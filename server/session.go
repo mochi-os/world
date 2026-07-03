@@ -128,7 +128,7 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	if len(sessions) >= limit {
 		return nil, errors.New("full")
 	}
-	most := ini_int("limits", "players", 16)
+	most := ini_int("limits", "players", 100)
 	if capacity <= 0 || capacity > most {
 		capacity = most
 	}
