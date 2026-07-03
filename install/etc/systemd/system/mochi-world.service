@@ -1,0 +1,16 @@
+[Unit]
+Description=Mochi world server
+Documentation=https://docs.mochi-os.org/
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/mochi-world
+User=mochi
+Group=mochi
+Restart=on-failure
+RestartSec=5
+LimitNOFILE=65535
+
+[Install]
+WantedBy=multi-user.target
