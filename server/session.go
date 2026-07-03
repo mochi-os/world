@@ -30,6 +30,7 @@ type player struct {
 	link     link         // nil once disconnected
 	sequence uint32       // highest input sequence applied (acknowledged in snapshots)
 	queue    []game.Input // inputs since the last step
+	seen     time.Time    // last input received — the application-level liveness signal
 }
 
 // order is a control message from a connection to a session's tick goroutine.

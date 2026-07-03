@@ -31,15 +31,15 @@ func build(t *testing.T, mode string, parameters map[string]any, players int) *i
 
 // place puts b dead ahead of a, in guns range.
 func place(i *instance, a int, b int, distance float64) {
-	shooter := i.aircraft[a]
-	target := i.aircraft[b]
-	target.state.Position = shooter.state.Position
-	forward := shooter.state.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
-	target.state.Position.X += forward.X * distance
-	target.state.Position.Y += forward.Y * distance
-	target.state.Position.Z += forward.Z * distance
-	target.state.Direction = shooter.state.Direction
-	target.state.Attitude = shooter.state.Attitude
+	shooter := &i.aircraft[a].model.State
+	target := &i.aircraft[b].model.State
+	target.Position = shooter.Position
+	forward := shooter.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	target.Position.X += forward.X * distance
+	target.Position.Y += forward.Y * distance
+	target.Position.Z += forward.Z * distance
+	target.Velocity = shooter.Velocity
+	target.Attitude = shooter.Attitude
 }
 
 func fire(i *instance, slot int, sample map[string]any) {

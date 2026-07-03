@@ -4,17 +4,18 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Furball multiplayer: air combat over the atoll with the placeholder flight
-// model (package flight) and server-authoritative weapons. Two modes:
+// Furball multiplayer: air combat over the atoll with the real blade-element
+// flight model (package flight) and server-authoritative weapons. Two modes:
 // "furball" — long-running, anyone joins or leaves at any time, endless
 // respawns (the standing match uses this); "joust" — 1v1, ends the moment one
 // player is destroyed. Creators set weather and rules through the session
 // parameters: "tod", "clouds" (relayed to clients in the welcome) and
-// "missiles" (enforced here). Deck operations stay single-player until the
-// real flight model phase.
+// "missiles" (enforced here). Matches are air-start; deck operations stay
+// single-player for now, so ANY surface contact in multiplayer is a kill.
 package furball
 
 import (
+	"encoding/binary"
 	"errors"
 	"math"
 
@@ -27,6 +28,7 @@ const (
 	ring     = 2778   // spawn radius (1.5 NM)
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
+	fuel     = 3000.0 // spawn fuel load, kg (~half internal)
 	health   = 100.0  // gun damage pool
 	damage   = 40.0   // per second while guns are on target
 	reach    = 700.0  // gun range (m)
@@ -75,7 +77,7 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 
 type aircraft struct {
 	player game.Player
-	state  flight.State
+	model  *flight.Model
 	latest flight.Inputs
 	alive  bool
 	health float64
@@ -106,29 +108,39 @@ type instance struct {
 	results     map[string]any
 }
 
-// spawn places a slot on the merge ring, facing the centre: slots 0/1 meet
+// spawn resets a model to the merge ring, facing the centre: slots 0/1 meet
 // head-on (the joust pair); later slots spread by the golden angle.
-func (i *instance) spawn(slot int) flight.State {
+func (i *instance) spawn(slot int, m *flight.Model) {
 	angle := float64(slot) * math.Pi
 	if slot > 1 {
 		angle = float64(slot) * 2.399963
 	}
 	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
-	return flight.State{
-		Position:  position,
-		Direction: inward,
-		Speed:     speed,
-		Attitude:  flight.Look(inward),
-	}
+	m.State = flight.Level(m, position, inward, speed, fuel)
 }
 
-func state_payload(s flight.State) map[string]any {
+// state_payload is one aircraft's snapshot entry: the legacy derived fields
+// every client renders from, the world velocity, and the full encoded core
+// state whose own entry feeds the sender's prediction replay.
+func state_payload(s *flight.State) map[string]any {
+	direction := s.Velocity.Normalize()
+	if s.Velocity.Length() < 1 {
+		direction = s.Attitude.Rotate(flight.Vec3{X: 1})
+	}
+	words := make([]float64, flight.Size)
+	s.Encode(words)
+	core := make([]byte, flight.Size*8)
+	for i, w := range words {
+		binary.LittleEndian.PutUint64(core[i*8:], math.Float64bits(w))
+	}
 	return map[string]any{
 		"position":  []float64{s.Position.X, s.Position.Y, s.Position.Z},
-		"direction": []float64{s.Direction.X, s.Direction.Y, s.Direction.Z},
+		"direction": []float64{direction.X, direction.Y, direction.Z},
 		"attitude":  []float64{s.Attitude.W, s.Attitude.X, s.Attitude.Y, s.Attitude.Z},
-		"speed":     s.Speed,
+		"speed":     s.Velocity.Length(),
+		"velocity":  []float64{s.Velocity.X, s.Velocity.Y, s.Velocity.Z},
+		"core":      core,
 	}
 }
 
@@ -139,9 +151,10 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	if i.mode == "joust" && len(i.aircraft) >= 2 {
 		return nil, errors.New("full")
 	}
-	state := i.spawn(player.Slot)
-	i.aircraft[player.Slot] = &aircraft{player: player, state: state, alive: true, health: health, flared: 1e9}
-	return map[string]any{"state": state_payload(state), "wrap": i.environment.Wrap}, nil
+	m := flight.New(flight.Fighter, i.environment, flight.World{Sea: sea})
+	i.spawn(player.Slot, m)
+	i.aircraft[player.Slot] = &aircraft{player: player, model: m, alive: true, health: health, flared: 1e9}
+	return map[string]any{"state": state_payload(&m.State), "wrap": i.environment.Wrap, "model": flight.Version}, nil
 }
 
 func (i *instance) Leave(player game.Player) {
@@ -158,20 +171,26 @@ func (i *instance) Leave(player game.Player) {
 func input(data map[string]any) flight.Inputs {
 	flag := func(key string) bool { v, _ := data[key].(bool); return v }
 	return flight.Inputs{
-		Pitch:      number(data, "pitch"),
-		Roll:       number(data, "roll"),
-		Yaw:        number(data, "yaw"),
-		Throttle:   number(data, "throttle"),
-		Speedbrake: number(data, "speedbrake"),
+		Pitch:      clamp(number(data, "pitch"), -1, 1),
+		Roll:       clamp(number(data, "roll"), -1, 1),
+		Yaw:        clamp(number(data, "yaw"), -1, 1),
+		Throttle:   clamp(number(data, "throttle"), 0, 1),
+		Speedbrake: clamp(number(data, "speedbrake"), 0, 1),
 		Reheat:     flag("reheat"),
 		Brake:      flag("brake"),
 		Gear:       flag("gear"),
 		Hook:       flag("hook"),
+		Launch:     flag("launch"),
+		Override:   flag("override"),
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
 		Missile:    flag("missile"),
 		Sequence:   uint32(number(data, "sequence")),
 	}
+}
+
+func clamp(v float64, low float64, high float64) float64 {
+	return math.Max(low, math.Min(high, v))
 }
 
 func number(data map[string]any, key string) float64 {
@@ -215,15 +234,20 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 			a.wait -= dt
 			if a.wait <= 0 {
-				a.state = i.spawn(slot)
+				i.spawn(slot, a.model)
 				a.alive = true
 				a.health = health
-				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(a.state)})
+				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&a.model.State)})
 			}
 			continue
 		}
-		a.state = flight.Step(a.state, a.latest, dt, i.environment)
-		if a.state.Position.Y <= sea {
+		for substep := 0; substep < 4; substep++ {
+			a.model.Step(a.latest) // 4 × Dt (1/240) per 60 Hz tick
+		}
+		// Air-start rule: any surface contact — water, a crash probe, even a
+		// gentle touch — is a kill until multiplayer deck operations land.
+		state := &a.model.State
+		if state.Position.Y <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
 			i.kill(slot, -1)
 		}
 	}
@@ -237,12 +261,12 @@ func (i *instance) guns(dt float64) {
 		if !a.alive || !a.latest.Fire {
 			continue
 		}
-		forward := a.state.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+		forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 		for other, b := range i.aircraft {
 			if other == slot || !b.alive {
 				continue
 			}
-			direction, distance := i.bearing(a.state.Position, b.state.Position)
+			direction, distance := i.bearing(a.model.State.Position, b.model.State.Position)
 			if distance > reach || distance < 1 {
 				continue
 			}
@@ -272,13 +296,13 @@ func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) 
 
 // launch fires a missile at the best target in the seeker cone.
 func (i *instance) launch(slot int, a *aircraft) {
-	forward := a.state.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best, nearest := -1, missile_range+1
 	for other, b := range i.aircraft {
 		if other == slot || !b.alive {
 			continue
 		}
-		direction, distance := i.bearing(a.state.Position, b.state.Position)
+		direction, distance := i.bearing(a.model.State.Position, b.model.State.Position)
 		if distance > missile_range || distance < 1 {
 			continue
 		}
@@ -296,7 +320,7 @@ func (i *instance) launch(slot int, a *aircraft) {
 	i.flying = append(i.flying, &missile{
 		shooter:  slot,
 		target:   best,
-		position: a.state.Position,
+		position: a.model.State.Position,
 		velocity: flight.Vec3{X: forward.X * missile_speed, Y: forward.Y * missile_speed, Z: forward.Z * missile_speed},
 		life:     missile_life,
 		number:   i.launched,
@@ -320,7 +344,7 @@ func (i *instance) pursue(dt float64) {
 			i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
 			continue
 		}
-		direction, distance := i.bearing(m.position, target.state.Position)
+		direction, distance := i.bearing(m.position, target.model.State.Position)
 		if distance < missile_kill {
 			i.kill(m.target, m.shooter)
 			continue
@@ -359,7 +383,7 @@ func (i *instance) kill(victim int, by int) {
 	}
 	i.events = append(i.events, map[string]any{
 		"kind": "kill", "slot": victim, "by": by,
-		"position": []float64{a.state.Position.X, a.state.Position.Y, a.state.Position.Z},
+		"position": []float64{a.model.State.Position.X, a.model.State.Position.Y, a.model.State.Position.Z},
 	})
 	if i.mode == "joust" && !i.finished {
 		winner := by
@@ -388,17 +412,20 @@ func (i *instance) finish(winner int, loser int) {
 
 func (i *instance) Snapshot(tick uint64) map[string]any {
 	players := []map[string]any{}
+	cores := map[int]any{}
 	for slot, a := range i.aircraft {
-		entry := state_payload(a.state)
+		entry := state_payload(&a.model.State)
+		cores[slot] = entry["core"]
+		delete(entry, "core") // per-recipient: N cores would burst the datagram MTU
 		entry["slot"] = slot
 		entry["name"] = a.player.Name
 		entry["alive"] = a.alive
 		entry["health"] = a.health
 		entry["kills"] = a.kills
 		entry["deaths"] = a.deaths
-		entry["gear"] = a.latest.Gear
+		entry["gear"] = a.model.State.Gear.Extension > 0.5
 		entry["hook"] = a.latest.Hook
-		entry["speedbrake"] = a.latest.Speedbrake
+		entry["speedbrake"] = a.model.State.Fcs.Speedbrake
 		entry["reheat"] = a.latest.Reheat
 		entry["fire"] = a.latest.Fire
 		players = append(players, entry)
@@ -410,7 +437,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			"velocity": []float64{m.velocity.X, m.velocity.Y, m.velocity.Z},
 		})
 	}
-	return map[string]any{"players": players, "missiles": missiles}
+	return map[string]any{"players": players, "missiles": missiles, "cores": cores}
 }
 
 func (i *instance) Events() []map[string]any {

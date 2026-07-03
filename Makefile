@@ -17,7 +17,16 @@ run1: all
 test:
 	go test ./...
 
+# Run the simulation-core tests on the browser target: the golden-trace
+# comparison under wasm IS the native-versus-wasm divergence bound.
+test-wasm:
+	GOOS=js GOARCH=wasm PATH="$(shell go env GOROOT)/lib/wasm:$$PATH" go test $(testflags) ./games/furball/flight/
+
+# Compile-check the simulation core and its boundary for the browser target.
+wasm:
+	GOOS=js GOARCH=wasm CGO_ENABLED=0 go build ./games/furball/flight/ ./wasm/
+
 clean:
 	rm -f $(bin)/mochi-world
 
-.PHONY: all run1 test clean
+.PHONY: all run1 test test-wasm wasm clean

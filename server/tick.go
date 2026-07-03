@@ -26,8 +26,11 @@ func session_run(s *session, g game.Game) {
 		every = 1
 	}
 	idle := time.Duration(ini_int("limits", "idle", 300)) * time.Second
-	ticker := time.NewTicker(time.Second / time.Duration(tickrate))
+	interval := time.Second / time.Duration(tickrate)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
+	previous := time.Now()
+	behind := time.Duration(0)
 
 	for {
 		select {
@@ -35,30 +38,56 @@ func session_run(s *session, g game.Game) {
 			session_close(s, "shutdown")
 			return
 		case <-ticker.C:
-			session_orders(s)
-			gathered := map[int][]game.Input{}
+			// Wall-clock accumulator: a ticker drops fires under load, which
+			// silently dilates simulation time. Run however many ticks the
+			// wall says are owed, capped so a long stall (suspend, debugger)
+			// jumps rather than fast-forwarding for minutes.
+			now := time.Now()
+			behind += now.Sub(previous)
+			previous = now
+			if behind > 250*time.Millisecond {
+				behind = 250 * time.Millisecond
+			}
 			connected := 0
-			for slot, p := range s.players {
-				if len(p.queue) > 0 {
-					gathered[slot] = p.queue
-					p.queue = nil
+			for _, p := range s.players {
+				if p.link == nil {
+					continue
 				}
-				if p.link != nil {
-					connected++
+				// Application-level liveness: QUIC never idles out a ghost
+				// (the browser ACKs our snapshot stream even when the tab is
+				// hidden or the game's script is dead), but a live client
+				// streams inputs every frame. Fifteen silent seconds means
+				// the pilot is gone; closing the link fires the ordinary
+				// leave path from its reader.
+				if !p.seen.IsZero() && time.Since(p.seen) > 15*time.Second {
+					p.link.close("idle")
+					p.link = nil
+					continue
 				}
+				connected++
 			}
-			s.tick++
-			s.instance.Step(s.tick, gathered)
-			for _, e := range s.instance.Events() {
-				session_broadcast(s, map[string]any{"kind": "event", "tick": s.tick, "event": e}, true)
-			}
-			if s.tick%uint64(every) == 0 {
-				session_snapshot(s)
-			}
-			if done, results := s.instance.Finished(); done {
-				session_broadcast(s, map[string]any{"kind": "end", "reason": "finished", "results": results}, true)
-				session_close(s, "finished")
-				return
+			for ; behind >= interval; behind -= interval {
+				session_orders(s)
+				gathered := map[int][]game.Input{}
+				for slot, p := range s.players {
+					if len(p.queue) > 0 {
+						gathered[slot] = p.queue
+						p.queue = nil
+					}
+				}
+				s.tick++
+				s.instance.Step(s.tick, gathered)
+				for _, e := range s.instance.Events() {
+					session_broadcast(s, map[string]any{"kind": "event", "tick": s.tick, "event": e}, true)
+				}
+				if s.tick%uint64(every) == 0 {
+					session_snapshot(s)
+				}
+				if done, results := s.instance.Finished(); done {
+					session_broadcast(s, map[string]any{"kind": "end", "reason": "finished", "results": results}, true)
+					session_close(s, "finished")
+					return
+				}
 			}
 			if connected > 0 {
 				s.empty = time.Time{}
@@ -93,6 +122,7 @@ func session_orders(s *session) {
 				}
 			case "input":
 				if p := s.players[o.slot]; p != nil {
+					p.seen = time.Now()
 					for _, in := range o.inputs {
 						if in.Sequence > p.sequence || len(p.queue) == 0 {
 							p.queue = append(p.queue, in)
@@ -128,7 +158,7 @@ func session_join(s *session, o order) answer {
 	if err != nil {
 		return answer{err: err}
 	}
-	s.players[slot] = &player{Player: o.player, link: o.link}
+	s.players[slot] = &player{Player: o.player, link: o.link, seen: time.Now()}
 	others := []map[string]any{}
 	for _, p := range s.players {
 		others = append(others, map[string]any{"slot": p.Slot, "name": p.Name, "identity": p.Identity})
@@ -137,7 +167,7 @@ func session_join(s *session, o order) answer {
 	welcome, err := encode(map[string]any{
 		"kind": "welcome", "protocol": protocol, "session": s.identifier,
 		"slot": slot, "name": o.player.Name, "tick": s.tick,
-		"rate": map[string]any{"tick": tickrate, "snapshot": snaprate},
+		"rate":       map[string]any{"tick": tickrate, "snapshot": snaprate},
 		"parameters": s.spec.Parameters, "seed": s.spec.Seed,
 		"spawn": spawn, "players": others,
 	})
@@ -153,13 +183,20 @@ func session_join(s *session, o order) answer {
 // acknowledgement.
 func session_snapshot(s *session) {
 	shared := s.instance.Snapshot(s.tick)
+	cores, _ := shared["cores"].(map[int]any)
 	for _, p := range s.players {
 		if p.link == nil {
 			continue
 		}
 		envelope := map[string]any{"kind": "snapshot", "tick": s.tick, "acknowledged": p.sequence}
 		for k, v := range shared {
+			if k == "cores" {
+				continue // per-recipient below: everyone's cores would burst the datagram MTU
+			}
 			envelope[k] = v
+		}
+		if core, found := cores[p.Slot]; found {
+			envelope["core"] = core
 		}
 		bytes, err := encode(envelope)
 		if err == nil {
