@@ -122,6 +122,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// means-fresh sentinel here: a full push slews THROUGH exactly zero,
 		// and a sentinel reset turns it into a 1→0→1 loop that silently
 		// refuses every negative-g command.)
+		// Law blend across the gear transition: the PA law caps full stick
+		// near approach alpha; the UA law gives it the full g ceiling. With
+		// the stick held through gear retraction the command used to STEP —
+		// the jet snapped 23°/s nose-up at gear-up. The ceiling now opens
+		// with the gear (Extension 1→0 over ~2 s), as the real law fader does.
+		if m.State.Gear.Extension > 0.02 && speed < 130 {
+			demand = math.Min(demand, level+(ceiling-level)*(1-m.State.Gear.Extension))
+		}
 		f.Demand += clamp(demand-f.Demand, -25*Dt, 25*Dt)
 		demand = f.Demand
 		// Cascaded pitch: the g error commands a PITCH RATE, and the carefree

@@ -122,15 +122,25 @@ func (m *Model) catapult(s *State, in Inputs) {
 		if relative.Length() > 4 {
 			return
 		}
+		forward := s.Attitude.Rotate(Vec3{X: 1})
 		for i := range c.Catapults {
 			shuttle := c.world(c.Catapults[i].Position, s.Time)
 			dx := Shortest(nose.X, shuttle.X, m.Environment.Wrap)
 			dz := Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)
-			if dx*dx+dz*dz < capture*capture {
-				s.Gear.Catapult = i
-				s.Gear.Stroke = -1
-				return
+			if dx*dx+dz*dz >= capture*capture {
+				continue
 			}
+			// The crew only hook up an ALIGNED aircraft: taxiing across the
+			// shuttle perpendicular used to attach on proximity alone, and
+			// the holdback yanked the jet sideways into the deck crash gates.
+			heading := c.Heading + c.Catapults[i].Heading
+			track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+			if forward.X*track.X+forward.Z*track.Z < 0.9 { // within ~25°
+				continue
+			}
+			s.Gear.Catapult = i
+			s.Gear.Stroke = -1
+			return
 		}
 		return
 	}
