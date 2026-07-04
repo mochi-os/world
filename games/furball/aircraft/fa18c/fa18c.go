@@ -127,12 +127,15 @@ func build() *flight.Airframe {
 		{Position: flight.Vec3{X: -1.4}, Area: 2.7, Plan: 10.0, Drag: 0.09},
 		{Position: flight.Vec3{X: -5.6}, Area: 1.6, Plan: 5.4, Drag: 0.09},
 	}
-	// Undercarriage: track 3.11 m, wheelbase 5.4 m. Stance PROVISIONAL until
-	// #91 measures the drawn model's wheel-bottom drop; stiffness scaled to
-	// the lighter jet at the F's static-compression ratio. Tunable.
-	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.30}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 1.2}
-	a.Gear.Left = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.30, Z: -1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
-	a.Gear.Right = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.30, Z: 1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
+	// Undercarriage: track 3.11 m, wheelbase 5.4 m. Stance measured from the
+	// drawn model's DEPLOYED gear (three.js pose of the gear animation at
+	// full extension: wheel bottoms 2.57 m below the render origin; -2.63
+	// with ~0.06 m static compression rests the origin there). The drawn
+	// mains then land within 5 cm of these struts. Stiffness scaled to the
+	// lighter jet at the F's static-compression ratio. Tunable.
+	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 1.2}
+	a.Gear.Left = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: -1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
+	a.Gear.Right = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: 1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Hook.Position = flight.Vec3{X: -6.0, Y: -0.55}
 	a.Hook.Length = 2.4
 	// Crash probes and belly skid points, scaled to the shorter airframe.
