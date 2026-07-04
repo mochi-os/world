@@ -23,7 +23,7 @@ const (
 
 // compress returns the lift-slope factor, added wave drag, and pitching
 // moment increment for a section at local Mach and lift coefficient.
-func compress(mach float64, cl float64) (float64, float64, float64) {
+func compress(mach float64, cl float64, hump float64) (float64, float64, float64) {
 	if mach < 0.05 {
 		return 1, 0, 0
 	}
@@ -48,11 +48,11 @@ func compress(mach float64, cl float64) (float64, float64, float64) {
 	wave := 0.0
 	if mach > edge {
 		rise := clamp((mach-edge)/(1.0-edge), 0, 1)
-		hump := rise * rise * rise * rise
+		rise = rise * rise * rise * rise
 		if mach > 1.02 {
-			hump = 1 / (1 + (mach-1.02)*2.6) // slow decay to the supersonic shelf
+			rise = 1 / (1 + (mach-1.02)*2.6) // slow decay to the supersonic shelf
 		}
-		wave = 0.033 * hump
+		wave = hump * rise
 	}
 	// Transonic aft AC shift: ~10% of chord, ramped across the band, felt
 	// as a nose-down moment proportional to lift.

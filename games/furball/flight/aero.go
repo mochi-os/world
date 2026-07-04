@@ -169,7 +169,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				cl += extra
 				cd += suction
 			}
-			slope, wave, shift := compress(speed/local.Sound, cl)
+			slope, wave, shift := compress(speed/local.Sound, cl, a.Wave.Hump)
 			// Prandtl-Glauert amplifies attached potential flow, not a
 			// separated wake: fade the slope factor out across the stall, or
 			// the transonic lift-loss at the break doubles and the swept-wing
@@ -205,7 +205,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	bodyWave := 0.0
 	if bodyMach > 0.92 {
 		ramp := clamp((bodyMach-0.92)/0.12, 0, 1)
-		bodyWave = 0.11 * ramp * ramp
+		bodyWave = a.Wave.Body * ramp * ramp
 		if bodyMach > 1.02 {
 			bodyWave /= 1 + (bodyMach-1.02)*3.0 // the hump decays supersonic
 		}

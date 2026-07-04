@@ -27,8 +27,8 @@ func TestDragRise(t *testing.T) {
 // level and constant alpha it is masked by the PG lift growth, so the gate
 // is at the unit level; the FCS trims the aircraft-level effect.)
 func TestTransonicTrim(t *testing.T) {
-	slow, _, shiftSlow := compress(0.70, 0.4)
-	fast, _, shiftFast := compress(0.95, 0.4)
+	slow, _, shiftSlow := compress(0.70, 0.4, 0.033)
+	fast, _, shiftFast := compress(0.95, 0.4, 0.033)
 	if shiftSlow != 0 || shiftFast >= 0 {
 		t.Fatalf("AC shift wrong: %f at M0.70, %f at M0.95", shiftSlow, shiftFast)
 	}

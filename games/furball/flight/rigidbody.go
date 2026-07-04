@@ -32,8 +32,13 @@ type Model struct {
 	first   bool      // capture flag: record normal on the k1 stage only
 }
 
-// New builds a model at rest at the origin.
+// New builds a model at rest at the origin. Airframes declare at most four
+// engines — the encoded state carries four fixed slots; gang a larger count
+// into pods (a B-52's eight engines are four pods of two).
 func New(airframe *Airframe, environment Environment, world World) *Model {
+	if len(airframe.Engines) > len((&State{}).Engine) {
+		panic("flight: airframe " + airframe.Name + " declares more than four engines — gang them into pods")
+	}
 	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity}
 	m.State.Attitude = Quat{W: 1}
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}

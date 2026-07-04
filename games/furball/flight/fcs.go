@@ -19,18 +19,9 @@ import (
 	"math"
 )
 
-const (
-	crossover   = 60.0               // m/s: the C* crossover (~120 kt, the classic blend point)
-	stab_rate   = 40 * math.Pi / 180 // actuator rates, rad/s
-	flap_rate   = 100 * math.Pi / 180
-	rudder_rate = 75 * math.Pi / 180
-	brake_rate  = 1.0                 // speedbrake: full travel per second
-	blowdown    = 35000.0             // deflection·dynamic-pressure ceiling — bites near limit q only
-	onspeed     = 8.1 * math.Pi / 180 // PA approach alpha
-)
-
 // fcs turns stick commands into surface commands and slews the actuators.
 func (m *Model) fcs(in Inputs, local Air) {
+	c := &m.Airframe.Control
 	f := &m.State.Fcs
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 	speed := v.Length()
@@ -47,9 +38,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 
 	if m.Direct {
 		// Geared surfaces, no augmentation — the bare-airframe validation path.
-		stabTarget = -stick * 0.42
-		flapTarget = lateral * 0.35
-		rudderTarget = -pedal * 0.52
+		stabTarget = -stick * c.Gearing.Pitch
+		flapTarget = lateral * c.Gearing.Roll
+		rudderTarget = -pedal * c.Gearing.Yaw
 		f.Integral = 0
 	} else if in.Gear && speed < 130 {
 		// Powered approach: the stick commands alpha about on-speed, and the
@@ -58,12 +49,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// snapping straight to on-speed alpha at gear-limit speed is a 2.5 g
 		// uncommanded zoom that full forward stick cannot push out of; as the
 		// jet decelerates toward on-speed the cap rises to meet it.
-		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, onspeed)
-		demand := math.Min(onspeed, level) + stick*(6*math.Pi/180)
+		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, c.Onspeed)
+		demand := math.Min(c.Onspeed, level) + stick*(6*math.Pi/180)
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.3, 0.3)
 		stabTarget = -(errorTerm*0.28 + f.Integral)
-		droopTarget = 0.52 * clamp(1-pressure/9000, 0, 1)
+		droopTarget = c.Droop.Angle * clamp(1-pressure/c.Droop.Pressure, 0, 1)
 		flapTarget = lateral * 0.30
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
@@ -128,7 +119,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// ~60 kPa (a supersonic dive on the deck). Scale the surface loop
 		// down as q̄ rises, exactly as the real jet's control law does.
 		authority := clamp(20000/math.Max(pressure, 1), 0.25, 1)
-		saturated := math.Abs(f.Stabilator.Left) > 0.40*clamp(blowdown/math.Max(pressure, 1), 0, 1)
+		saturated := math.Abs(f.Stabilator.Left) > 0.95*c.Throw.Down*clamp(c.Blowdown/math.Max(pressure, 1), 0, 1)
 		if !saturated {
 			f.Trim = clamp(f.Trim+inner*0.25*authority*Dt, -0.35, 0.35)
 		}
@@ -146,13 +137,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 	}
 
 	// Leading-edge flaps schedule with alpha.
-	slatTarget := clamp(0.9*(a-0.05), 0, 25*math.Pi/180)
+	slatTarget := clamp(c.Slat.Slope*(a-c.Slat.Offset), 0, c.Slat.Limit)
 	if m.Direct {
 		slatTarget = 0
 	}
 
 	// Blowdown: available deflection falls with dynamic pressure.
-	available := clamp(blowdown/math.Max(pressure, 1), 0, 1)
+	available := clamp(c.Blowdown/math.Max(pressure, 1), 0, 1)
 
 	// Actuators: rate-limited slew toward the commanded positions.
 	slew := func(current float64, target float64, rate float64, limit float64) float64 {
@@ -160,16 +151,16 @@ func (m *Model) fcs(in Inputs, local Air) {
 		target = clamp(target, -bound, bound)
 		return current + clamp(target-current, -rate*Dt, rate*Dt)
 	}
-	symmetric := clamp(stabTarget, -0.42, 0.30)
+	symmetric := clamp(stabTarget, -c.Throw.Down, c.Throw.Up)
 	differential := clamp(flapTarget, -0.35, 0.35)
-	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, stab_rate, 0.42)
-	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, stab_rate, 0.42)
-	f.Flaperon.Left = slew(f.Flaperon.Left, droopTarget+differential, flap_rate, 0.60)
-	f.Flaperon.Right = slew(f.Flaperon.Right, droopTarget-differential, flap_rate, 0.60)
-	f.Rudder = slew(f.Rudder, rudderTarget, rudder_rate, 0.52)
-	f.Slat += clamp(slatTarget-f.Slat, -0.6*Dt, 0.6*Dt)
+	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, c.Rate.Stabilator, c.Throw.Down)
+	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, c.Rate.Stabilator, c.Throw.Down)
+	f.Flaperon.Left = slew(f.Flaperon.Left, droopTarget+differential, c.Rate.Flaperon, c.Throw.Flap)
+	f.Flaperon.Right = slew(f.Flaperon.Right, droopTarget-differential, c.Rate.Flaperon, c.Throw.Flap)
+	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder, c.Throw.Rudder)
+	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*Dt, c.Rate.Slat*Dt)
 	f.Flap = f.Flaperon.Left*0 + droopTarget // droop is carried inside the flaperon targets; keep the readout
-	f.Speedbrake += clamp(clamp(in.Speedbrake, 0, 1)-f.Speedbrake, -brake_rate*Dt, brake_rate*Dt)
+	f.Speedbrake += clamp(clamp(in.Speedbrake, 0, 1)-f.Speedbrake, -c.Rate.Brake*Dt, c.Rate.Brake*Dt)
 }
 
 // yaw is the directional law: a washed-out yaw damper, sideslip suppression
@@ -185,5 +176,5 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	// tail right, yawing the nose left): opposing r means following it with
 	// the rudder (+damped), killing beta means steering away from it (-b),
 	// and coordination follows the roll (-interconnect).
-	return clamp(damped*1.2-(b-pedal*0.06)*3.4-interconnect, -0.52, 0.52)
+	return clamp(damped*1.2-(b-pedal*0.06)*3.4-interconnect, -m.Airframe.Control.Throw.Rudder, m.Airframe.Control.Throw.Rudder)
 }

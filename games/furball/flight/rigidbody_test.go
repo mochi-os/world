@@ -131,3 +131,16 @@ func TestAllocations(t *testing.T) {
 		t.Fatalf("Step allocates: %f allocations per run", avg)
 	}
 }
+
+// TestEngineGuard: an airframe declaring more than four engines must fail
+// loudly at construction, not index out of range mid-flight.
+func TestEngineGuard(t *testing.T) {
+	defer func() {
+		if recover() == nil {
+			t.Fatal("five engines were accepted")
+		}
+	}()
+	a := block()
+	a.Engines = make([]Engine, 5)
+	New(a, Environment{}, World{})
+}

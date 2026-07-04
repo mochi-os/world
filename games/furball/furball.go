@@ -20,6 +20,7 @@ import (
 	"math"
 
 	"world/game"
+	"world/games/furball/aircraft"
 	"world/games/furball/flight"
 )
 
@@ -71,12 +72,13 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 		mode:        mode,
 		missiles:    allowed,
 		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
-		aircraft:    map[int]*aircraft{},
+		aircraft:    map[int]*craft{},
 	}, nil
 }
 
-type aircraft struct {
+type craft struct {
 	player game.Player
+	kind   string // aircraft catalogue name
 	model  *flight.Model
 	latest flight.Inputs
 	alive  bool
@@ -100,7 +102,7 @@ type instance struct {
 	mode        string // furball (open, endless) or joust (1v1, first kill ends it)
 	missiles    bool   // rule: missiles allowed
 	environment flight.Environment
-	aircraft    map[int]*aircraft
+	aircraft    map[int]*craft
 	flying      []*missile
 	launched    uint64
 	events      []map[string]any
@@ -151,10 +153,11 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	if i.mode == "joust" && len(i.aircraft) >= 2 {
 		return nil, errors.New("full")
 	}
-	m := flight.New(flight.Fighter, i.environment, flight.World{Sea: sea})
+	kind := "fa18f" // the only catalogue entry today; a requested type arrives with #90
+	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
 	i.spawn(player.Slot, m)
-	i.aircraft[player.Slot] = &aircraft{player: player, model: m, alive: true, health: health, flared: 1e9}
-	return map[string]any{"state": state_payload(&m.State), "wrap": i.environment.Wrap, "model": flight.Version}, nil
+	i.aircraft[player.Slot] = &craft{player: player, kind: kind, model: m, alive: true, health: health, flared: 1e9}
+	return map[string]any{"state": state_payload(&m.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind}, nil
 }
 
 func (i *instance) Leave(player game.Player) {
@@ -295,7 +298,7 @@ func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) 
 }
 
 // launch fires a missile at the best target in the seeker cone.
-func (i *instance) launch(slot int, a *aircraft) {
+func (i *instance) launch(slot int, a *craft) {
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best, nearest := -1, missile_range+1
 	for other, b := range i.aircraft {
@@ -418,6 +421,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		cores[slot] = entry["core"]
 		delete(entry, "core") // per-recipient: N cores would burst the datagram MTU
 		entry["slot"] = slot
+		entry["aircraft"] = a.kind
 		entry["name"] = a.player.Name
 		entry["alive"] = a.alive
 		entry["health"] = a.health

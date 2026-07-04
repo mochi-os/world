@@ -13,8 +13,10 @@ type Airframe struct {
 	Reference struct{ Area, Span, Chord float64 }
 	Surfaces  []Surface
 	Body      []Station
-	Engines   [2]Engine
+	Engines   []Engine                      // 0..4; State carries four slots regardless
 	Mass      struct{ Empty, Fuel float64 } // kg; Fuel = internal capacity
+	Control   Control                       // control-law data the shared law flies with
+	Wave      struct{ Hump, Body float64 }  // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
 	Inertia   Mat3                          // empty aircraft, about empty CG (frames.go axis mapping)
 	Center    Vec3                          // empty CG, body, from datum
 	Tank      Vec3                          // fuel CG, body
@@ -101,4 +103,17 @@ type Strut struct {
 	Stiffness float64 // N/m
 	Damping   float64 // N·s/m
 	Steer     float64 // max steering angle, rad (nosewheel)
+}
+
+// Control is the airframe-specific control-law data: schedules, throws, and
+// actuator rates. The law itself (loop shaping, limiter structure) is shared
+// across aircraft; everything a different airframe would change lives here.
+type Control struct {
+	Onspeed  float64                                                     // PA on-speed alpha, rad
+	Blowdown float64                                                     // deflection·dynamic-pressure ceiling, Pa
+	Gearing  struct{ Pitch, Roll, Yaw float64 }                          // Direct-mode stick to surface, rad
+	Slat     struct{ Slope, Offset, Limit float64 }                      // leading-edge schedule: Slope·(alpha−Offset) up to Limit
+	Droop    struct{ Angle, Pressure float64 }                           // PA trailing-edge droop, rad, washed out by q̄/Pressure
+	Throw    struct{ Down, Up, Flap, Rudder float64 }                    // surface limits, rad (stabilator Down is trailing-edge down)
+	Rate     struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
 }

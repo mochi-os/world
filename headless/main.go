@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"world/games/furball/aircraft"
 	"world/games/furball/flight"
 )
 
@@ -59,20 +60,34 @@ func main() {
 	}
 }
 
+// selected is the airframe under analysis (-aircraft flag, default fa18f).
+var selected = ""
+
+// airframe resolves the selection, failing loudly on unknown names.
+func airframe() *flight.Airframe {
+	a := aircraft.Get(selected)
+	if a == nil {
+		fmt.Fprintf(os.Stderr, "unknown aircraft %q (have %v)\n", selected, aircraft.Names())
+		os.Exit(2)
+	}
+	return a
+}
+
 // model builds a calm-air analysis model at a fuel fraction.
 func model(fraction float64) *flight.Model {
-	m := flight.New(flight.Fighter, flight.Environment{}, flight.World{})
-	m.State.Fuel = fraction * flight.Fighter.Mass.Fuel
+	m := flight.New(airframe(), flight.Environment{}, flight.World{})
+	m.State.Fuel = fraction * airframe().Mass.Fuel
 	return m
 }
 
 // weight is the analysis weight in newtons at a fuel fraction.
 func weight(fraction float64) float64 {
-	return (flight.Fighter.Mass.Empty + fraction*flight.Fighter.Mass.Fuel) * gravity
+	return (airframe().Mass.Empty + fraction*airframe().Mass.Fuel) * gravity
 }
 
 func command_trim(arguments []string) {
 	flags := flag.NewFlagSet("trim", flag.ExitOnError)
+	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
 	speed := flags.Float64("speed", 200, "true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
@@ -117,6 +132,7 @@ func (d doublet) at(t float64) float64 {
 
 func command_fly(arguments []string) {
 	flags := flag.NewFlagSet("fly", flag.ExitOnError)
+	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
 	seconds := flags.Float64("seconds", 20, "duration")
 	speed := flags.Float64("speed", 200, "initial true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "initial altitude, m")
@@ -177,6 +193,7 @@ func clamp(v float64, low float64, high float64) float64 {
 // command_modes identifies the classical dynamic modes by perturb-and-fit.
 func command_modes(arguments []string) {
 	flags := flag.NewFlagSet("modes", flag.ExitOnError)
+	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
 	speed := flags.Float64("speed", 200, "true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
@@ -236,10 +253,10 @@ func settle(speed float64, altitude float64, fuel float64, direct bool) (*flight
 		m.State.Position = flight.Vec3{Y: altitude}
 		m.State.Velocity = flight.Vec3{X: speed}
 		clean := model(fuel)
-		a := angle(clean, speed, altitude, weight(fuel)/(pressure(speed, altitude)*flight.Fighter.Reference.Area))
+		a := angle(clean, speed, altitude, weight(fuel)/(pressure(speed, altitude)*airframe().Reference.Area))
 		_, drag := clean.Evaluate(speed, a, altitude)
 		dry, _ := clean.Thrust(speed, altitude)
-		inputs.Throttle = clamp(drag*pressure(speed, altitude)*flight.Fighter.Reference.Area/math.Max(dry, 1), 0.1, 1)
+		inputs.Throttle = clamp(drag*pressure(speed, altitude)*airframe().Reference.Area/math.Max(dry, 1), 0.1, 1)
 		m.State.Engine[0] = flight.EngineState{Spool: inputs.Throttle}
 		m.State.Engine[1] = flight.EngineState{Spool: inputs.Throttle}
 		for step := 0; step < 240*10; step++ {
@@ -389,13 +406,14 @@ func ceiling(m *flight.Model, speed float64, altitude float64) (float64, float64
 // command_em sweeps climb and turn performance at one altitude.
 func command_em(arguments []string) {
 	flags := flag.NewFlagSet("em", flag.ExitOnError)
+	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
 	altitude := flags.Float64("altitude", 0, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
 	table := flags.Bool("table", false, "print the full sweep table")
 	flags.Parse(arguments)
 	m := model(*fuel)
 	w := weight(*fuel)
-	area := flight.Fighter.Reference.Area
+	area := airframe().Reference.Area
 	local := flight.Atmosphere(*altitude, flight.Environment{})
 	fmt.Printf("energy-manoeuvrability at %.0f m (%.0f ft), fuel %.0f%%, weight %.0f kg\n",
 		*altitude, *altitude*feet, *fuel*100, w/gravity)
@@ -491,7 +509,7 @@ func command_bench() {
 }
 
 func command_dump() {
-	bytes, err := json.MarshalIndent(flight.Fighter, "", "  ")
+	bytes, err := json.MarshalIndent(airframe(), "", "  ")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

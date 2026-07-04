@@ -17,7 +17,7 @@ package flight
 // Version identifies the model's behaviour and state layout. It travels in
 // the multiplayer join payload; hosts on different versions disable
 // prediction rather than mispredict. Bump on ANY behavioural change.
-const Version = 3
+const Version = 4
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
 // choose how many steps to run.
@@ -49,3 +49,9 @@ func Shortest(a float64, b float64, size float64) float64 {
 	}
 	return d
 }
+
+// Fighter is the airframe the package's own tests fly; the test bootstrap
+// (bootstrap_test.go, package flight_test) wires it to the fa18f dataset,
+// which cannot be imported here without a cycle. Hosts never read it — they
+// resolve airframes through the aircraft catalogue and pass them to New.
+var Fighter *Airframe

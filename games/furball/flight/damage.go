@@ -13,7 +13,7 @@ package flight
 type DamageState struct {
 	Element []float64  // per-element effectiveness 0..1 (nil = pristine)
 	Jam     []float64  // per-channel deflection clamp 0..1 (nil = free)
-	Engine  [2]float64 // thrust multiplier offsets: stored as 1-multiplier, so zero = pristine
+	Engine  [4]float64 // thrust multiplier offsets: stored as 1-multiplier, so zero = pristine
 	Leak    float64    // kg/s fuel loss
 	Drag    float64    // added parasitic drag area, m²
 	Shift   Vec3       // CG shift from lost structure

@@ -37,7 +37,7 @@ type State struct {
 	Attitude Quat // body->world
 	Omega    Vec3 // body, rad/s
 	Fuel     float64
-	Engine   [2]EngineState
+	Engine   [4]EngineState // one per Airframe.Engines entry (0..4); unused slots stay zero
 	Fcs      FcsState
 	Gear     GearState
 	Damage   DamageState

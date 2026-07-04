@@ -21,7 +21,7 @@
 //	6 sequence, 7 steps
 //
 // Output buffer layout: flight.Size encoded state words, then
-// alpha, beta, nz, mach, cas.
+// alpha, beta, nz, mach, cas, power, stage.
 package main
 
 import (
@@ -30,11 +30,12 @@ import (
 	"math"
 	"syscall/js"
 
+	"world/games/furball/aircraft"
 	"world/games/furball/flight"
 )
 
 // Extra is the instrument tail appended to the encoded state.
-const extra = 5
+const extra = 7
 
 // ring is the prediction history: one slot per input sequence.
 const ring = 512
@@ -75,13 +76,18 @@ func version(js.Value, []js.Value) any { return flight.Version }
 // geometry. Returns an error string, or "" on success.
 func initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
+		Aircraft    string
 		Environment flight.Environment
 		World       flight.World
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	model = flight.New(flight.Fighter, payload.Environment, payload.World)
+	airframe := aircraft.Get(payload.Aircraft)
+	if airframe == nil {
+		return "unknown aircraft"
+	}
+	model = flight.New(airframe, payload.Environment, payload.World)
 	rings = [ring]slot{}
 	if len(bytes) == 0 {
 		bytes = make([]byte, (flight.Size+extra)*8)
@@ -130,6 +136,19 @@ func emit(view js.Value) {
 	output[flight.Size+2] = model.Nz()
 	output[flight.Size+3] = model.Mach()
 	output[flight.Size+4] = model.Cas()
+	// Achieved power across the AIRFRAME'S engines (0..4): spool fraction of
+	// military and reheat stage, so hosts never count engine slots.
+	power, stage := 0.0, 0.0
+	if count := len(model.Airframe.Engines); count > 0 {
+		for i := 0; i < count; i++ {
+			power += model.State.Engine[i].Spool
+			stage += model.State.Engine[i].Reheat
+		}
+		power /= float64(count)
+		stage /= float64(count)
+	}
+	output[flight.Size+5] = power
+	output[flight.Size+6] = stage
 	send(output[:], view)
 }
 

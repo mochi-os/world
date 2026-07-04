@@ -35,6 +35,10 @@ func (m *Model) spool(in Inputs) {
 	throttle := idle + clamp(in.Throttle, 0, 1)*(1-idle)
 	for i := range m.State.Engine {
 		e := &m.State.Engine[i]
+		if i >= len(m.Airframe.Engines) {
+			*e = EngineState{} // no engine in this slot
+			continue
+		}
 		constant := spool_up
 		if throttle < e.Spool {
 			constant = spool_down
