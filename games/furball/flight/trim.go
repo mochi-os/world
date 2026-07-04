@@ -134,6 +134,7 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	s.Engine[0] = EngineState{Spool: spool}
 	s.Engine[1] = EngineState{Spool: spool}
 	s.Fcs.Normal = 1
+	s.Fcs.Reference = angle // stick-free attitude hold: spawn holding the trimmed attitude
 	s.Fcs.Demand = 1
 	s.Gear = GearState{Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	return s

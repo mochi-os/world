@@ -7,13 +7,13 @@
 // One fixed float64 layout serves the wire snapshot, the prediction ring,
 // and the wasm boundary. Values pass through bit-exact. Four engine slots
 // are always carried (airframes declare 0..4; unused slots stay zero). The
-// per-element damage slices are not carried — they are nil until the damage
+// per-element damage slices are not carried (word 56 carries the FCS trim-speed reference) — they are nil until the damage
 // model (#78) lands, which extends this layout and bumps Version.
 
 package flight
 
 // Size is the encoded state length in float64 words.
-const Size = 56
+const Size = 57
 
 // Encode writes the state into out (at least Size long) and returns Size.
 func (s *State) Encode(out []float64) int {
@@ -47,6 +47,7 @@ func (s *State) Encode(out []float64) int {
 	out[51], out[52], out[53] = d.Shift.X, d.Shift.Y, d.Shift.Z
 	out[54] = d.Stress
 	out[55] = s.Time
+	out[56] = s.Fcs.Reference
 	return Size
 }
 
@@ -83,6 +84,7 @@ func Decode(in []float64) State {
 	d.Shift = Vec3{in[51], in[52], in[53]}
 	d.Stress = in[54]
 	s.Time = in[55]
+	s.Fcs.Reference = in[56]
 	return s
 }
 

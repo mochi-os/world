@@ -73,7 +73,14 @@ func (m *Model) stroke(s *State, total *Forces) {
 	}
 	heading := c.Heading + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
-	force := m.mass * cat.Speed * cat.Speed / (2 * cat.Stroke)
+	// The shot is set for the aircraft's weight, as the real catapult crew
+	// does: ~1.16× the powered-approach stall speed, capped by the cat's
+	// mechanical limit. A light jet no longer rockets off mid-stroke at the
+	// full 88 m/s; a heavy one settles toward the deck edge before flying
+	// away — the sink real launches show.
+	stall := math.Sqrt(2 * m.mass * gravity / (air(m.State.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
+	speed := clamp(1.16*stall, 45, cat.Speed)
+	force := m.mass * speed * speed / (2 * cat.Stroke)
 	local := s.Attitude.Unrotate(track.Scale(force))
 	total.Force = total.Force.Add(local)
 }

@@ -41,9 +41,11 @@ func build() *flight.Airframe {
 	a.Limit.Negative = -3
 	a.Limit.Override = 10
 	a.Limit.Alpha = 40 * math.Pi / 180
+	a.Limit.Floor = 10 * math.Pi / 180 // negative-alpha protection bound
 
 	// Same F/A-18 CAS family as the F: identical schedules and throws.
 	a.Control.Onspeed = 8.1 * math.Pi / 180
+	a.Control.Flyaway = 12 * math.Pi / 180
 	a.Control.Blowdown = 35000
 	a.Control.Gearing.Pitch = 0.42
 	a.Control.Gearing.Roll = 0.35
@@ -58,7 +60,7 @@ func build() *flight.Airframe {
 	a.Control.Droop.Angle = 0.52
 	a.Control.Droop.Pressure = 9000
 	a.Control.Throw.Down = 0.42
-	a.Control.Throw.Up = 0.30
+	a.Control.Throw.Up = 0.183 // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
 	a.Control.Throw.Flap = 0.60
 	a.Control.Throw.Rudder = 0.52
 	a.Control.Rate.Stabilator = 40 * math.Pi / 180

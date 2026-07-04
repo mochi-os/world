@@ -69,6 +69,7 @@ type FcsState struct {
 	Washout    float64 // yaw-damper washout filter state
 	Demand     float64 // onset-shaped g demand (12 g/s slew — no slam transients)
 	Normal     float64 // sensed load factor (body up) from the last step — the g meter
+	Reference  float64 // trimmed-airspeed memory for speed stability, m/s
 }
 
 // GearState is the undercarriage, catapult, and arrestor condition, plus

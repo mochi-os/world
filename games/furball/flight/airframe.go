@@ -20,7 +20,7 @@ type Airframe struct {
 	Inertia   Mat3                          // empty aircraft, about empty CG (frames.go axis mapping)
 	Center    Vec3                          // empty CG, body, from datum
 	Tank      Vec3                          // fuel CG, body
-	Limit     struct{ Positive, Negative, Override, Alpha float64 }
+	Limit     struct{ Positive, Negative, Override, Alpha, Floor float64 }
 	Gear      struct{ Nose, Left, Right Strut }
 	Hook      struct {
 		Position Vec3
@@ -114,7 +114,8 @@ type Control struct {
 	Gearing  struct{ Pitch, Roll, Yaw float64 }                          // Direct-mode stick to surface, rad
 	Slat     struct{ Slope, Offset, Limit float64 }                      // leading-edge schedule: Slope·(alpha−Offset) up to Limit
 	Flap     struct{ Slope, Offset, Limit, Pressure float64 }            // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
+	Flyaway  float64                                                     // PA-mode pitch-attitude capture datum, rad (hands-off catapult flyaway)
 	Droop    struct{ Angle, Pressure float64 }                           // PA trailing-edge droop, rad, washed out by q̄/Pressure
-	Throw    struct{ Down, Up, Flap, Rudder float64 }                    // surface limits, rad (stabilator Down is trailing-edge down)
+	Throw    struct{ Down, Up, Flap, Rudder float64 }                    // surface limits, rad (stabilator: Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
 	Rate     struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
 }

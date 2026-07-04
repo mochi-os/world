@@ -51,6 +51,24 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// jet decelerates toward on-speed the cap rises to meet it.
 		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, c.Onspeed)
 		demand := math.Min(c.Onspeed, level) + stick*(6*math.Pi/180)
+		// Flyaway attitude capture: hands-off after a catapult shot the real
+		// FCS settles at ~12° deck attitude rather than riding approach alpha
+		// into a full-burner zoom. Binds only when pitch exceeds the datum;
+		// the approach (low attitude, low power) never feels it.
+		forward := m.State.Attitude.Rotate(Vec3{X: 1})
+		pitch := math.Asin(clamp(forward.Y, -1, 1))
+		capture := a + (c.Flyaway - pitch)
+		demand = math.Min(demand, math.Max(capture, 0)+stick*(6*math.Pi/180))
+		if m.State.Gear.Wow {
+			// Ground mode: the alpha law would wind the stabilator full
+			// nose-up during the catapult stroke (deck alpha is far below
+			// approach alpha) and rotate the jet off the shuttle mid-stroke.
+			// Follow the current alpha instead — no error, no windup; the
+			// stick passes through for checks and early rotation stays manual.
+			demand = a + stick*(12*math.Pi/180) // full aft stick rotates ~12° above deck alpha — field takeoffs need real rotation authority
+			f.Integral = 0
+			f.Reference = pitch // leave the deck holding the deck attitude
+		}
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.3, 0.3)
 		stabTarget = -(errorTerm*0.28 + f.Integral)
@@ -64,11 +82,40 @@ func (m *Model) fcs(in Inputs, local Air) {
 			ceiling = m.Airframe.Limit.Override
 		}
 		floor := m.Airframe.Limit.Negative
-		demand := 1.0
-		if stick >= 0 {
-			demand = 1 + stick*(ceiling-1)
+		// Neutral-stick feedforward: the load that holds the current flight
+		// path (cos γ); the attitude-hold below owns the actual behaviour.
+		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
+		forward := m.State.Attitude.Rotate(Vec3{X: 1})
+		theta := math.Asin(clamp(forward.Y, -1, 1))
+		level := math.Cos(gamma)
+		level -= clamp((a-0.15)*5, 0, 0.8) // alpha backstop: the nose falls rather than mushing when too slow
+		// Stick-free = ATTITUDE HOLD: the one coherent neutral-stick concept.
+		// While the stick is displaced, the held reference follows the jet;
+		// on release (once the pitch rate settles) it freezes, and the error
+		// feeds the rate loop below. This replaced a tower of stacked bias
+		// terms (path-hold, level-seek, trim-speed) whose interactions drifted
+		// the nose and wandered on an undamped phugoid.
+		// Peak ratchet: the reference follows the nose while it moves AWAY
+		// (stick in, or coasting after release), and freezes the instant the
+		// motion reverses — the nose stops exactly where it peaks.
+		flying := clamp(math.Abs(stick)*3.3, 0, 1)
+		if flying > 0 {
+			f.Reference = theta
 		} else {
-			demand = 1 + stick*(1-floor)
+			// After release the reference CHASES the nose at 85% of the pitch
+			// rate (deadbanded): it rides the coast and pins where motion
+			// dies — no fixed lead to over- or under-predict the stop. A
+			// powered pitch-up outruns the chase, the gap grows, and the
+			// hold arrests it, so it cannot be ratcheted around a loop.
+			chase := 0.92 * math.Max(0, math.Abs(q)-0.015) * Dt
+			f.Reference += clamp(theta-f.Reference, -chase, chase)
+		}
+		hold := clamp((f.Reference-theta)*2.0, -0.35, 0.35) - q*0.7 - clamp((a-0.30)*1.5, 0, 0.5)
+		demand := level
+		if stick >= 0 {
+			demand = level + stick*(ceiling-level)
+		} else {
+			demand = level + stick*(level-floor)
 		}
 		// Onset shaping: the demand slews at ~15 g/s, so a stick slam builds
 		// load the loops can track instead of a step they chase. (No zero-
@@ -77,24 +124,34 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// refuses every negative-g command.)
 		f.Demand += clamp(demand-f.Demand, -25*Dt, 25*Dt)
 		demand = f.Demand
-		_ = floor
 		// Cascaded pitch: the g error commands a PITCH RATE, and the carefree
 		// limits shape that rate demand — it fades to zero approaching the g
 		// and alpha boundaries and goes negative beyond them, so the limiter
 		// is a smooth property of the command path, not a switched override.
 		// A fast inner rate loop owns the (very powerful) stabilator.
-		star := demand - m.State.Fcs.Normal
+		// C* proper: blend pitch rate into the feedback at the classic
+		// crossover (Vco 122 m/s). Below crossover the q term dominates, so
+		// releasing the stick holds ATTITUDE; a pure-nz error re-acquires
+		// the lagging flight path — the jet visibly snaps back to the pitch
+		// it had before the input. The command is scaled by the same blend
+		// so a sustained pull still reaches the commanded g exactly.
+		vco := 122.0
+		star := (demand + vco/math.Max(speed, 60)*(demand-level)) - (m.State.Fcs.Normal + vco/gravity*q)
 		rateBound := math.Min(1.0, 150/math.Max(speed, 60)) // ~0.58 rad/s at 260 m/s, opening up low and slow
 		// The g error commands the rate that closes it at a fixed loop
 		// bandwidth: a rad/s of pitch rate yields V/g g's, so the gain must
 		// carry g/V or the loop crossover climbs with speed past the alpha
 		// lag and limit-cycles about 1g.
-		gain := 30 / math.Max(speed, 60)
-		f.Integral = clamp(f.Integral+star*gain*0.3*Dt, -0.5, 0.5)
+		gain := 30 / (math.Max(speed, 60) + vco) // biased hot at low speed: fully normalised the nz tracking went sloppy below ~150 kt and the phugoid ballooned                                       // normalised by the C* blend: star is scaled by (V+Vco)/V, so this keeps the nz-loop crossover speed-invariant (unnormalised, low-speed gain tripled = residual oscillation)
+		delta := clamp(star, -0.25, 0.25)
+		if star*f.Integral < 0 {
+			delta = clamp(star, -1.5, 1.5) // unwinding: release trim fast — clamping both ways held wound-up nose-up trim through a deceleration (the low-power balloon)
+		}
+		f.Integral = clamp(f.Integral+flying*delta*gain*0.3*Dt, -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce)
 		// Stick feedforward: the real CAS has a direct forward path, so a
 		// slam bites the surface immediately while the g loop trims behind
 		// it — without it the response is bandwidth-limited and reads mushy.
-		rateDemand := clamp(star*gain+f.Integral+stick*0.35*rateBound, -rateBound, rateBound)
+		rateDemand := clamp(flying*(star*gain+stick*0.25*rateBound+f.Integral)+(1-flying)*hold, -rateBound, rateBound) // the trim integral belongs INSIDE the flying mode: frozen outside the blend it biased the stick-free rate demand, parking the nose Integral/1.2 rad above the held reference (the push-release rebound)
 		// Rate anticipation on the EXCESS pitch rate only: q above the steady
 		// turn rate n·g/V is what is still building g. Penalising total q made
 		// the limiter park a full g below the ceiling in a sustained pull.
@@ -102,7 +159,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 		capG := (ceiling-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000)
 		capA := (m.Airframe.Limit.Alpha - a) * 2.2
 		capFloor := (m.Airframe.Limit.Negative-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000) // mirrored anticipation: without it the negative boundary chatters
-		shaped := clamp(rateDemand, capFloor, math.Min(capG, capA))
+		capB := (-m.Airframe.Limit.Floor - a) * 2.2                                              // negative-alpha protection: at low q̄ the -3g floor is unreachable and an unbounded push winds the wing into deep negative stall (mushy, ballistic pushover)
+		shaped := clamp(rateDemand, math.Max(capFloor, capB), math.Min(capG, capA))
 		// Boundary-recovery demands are proportional to the violation, so a
 		// large external upset (transonic pitch-up, gust) can ask for tens of
 		// rad/s — far beyond the airframe. Unbounded, those slams pump the
@@ -180,5 +238,11 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	// tail right, yawing the nose left): opposing r means following it with
 	// the rudder (+damped), killing beta means steering away from it (-b),
 	// and coordination follows the roll (-interconnect).
-	return clamp(damped*1.2-(b-pedal*0.06)*3.4-interconnect, -m.Airframe.Control.Throw.Rudder, m.Airframe.Control.Throw.Rudder)
+	// The pedal commands rudder DIRECTLY, and the damper/beta terms fade as
+	// it is applied: as a beta command the rudder kicked, washed back to
+	// the small deflection holding ~3° of sideslip, then wobbled on the
+	// dutch roll — held pedal now holds deflection.
+	throw := m.Airframe.Control.Throw.Rudder
+	weight := 1 - 0.75*math.Abs(pedal)
+	return clamp(pedal*throw*0.85+(damped*1.2-b*3.4-interconnect)*weight, -throw, throw)
 }
