@@ -129,6 +129,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 			m.State.Damage.Stress += (m.State.Fcs.Normal - m.Airframe.Limit.Positive) * Dt
 		}
 		stabTarget = command
+		// AUTO manoeuvring flaps: the trailing edge droops with alpha and
+		// washes out with dynamic pressure — the FCS reshapes the wing
+		// through a turn, exactly as the real jet's AUTO flap mode does.
+		droopTarget = clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
 		// Roll-rate command, tempered at low speed and high alpha.
 		limit := 3.8 * clamp(speed/200, 0.35, 1) * clamp(1-0.9*a/m.Airframe.Limit.Alpha, 0.08, 1)
 		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1) // sideslip strips roll authority: no spin fuel

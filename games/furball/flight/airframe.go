@@ -113,6 +113,7 @@ type Control struct {
 	Blowdown float64                                                     // deflection·dynamic-pressure ceiling, Pa
 	Gearing  struct{ Pitch, Roll, Yaw float64 }                          // Direct-mode stick to surface, rad
 	Slat     struct{ Slope, Offset, Limit float64 }                      // leading-edge schedule: Slope·(alpha−Offset) up to Limit
+	Flap     struct{ Slope, Offset, Limit, Pressure float64 }            // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
 	Droop    struct{ Angle, Pressure float64 }                           // PA trailing-edge droop, rad, washed out by q̄/Pressure
 	Throw    struct{ Down, Up, Flap, Rudder float64 }                    // surface limits, rad (stabilator Down is trailing-edge down)
 	Rate     struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
