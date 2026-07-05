@@ -153,7 +153,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	if i.mode == "joust" && len(i.aircraft) >= 2 {
 		return nil, errors.New("full")
 	}
-	kind := "fa18f" // the only catalogue entry today; a requested type arrives with #90
+	kind := "fa18c" // the only catalogue entry today; a requested type would arrive on the join payload
 	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
 	i.spawn(player.Slot, m)
 	i.aircraft[player.Slot] = &craft{player: player, kind: kind, model: m, alive: true, health: health, flared: 1e9}

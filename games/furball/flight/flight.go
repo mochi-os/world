@@ -51,7 +51,8 @@ func Shortest(a float64, b float64, size float64) float64 {
 }
 
 // Fighter is the airframe the package's own tests fly; the test bootstrap
-// (bootstrap_test.go, package flight_test) wires it to the fa18f dataset,
-// which cannot be imported here without a cycle. Hosts never read it — they
-// resolve airframes through the aircraft catalogue and pass them to New.
+// (bootstrap_test.go, package flight_test) wires it to the reference dataset
+// in fighter_test.go — a fixed F/A-18F-class airframe kept out of the
+// shipping catalogue. Hosts never read it — they resolve airframes through
+// the aircraft catalogue and pass them to New.
 var Fighter *Airframe
