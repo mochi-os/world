@@ -62,9 +62,11 @@ func TestInduced(t *testing.T) {
 		points = append(points, point{cl * cl, cd})
 	}
 	slope := (points[len(points)-1].cd - points[0].cd) / (points[len(points)-1].cl2 - points[0].cl2)
-	// Reference AR ≈ 4.0; the effective Oswald across wing + body sits
-	// around 0.6-0.8, so the slope should land near 0.10-0.13.
-	if slope < 0.05 || slope > 0.20 {
+	// Reference AR ≈ 4.0 with the effective Oswald near 0.6-0.8 puts the
+	// emergent slope near 0.10-0.13; the calibrated Surface.Induced
+	// supplement (matching the classic F-18 polar K≈0.19-0.24, which the
+	// lifting-line tilt alone under-prices) raises the total toward ~0.3.
+	if slope < 0.05 || slope > 0.40 {
 		t.Fatalf("induced drag slope %f outside the plausible band", slope)
 	}
 }

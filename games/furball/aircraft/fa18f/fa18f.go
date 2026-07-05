@@ -95,7 +95,7 @@ func build() *flight.Airframe {
 		// Half area ~19 m²; root chord 4.6 m tapering to 1.3 m; the surface
 		// aerodynamic centre sits slightly aft of the CG (bare stability).
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
-			Kind: flight.Wing, Side: side, Area: 19, Span: 5.6, Ratio: 3.5, Oswald: 0.75,
+			Kind: flight.Wing, Side: side, Area: 19, Span: 5.6, Ratio: 3.5, Oswald: 0.75, Induced: 0.24,
 			Vortex: 0.6, Breakdown: 22 * math.Pi / 180, Channel: flight.Differential,
 		}, 8, span{1.2, 6.8, side}, chord{4.6, 1.3}, sweep{0.6, -1.9}, twist{0.017, -0.052}, &wing, 0.25, 0.52))
 		// LEX strakes: slender lifting surfaces ahead of the CG.

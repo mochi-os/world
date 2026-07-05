@@ -158,6 +158,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9) // slats keep the wing attached
 			}
 			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope)
+			cd += surface.Induced * cl * cl // calibrated drag-due-to-lift the emergent tilt under-prices
 			// Camber lift: the half of the flap deflection that raises CLmax
 			// rather than spending stall margin; rolls off in deep stall.
 			if shift != 0 {

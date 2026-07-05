@@ -91,7 +91,7 @@ func build() *flight.Airframe {
 	for _, side := range []float64{-1, 1} {
 		// Main wing: the C panel is ~80% of the F's area on 84% of the span.
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
-			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75,
+			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.22,
 			Vortex: 0.6, Breakdown: 22 * math.Pi / 180, Channel: flight.Differential,
 		}, 8, span{1.0, 5.7, side}, chord{4.0, 1.1}, sweep{0.55, -1.75}, twist{0.017, -0.052}, &wing, 0.25, 0.52))
 		// LEX: the C's original strake — the E/F enlarged it by a third.

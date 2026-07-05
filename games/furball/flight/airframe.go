@@ -38,6 +38,7 @@ type Surface struct {
 	Span      float64 // m
 	Ratio     float64 // aspect ratio
 	Oswald    float64 // span-efficiency for induced flow
+	Induced   float64 // supplementary drag-due-to-lift K (cd += K·cl²): the lifting-line tilt only prices the linear lift; the classic F-18 polar K≈0.19 includes the nonlinear/trim costs
 	Slope     float64 // section lift slope (Cl per rad) — downwash consistency
 	Vortex    float64 // Polhamus Kv (0 = no vortex lift)
 	Breakdown float64 // vortex breakdown alpha, rad
