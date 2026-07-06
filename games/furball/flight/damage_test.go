@@ -94,7 +94,7 @@ func TestLeakFlameout(t *testing.T) {
 	m := cruising(t)
 	m.State.Fuel = 20
 	m.State.Damage.Leak = 50 // catastrophic leak: dry in under a second
-	full := flight.Inputs{Throttle: 1, Reheat: true}
+	full := flight.Inputs{Throttle: 1, Reheat: 1}
 	for i := 0; i < 240*3; i++ {
 		m.Step(full)
 	}

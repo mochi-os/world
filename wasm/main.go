@@ -17,7 +17,7 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (1 reheat, 2 brake, 4 gear, 8 hook, 16 launch, 32 override),
+//	5 flags (2 brake, 4 gear, 8 hook, 16 launch, 32 override; bit 1 retired — reheat moved to slot 8, analog),
 //	6 sequence, 7 steps
 //
 // Output buffer layout: flight.Size encoded state words, then
@@ -50,7 +50,7 @@ type slot struct {
 var (
 	model  *flight.Model
 	rings  [ring]slot
-	input  [8]float64
+	input  [9]float64
 	output [flight.Size + extra]float64
 	bytes  []byte // scratch for boundary copies
 )
@@ -165,7 +165,7 @@ func controls() (flight.Inputs, int) {
 		Yaw:        input[2],
 		Throttle:   input[3],
 		Speedbrake: input[4],
-		Reheat:     flags&1 != 0,
+		Reheat:     input[8], // analog reheat: the commanded afterburner-zone fraction (flag bit 1 retired)
 		Brake:      flags&2 != 0,
 		Gear:       flags&4 != 0,
 		Hook:       flags&8 != 0,

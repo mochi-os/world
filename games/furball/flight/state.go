@@ -15,7 +15,7 @@ type Inputs struct {
 	Yaw        float64 // -1..1, +1 = nose right
 	Throttle   float64 // 0..1; reheat only at 1.0 (no detent)
 	Speedbrake float64 // 0..1 commanded
-	Reheat     bool    // derived by the host: throttle at max
+	Reheat     float64 // commanded reheat fraction 0..1: the throttle's position in the afterburner range (0 = dry); the fuel control quantizes to the F404's five zones
 	Brake      bool    // wheel brakes, held, both mains
 	Gear       bool    // commanded position, true = down
 	Hook       bool    // true = deployed

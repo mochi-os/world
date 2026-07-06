@@ -137,7 +137,7 @@ func command_fly(arguments []string) {
 	speed := flags.Float64("speed", 200, "initial true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "initial altitude, m")
 	throttle := flags.Float64("throttle", 0.85, "throttle 0..1")
-	reheat := flags.Bool("reheat", false, "reheat on")
+	reheat := flags.Float64("reheat", 0, "reheat zone fraction 0..1 (quantized to the five zones)")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
 	pitch := flags.String("pitch", "", "pitch doublet start:stop:value")
 	roll := flags.String("roll", "", "roll doublet start:stop:value")

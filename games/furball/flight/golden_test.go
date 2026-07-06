@@ -35,11 +35,11 @@ func script(step int) Inputs {
 	case t < 8:
 		in.Pitch = 0.8
 		in.Throttle = 1
-		in.Reheat = true
+		in.Reheat = 1
 	case t < 12:
 		in.Roll = 1
 		in.Throttle = 1
-		in.Reheat = true
+		in.Reheat = 1
 	case t < 16:
 		in.Pitch = 0.4
 		in.Yaw = 0.3
@@ -111,6 +111,14 @@ func compare(t *testing.T, path string, lines []string) {
 	}
 }
 
+// reheat converts a legacy on/off demand into the full-zone command.
+func reheat(on bool) float64 {
+	if on {
+		return 1
+	}
+	return 0
+}
+
 // deck flies the contact-path reference: attach to the catapult, launch,
 // gear up, climb out — the numerically touchiest code under regression watch.
 func deck() []string {
@@ -118,7 +126,7 @@ func deck() []string {
 	park(m, 42.7, -0.6)
 	lines := []string{"time,x,y,z,vx,vy,vz,w,qx,qy,qz,ox,oy,oz,extension"}
 	for step := 0; step < 240*14; step++ {
-		in := Inputs{Gear: true, Throttle: 1, Reheat: step > 120}
+		in := Inputs{Gear: true, Throttle: 1, Reheat: reheat(step > 120)}
 		in.Launch = step > 480
 		if m.State.Gear.Catapult < 0 && step > 480 {
 			in.Gear = m.State.Time < 4 // airborne: clean up

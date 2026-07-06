@@ -48,8 +48,10 @@ func (m *Model) spool(in Inputs) {
 		}
 		e.Spool += (throttle - e.Spool) * Dt / constant
 		lit := 0.0
-		if in.Reheat && e.Spool > 0.85 && m.State.Fuel > 0 {
-			lit = 1
+		if in.Reheat > 0 && e.Spool > 0.85 && m.State.Fuel > 0 {
+			// The F404 stages reheat in five discrete zones: the fuel control
+			// lights whole segments, so the commanded fraction quantizes up.
+			lit = math.Ceil(clamp(in.Reheat, 0, 1)*5) / 5
 		}
 		e.Reheat += (lit - e.Reheat) * Dt / stage_lag
 	}

@@ -30,7 +30,7 @@ func TestLimiter(t *testing.T) {
 	launch(m, 240)
 	peak, worstAlpha, worstBeta := 0.0, 0.0, 0.0
 	for i := 0; i < 240*6; i++ {
-		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: true})
+		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: 1})
 		v := m.State.Attitude.Unrotate(m.State.Velocity)
 		peak = math.Max(peak, m.State.Fcs.Normal)
 		worstAlpha = math.Max(worstAlpha, alpha(v))
@@ -61,14 +61,14 @@ func TestOverride(t *testing.T) {
 	launch(m, 310)
 	limited := 0.0
 	for i := 0; i < 240*4; i++ {
-		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: true})
+		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: 1})
 		limited = math.Max(limited, m.State.Fcs.Normal)
 	}
 	launch(m, 310)
 	m.State.Damage.Stress = 0
 	overridden := 0.0
 	for i := 0; i < 240*4; i++ {
-		m.Step(Inputs{Pitch: 1, Override: true, Throttle: 1, Reheat: true})
+		m.Step(Inputs{Pitch: 1, Override: true, Throttle: 1, Reheat: 1})
 		overridden = math.Max(overridden, m.State.Fcs.Normal)
 	}
 	if overridden < limited+0.8 {

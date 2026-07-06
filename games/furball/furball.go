@@ -236,7 +236,7 @@ func input(data map[string]any) flight.Inputs {
 		Yaw:        clamp(number(data, "yaw"), -1, 1),
 		Throttle:   clamp(number(data, "throttle"), 0, 1),
 		Speedbrake: clamp(number(data, "speedbrake"), 0, 1),
-		Reheat:     flag("reheat"),
+		Reheat:     clamp(number(data, "reheat"), 0, 1),
 		Brake:      flag("brake"),
 		Gear:       flag("gear"),
 		Hook:       flag("hook"),
@@ -525,7 +525,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				direction, _ := i.bearing(m.position, target.model.State.Position)
 				tail := direction.Dot(target.model.State.Attitude.Rotate(flight.Vec3{X: 1}))
 				decoy := 0.35 + 0.40*(1-clamp(tail, 0, 1))
-				if target.latest.Reheat {
+				if target.latest.Reheat > 0.05 {
 					decoy *= 0.5
 				}
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {

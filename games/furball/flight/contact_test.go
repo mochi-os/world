@@ -115,7 +115,7 @@ func TestCatapult(t *testing.T) {
 	// max thrust, so the jet must stay put until the shot is fired.
 	held := m.State.Position
 	for i := 0; i < 240*2; i++ {
-		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: true})
+		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1})
 	}
 	if m.State.Gear.Catapult != 0 {
 		t.Fatalf("detached under tension: %d", m.State.Gear.Catapult)
@@ -128,7 +128,7 @@ func TestCatapult(t *testing.T) {
 	}
 	launched := false
 	for i := 0; i < 240*6; i++ {
-		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: true, Launch: i > 240})
+		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: i > 240})
 		if m.State.Gear.Catapult < 0 && !launched && i > 240 {
 			launched = true
 			speed := m.State.Velocity.Length()
@@ -205,7 +205,7 @@ func TestBolter(t *testing.T) {
 	m.State.Engine[0] = EngineState{Spool: 1}
 	m.State.Engine[1] = EngineState{Spool: 1}
 	for i := 0; i < 240*8; i++ {
-		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: true})
+		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1})
 		if m.State.Gear.Wire >= 0 {
 			t.Fatal("caught a wire with the hook up")
 		}

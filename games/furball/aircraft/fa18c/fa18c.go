@@ -37,6 +37,7 @@ func build() *flight.Airframe {
 	a.Inertia = flight.Mat3{{22960, 2960, 0}, {2960, 169900, 0}, {0, 0, 151300}}
 	a.Center = flight.Vec3{}
 	a.Tank = flight.Vec3{X: -0.33} // fuel slightly aft, CG walks forward burning. Tunable.
+	a.Cockpit = flight.Vec3{X: 5.0, Y: 0.55} // seat under the canopy line, forward fuselage
 	a.Limit.Positive = 7.5
 	a.Limit.Negative = -3
 	a.Limit.Override = 10
@@ -57,12 +58,14 @@ func build() *flight.Airframe {
 	a.Control.Flap.Offset = 0.03
 	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°, washed out by ~350 KCAS
 	a.Control.Flap.Pressure = 25000
-	a.Control.Droop.Angle = 0.52
+	a.Control.Droop.Angle = 30 * math.Pi / 180 // PA trailing-edge droop: NATOPS flaps HALF on the ground sets TEF 30° and aileron droop 30° (the deck launch configuration; FULL would be TEF 45°/droop 42°)
 	a.Control.Droop.Pressure = 9000
+	a.Control.Toe = 30 * math.Pi / 180 // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
 	a.Control.Throw.Down = 0.42
 	a.Control.Throw.Up = 0.183 // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
-	a.Control.Throw.Flap = 0.60
-	a.Control.Throw.Rudder = 0.52
+	a.Control.Throw.Flaperon.Down = 45 * math.Pi / 180 // aileron/flaperon travel (NATOPS/HARV: 45° trailing-edge down, 25° up; rate 100°/s)
+	a.Control.Throw.Flaperon.Up = 25 * math.Pi / 180
+	a.Control.Throw.Rudder = 30 * math.Pi / 180 // ±30° rudder travel (NATOPS/HARV)
 	a.Control.Rate.Stabilator = 40 * math.Pi / 180
 	a.Control.Rate.Flaperon = 100 * math.Pi / 180
 	a.Control.Rate.Rudder = 75 * math.Pi / 180
@@ -139,7 +142,7 @@ func build() *flight.Airframe {
 	// with ~0.06 m static compression rests the origin there). The drawn
 	// mains then land within 5 cm of these struts. Stiffness scaled to the
 	// lighter jet at the F's static-compression ratio. Tunable.
-	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 1.2}
+	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 75 * math.Pi / 180} // NWS HI 75° (LOW is 22.5°; the speed washout in gear.go stands in for the mode switch)
 	a.Gear.Left = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: -1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Gear.Right = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: 1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Hook.Position = flight.Vec3{X: -6.0, Y: -0.55}
