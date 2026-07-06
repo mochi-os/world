@@ -68,22 +68,33 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 		mean.Z += dz * factor
 	}
 
+	// Cloud convection: extra gust intensity inside convective cells, and
+	// the thermal/sink structure beneath their bases (convection.go).
+	chop, draft := convection(position, env.Cloud)
+	mean.Y += draft
+
 	// Turbulence: a frozen field of sinusoids per axis, wavelengths log
 	// spaced, amplitudes Dryden-ish (energy toward the longer wavelengths),
 	// intensity and scale reduced near the surface (MIL-8785C low-altitude
 	// character), advected past the aircraft with the mean wind and time.
-	if env.Turbulence > 0 {
+	if env.Turbulence > 0 || chop > 0 {
 		scale := clamp(h, 50, 533)  // Dryden scale length
 		low := clamp(h/300, 0.4, 1) // near-surface intensity knockdown
-		sigma := env.Turbulence * low
+		sigma := env.Turbulence*low + chop
+		// Energy per octave: Kolmogorov 2/3 rolloff below the scale length,
+		// flat above it — long wavelengths carry the energy (the felt bumps
+		// at 0.2-1.5 Hz), short ones only light fast texture. The original
+		// 1/(1+k) weights were INVERTED (most energy at the shortest band —
+		// a 3 Hz buzz at combat speed), unfelt until cloud chop became the
+		// field's first consumer.
 		total := 0.0
 		for k := uint64(0); k < gusts; k++ {
-			total += 1 / (1 + float64(k))
+			total += math.Min(math.Pow(2, (float64(k)-3)*2.0/3.0), 1)
 		}
 		var gust Vec3
 		for k := uint64(0); k < gusts; k++ {
 			wavelength := scale * math.Pow(2, float64(k)-3) // scale/8 .. 16·scale
-			weight := (1 / (1 + float64(k))) / total
+			weight := math.Min(math.Pow(2, (float64(k)-3)*2.0/3.0), 1) / total
 			amplitude := sigma * math.Sqrt(2*weight)
 			for axis := uint64(0); axis < 3; axis++ {
 				i := k*8 + axis

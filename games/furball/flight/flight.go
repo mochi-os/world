@@ -17,7 +17,7 @@ package flight
 // Version identifies the model's behaviour and state layout. It travels in
 // the multiplayer join payload; hosts on different versions disable
 // prediction rather than mispredict. Bump on ANY behavioural change.
-const Version = 21
+const Version = 22
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
 // choose how many steps to run.
@@ -31,6 +31,7 @@ type Environment struct {
 	Temperature float64 // sea-level offset from ISA, K (Midway climatology ≈ +9)
 	Pressure    float64 // sea-level pressure, Pa (0 = ISA standard 101325)
 	Wrap        float64 // toroidal world size, m; 0 = none
+	Cloud       Cloud   // convective cloud layer (zero = clear/stratiform/smooth)
 }
 
 // Shortest returns the minimum-image difference b-a along one axis of the
