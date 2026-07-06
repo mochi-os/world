@@ -11,6 +11,10 @@
 
 package flight
 
+import (
+	"math"
+)
+
 // Model binds the immutable airframe, environment, and world geometry to a
 // mutable State and steps it. One Model per aircraft; prediction rewind is
 // an assignment to State.
@@ -29,6 +33,7 @@ type Model struct {
 	inverse Mat3
 	gust    Vec3      // wind at the pre-step position (frozen per step)
 	lift    []float64 // pass-one surface lift coefficients
+	base    []int     // per-surface offset into the flattened element index (damage addressing)
 	first   bool      // capture flag: record normal on the k1 stage only
 }
 
@@ -44,6 +49,15 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	m.State.Fuel = airframe.Mass.Fuel
 	m.lift = make([]float64, len(airframe.Surfaces))
+	m.base = make([]int, len(airframe.Surfaces))
+	total := 0
+	for si := range airframe.Surfaces {
+		m.base[si] = total
+		total += len(airframe.Surfaces[si].Elements)
+	}
+	if total > Elements {
+		panic("flight: airframe " + airframe.Name + " declares more elements than the encoded damage budget")
+	}
 	return m
 }
 
@@ -70,11 +84,13 @@ func (m *Model) Step(in Inputs) {
 func (m *Model) weigh() {
 	a := m.Airframe
 	fuel := m.State.Fuel
-	m.mass = a.Mass.Empty + fuel
-	m.center = a.Center.Scale(a.Mass.Empty).Add(a.Tank.Scale(fuel)).Scale(1 / m.mass).Add(m.State.Damage.Shift)
+	empty := math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
+	m.mass = empty + fuel
+	m.center = a.Center.Scale(empty).Add(a.Tank.Scale(fuel)).Scale(1 / m.mass).Add(m.State.Damage.Shift)
 	// Parallel-axis: empty tensor is about the empty CG; move both masses to
-	// the combined CG.
-	tensor := a.Inertia.Add(parallel(a.Center.Subtract(m.center), a.Mass.Empty))
+	// the combined CG. The empty tensor is deliberately NOT reduced with
+	// Loss — a conservative, documented approximation.
+	tensor := a.Inertia.Add(parallel(a.Center.Subtract(m.center), empty))
 	tensor = tensor.Add(parallel(a.Tank.Subtract(m.center), fuel))
 	m.inertia = tensor
 	m.inverse = tensor.Inverse()

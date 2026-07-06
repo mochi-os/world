@@ -35,6 +35,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	pedal := clamp(in.Yaw, -1, 1)
 
 	var stabTarget, flapTarget, rudderTarget, droopTarget float64
+	brakeTarget := clamp(in.Speedbrake, 0, 1)
 
 	if m.Direct {
 		// Geared surfaces, no augmentation — the bare-airframe validation path.
@@ -73,6 +74,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.3, 0.3)
 		stabTarget = -(errorTerm*0.28 + f.Integral)
 		droopTarget = c.Droop.Angle * clamp(1-pressure/c.Droop.Pressure, 0, 1)
+		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		flapTarget = lateral * 0.30
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
@@ -190,9 +192,18 @@ func (m *Model) fcs(in Inputs, local Air) {
 			f.Trim = clamp(f.Trim+inner*0.25*authority*Dt, -0.35, 0.35)
 		}
 		command := -(inner*0.30*authority + f.Trim)
-		// Overstress accounting for the damage model.
+		// Overstress accounting for the damage model: exposure beyond the
+		// positive and negative g limits, plus an overspeed term above the
+		// airframe's placard (~740 KCAS equivalent) — battle converts the
+		// accumulated exposure into structural weakness.
 		if m.State.Fcs.Normal > m.Airframe.Limit.Positive {
 			m.State.Damage.Stress += (m.State.Fcs.Normal - m.Airframe.Limit.Positive) * Dt
+		}
+		if m.State.Fcs.Normal < m.Airframe.Limit.Negative {
+			m.State.Damage.Stress += (m.Airframe.Limit.Negative - m.State.Fcs.Normal) * Dt
+		}
+		if equivalent := speed * math.Sqrt(local.Density/1.225); equivalent > 380 {
+			m.State.Damage.Stress += (equivalent - 380) * 0.02 * Dt
 		}
 		stabTarget = command
 		// AUTO manoeuvring flaps: the trailing edge droops with alpha and
@@ -223,14 +234,18 @@ func (m *Model) fcs(in Inputs, local Air) {
 	}
 	symmetric := clamp(stabTarget, -c.Throw.Down, c.Throw.Up)
 	differential := clamp(flapTarget, -0.35, 0.35)
-	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, c.Rate.Stabilator, c.Throw.Down)
-	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, c.Rate.Stabilator, c.Throw.Down)
-	f.Flaperon.Left = slew(f.Flaperon.Left, droopTarget+differential, c.Rate.Flaperon, c.Throw.Flap)
-	f.Flaperon.Right = slew(f.Flaperon.Right, droopTarget-differential, c.Rate.Flaperon, c.Throw.Flap)
-	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder, c.Throw.Rudder)
-	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*Dt, c.Rate.Slat*Dt)
+	// Battle damage: a jammed actuator slews slower, and a fully jammed one
+	// freezes AT ITS CURRENT DEFLECTION — the surface holds whatever it was
+	// commanding when hit, and the FCS fights it with the others.
+	d := &m.State.Damage
+	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorLeft), c.Throw.Down)
+	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorRight), c.Throw.Down)
+	f.Flaperon.Left = slew(f.Flaperon.Left, clamp(droopTarget+differential, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonLeft), c.Throw.Flaperon.Down)
+	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-differential, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
+	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
+	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*Dt, c.Rate.Slat*d.jam(ChannelSlat)*Dt)
 	f.Flap = f.Flaperon.Left*0 + droopTarget // droop is carried inside the flaperon targets; keep the readout
-	f.Speedbrake += clamp(clamp(in.Speedbrake, 0, 1)-f.Speedbrake, -c.Rate.Brake*Dt, c.Rate.Brake*Dt)
+	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt, c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt)
 }
 
 // yaw is the directional law: a washed-out yaw damper, sideslip suppression
@@ -245,12 +260,15 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	// Signs under the -side rudder geometry (positive rudder pushes the
 	// tail right, yawing the nose left): opposing r means following it with
 	// the rudder (+damped), killing beta means steering away from it (-b),
-	// and coordination follows the roll (-interconnect).
+	// and coordination follows the roll (-interconnect). The PEDAL term is
+	// negated: +pedal is "nose right" everywhere else (nosewheel steering,
+	// Direct gearing, the interconnect's convention), and nose right is
+	// negative rudder in this geometry.
 	// The pedal commands rudder DIRECTLY, and the damper/beta terms fade as
 	// it is applied: as a beta command the rudder kicked, washed back to
 	// the small deflection holding ~3° of sideslip, then wobbled on the
 	// dutch roll — held pedal now holds deflection.
 	throw := m.Airframe.Control.Throw.Rudder
 	weight := 1 - 0.75*math.Abs(pedal)
-	return clamp(pedal*throw*0.85+(damped*1.2-b*3.4-interconnect)*weight, -throw, throw)
+	return clamp(-pedal*throw*0.85+(damped*1.2-b*3.4-interconnect)*weight, -throw, throw)
 }

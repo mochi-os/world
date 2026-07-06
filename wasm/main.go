@@ -56,7 +56,7 @@ var (
 )
 
 func main() {
-	js.Global().Set("furball_flight", js.ValueOf(map[string]any{
+	exports := map[string]any{
 		"version": js.FuncOf(version),
 		"init":    js.FuncOf(initialize),
 		"set":     js.FuncOf(set),
@@ -66,7 +66,11 @@ func main() {
 		"ack":     js.FuncOf(ack),
 		"level":   js.FuncOf(level),
 		"clear":   js.FuncOf(clear),
-	}))
+	}
+	for name, export := range battles() {
+		exports[name] = export
+	}
+	js.Global().Set("furball_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
 }
 

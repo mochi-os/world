@@ -21,6 +21,7 @@ type Inputs struct {
 	Hook       bool    // true = deployed
 	Launch     bool    // catapult fire edge, while attached
 	Override   bool    // paddle switch: raises the g ceiling, records overstress
+	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
 	Missile    bool

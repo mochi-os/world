@@ -33,6 +33,9 @@ const idle = 0.04
 // spool advances the engine states one step.
 func (m *Model) spool(in Inputs) {
 	throttle := idle + clamp(in.Throttle, 0, 1)*(1-idle)
+	if m.State.Fuel <= 0 {
+		throttle = 0 // flameout: dry tanks wind the cores down and kill reheat
+	}
 	for i := range m.State.Engine {
 		e := &m.State.Engine[i]
 		if i >= len(m.Airframe.Engines) {
@@ -45,7 +48,7 @@ func (m *Model) spool(in Inputs) {
 		}
 		e.Spool += (throttle - e.Spool) * Dt / constant
 		lit := 0.0
-		if in.Reheat && e.Spool > 0.85 {
+		if in.Reheat && e.Spool > 0.85 && m.State.Fuel > 0 {
 			lit = 1
 		}
 		e.Reheat += (lit - e.Reheat) * Dt / stage_lag

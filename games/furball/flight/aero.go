@@ -33,6 +33,33 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	// LEX state first: the coupling applies to BOTH passes, so the downwash
 	// follows the lift the energised wing actually makes.
 	lex := loading(alpha(v))
+	// Battle damage: a shot-away strake stops energising its own side, so the
+	// LEX coupling is scaled by per-side strake health before retention.
+	health := [2]float64{1, 1}
+	for si := range a.Surfaces {
+		if a.Surfaces[si].Kind != Strake || len(a.Surfaces[si].Elements) == 0 {
+			continue
+		}
+		sum := 0.0
+		for ei := range a.Surfaces[si].Elements {
+			sum += m.State.Damage.element(m.base[si] + ei)
+		}
+		mean := sum / float64(len(a.Surfaces[si].Elements))
+		if a.Surfaces[si].Side < 0 {
+			health[0] = mean
+		} else if a.Surfaces[si].Side > 0 {
+			health[1] = mean
+		}
+	}
+	coupled := func(surface *Surface) float64 {
+		if surface.Side < 0 {
+			return lex * health[0]
+		}
+		if surface.Side > 0 {
+			return lex * health[1]
+		}
+		return lex * (health[0] + health[1]) * 0.5
+	}
 
 	// Ground effect: closer than a span, induced flow weakens.
 	height := math.Max(s.Position.Y-m.World.Sea, 1)
@@ -66,7 +93,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				}
 				angle, shift := m.section(s, surface, e, w)
 				raw := angle + shift*0.5
-				hold := retention(surface, ei, lex)
+				hold := retention(surface, ei, coupled(surface))
 				if surface.Kind == Wing {
 					hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9)
 				}
@@ -78,6 +105,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 					extra, _ := vortex(surface.Vortex, surface.Breakdown, raw)
 					cl += extra
 				}
+				cl *= m.State.Damage.element(m.base[si] + ei) // damaged elements stop lifting in BOTH passes, so the induced wash tracks the damaged loading
 				sum += cl * e.Area
 				area += e.Area
 			}
@@ -153,7 +181,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			pressure = 0.5 * local.Density * speed * speed
 			angle, shift := m.section(s, surface, e, section)
 			effective := angle + shift*0.5
-			hold := retention(surface, ei, lex)
+			hold := retention(surface, ei, coupled(surface))
 			if surface.Kind == Wing {
 				hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9) // slats keep the wing attached
 			}
@@ -181,7 +209,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			cl *= slope
 			cd += wave
 			cm += shift
-			cl *= m.State.Damage.element(si)
+			cl *= m.State.Damage.element(m.base[si] + ei)
 			flow := section.Normalize()
 			lift := flow.Cross(e.Axis).Normalize()
 			if lift.Dot(e.Normal) < 0 {
@@ -264,7 +292,16 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 	case Rudder:
 		// Mirrored fin frames flip the meaning of a camber shift: without
 		// the side sign the two rudders' side forces cancel exactly.
-		shift = Effectiveness(e.Flap) * s.Fcs.Rudder * -surface.Side
+		deflection := s.Fcs.Rudder * -surface.Side
+		if s.Gear.Wow && !m.Direct {
+			// Rudder toe-in: with weight on wheels both trailing edges turn
+			// inboard, and on the canted fins the pair's lateral forces cancel
+			// while the vertical components add — tail downforce, a nose-up
+			// moment assisting takeoff rotation. A pure function of the
+			// encoded Wow state, so prediction replay needs no new state.
+			deflection -= m.Airframe.Control.Toe
+		}
+		shift = Effectiveness(e.Flap) * deflection
 	}
 	return raw + e.Incidence, shift
 }

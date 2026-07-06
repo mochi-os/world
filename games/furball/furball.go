@@ -18,9 +18,11 @@ import (
 	"encoding/binary"
 	"errors"
 	"math"
+	"sort"
 
 	"world/game"
 	"world/games/furball/aircraft"
+	"world/games/furball/battle"
 	"world/games/furball/flight"
 )
 
@@ -30,21 +32,20 @@ const (
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
 	fuel     = 3000.0 // spawn fuel load, kg (~half internal)
-	health   = 100.0  // gun damage pool
-	damage   = 40.0   // per second while guns are on target
-	reach    = 700.0  // gun range (m)
-	aim      = 0.9986 // cos of the gun cone half-angle (~3°)
 	pause    = 5.0    // seconds from death to respawn (furball mode)
+	rounds   = 578    // M61 magazine per life
+	rate     = 100.0  // rounds per second (6,000 rpm)
+	muzzle   = 6.0    // m forward of the datum, matching the client's tracer port
+	derelict = 30.0   // s a pilot-dead/ejected wreck keeps flying
 )
 
-// Missile constants: a deliberately simple pursuit weapon — enough to make
-// the "guns and missiles" rule real; the full seeker/countermeasure model
-// belongs to the damage-model phase.
+// Missile constants: pursuit guidance with an aspect-aware seeker, graded
+// flare decoys, and a real proximity fuse feeding the battle warhead.
 const (
 	missile_speed = 700.0  // m/s, constant
 	missile_life  = 12.0   // s
-	missile_kill  = 30.0   // proximity fuse (m)
-	missile_range = 5000.0 // acquisition range (m)
+	missile_fuse  = 12.0   // m, proximity fuse envelope (battle grades the warhead inside)
+	missile_range = 5000.0 // rear-aspect acquisition range (m); weak head-on
 	missile_cone  = 0.866  // cos of the acquisition half-angle (~30°)
 	flare_window  = 0.8    // s after a flare drop in which it can decoy
 )
@@ -77,16 +78,34 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 }
 
 type craft struct {
-	player game.Player
-	kind   string // aircraft catalogue name
-	model  *flight.Model
-	latest flight.Inputs
-	alive  bool
-	health float64
-	wait   float64 // seconds until respawn (furball mode)
-	flared float64 // sim seconds since the last flare drop (large when none)
-	kills  int
-	deaths int
+	player    game.Player
+	kind      string // aircraft catalogue name
+	model     *flight.Model
+	body      battle.Body
+	condition battle.Condition
+	latest    flight.Inputs
+	alive     bool
+	ammunition int     // gun rounds left this life
+	charge    float64 // fractional rounds accumulated at the fire rate
+	ejected   bool    // eject edge consumed this life
+	wait      float64 // seconds until respawn (furball mode)
+	flared    float64 // sim seconds since the last flare drop (large when none)
+	kills     int
+	deaths    int
+}
+
+// arm rebinds the craft's battle body to its current model's damage state.
+func (a *craft) arm() {
+	a.condition = battle.Condition{Damager: -1}
+	a.body = battle.Body{
+		Airframe:  a.model.Airframe,
+		Parts:     battle.Parts(a.model.Airframe),
+		Damage:    &a.model.State.Damage,
+		Condition: &a.condition,
+	}
+	a.ammunition = rounds
+	a.charge = 0
+	a.ejected = false
 }
 
 type missile struct {
@@ -96,6 +115,15 @@ type missile struct {
 	velocity flight.Vec3
 	life     float64
 	number   uint64 // per-instance launch counter, for deterministic decoys
+	window   bool   // a flare window has been judged (one decoy roll per flare)
+}
+
+// wreck is a pilot-dead or ejected airframe that keeps flying until it hits
+// something or burns out; purely spectacle, no further scoring.
+type wreck struct {
+	model *flight.Model
+	burn  [2]float64
+	life  float64
 }
 
 type instance struct {
@@ -104,10 +132,23 @@ type instance struct {
 	environment flight.Environment
 	aircraft    map[int]*craft
 	flying      []*missile
+	wrecks      []*wreck
 	launched    uint64
 	events      []map[string]any
 	finished    bool
 	results     map[string]any
+}
+
+// slots iterates the aircraft in slot order: map order is random per
+// process, and battle rolls are keyed on tick — determinism requires a
+// stable iteration order.
+func (i *instance) slots() []int {
+	order := make([]int, 0, len(i.aircraft))
+	for slot := range i.aircraft {
+		order = append(order, slot)
+	}
+	sort.Ints(order)
+	return order
 }
 
 // spawn resets a model to the merge ring, facing the centre: slots 0/1 meet
@@ -132,9 +173,23 @@ func state_payload(s *flight.State) map[string]any {
 	}
 	words := make([]float64, flight.Size)
 	s.Encode(words)
-	core := make([]byte, flight.Size*8)
-	for i, w := range words {
-		binary.LittleEndian.PutUint64(core[i*8:], math.Float64bits(w))
+	// The wire core: 57 base words at full precision, then the damage tail
+	// QUANTIZED to uint16 — the tail is unit-interval losses plus one mass,
+	// and at float64 it pushed the snapshot past the QUIC datagram MTU
+	// (SendDatagram drops oversized frames silently; TestPair catches it).
+	// The client re-expands to the full 106-word layout before the core
+	// feeds prediction; 1.5e-5 quantisation steps are far below anything
+	// the aero can feel. Scale for Loss (words beyond the unit losses): kg/8000.
+	core := make([]byte, 57*8+(flight.Size-57)*2)
+	for i := 0; i < 57; i++ {
+		binary.LittleEndian.PutUint64(core[i*8:], math.Float64bits(words[i]))
+	}
+	for i := 57; i < flight.Size; i++ {
+		v := words[i]
+		if i == 57+flight.Elements+flight.Channels { // Loss, kg
+			v /= 8000
+		}
+		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
 	}
 	return map[string]any{
 		"position":  []float64{s.Position.X, s.Position.Y, s.Position.Z},
@@ -156,7 +211,9 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	kind := "fa18c" // the only catalogue entry today; a requested type would arrive on the join payload
 	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
 	i.spawn(player.Slot, m)
-	i.aircraft[player.Slot] = &craft{player: player, kind: kind, model: m, alive: true, health: health, flared: 1e9}
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9}
+	a.arm()
+	i.aircraft[player.Slot] = a
 	return map[string]any{"state": state_payload(&m.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind}, nil
 }
 
@@ -185,6 +242,7 @@ func input(data map[string]any) flight.Inputs {
 		Hook:       flag("hook"),
 		Launch:     flag("launch"),
 		Override:   flag("override"),
+		Eject:      flag("eject"),
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
 		Missile:    flag("missile"),
@@ -226,10 +284,15 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			if in.Missile && a.alive && i.missiles {
 				i.launch(slot, a)
 			}
+			if in.Eject && a.alive && !a.ejected {
+				a.ejected = true
+				i.eject(slot, a)
+			}
 		}
 		a.latest = input(list[len(list)-1].Data)
 	}
-	for slot, a := range i.aircraft {
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
 		a.flared += dt
 		if !a.alive {
 			if i.mode == "joust" {
@@ -237,9 +300,13 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 			a.wait -= dt
 			if a.wait <= 0 {
+				if a.model == nil { // the previous airframe left as a wreck
+					a.model = flight.New(aircraft.Get(a.kind), i.environment, flight.World{Sea: sea})
+				}
 				i.spawn(slot, a.model)
+				a.model.State.Damage = flight.DamageState{} // a fresh jet
+				a.arm()
 				a.alive = true
-				a.health = health
 				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&a.model.State)})
 			}
 			continue
@@ -247,39 +314,139 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(a.latest) // 4 × Dt (1/240) per 60 Hz tick
 		}
+		// The damage cascade: fires feed or starve on the throttle, fuel
+		// fires run their fuse, weakened wings shed under g.
+		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, 60, i.environment.Seed, uint64(slot), tick) {
+			i.raise(slot, event)
+		}
+		if a.alive && a.condition.Killed {
+			i.down(slot, a, "pilot")
+			continue
+		}
+		if !a.alive {
+			continue // the cascade exploded this aircraft
+		}
 		// Air-start rule: any surface contact — water, a crash probe, even a
 		// gentle touch — is a kill until multiplayer deck operations land.
 		state := &a.model.State
 		if state.Position.Y <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
-			i.kill(slot, -1)
+			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
 		}
 	}
-	i.guns(dt)
-	i.pursue(dt)
+	i.guns(dt, tick)
+	i.pursue(dt, tick)
+	i.drift(dt)
 }
 
-// guns applies cone-tracking damage from every firing aircraft.
-func (i *instance) guns(dt float64) {
-	for slot, a := range i.aircraft {
-		if !a.alive || !a.latest.Fire {
+// credit names the killer: the last player to damage this aircraft within
+// the last minute, else the environment.
+func credit(a *craft) int {
+	if a.condition.Damager >= 0 && a.condition.Damaged < 60 {
+		return a.condition.Damager
+	}
+	return -1
+}
+
+// raise converts a battle event into wire events and verdicts.
+func (i *instance) raise(slot int, event battle.Event) {
+	a := i.aircraft[slot]
+	switch event.Kind {
+	case "explode":
+		i.events = append(i.events, map[string]any{"kind": "explode", "slot": slot})
+		if a != nil {
+			i.kill(slot, credit(a))
+		}
+	case "hit":
+		// Raised with shooter context in guns(); ignored here.
+	default:
+		i.events = append(i.events, map[string]any{"kind": event.Kind, "slot": slot, "engine": event.Engine, "surface": event.Surface})
+	}
+}
+
+// down retires a flying airframe whose pilot is gone — killed or ejected.
+// The jet flies on as a wreck; the slot dies for scoring and respawn.
+func (i *instance) down(slot int, a *craft, reason string) {
+	i.events = append(i.events, map[string]any{"kind": reason, "slot": slot, "by": credit(a)})
+	i.kill(slot, credit(a)) // while the model still exists: the kill event carries its position
+	i.wrecks = append(i.wrecks, &wreck{model: a.model, burn: a.condition.Fire, life: derelict})
+	a.model = nil
+}
+
+// eject: the pilot's out — a kill credit for whoever wrecked the jet, and
+// the airframe flies on pilotless.
+func (i *instance) eject(slot int, a *craft) {
+	i.down(slot, a, "eject")
+}
+
+// drift flies the wrecks: neutral controls, idle throttle, burning until
+// they hit the sea or burn out.
+func (i *instance) drift(dt float64) {
+	keep := i.wrecks[:0]
+	for _, w := range i.wrecks {
+		w.life -= dt
+		for substep := 0; substep < 4; substep++ {
+			w.model.Step(flight.Inputs{})
+		}
+		state := &w.model.State
+		if w.life <= 0 || state.Position.Y <= sea || state.Gear.Contact >= 0 {
+			i.events = append(i.events, map[string]any{
+				"kind": "splash",
+				"position": []float64{state.Position.X, state.Position.Y, state.Position.Z},
+			})
 			continue
 		}
-		forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
-		for other, b := range i.aircraft {
+		keep = append(keep, w)
+	}
+	i.wrecks = keep
+	if len(i.wrecks) > 4 { // MTU guard: oldest wrecks vanish quietly
+		i.wrecks = i.wrecks[len(i.wrecks)-4:]
+	}
+}
+
+// guns fires real rounds: the M61's rate accumulates fractional rounds per
+// tick, each round is a dispersed ray traced against every hostile's part
+// geometry, and each hit strikes a specific system.
+func (i *instance) guns(dt float64, tick uint64) {
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
+		if !a.alive || !a.latest.Fire || a.ammunition <= 0 {
+			a.charge = 0
+			continue
+		}
+		a.charge += rate * dt
+		burst := int(a.charge)
+		if burst <= 0 {
+			continue
+		}
+		a.charge -= float64(burst)
+		if burst > a.ammunition {
+			burst = a.ammunition
+		}
+		a.ammunition -= burst
+		state := &a.model.State
+		shooter := battle.Pose{
+			Position: state.Position.Add(state.Attitude.Rotate(flight.Vec3{X: muzzle})),
+			Forward:  state.Attitude.Rotate(flight.Vec3{X: 1}),
+			Up:       state.Attitude.Rotate(flight.Vec3{Y: 1}),
+			Right:    state.Attitude.Rotate(flight.Vec3{Z: 1}),
+		}
+		for _, other := range i.slots() {
+			b := i.aircraft[other]
 			if other == slot || !b.alive {
 				continue
 			}
-			direction, distance := i.bearing(a.model.State.Position, b.model.State.Position)
-			if distance > reach || distance < 1 {
+			hits, events := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick)
+			if hits == 0 {
 				continue
 			}
-			if forward.X*direction.X+forward.Y*direction.Y+forward.Z*direction.Z < aim {
-				continue
-			}
-			b.health -= damage * dt
-			if b.health <= 0 {
-				b.health = 0
-				i.kill(other, slot)
+			b.condition.Damager = slot
+			b.condition.Damaged = 0
+			for _, event := range events {
+				if event.Kind == "hit" {
+					i.events = append(i.events, map[string]any{"kind": "hit", "slot": other, "by": slot, "count": event.Count})
+					continue
+				}
+				i.raise(other, event)
 			}
 		}
 	}
@@ -297,16 +464,23 @@ func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) 
 	return flight.Vec3{X: dx / distance, Y: dy / distance, Z: dz / distance}, distance
 }
 
-// launch fires a missile at the best target in the seeker cone.
+// launch fires a missile at the best target in the seeker cone. The seeker
+// is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
+// than a cold nose head-on.
 func (i *instance) launch(slot int, a *craft) {
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best, nearest := -1, missile_range+1
-	for other, b := range i.aircraft {
+	for _, other := range i.slots() {
+		b := i.aircraft[other]
 		if other == slot || !b.alive {
 			continue
 		}
 		direction, distance := i.bearing(a.model.State.Position, b.model.State.Position)
-		if distance > missile_range || distance < 1 {
+		if distance < 1 {
+			continue
+		}
+		tail := direction.Dot(b.model.State.Attitude.Rotate(flight.Vec3{X: 1})) // 1 = square at the tailpipe
+		if distance > missile_range*(0.4+0.6*math.Max(0, tail)) {
 			continue
 		}
 		if forward.X*direction.X+forward.Y*direction.Y+forward.Z*direction.Z < missile_cone {
@@ -331,9 +505,10 @@ func (i *instance) launch(slot int, a *craft) {
 	i.events = append(i.events, map[string]any{"kind": "missile", "slot": slot, "target": best})
 }
 
-// pursue advances every missile: pure pursuit toward the target, decoyed by
-// a recent flare (deterministic per missile), proximity kill.
-func (i *instance) pursue(dt float64) {
+// pursue advances every missile: pure pursuit toward the target, graded
+// flare decoys judged once per flare drop, and a proximity fuse feeding the
+// battle warhead — a direct hit kills outright, a fringe burst fragments.
+func (i *instance) pursue(dt float64, tick uint64) {
 	alive := i.flying[:0]
 	for _, m := range i.flying {
 		m.life -= dt
@@ -341,15 +516,39 @@ func (i *instance) pursue(dt float64) {
 		if m.life <= 0 || target == nil || !target.alive {
 			continue
 		}
-		// A flare dropped inside the window decoys this missile with an
-		// instance-deterministic coin flip (seed and launch number).
-		if target.flared < flare_window && (i.environment.Seed+m.number)%3 != 0 {
-			i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
-			continue
+		// A flare inside the window decoys with aspect-graded probability:
+		// looking up a hot tailpipe the seeker holds; from the beam a flare
+		// is the brighter thing in view. Reheat anchors the seeker harder.
+		if target.flared < flare_window {
+			if !m.window {
+				m.window = true
+				direction, _ := i.bearing(m.position, target.model.State.Position)
+				tail := direction.Dot(target.model.State.Attitude.Rotate(flight.Vec3{X: 1}))
+				decoy := 0.35 + 0.40*(1-clamp(tail, 0, 1))
+				if target.latest.Reheat {
+					decoy *= 0.5
+				}
+				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
+					i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
+					continue
+				}
+			}
+		} else {
+			m.window = false
 		}
 		direction, distance := i.bearing(m.position, target.model.State.Position)
-		if distance < missile_kill {
-			i.kill(m.target, m.shooter)
+		if distance < missile_fuse {
+			kill, events := battle.Blast(m.position, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+			target.condition.Damager = m.shooter
+			target.condition.Damaged = 0
+			for _, event := range events {
+				if event.Kind != "explode" {
+					i.raise(m.target, event)
+				}
+			}
+			if kill {
+				i.kill(m.target, m.shooter)
+			}
 			continue
 		}
 		// Steer the velocity toward the target with a limited blend rate —
@@ -369,6 +568,29 @@ func (i *instance) pursue(dt float64) {
 		alive = append(alive, m)
 	}
 	i.flying = alive
+}
+
+// mask packs per-surface damage into a bitfield: bit set when a surface's
+// mean element loss exceeds 0.4 — the client's visual-damage summary.
+func mask(a *flight.Airframe, element []float64) int {
+	if element == nil {
+		return 0
+	}
+	bits, base := 0, 0
+	for si := range a.Surfaces {
+		n := len(a.Surfaces[si].Elements)
+		if n > 0 && si < 16 {
+			sum := 0.0
+			for ei := 0; ei < n && base+ei < len(element); ei++ {
+				sum += element[base+ei]
+			}
+			if sum/float64(n) > 0.4 {
+				bits |= 1 << si
+			}
+		}
+		base += n
+	}
+	return bits
 }
 
 // kill downs a victim; by is the killer's slot or -1 for the environment.
@@ -417,14 +639,19 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 	players := []map[string]any{}
 	cores := map[int]any{}
 	for slot, a := range i.aircraft {
+		if a.model == nil { // pilot gone, airframe flying on as a wreck: score-only entry until respawn
+			players = append(players, map[string]any{"slot": slot, "aircraft": a.kind, "name": a.player.Name,
+				"alive": false, "kills": a.kills, "deaths": a.deaths})
+			continue
+		}
 		entry := state_payload(&a.model.State)
 		cores[slot] = entry["core"]
-		delete(entry, "core") // per-recipient: N cores would burst the datagram MTU
+		delete(entry, "core")      // per-recipient: N cores would burst the datagram MTU
+		delete(entry, "direction") // derivable from attitude; snapshot bytes are precious (see TestSnapshotSize)
 		entry["slot"] = slot
 		entry["aircraft"] = a.kind
 		entry["name"] = a.player.Name
 		entry["alive"] = a.alive
-		entry["health"] = a.health
 		entry["kills"] = a.kills
 		entry["deaths"] = a.deaths
 		entry["gear"] = a.model.State.Gear.Extension > 0.5
@@ -432,6 +659,10 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		entry["speedbrake"] = a.model.State.Fcs.Speedbrake
 		entry["reheat"] = a.latest.Reheat
 		entry["fire"] = a.latest.Fire
+		entry["burn"] = []float64{a.condition.Fire[0], a.condition.Fire[1]}
+		entry["leak"] = a.model.State.Damage.Leak
+		entry["pilot"] = !a.condition.Killed
+		entry["loss"] = mask(a.model.Airframe, a.model.State.Damage.Element)
 		players = append(players, entry)
 	}
 	missiles := []map[string]any{}
@@ -441,7 +672,17 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			"velocity": []float64{m.velocity.X, m.velocity.Y, m.velocity.Z},
 		})
 	}
-	return map[string]any{"players": players, "missiles": missiles, "cores": cores}
+	derelicts := []map[string]any{}
+	for _, w := range i.wrecks {
+		s := &w.model.State
+		derelicts = append(derelicts, map[string]any{
+			"position": []float64{s.Position.X, s.Position.Y, s.Position.Z},
+			"attitude": []float64{s.Attitude.W, s.Attitude.X, s.Attitude.Y, s.Attitude.Z},
+			"velocity": []float64{s.Velocity.X, s.Velocity.Y, s.Velocity.Z},
+			"burn":     []float64{w.burn[0], w.burn[1]},
+		})
+	}
+	return map[string]any{"players": players, "missiles": missiles, "wrecks": derelicts, "cores": cores}
 }
 
 func (i *instance) Events() []map[string]any {

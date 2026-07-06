@@ -6,14 +6,15 @@
 
 // One fixed float64 layout serves the wire snapshot, the prediction ring,
 // and the wasm boundary. Values pass through bit-exact. Four engine slots
-// are always carried (airframes declare 0..4; unused slots stay zero). The
-// per-element damage slices are not carried (word 56 carries the FCS trim-speed reference) — they are nil until the damage
-// model (#78) lands, which extends this layout and bumps Version.
+// are always carried (airframes declare 0..4; unused slots stay zero), as
+// are the Elements damage budget and the Channels jam budget — damage
+// semantics are zero-means-pristine, so a pristine jet costs nothing but
+// zeros and decodes back to nil slices.
 
 package flight
 
 // Size is the encoded state length in float64 words.
-const Size = 57
+const Size = 57 + Elements + Channels + 1 // 106: base state, per-element loss, per-channel jams, lost mass
 
 // Encode writes the state into out (at least Size long) and returns Size.
 func (s *State) Encode(out []float64) int {
@@ -48,6 +49,21 @@ func (s *State) Encode(out []float64) int {
 	out[54] = d.Stress
 	out[55] = s.Time
 	out[56] = s.Fcs.Reference
+	for i := 0; i < Elements; i++ {
+		v := 0.0
+		if i < len(d.Element) {
+			v = d.Element[i]
+		}
+		out[57+i] = v
+	}
+	for c := 0; c < Channels; c++ {
+		v := 0.0
+		if c < len(d.Jam) {
+			v = d.Jam[c]
+		}
+		out[57+Elements+c] = v
+	}
+	out[57+Elements+Channels] = d.Loss
 	return Size
 }
 
@@ -85,6 +101,27 @@ func Decode(in []float64) State {
 	d.Stress = in[54]
 	s.Time = in[55]
 	s.Fcs.Reference = in[56]
+	// Slices materialise only when damage exists: a pristine wire stays nil,
+	// so encode(decode(x)) is stable and the common case allocates nothing.
+	for i := 0; i < Elements; i++ {
+		if in[57+i] != 0 {
+			d.Element = make([]float64, Elements)
+			for k := 0; k < Elements; k++ {
+				d.Element[k] = in[57+k]
+			}
+			break
+		}
+	}
+	for c := 0; c < Channels; c++ {
+		if in[57+Elements+c] != 0 {
+			d.Jam = make([]float64, Channels)
+			for k := 0; k < Channels; k++ {
+				d.Jam[k] = in[57+Elements+k]
+			}
+			break
+		}
+	}
+	d.Loss = in[57+Elements+Channels]
 	return s
 }
 
