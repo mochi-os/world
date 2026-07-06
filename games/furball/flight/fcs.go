@@ -34,7 +34,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	lateral := clamp(in.Roll, -1, 1)
 	pedal := clamp(in.Yaw, -1, 1)
 
-	var stabTarget, flapTarget, rudderTarget, droopTarget float64
+	var stabTarget, flapTarget, rudderTarget, droopTarget, slatFloor float64
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
 
 	if m.Direct {
@@ -74,6 +74,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.3, 0.3)
 		stabTarget = -(errorTerm*0.28 + f.Integral)
 		droopTarget = c.Droop.Angle * clamp(1-pressure/c.Droop.Pressure, 0, 1)
+		slatFloor = 12 * math.Pi / 180 * clamp(1-pressure/c.Droop.Pressure, 0, 1) // NATOPS flaps HALF droops the LEADING edge too (12°); washed out with q̄ like the trailing-edge droop
 		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		flapTarget = lateral * 0.30
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
@@ -217,8 +218,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	}
 
-	// Leading-edge flaps schedule with alpha.
-	slatTarget := clamp(c.Slat.Slope*(a-c.Slat.Offset), 0, c.Slat.Limit)
+	// Leading-edge flaps schedule with alpha (plus the PA floor set in the gear-down branch).
+	slatTarget := math.Max(clamp(c.Slat.Slope*(a-c.Slat.Offset), 0, c.Slat.Limit), slatFloor)
 	if m.Direct {
 		slatTarget = 0
 	}
