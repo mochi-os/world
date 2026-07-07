@@ -20,9 +20,15 @@ import (
 
 const (
 	capture  = 5.0    // m: catapult attach radius around the shuttle
-	tension  = 3000.0 // N per metre of cable payout
-	absorb   = 8000.0 // N·s/m of payout rate
-	greatest = 6.0e5  // cable tension ceiling, N
+	tension  = 3000.0 // N per metre of cable payout (at the reference weight setting)
+	absorb   = 8000.0 // N·s/m of payout rate (at the reference weight setting)
+	greatest = 6.0e5  // cable tension ceiling, N (at the reference weight setting)
+	// The energy the constants above were tuned at: the setting formula below
+	// evaluated at TestTrap's condition (fa18c, full internal fuel 15,600 kg,
+	// sea-level deck: expected engagement 1.16×stall ≈ 76.5 m/s). Defined
+	// through the SAME formula so that exact condition computes setting = 1.0
+	// and behaves identically to the pre-setting gear.
+	reference = 9.13e7 // kg·(m/s)² — 2× the tuned engagement energy
 )
 
 // hook is the tailhook tip position for a trial state (body frame offset:
@@ -192,9 +198,18 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 	// Payout rate from the hook-tip velocity resolved along both legs.
 	velocity := s.Velocity.Subtract(c.direction().Scale(c.Speed))
 	rate := -velocity.Dot(legA.Normalize()) - velocity.Dot(legB.Normalize())
-	pull := clamp(tension*payout+absorb*rate, 0, greatest)
+	// Weight setting, dialled per engagement as the real gear crew does (and as
+	// the catapult already sets its shot): the retard scales with the energy a
+	// correctly-flown engagement carries at THIS gross mass — on-speed approach
+	// (1.16× stall at this weight) less the deck's own way. Constant runout and
+	// constant felt G across fuel states; an over-speed engagement still carries
+	// excess energy and still pulls longer and harder, as it should.
+	stall := math.Sqrt(2 * m.mass * gravity / (air(s.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
+	engage := math.Max(1.16*stall-c.Speed, 30)
+	setting := m.mass * engage * engage / reference
+	pull := clamp(setting*(tension*payout+absorb*rate), 0, setting*greatest)
 	if rate < 0 {
-		pull = clamp(tension*payout*0.12, 0, greatest) // the arresting engine dissipates: almost no recoil
+		pull = clamp(setting*tension*payout*0.12, 0, setting*greatest) // the arresting engine dissipates: almost no recoil
 	}
 	direction := legA.Normalize().Add(legB.Normalize()).Normalize()
 	m.apply(s, direction.Scale(pull), tip, total)
