@@ -80,18 +80,44 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 	// scripted gentle manoeuvres, filling slots from the TOP so the framework's
 	// low-slot assignment for real players cannot collide in practice. Open
 	// mode only — a joust is strictly the human pair.
-	if bots := number(session.Parameters, "bots"); mode != "joust" && bots > 0 {
-		count := int(bots)
-		if count > 99 {
-			count = 99
+	if clouds, _ := session.Parameters["clouds"].(string); clouds != "" {
+		i.sky = clouds
+	}
+	if tod, _ := session.Parameters["tod"].(string); tod == "night" {
+		i.night = true
+	}
+	// Practice bots: the parameter is a per-level count map {"drone": n,
+	// "rookie": n, ...} — the match creator chooses how many of each. A bare
+	// number still means drones (test-harness convenience). Bots fill slots
+	// from 99 downward, grouped by level, named for the kill feed. Open mode
+	// only — a joust is strictly the pair.
+	if mode != "joust" {
+		type order struct {
+			level string
+			count int
 		}
-		for n := 0; n < count; n++ {
-			slot := 99 - n
-			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-			i.spawn(slot, m)
-			b := &craft{player: game.Player{Name: fmt.Sprintf("Bot %d", n+1), Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true}
-			b.arm()
-			i.aircraft[slot] = b
+		wanted := []order{}
+		if flat := number(session.Parameters, "bots"); flat > 0 {
+			wanted = append(wanted, order{"drone", int(flat)})
+		} else if levels, found := session.Parameters["bots"].(map[string]any); found {
+			for _, level := range []string{"drone", "rookie", "pilot", "veteran", "ace"} {
+				if n := int(number(levels, level)); n > 0 {
+					wanted = append(wanted, order{level, n})
+				}
+			}
+		}
+		slot, total := 99, 0
+		for _, w := range wanted {
+			for n := 1; n <= w.count && total < 99; n++ {
+				m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
+				i.spawn(slot, m)
+				title := fmt.Sprintf("%s%s %d", string(w.level[0]-32), w.level[1:], n)
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level)}
+				b.arm()
+				i.aircraft[slot] = b
+				slot--
+				total++
+			}
 		}
 	}
 	return i, nil
@@ -101,6 +127,7 @@ type craft struct {
 	player    game.Player
 	kind      string // aircraft catalogue name
 	bot       bool   // server-flown practice aircraft: scripted inputs, no link
+	brain     *brain // fighting bots think; drones (and humans) carry nil
 	close     map[int]bool // this recipient's sticky near set (interest hysteresis)
 	model     *flight.Model
 	body      battle.Body
@@ -154,6 +181,8 @@ type instance struct {
 	merged      bool   // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
 	missiles    bool   // rule: missiles allowed
 	environment flight.Environment
+	sky         string // session cloud preset (bot visibility occlusion)
+	night       bool   // session time of day (bot visual range and glare)
 	aircraft    map[int]*craft
 	flying      []*missile
 	wrecks      []*wreck
@@ -373,23 +402,10 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	}
 	for _, slot := range i.slots() {
 		if a := i.aircraft[slot]; a.bot && a.alive {
-			// Bot autopilot: CLOSED loops, not open-loop weaves (those spiralled
-			// every bot into the sea within minutes). Bank tracks a slow
-			// slot-staggered wander, pitch holds a per-slot altitude with climb
-			// damping plus a bank-compensation bias, throttle holds airspeed.
-			s := &a.model.State
-			up := s.Attitude.Rotate(flight.Vec3{Y: 1})
-			right := s.Attitude.Rotate(flight.Vec3{Z: 1})
-			bank := math.Atan2(right.Y, up.Y)
-			t := float64(tick) / 60
-			phase := float64(slot) * 2.399
-			bankTarget := 0.35 * math.Sin(t*0.03+phase)
-			altTarget := 3200 + float64(slot%40)*60
-			speed := s.Velocity.Length()
-			a.latest = flight.Inputs{
-				Throttle: clamp(0.55+(200-speed)*0.01, 0.3, 1),
-				Roll:     clamp((bank-bankTarget)*1.5, -0.5, 0.5), // positive stick rolls right = NEGATIVE bank in the atan2(right.Y, up.Y) convention (the first sign spiralled every bot inverted within seconds)
-				Pitch:    clamp((altTarget-s.Position.Y)*4e-4-s.Velocity.Y*4e-3+math.Abs(bank)*0.15, -0.3, 0.5),
+			if a.brain != nil {
+				i.think(slot, a, tick) // the fighting brain (bot.go)
+			} else {
+				weave(slot, a, tick) // drones keep the original wander
 			}
 		}
 	}
@@ -408,6 +424,9 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				i.spawn(slot, a.model)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
+				if a.brain != nil {
+					a.brain.reborn()
+				}
 				a.alive = true
 				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&a.model.State)})
 			}
