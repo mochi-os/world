@@ -184,14 +184,15 @@ func session_join(s *session, o order) answer {
 func session_snapshot(s *session) {
 	shared := s.instance.Snapshot(s.tick)
 	cores, _ := shared["cores"].(map[int]any)
+	poses, _ := shared["poses"].(map[int]any)
 	for _, p := range s.players {
 		if p.link == nil {
 			continue
 		}
 		envelope := map[string]any{"kind": "snapshot", "tick": s.tick, "acknowledged": p.sequence}
 		for k, v := range shared {
-			if k == "cores" {
-				continue // per-recipient below: everyone's cores would burst the datagram MTU
+			if k == "cores" || k == "poses" {
+				continue // per-recipient below: everyone's cores (or full pose sets) would burst the datagram MTU
 			}
 			envelope[k] = v
 		}
@@ -201,6 +202,22 @@ func session_snapshot(s *session) {
 		bytes, err := encode(envelope)
 		if err == nil {
 			p.link.write(bytes, false)
+		}
+		// The pose blob rides its OWN datagram: core + poses together burst
+		// the MTU at scale, and datagrams are independent anyway — the client
+		// stitches by tick.
+		if mine, found := poses[p.Slot]; found {
+			flock, ok := mine.(map[string]any)
+			if !ok {
+				continue
+			}
+			second := map[string]any{"kind": "poses", "tick": s.tick}
+			for k, v := range flock {
+				second[k] = v
+			}
+			if bytes, err := encode(second); err == nil {
+				p.link.write(bytes, false)
+			}
 		}
 	}
 }

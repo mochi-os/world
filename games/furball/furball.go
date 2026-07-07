@@ -216,6 +216,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9}
 	a.arm()
 	i.aircraft[player.Slot] = a
+	i.events = append(i.events, map[string]any{"kind": "roster", "slot": player.Slot, "name": player.Name})
 	if i.mode == "joust" && len(i.aircraft) == 2 && !i.started {
 		// The pair is complete THIS instant: the match starts, and both merge
 		// fresh and simultaneously however long the first arrival sat frozen.
@@ -688,54 +689,170 @@ func (i *instance) finish(winner int, loser int) {
 	i.results = map[string]any{"winner": winner, "loser": loser, "name": name(winner)}
 }
 
+// Snapshot wire (#81, 100 players): every remote aircraft is a fixed 34-byte
+// binary pose record — CBOR maps with string keys cost ~300 B per player and
+// burst the QUIC datagram at three. Each recipient gets the NEAREST `near`
+// remotes every snapshot plus `roving` of the far tail round-robin (full far
+// coverage in a fraction of a second at snapshot rate); missiles are the
+// recipient's nearest few. Names, aircraft types, and scores never ride the
+// hot path: names arrive in the welcome and the session mirror, and clients
+// count kills from the kill events.
+const (
+	near   = 20 // nearest remotes in every pose blob (sized with roving + missiles to fit the poses datagram)
+	roving = 8  // far-tail remotes rotated through per snapshot
+)
+
+// pose packs one aircraft into the 34-byte wire record.
+func pose(slot int, a *craft) []byte {
+	s := &a.model.State
+	b := make([]byte, 34)
+	b[0] = byte(slot)
+	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(s.Position.X)))
+	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(s.Position.Y)))
+	binary.LittleEndian.PutUint32(b[9:], math.Float32bits(float32(s.Position.Z)))
+	quat := func(offset int, v float64) { binary.LittleEndian.PutUint16(b[offset:], uint16(int16(clamp(v, -1, 1)*32767))) }
+	quat(13, s.Attitude.W)
+	quat(15, s.Attitude.X)
+	quat(17, s.Attitude.Y)
+	quat(19, s.Attitude.Z)
+	direction := s.Velocity.Normalize()
+	if s.Velocity.Length() < 1 {
+		direction = s.Attitude.Rotate(flight.Vec3{X: 1})
+	}
+	b[21] = byte(int8(clamp(direction.X, -1, 1) * 127))
+	b[22] = byte(int8(clamp(direction.Y, -1, 1) * 127))
+	b[23] = byte(int8(clamp(direction.Z, -1, 1) * 127))
+	binary.LittleEndian.PutUint16(b[24:], uint16(clamp(s.Velocity.Length(), 0, 6553)*10))
+	flags := byte(0)
+	if a.alive {
+		flags |= 1
+	}
+	if s.Gear.Extension > 0.5 {
+		flags |= 2
+	}
+	if a.latest.Hook {
+		flags |= 4
+	}
+	if a.latest.Fire {
+		flags |= 8
+	}
+	if !a.condition.Killed {
+		flags |= 16
+	}
+	b[26] = flags
+	b[27] = byte(clamp(a.latest.Reheat, 0, 1) * 255)
+	b[28] = byte(clamp(a.model.State.Fcs.Speedbrake, 0, 1) * 255)
+	b[29] = byte(clamp(a.condition.Fire[0], 0, 1) * 255)
+	b[30] = byte(clamp(a.condition.Fire[1], 0, 1) * 255)
+	b[31] = byte(clamp(a.model.State.Damage.Leak*10, 0, 255))
+	binary.LittleEndian.PutUint16(b[32:], uint16(mask(a.model.Airframe, a.model.State.Damage.Element)))
+	return b
+}
+
+// span is the wrap-aware distance between two aircraft.
+func (i *instance) span(a, b *flight.Model) float64 {
+	return flight.Vec3{
+		X: flight.Shortest(a.State.Position.X, b.State.Position.X, i.environment.Wrap),
+		Y: b.State.Position.Y - a.State.Position.Y,
+		Z: flight.Shortest(a.State.Position.Z, b.State.Position.Z, i.environment.Wrap),
+	}.Length()
+}
+
 func (i *instance) Snapshot(tick uint64) map[string]any {
-	players := []map[string]any{}
 	cores := map[int]any{}
-	for slot, a := range i.aircraft {
-		if a.model == nil { // pilot gone, airframe flying on as a wreck: score-only entry until respawn
-			players = append(players, map[string]any{"slot": slot, "aircraft": a.kind, "name": a.player.Name,
-				"alive": false, "kills": a.kills, "deaths": a.deaths})
+	poses := map[int]any{}
+	order := i.slots()
+	for _, self := range order {
+		me := i.aircraft[self]
+		if me.model == nil {
 			continue
 		}
-		entry := state_payload(&a.model.State)
-		cores[slot] = entry["core"]
-		delete(entry, "core")      // per-recipient: N cores would burst the datagram MTU
-		delete(entry, "direction") // derivable from attitude; snapshot bytes are precious (see TestSnapshotSize)
-		entry["slot"] = slot
-		entry["aircraft"] = a.kind
-		entry["name"] = a.player.Name
-		entry["alive"] = a.alive
-		entry["kills"] = a.kills
-		entry["deaths"] = a.deaths
-		entry["gear"] = a.model.State.Gear.Extension > 0.5
-		entry["hook"] = a.latest.Hook
-		entry["speedbrake"] = a.model.State.Fcs.Speedbrake
-		entry["reheat"] = a.latest.Reheat
-		entry["fire"] = a.latest.Fire
-		entry["burn"] = []float64{a.condition.Fire[0], a.condition.Fire[1]}
-		entry["leak"] = a.model.State.Damage.Leak
-		entry["pilot"] = !a.condition.Killed
-		entry["loss"] = mask(a.model.Airframe, a.model.State.Damage.Element)
-		players = append(players, entry)
-	}
-	missiles := []map[string]any{}
-	for _, m := range i.flying {
-		missiles = append(missiles, map[string]any{
-			"position": []float64{m.position.X, m.position.Y, m.position.Z},
-			"velocity": []float64{m.velocity.X, m.velocity.Y, m.velocity.Z},
+		entry := state_payload(&me.model.State)
+		cores[self] = entry["core"]
+		// Interest management: everyone else sorted by wrap distance; the
+		// nearest `near` every snapshot, the far tail rotated `roving` at a
+		// time so distant contacts still refresh several times a second.
+		others := make([]int, 0, len(order)-1)
+		for _, slot := range order {
+			if slot != self && i.aircraft[slot].model != nil {
+				others = append(others, slot)
+			}
+		}
+		sort.Slice(others, func(x, y int) bool {
+			return i.span(me.model, i.aircraft[others[x]].model) < i.span(me.model, i.aircraft[others[y]].model)
 		})
+		picked := others
+		if len(others) > near {
+			far := others[near:]
+			cycle := (len(far) + roving - 1) / roving
+			at := int(tick/4%uint64(cycle)) * roving
+			stop := at + roving
+			if stop > len(far) {
+				stop = len(far)
+			}
+			picked = append(append([]int{}, others[:near]...), far[at:stop]...)
+		}
+		blob := make([]byte, 0, (len(picked)+1)*34)
+		blob = append(blob, pose(self, me)...) // self first: the client's no-prediction fallback reads its own pose from the wire
+		for _, slot := range picked {
+			blob = append(blob, pose(slot, i.aircraft[slot])...)
+		}
+		// The recipient's nearest missiles, 24 bytes each, capped at 6.
+		type shot struct {
+			m *missile
+			d float64
+		}
+		shots := make([]shot, 0, len(i.flying))
+		for _, m := range i.flying {
+			d := flight.Vec3{
+				X: flight.Shortest(me.model.State.Position.X, m.position.X, i.environment.Wrap),
+				Y: m.position.Y - me.model.State.Position.Y,
+				Z: flight.Shortest(me.model.State.Position.Z, m.position.Z, i.environment.Wrap),
+			}.Length()
+			shots = append(shots, shot{m, d})
+		}
+		sort.Slice(shots, func(x, y int) bool { return shots[x].d < shots[y].d })
+		if len(shots) > 6 {
+			shots = shots[:6]
+		}
+		darts := make([]byte, 0, len(shots)*24)
+		for _, sh := range shots {
+			var d [24]byte
+			binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(sh.m.position.X)))
+			binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(sh.m.position.Y)))
+			binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(sh.m.position.Z)))
+			binary.LittleEndian.PutUint32(d[12:], math.Float32bits(float32(sh.m.velocity.X)))
+			binary.LittleEndian.PutUint32(d[16:], math.Float32bits(float32(sh.m.velocity.Y)))
+			binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(sh.m.velocity.Z)))
+			darts = append(darts, d[:]...)
+		}
+		poses[self] = map[string]any{"blob": blob, "missiles": darts}
 	}
-	derelicts := []map[string]any{}
-	for _, w := range i.wrecks {
+	// Wrecks: global, capped, 42-byte records (position, attitude, velocity, burn).
+	limit := len(i.wrecks)
+	if limit > 4 {
+		limit = 4
+	}
+	derelicts := make([]byte, 0, limit*42)
+	for _, w := range i.wrecks[:limit] {
 		s := &w.model.State
-		derelicts = append(derelicts, map[string]any{
-			"position": []float64{s.Position.X, s.Position.Y, s.Position.Z},
-			"attitude": []float64{s.Attitude.W, s.Attitude.X, s.Attitude.Y, s.Attitude.Z},
-			"velocity": []float64{s.Velocity.X, s.Velocity.Y, s.Velocity.Z},
-			"burn":     []float64{w.burn[0], w.burn[1]},
-		})
+		var d [42]byte
+		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(s.Position.X)))
+		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(s.Position.Y)))
+		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(s.Position.Z)))
+		quat := func(offset int, v float64) { binary.LittleEndian.PutUint16(d[offset:], uint16(int16(clamp(v, -1, 1)*32767))) }
+		quat(12, s.Attitude.W)
+		quat(14, s.Attitude.X)
+		quat(16, s.Attitude.Y)
+		quat(18, s.Attitude.Z)
+		binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(s.Velocity.X)))
+		binary.LittleEndian.PutUint32(d[24:], math.Float32bits(float32(s.Velocity.Y)))
+		binary.LittleEndian.PutUint32(d[28:], math.Float32bits(float32(s.Velocity.Z)))
+		d[32] = byte(clamp(w.burn[0], 0, 1) * 255)
+		d[33] = byte(clamp(w.burn[1], 0, 1) * 255)
+		derelicts = append(derelicts, d[:34]...)
 	}
-	return map[string]any{"players": players, "missiles": missiles, "wrecks": derelicts, "cores": cores}
+	return map[string]any{"wrecks": derelicts, "cores": cores, "poses": poses}
 }
 
 func (i *instance) Events() []map[string]any {

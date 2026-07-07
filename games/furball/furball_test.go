@@ -249,29 +249,46 @@ func TestDecoy(t *testing.T) {
 // QUIC datagram MTU — the 106-word core once burst it and snapshots vanished
 // silently (SendDatagram discards oversized frames). Guard it forever.
 func TestSnapshotSize(t *testing.T) {
-	// Two players: the joust, the only cardinality yet exercised live. At 3+
-	// players the shared body ALONE already exceeds the budget — a latent
-	// pre-damage-model bug now owned by #81 (interest management / deltas).
-	i := build(t, "furball", map[string]any{"missiles": true}, 2)
-	snapshot := i.Snapshot(1)
-	cores, _ := snapshot["cores"].(map[int]any)
-	delete(snapshot, "cores")
-	var largest any
-	for _, core := range cores {
-		largest = core // both cores are the same size at spawn
-	}
-	snapshot["core"] = largest // exactly what session_snapshot attaches per recipient
-	snapshot["kind"] = "snapshot"
-	snapshot["tick"] = uint64(1)
-	snapshot["acknowledged"] = uint32(1000)
-	packed, err := cbor.Marshal(snapshot)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(packed) > 1250 { // the QUIC datagram fits ~1450 on a 1500 MTU path; keep margin
-		t.Fatalf("per-recipient snapshot %d bytes: over the datagram budget", len(packed))
+	// A FULL 100-player match (#81): every recipient's snapshot datagram —
+	// shared body + own core + own interest-managed pose blob — must stay
+	// under the QUIC datagram MTU with margin. SendDatagram discards
+	// oversized frames silently, so this is the one guard that matters.
+	i := build(t, "furball", map[string]any{"missiles": true}, 100)
+	for tick := uint64(1); tick <= 8; tick++ { // several ticks so the far-tail rotation is exercised
+		snapshot := i.Snapshot(tick)
+		cores, _ := snapshot["cores"].(map[int]any)
+		poses, _ := snapshot["poses"].(map[int]any)
+		delete(snapshot, "cores")
+		delete(snapshot, "poses")
+		for slot := 0; slot < 100; slot++ {
+			envelope := map[string]any{"kind": "snapshot", "tick": tick, "acknowledged": uint32(1000)}
+			for k, v := range snapshot {
+				envelope[k] = v
+			}
+			envelope["core"] = cores[slot]
+			packed, err := cbor.Marshal(envelope)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(packed) > 1250 {
+				t.Fatalf("slot %d snapshot datagram %d bytes (budget 1250)", slot, len(packed))
+			}
+			flock, _ := poses[slot].(map[string]any)
+			second := map[string]any{"kind": "poses", "tick": tick}
+			for k, v := range flock {
+				second[k] = v
+			}
+			packed, err = cbor.Marshal(second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(packed) > 1250 {
+				t.Fatalf("slot %d poses datagram %d bytes (budget 1250)", slot, len(packed))
+			}
+		}
 	}
 }
+
 
 // TestEngagement: a scripted fight — sustained fire degrades systems and the
 // event stream tells the story; the identical script with the identical seed
