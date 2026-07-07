@@ -13,32 +13,43 @@ import (
 // settle flies the PA law hands-off at a fixed condition with a slow
 // autothrottle holding the vertical speed near zero, and returns the
 // settled speed and alpha — the model's own on-speed point.
-func settle(t *testing.T, fuel float64, target float64) (float64, float64) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, target+8, fuel)
-	throttle := 0.6
-	for i := 0; i < 240*60; i++ {
-		m.Step(Inputs{Throttle: throttle, Gear: true})
-		if i%24 == 0 {
-			// speed-anchored autothrottle: hold the candidate approach speed and
-			// let the PA law show the alpha it flies there
-			throttle = clamp(throttle+0.01*(target-m.State.Velocity.Length()), 0.1, 1)
+// settle sweeps fixed throttle settings in the landing configuration and
+// returns the time-averaged speed and alpha of the level-est run — open loop,
+// so no autothrottle can pump the phugoid; averaging over the tail washes it out.
+func settle(t *testing.T, fuel float64) (float64, float64) {
+	bestVy, bestSpeed, bestAlpha := 1e9, 0.0, 0.0
+	for throttle := 0.20; throttle <= 0.64; throttle += 0.01 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, fuel)
+		sumVy, sumSpeed, sumAlpha, n := 0.0, 0.0, 0.0, 0
+		for i := 0; i < 240*90; i++ {
+			m.Step(Inputs{Throttle: throttle, Gear: true})
+			if i >= 240*45 {
+				body := m.State.Attitude.Unrotate(m.State.Velocity)
+				sumVy += m.State.Velocity.Y
+				sumSpeed += m.State.Velocity.Length()
+				sumAlpha += alpha(body)
+				n++
+			}
+		}
+		vy := sumVy / float64(n)
+		if math.Abs(vy) < math.Abs(bestVy) {
+			bestVy, bestSpeed, bestAlpha = vy, sumSpeed/float64(n), sumAlpha/float64(n)
 		}
 	}
-	body := m.State.Attitude.Unrotate(m.State.Velocity)
-	t.Logf("settle %.0f m/s: speed %.1f vy %.2f alpha %.1f° flaperon %.1f°",
-		target, m.State.Velocity.Length(), m.State.Velocity.Y, alpha(body)*57.3, m.State.Fcs.Flaperon.Left*57.3)
-	if math.Abs(m.State.Velocity.Y) > 2.5 {
-		t.Fatalf("did not settle: vy %.2f", m.State.Velocity.Y)
+	t.Logf("settle fuel %.0f: speed %.1f m/s (%.0f kt) alpha %.1f° (level-est vy %.2f)",
+		fuel, bestSpeed, bestSpeed*1.94384, bestAlpha*57.3, bestVy)
+	if math.Abs(bestVy) > 1.5 {
+		t.Fatalf("no near-level trim found in the throttle sweep: best vy %.2f", bestVy)
 	}
-	return m.State.Velocity.Length(), alpha(body)
+	return bestSpeed, bestAlpha
 }
 
 // TestOnspeed: the PA law's hands-off on-speed condition should sit near the
 // real jet's approach numbers — 8.1° alpha at roughly 135 kt (69 m/s) at a
 // typical trap weight (about half fuel).
 func TestOnspeed(t *testing.T) {
-	speed, a := settle(t, 2500, 69)
+	speed, a := settle(t, 2500)
 	if math.Abs(a-8.1*math.Pi/180) > 1.2*math.Pi/180 {
 		t.Fatalf("on-speed alpha %.1f°, want ~8.1°", a*180/math.Pi)
 	}
@@ -50,8 +61,8 @@ func TestOnspeed(t *testing.T) {
 
 // TestOnspeedHeavy: heavier jets fly faster approaches at the same alpha.
 func TestOnspeedHeavy(t *testing.T) {
-	light, _ := settle(t, 1000, 65)
-	heavy, _ := settle(t, 4500, 73)
+	light, _ := settle(t, 1000)
+	heavy, _ := settle(t, 4500)
 	if heavy <= light+1 {
 		t.Fatalf("approach speed must grow with weight: light %.1f heavy %.1f m/s", light, heavy)
 	}

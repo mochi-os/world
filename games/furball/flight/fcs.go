@@ -89,8 +89,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
 		stabTarget = -(errorTerm*0.34 + f.Integral) - stick*0.10 // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
-		droopTarget = c.Droop.Angle * clamp(1-pressure/c.Droop.Pressure, 0, 1)
-		slatFloor = 12 * math.Pi / 180 * clamp(1-pressure/c.Droop.Pressure, 0, 1) // NATOPS flaps HALF droops the LEADING edge too (12°); washed out with q̄ like the trailing-edge droop
+		// Hold-then-washout: the real TEF schedule HOLDS the commanded setting
+		// through the approach band and retracts approaching the flap limit —
+		// the old linear fade left only ~2/3 droop at on-speed ("flaps up" on
+		// a slightly fast approach) and nothing by 250 kt.
+		schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
+		droopTarget = c.Droop.Angle * schedule
+		slatFloor = 12 * math.Pi / 180 * schedule // NATOPS flaps HALF droops the LEADING edge too (12°)
 		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		// Wing leveler on deck: as lift builds down the stroke the wheels
 		// unload and the crosswind's rolling moment grows — with no roll

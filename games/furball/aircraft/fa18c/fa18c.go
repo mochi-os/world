@@ -58,8 +58,8 @@ func build() *flight.Airframe {
 	a.Control.Flap.Offset = 0.03
 	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°, washed out by ~350 KCAS
 	a.Control.Flap.Pressure = 25000
-	a.Control.Droop.Angle = 30 * math.Pi / 180 // PA trailing-edge droop: NATOPS flaps HALF sets TEF 30° (FULL would be 45°, but the PA aero — on-speed alpha, trap energy — is calibrated around this ceiling; raising it balloons the alpha law. Recalibrating for FULL belongs to the flight-model phase, #124)
-	a.Control.Droop.Pressure = 9000
+	a.Control.Droop.Angle = 26 * math.Pi / 180 // PA droop, HELD through the approach band (see the fcs schedule). Calibrated to the on-speed anchor (134 kt at alpha 8.1, envelope_test.go): the camber model lifts more per degree than the real TEF, so the NATOPS 30/45° labels over-lift — this is the angle whose LIFT matches the real approach numbers
+	a.Control.Droop.Pressure = 10000 // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
 	a.Control.Toe = 30 * math.Pi / 180 // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
 	a.Control.Throw.Down = 0.42
 	a.Control.Throw.Up = 0.183 // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)

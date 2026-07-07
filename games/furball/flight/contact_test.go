@@ -182,7 +182,7 @@ func TestTrap(t *testing.T) {
 	m.State.Engine[1] = EngineState{Spool: 0.7}
 	caught := false
 	for i := 0; i < 240*10; i++ {
-		m.Step(Inputs{Gear: true, Hook: true, Throttle: 0.6})
+		m.Step(Inputs{Gear: true, Hook: true, Throttle: 0.45})
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}
