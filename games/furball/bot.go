@@ -355,6 +355,26 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = true
 		b.prey = foe
 		b.distance = span
+		// Cloud escape (tier 3+): a reachable layer is a blindfold the pursuer
+		// cannot see through — dive or climb into it, then turn hard inside.
+		// The visibility model does the rest: his track of us goes stale.
+		if l, found := layers[i.sky]; found && b.skill.library >= 3 && span > 450 {
+			mid := (l.base + l.top) / 2
+			if math.Abs(me.Position.Y-mid) < 1300 && mid > 700 {
+				b.mode = "shroud"
+				away := at.Scale(-1)
+				b.aim = flight.Vec3{X: away.X, Y: clamp((mid-me.Position.Y)*0.002, -0.5, 0.5), Z: away.Z}.Normalize()
+				b.throttle, b.reheat = 1, boost(speed, pace, -40)
+				if me.Position.Y > l.base && me.Position.Y < l.top {
+					// Inside: hard turn while he's blind — come out somewhere else.
+					side := me.Attitude.Rotate(flight.Vec3{Z: 1})
+					b.aim = flight.Vec3{X: side.X, Y: 0.05, Z: side.Z}.Normalize()
+					b.hold = tick + 150
+				}
+				i.guard(b, me, pace)
+				return
+			}
+		}
 		// The reversal cue (tier 3+): the attacker's lateral side FLIPPING
 		// while he's close means he crossed my flight path — reverse the turn
 		// into him NOW (the scissors entry), don't keep the old break.
@@ -409,6 +429,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		} else {
 			b.aim = level(at) // break INTO him at corner speed
 		}
+		i.guard(b, me, pace)
 		return
 	case tail > 0.35: // offensive: behind his 3/9
 		b.mode = "offense"
@@ -417,6 +438,16 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// and the terminal solution. The intercept-lead variant predated the
 		// hitscan discovery and chased phantom points off weaving targets.
 		b.aim = direction
+		// Sun exploitation (tier 4, day): while still approaching, drift the
+		// run-in toward the up-sun station — his own glare model blinds him
+		// to anything within ~5° of the disc, and we built that model.
+		if b.skill.library >= 4 && !i.night && distance > 1500 {
+			station := spot.Add(glare.Scale(distance * 0.2))
+			toward, _ := i.bearing(me.Position, station)
+			if toward.Dot(me.Velocity.Normalize()) > 0.75 { // nearly free, never a detour — the first cut drifted every approach into a delay
+				b.aim = toward
+			}
+		}
 		b.throttle, b.reheat = 1, boost(speed, pace, 40)
 		if distance < 1500 {
 			// Closure discipline into the control zone: arrive with 40-ish
@@ -434,6 +465,31 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 		switch {
+		case b.skill.library >= 4 && closure > 120 && distance < 400:
+			// QUARTER PLANE: about to blow through — pull up and across into
+			// the vertical behind him; the overshoot becomes a perch, not a
+			// role swap.
+			b.mode = "quarter"
+			b.aim = direction.Scale(0.4).Add(flight.Vec3{Y: 1}).Normalize()
+			b.g *= 0.9
+			b.throttle, b.reheat = 0.55, 0
+			b.brake = 1
+			b.hold = tick + 120
+		case b.skill.library >= 4 && closure > 70 && distance > 400 && distance < 1100 && tail > 0.2 && tail < 0.75:
+			// LAG DISPLACEMENT ROLL: angles-hot on a crossing target — roll
+			// out-of-plane around his turn, arrive back in lag with the
+			// closure spent as geometry instead of an overshoot.
+			if b.rolling == 0 || tick-b.rolling > 200 {
+				b.rolling = tick
+			}
+			phase := float64(tick-b.rolling) / 60 * 1.3
+			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+			out := up.Scale(math.Cos(phase)).Add(me.Attitude.Rotate(flight.Vec3{Z: 1}).Scale(math.Sin(phase)))
+			b.mode = "roll"
+			b.aim = direction.Scale(0.5).Add(out.Scale(0.85)).Normalize()
+			b.g = math.Min(b.g, 4.5)
+			b.throttle, b.reheat = 0.55, 0
+			b.hold = tick + uint64(b.skill.cadence)
 		case b.skill.library >= 3 && closure > 90 && distance < 1200 && tail < 0.85:
 			// (dead-astern overtake is the closure discipline's job — boards,
 			// not vertical excursions that blow the approach every pass)
@@ -508,6 +564,18 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = true
 		b.aim = direction.Add(prey.velocity.Scale(2.0 / math.Max(distance, 200))).Normalize()
 		b.throttle, b.reheat = 1, boost(speed, pace, 0)
+		// BARREL ROLL ATTACK (tier 4): a fast beam crossing converts over the
+		// top — roll up and behind his line instead of honouring the flat
+		// lead turn's closure problem.
+		if b.skill.library >= 4 && closure > 50 && distance > 600 && distance < 1500 && speed > pace && mine > theirs+200 {
+			// (the roll over the top is paid for in energy — only with an edge)
+			perch := spot.Subtract(chase.Scale(distance * 0.3)).Add(flight.Vec3{Y: distance * 0.4})
+			b.mode = "barrel"
+			b.aim, _ = i.bearing(me.Position, perch)
+			b.g = math.Min(b.g, 5.5)
+			b.throttle, b.reheat = 0.8, 0
+			b.hold = tick + 140
+		}
 	}
 
 	// The scissors lock: thirty seconds of close combat without a kill means
