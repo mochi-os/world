@@ -58,7 +58,7 @@ func build() *flight.Airframe {
 	a.Control.Flap.Offset = 0.03
 	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°, washed out by ~350 KCAS
 	a.Control.Flap.Pressure = 25000
-	a.Control.Droop.Angle = 30 * math.Pi / 180 // PA trailing-edge droop: NATOPS flaps HALF on the ground sets TEF 30° and aileron droop 30° (the deck launch configuration; FULL would be TEF 45°/droop 42°)
+	a.Control.Droop.Angle = 30 * math.Pi / 180 // PA trailing-edge droop: NATOPS flaps HALF sets TEF 30° (FULL would be 45°, but the PA aero — on-speed alpha, trap energy — is calibrated around this ceiling; raising it balloons the alpha law. Recalibrating for FULL belongs to the flight-model phase, #124)
 	a.Control.Droop.Pressure = 9000
 	a.Control.Toe = 30 * math.Pi / 180 // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
 	a.Control.Throw.Down = 0.42

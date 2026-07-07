@@ -282,7 +282,11 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 			raw += s.Fcs.Stabilator.Right
 		}
 	case Differential:
-		deflection := s.Fcs.Flap // PA droop, both sides
+		// The flaperon actuator ALREADY carries the PA droop (fcs.go slews it
+		// toward droop±differential; Fcs.Flap is a readout only). Adding Flap
+		// here doubled the droop camber — the whole PA envelope was tuned
+		// around ~2x the displayed flap angle (the balloon when 45° was tried).
+		deflection := 0.0
 		if surface.Side < 0 {
 			deflection += s.Fcs.Flaperon.Left
 		} else {

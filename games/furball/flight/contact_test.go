@@ -83,7 +83,10 @@ func TestTaxi(t *testing.T) {
 		t.Fatalf("throttle does not taxi: %.2f m/s", rolling)
 	}
 	heading := math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X)
-	for i := 0; i < 240*3; i++ {
+	// 1.5 s of pedal: with realistic LOW-mode taxi authority (22.5°, ~13 m radius)
+	// a longer full-pedal turn arcs the jet off the deck edge before the brake
+	// phase — the old 75° throw turned in a 1.4 m pirouette and never moved.
+	for i := 0; i < 240*3/2; i++ {
 		m.Step(Inputs{Gear: true, Throttle: 0.18, Yaw: 1})
 	}
 	turned := math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X)
@@ -281,5 +284,73 @@ func TestProbe(t *testing.T) {
 	}
 	if !fired {
 		t.Fatal("nose-first arrival fired no crash probe")
+	}
+}
+
+// TestTaxiUpSlow: rolling onto the shuttle at taxi speed must gather, not
+// slingshot — the parked-capture holdback tuning once pitched a 3-4 m/s
+// arrival onto its tail probe (grip is now speed-scheduled).
+func TestTaxiUpSlow(t *testing.T) {
+	for _, offset := range []float64{0, 1.5, -1.5} {
+		m := aboard()
+		park(m, 42.7-12, -0.6+offset)
+		for i := 0; i < 240*2; i++ {
+			m.Step(Inputs{Gear: true})
+		}
+		attached := false
+		for i := 0; i < 240*30; i++ {
+			th := 0.12
+			if m.State.Velocity.Length() > 2.5 {
+				th = 0.0
+			}
+			m.Step(Inputs{Gear: true, Throttle: th})
+			if m.State.Gear.Contact >= 0 {
+				t.Fatalf("offset %.1f: CRASH t=%.1fs probe %d", offset, float64(i)/240, m.State.Gear.Contact)
+			}
+			if m.State.Gear.Catapult >= 0 && m.State.Velocity.Length() < 0.2 && i > 240*4 {
+				t.Logf("offset %.1f: attached cleanly at t=%.1fs", offset, float64(i)/240)
+				attached = true
+				break
+			}
+		}
+		if !attached {
+			t.Fatalf("offset %.1f: never attached", offset)
+		}
+		// settle, then the jet must sit ON the spot, aligned down the track
+		for i := 0; i < 240*4; i++ {
+			m.Step(Inputs{Gear: true})
+		}
+		cat := m.World.Carrier.Catapults[m.State.Gear.Catapult]
+		shuttle := m.World.Carrier.world(cat.Position, m.State.Time)
+		nose := m.State.Position.Add(m.State.Attitude.Rotate(m.Airframe.Gear.Nose.Attach.Subtract(m.center)))
+		off := Vec3{X: nose.X - shuttle.X, Z: nose.Z - shuttle.Z}.Length()
+		heading := m.World.Carrier.Heading + cat.Heading
+		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+		forward := m.State.Attitude.Rotate(Vec3{X: 1})
+		align := forward.X*track.X + forward.Z*track.Z
+		if off > 0.5 || align < 0.97 { // within 0.5 m and ~14°: a sloppy offset approach parks visibly crabbed (alignment decays with distance ROLLED in the slot; the caster/damping balance favours a calm capture over a square park) — cosmetic, because the TENSION phase squares the jet on Launch (asserted below)
+			t.Fatalf("offset %.1f: poor spotting: %.2f m off the shuttle, alignment %.5f", offset, off, align)
+		}
+		t.Logf("offset %.1f: spotted %.2f m off, alignment %.5f", offset, off, align)
+		// The launch must run straight regardless of the parked crab: measure
+		// LATE IN THE STROKE while still captive — the release frame itself
+		// carries a legitimate weathervane transient in the test crosswind,
+		// and later samples just read wind drift.
+		for i := 0; i < 240*8 && (m.State.Gear.Stroke < 0 || m.State.Gear.Stroke < 60); i++ {
+			m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: true})
+		}
+		heading = m.World.Carrier.Heading + cat.Heading
+		track = Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+		v := m.State.Velocity
+		lateral := v.X*track.Z - v.Z*track.X
+		forward = m.State.Attitude.Rotate(Vec3{X: 1})
+		align = forward.X*track.X + forward.Z*track.Z
+		// Yaw RATE is deliberately not asserted: a crabbed start actively
+		// swings into line during the run (that rotation is the fix working);
+		// what must hold is the PATH (lateral) and the late-stroke HEADING.
+		if m.State.Gear.Contact >= 0 || math.Abs(lateral) > 2.5 || align < 0.99 { // the captive jet crabs a few degrees INTO the test crosswind while the slot holds its path — nose pinned, tail blown downwind
+			t.Fatalf("offset %.1f: crooked launch: lateral %.2f m/s heading %.5f contact %d", offset, lateral, align, m.State.Gear.Contact)
+		}
+		t.Logf("offset %.1f: stroke straight: lateral %.2f m/s heading %.5f", offset, lateral, align)
 	}
 }

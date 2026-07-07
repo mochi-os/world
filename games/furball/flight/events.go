@@ -145,9 +145,40 @@ func (m *Model) catapult(s *State, in Inputs) {
 		return
 	}
 	cat := &c.Catapults[s.Gear.Catapult]
+	if s.Gear.Stroke <= -3 {
+		// Tension: fire when the jet is straight AND its nose is on the track
+		// line — squaring a crab yaws about the CG and swings the nose off the
+		// line (4.9 m arm), and firing then starts the run with a lateral
+		// yank; the slot spring recentres the castering nose during the hold.
+		// An aligned jet fires the same step it asked to.
+		heading := c.Heading + cat.Heading
+		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+		forward := s.Attitude.Rotate(Vec3{X: 1})
+		swing := forward.X*track.Z - forward.Z*track.X
+		nose := s.Position.Add(s.Attitude.Rotate(m.Airframe.Gear.Nose.Attach.Subtract(m.center)))
+		shuttle := c.world(cat.Position, s.Time)
+		off := Vec3{X: Shortest(nose.X, shuttle.X, m.Environment.Wrap), Z: Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)}
+		cross := off.Subtract(track.Scale(off.X*track.X + off.Z*track.Z))
+		straight := math.Abs(swing) < 0.026 || (math.Abs(swing) < 0.09 && math.Abs(s.Omega.Y) < 0.004)
+		s.Gear.Stroke -= Dt // the tension clock: Stroke decays from -3 while holding
+		// Fire on straightness alone — the nose-offset gate (cross) used to
+		// block convergence-firing and push crabbed jets onto the TIMEOUT
+		// path, and firing crabbed is the one real danger: at speed the tire
+		// slip forces act at deck level and ROLL the jet (a wingtip probe hit
+		// the deck at 30 m into the run). Even the timeout refuses to fire
+		// beyond ~3.4°; the tension equilibrium sits inside that, so it
+		// always fires eventually.
+		_ = cross
+		if straight || (s.Gear.Stroke < -7 && math.Abs(swing) < 0.06) {
+			s.Gear.Stroke = 0
+		}
+		return
+	}
 	if s.Gear.Stroke < 0 {
 		if in.Launch {
-			s.Gear.Stroke = 0
+			if s.Gear.Stroke == -1 {
+				s.Gear.Stroke = -3 // tension first: the couple squares the jet (holdback applies the forces), events fires the shot when straight
+			}
 		} else if (in.Yaw > 0.5 || in.Yaw < -0.5) && in.Throttle < 0.3 {
 			s.Gear.Catapult = -1 // deliberate steer-away at low power: the crew unhooks and you taxi off
 			s.Gear.Stroke = -2   // released latch: no re-attach until clear of the shuttle

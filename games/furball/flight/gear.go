@@ -73,7 +73,15 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	slip := Vec3{X: velocity.X, Z: velocity.Z}
 	roll := s.Attitude.Rotate(Vec3{X: 1})
 	if nose && leg.Steer != 0 {
-		steer := clamp(in.Yaw, -1, 1) * leg.Steer * clamp(1-slip.Length()/60, 0.1, 1)
+		// NWS authority blends LOW mode (22.5°, normal taxi) up to the full HI throw
+		// only near standstill (tight spotting) — full HI at taxi speed spins the jet
+		// on a dime and reads as twitchy under a bang-bang keyboard pedal.
+		low := 22.5 * math.Pi / 180
+		authority := leg.Steer
+		if authority > low {
+			authority = low + (leg.Steer-low)*clamp(1-slip.Length()/2.5, 0, 1)
+		}
+		steer := clamp(in.Yaw, -1, 1) * authority * clamp(1-slip.Length()/60, 0.1, 1)
 		roll = s.Attitude.Rotate(Vec3{X: math.Cos(steer), Z: math.Sin(steer)})
 	}
 	roll = Vec3{X: roll.X, Z: roll.Z}.Normalize()
@@ -89,7 +97,11 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 		knee = regular / 10 // held brakes approximate stiction: idle thrust must not creep the parked jet
 	}
 	force = force.Add(roll.Scale(-grip * normal * along / math.Max(math.Abs(along), knee)))
-	force = force.Add(side.Scale(-cornering * normal / math.Max(side.Length(), regular)))
+	corner := cornering
+	if nose && s.Gear.Catapult >= 0 && s.Gear.Stroke < 0 {
+		corner = cornering * 0.2 // hookup: the nosewheel mostly casters while the bar rides the slot (full grip fights the lateral tow and parks the jet crabbed) — but not freely: some cornering keeps lateral damping in the nose, or the capture rolls and wobbles
+	}
+	force = force.Add(side.Scale(-corner * normal / math.Max(side.Length(), regular)))
 	m.apply(s, force, point, total)
 }
 
