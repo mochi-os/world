@@ -870,7 +870,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 				}
 			}
 			cycle := (len(far) + roving - 1) / roving
-			at := int(tick/4%uint64(cycle)) * roving
+			at := int(tick/3%uint64(cycle)) * roving // snapshots fire every 3 ticks (60/20): advance one window per snapshot, no skipped stretches
 			stop := at + roving
 			if stop > len(far) {
 				stop = len(far)
