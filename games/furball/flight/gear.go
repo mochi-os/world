@@ -79,7 +79,10 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 		low := 22.5 * math.Pi / 180
 		authority := leg.Steer
 		if authority > low {
-			authority = low + (leg.Steer-low)*clamp(1-slip.Length()/2.5, 0, 1)
+			// Full HI throw through spotting speeds (below ~8 kt), fading to LOW by
+			// ~16 kt: the earlier fade-by-2.5 m/s left only LOW at normal taxi and
+			// the jet couldn't turn tightly on deck.
+			authority = low + (leg.Steer-low)*clamp(1-(slip.Length()-4)/4, 0, 1)
 		}
 		steer := clamp(in.Yaw, -1, 1) * authority * clamp(1-slip.Length()/60, 0.1, 1)
 		roll = s.Attitude.Rotate(Vec3{X: math.Cos(steer), Z: math.Sin(steer)})

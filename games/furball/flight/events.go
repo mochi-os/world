@@ -159,6 +159,11 @@ func (m *Model) catapult(s *State, in Inputs) {
 		shuttle := c.world(cat.Position, s.Time)
 		off := Vec3{X: Shortest(nose.X, shuttle.X, m.Environment.Wrap), Z: Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)}
 		cross := off.Subtract(track.Scale(off.X*track.X + off.Z*track.Z))
+		if (in.Yaw > 0.5 || in.Yaw < -0.5) && in.Throttle < 0.3 {
+			s.Gear.Catapult = -1 // tension abort: steering away at idle releases the cat — without this, one Enter press was a one-way door and the jet could never taxi off again
+			s.Gear.Stroke = -2
+			return
+		}
 		straight := math.Abs(swing) < 0.026 || (math.Abs(swing) < 0.09 && math.Abs(s.Omega.Y) < 0.004)
 		s.Gear.Stroke -= Dt // the tension clock: Stroke decays from -3 while holding
 		// Fire on straightness alone — the nose-offset gate (cross) used to
