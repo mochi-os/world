@@ -56,6 +56,19 @@ func (b *Bandit) Place(words []float64) {
 	b.craft.alive = true
 }
 
+// Spawn places the bandit fresh: nose on the velocity, engines spooled,
+// clean airframe — the client's joust merge entry and every respawn.
+func (b *Bandit) Spawn(position, velocity flight.Vec3) {
+	s := &b.craft.model.State
+	*s = flight.State{Position: position, Velocity: velocity, Attitude: flight.Look(velocity.Normalize()), Fuel: fuel}
+	s.Engine[0] = flight.EngineState{Spool: 0.9}
+	s.Engine[1] = flight.EngineState{Spool: 0.9}
+	b.craft.arm()
+	b.craft.flared = 1e9
+	b.craft.brain.reborn()
+	b.craft.alive = true
+}
+
 // Mirror updates the player's reflection: encoded state words, whether the
 // player is firing (tracer perception), and whether the player still flies.
 func (b *Bandit) Mirror(words []float64, firing bool, alive bool) {
