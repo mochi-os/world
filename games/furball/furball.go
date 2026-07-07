@@ -128,6 +128,8 @@ type wreck struct {
 
 type instance struct {
 	mode        string // furball (open, endless) or joust (1v1, first kill ends it)
+	started     bool   // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
+	merged      bool   // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
 	missiles    bool   // rule: missiles allowed
 	environment flight.Environment
 	aircraft    map[int]*craft
@@ -214,16 +216,63 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9}
 	a.arm()
 	i.aircraft[player.Slot] = a
-	return map[string]any{"state": state_payload(&m.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind}, nil
+	if i.mode == "joust" && len(i.aircraft) == 2 && !i.started {
+		// The pair is complete THIS instant: the match starts, and both merge
+		// fresh and simultaneously however long the first arrival sat frozen.
+		i.started = true
+		for _, slot := range i.slots() {
+			b := i.aircraft[slot]
+			i.spawn(slot, b.model)
+			b.model.State.Damage = flight.DamageState{}
+			b.arm()
+			b.alive = true
+			i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&b.model.State)})
+		}
+	}
+	waiting := i.mode == "joust" && !i.started
+	return map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode}, nil
 }
 
 func (i *instance) Leave(player game.Player) {
 	delete(i.aircraft, player.Slot)
-	// A joust abandoned mid-fight ends in favour of whoever stayed.
-	if i.mode == "joust" && !i.finished && len(i.aircraft) == 1 {
+	// A joust abandoned mid-fight ends in favour of whoever stayed — but only
+	// once it actually started: bailing out of the waiting room is not a win.
+	if i.mode == "joust" && i.started && !i.finished && len(i.aircraft) == 1 {
 		for slot := range i.aircraft {
 			i.finish(slot, player.Slot)
 		}
+	}
+}
+
+// free reports whether weapons are enabled: jousts hold fire until the merge.
+func (i *instance) free() bool { return i.mode != "joust" || i.merged }
+
+// merge watches the joust pair for the 3/9-line crossing — the BFM merge: the
+// fight is on when either aircraft passes behind the other's wing line (a few
+// metres of margin so mutual-beam jitter cannot flicker it). One-shot.
+func (i *instance) merge() {
+	if i.mode != "joust" || i.merged || !i.started {
+		return
+	}
+	slots := i.slots()
+	if len(slots) < 2 {
+		return
+	}
+	a, b := i.aircraft[slots[0]], i.aircraft[slots[1]]
+	if a.model == nil || b.model == nil {
+		return
+	}
+	behind := func(from, of *flight.Model) bool {
+		rel := flight.Vec3{
+			X: flight.Shortest(of.State.Position.X, from.State.Position.X, i.environment.Wrap),
+			Y: from.State.Position.Y - of.State.Position.Y,
+			Z: flight.Shortest(of.State.Position.Z, from.State.Position.Z, i.environment.Wrap),
+		} // Shortest returns b-a: arguments ordered (of, from) so rel = from - of""}
+		return rel.Dot(of.State.Attitude.Rotate(flight.Vec3{X: 1})) < -5
+	}
+	if behind(a.model, b.model) || behind(b.model, a.model) {
+		i.merged = true
+		i.events = append(i.events, map[string]any{"kind": "fighton"})
 	}
 }
 
@@ -281,7 +330,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				a.flared = 0
 				i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
 			}
-			if in.Missile && a.alive && i.missiles {
+			if in.Missile && a.alive && i.missiles && i.free() {
 				i.launch(slot, a)
 			}
 			if in.Eject && a.alive && !a.ejected {
@@ -290,6 +339,9 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 		}
 		a.latest = input(list[len(list)-1].Data)
+	}
+	if i.mode == "joust" && !i.started {
+		return // waiting room: no physics until the opponent arrives (the lone jet hangs frozen at the ring; Join starts the match and merges both fresh)
 	}
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
@@ -333,6 +385,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
 		}
 	}
+	i.merge()
 	i.guns(dt, tick)
 	i.pursue(dt, tick)
 	i.drift(dt)
@@ -409,7 +462,7 @@ func (i *instance) drift(dt float64) {
 func (i *instance) guns(dt float64, tick uint64) {
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
-		if !a.alive || !a.latest.Fire || a.ammunition <= 0 {
+		if !a.alive || !a.latest.Fire || a.ammunition <= 0 || !i.free() {
 			a.charge = 0
 			continue
 		}

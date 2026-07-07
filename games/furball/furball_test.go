@@ -108,6 +108,72 @@ func TestJoustLeave(t *testing.T) {
 	}
 }
 
+// TestJoustWaiting: the first joiner is held frozen until the pair completes,
+// then both merge fresh via match-start respawn events.
+func TestJoustWaiting(t *testing.T) {
+	i := build(t, "joust", nil, 1)
+	before := i.aircraft[0].model.State.Position
+	for tick := 0; tick < 120; tick++ {
+		i.Step(0, nil)
+	}
+	if moved := i.aircraft[0].model.State.Position.Subtract(before).Length(); moved > 0.01 {
+		t.Fatalf("lone joust player should be held frozen, moved %.2f m", moved)
+	}
+	welcome, err := i.Join(game.Player{Slot: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if waiting, _ := welcome["waiting"].(bool); waiting {
+		t.Fatal("second joiner must not be waiting")
+	}
+	if !i.started {
+		t.Fatal("pair complete: the match must have started")
+	}
+	respawns := 0
+	for _, e := range i.events {
+		if e["kind"] == "respawn" {
+			respawns++
+		}
+	}
+	if respawns != 2 {
+		t.Fatalf("expected a match-start respawn per slot, got %d", respawns)
+	}
+	after := i.aircraft[0].model.State.Position
+	for tick := 0; tick < 60; tick++ {
+		i.Step(0, nil)
+	}
+	if moved := i.aircraft[0].model.State.Position.Subtract(after).Length(); moved < 1 {
+		t.Fatal("match started: physics should be running")
+	}
+}
+
+// TestJoustMerge: weapons hold until either aircraft crosses the other's
+// 3/9 line; the crossing raises fighton and frees the guns.
+func TestJoustMerge(t *testing.T) {
+	i := build(t, "joust", nil, 2)
+	i.Step(0, nil)
+	if i.merged || i.free() {
+		t.Fatal("head-on at the ring: weapons must be held before the merge")
+	}
+	// Park slot 1 directly BEHIND slot 0 (crossed the 3/9 line by any margin).
+	a, b := i.aircraft[0], i.aircraft[1]
+	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1})
+	b.model.State.Position = a.model.State.Position.Subtract(forward.Scale(100))
+	i.Step(1, nil)
+	if !i.merged || !i.free() {
+		t.Fatal("crossing the 3/9 line must merge the fight and free the weapons")
+	}
+	fighton := false
+	for _, e := range i.events {
+		if e["kind"] == "fighton" {
+			fighton = true
+		}
+	}
+	if !fighton {
+		t.Fatal("the merge must announce fighton")
+	}
+}
+
 // TestFurballRespawn: open mode respawns after the pause.
 func TestFurballRespawn(t *testing.T) {
 	i := build(t, "furball", nil, 2)
