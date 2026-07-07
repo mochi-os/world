@@ -87,6 +87,10 @@ type brain struct {
 	phase    float64    // current jink roll phase
 	missiles int
 	alert    uint64  // tick an inbound missile was first noticed (react delay runs from here)
+	plan     string  // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
+	planned  uint64  // tick the plan was chosen
+	side     float64 // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
+	rolling  uint64  // rolling-scissors phase start; 0 = not rolling
 	sense    float64 // committed roll direction while the aim is beyond ±140° (atan2 flips sides chaotically there)
 	hold     uint64  // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
 	stuck    int     // consecutive decisions of neutral non-progress (stalemate detector)
@@ -351,6 +355,43 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = true
 		b.prey = foe
 		b.distance = span
+		// The reversal cue (tier 3+): the attacker's lateral side FLIPPING
+		// while he's close means he crossed my flight path — reverse the turn
+		// into him NOW (the scissors entry), don't keep the old break.
+		flank := math.Copysign(1, me.Velocity.Normalize().Cross(at).Y)
+		if b.skill.library >= 3 {
+			if b.side != 0 && flank != b.side && span < 700 && tick-b.rolling > 240 && tick > b.hold+240 { // (tangle never accumulates while defensive — the defense case returns before that counter)
+				// Reverse once per genuine overshoot — a scissors flips sides
+				// every weave, and reversing each flip churns the energy away.
+				b.mode = "reverse"
+				b.aim = level(at)
+				b.brake = clamp((speed-0.9*pace)/80, 0, 1)
+				b.hold = tick + 90
+				b.side = flank
+				return
+			}
+			b.side = flank
+		}
+		// The ROLLING scissors (tier 4): a flat scissors that will not resolve
+		// (locked close, no closure) goes three-dimensional — barrel around
+		// his flight path, boards out, force him out front.
+		if b.skill.library >= 4 && span < 500 && speed < 0.85*pace && b.tangle > int(900/b.skill.cadence) {
+			// (the rolling scissors belongs to an already-slow lock — rolling
+			// while fast just hands the angles over)
+			if b.rolling == 0 {
+				b.rolling = tick
+			}
+			phase := float64(tick-b.rolling) / 60 * 1.6 // one barrel every ~4 s
+			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+			out := up.Scale(math.Cos(phase)).Add(me.Attitude.Rotate(flight.Vec3{Z: 1}).Scale(math.Sin(phase)))
+			b.mode = "rolling"
+			b.aim = at.Scale(0.55).Add(out.Scale(0.85)).Normalize()
+			b.g = math.Min(b.g, 4.5)
+			b.throttle, b.reheat, b.brake = 0.5, 0, clamp((speed-0.8*pace)/60, 0, 1)
+			b.hold = tick + uint64(b.skill.cadence) // re-evaluate each cadence: the phase must keep turning
+			return
+		}
+		b.rolling = 0
 		if b.skill.library >= 3 && span < 900 {
 			// Guns jink: irregular out-of-plane rolls off the break, re-rolled
 			// on a deterministic clock so it can't be learned.
@@ -424,8 +465,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		switch {
 		case b.skill.library >= 4 && mine-theirs > 500 && me.Position.Y < 7000:
 			b.aim = direction.Add(flight.Vec3{Y: 1}).Normalize() // take it vertical on an energy edge
+		case b.skill.library >= 3 && b.plan == "one" && tick-b.planned < 720:
+			// Flying the one-circle plan: tight, lift vector ON him — the
+			// radius fight converts at the second pass, not by rate. Tight
+			// means just under corner, never mushing.
+			b.aim = level(direction)
+			b.throttle, b.reheat = clamp(0.6+(0.88*pace-speed)*0.01, 0.5, 1), 0
 		case b.skill.library >= 3 && mine < theirs-300:
-			b.aim = level(direction) // one-circle: slow fight, smallest circle
+			b.aim = level(direction) // energy-poor without a plan: fight radius anyway
 			b.throttle, b.reheat = 0.8, 0
 		default:
 			b.aim = level(direction) // two-circle rate fight at corner
@@ -435,10 +482,26 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// angle is a quarter-circle, not a 12-second, 4 km turnaround — without
 		// it every merge is one-pass-haul-ass forever and nobody ever guns.
 		if closure > 0 && distance < math.Max(600, closure*2.0) {
-			side := math.Copysign(1, me.Velocity.Normalize().Cross(direction).Y) // turn toward his passing side (the two-circle)
-			sin, cos := math.Sin(side*1.3), math.Cos(side*1.3)
+			pass := math.Copysign(1, me.Velocity.Normalize().Cross(direction).Y) // his passing side
+			// The game plan (tier 3+): TWO-circle (rate fight — turn toward his
+			// side, fight at corner in burner) with the energy to rate; ONE-
+			// circle (radius fight — turn across the pass, slow and tight,
+			// denying his nose) when slower or poorer. Held, not re-rolled.
+			turn := pass
+			if b.skill.library >= 3 {
+				if mine < theirs-400 {
+					b.plan, turn = "one", -pass // a REAL energy deficit: deny his rate game
+				} else {
+					b.plan = "two"
+				}
+				b.planned = tick
+			}
+			sin, cos := math.Sin(turn*1.3), math.Cos(turn*1.3)
 			b.aim = flight.Vec3{X: direction.X*cos - direction.Z*sin, Y: 0.05, Z: direction.X*sin + direction.Z*cos}.Normalize()
 			b.throttle, b.reheat = 0.7, 0 // corner the pull, don't rocket past it
+			if b.plan == "one" {
+				b.throttle = 0.75 // the radius fight is tighter, not powerless — half throttle at a merge just donates the energy
+			}
 		}
 	default: // flanking: lead-turn into his future
 		b.mode = "offense"
