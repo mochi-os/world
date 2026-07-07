@@ -174,6 +174,52 @@ func TestJoustMerge(t *testing.T) {
 	}
 }
 
+// BenchmarkStep100: one 60 Hz tick of a full 100-player match (each tick runs
+// 4 flight substeps per aircraft plus the battle cascade and gun processing) —
+// the server CPU budget check for #81. Run: go test ./games/furball -bench Step100 -run xx
+func BenchmarkStep100(b *testing.B) {
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "bench", Game: "furball", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 99.0}})
+	if err != nil {
+		b.Fatal(err)
+	}
+	i := made.(*instance)
+	if _, err := i.Join(game.Player{Name: "human", Slot: 0}); err != nil {
+		b.Fatal(err)
+	}
+	b.ResetTimer()
+	for n := 0; n < b.N; n++ {
+		i.Step(uint64(n), nil)
+		i.Snapshot(uint64(n))
+	}
+}
+
+// TestBotsEndure: the bot autopilot must actually keep bots flying — the
+// first open-loop version spiralled every bot into the sea. Twenty bots,
+// two simulated minutes: nobody dies, nobody sinks low.
+func TestBotsEndure(t *testing.T) {
+	if testing.Short() {
+		t.Skip("two simulated minutes")
+	}
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "endure", Game: "furball", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	for tick := uint64(0); tick < 60*120; tick++ {
+		i.Step(tick, nil)
+	}
+	for slot, a := range i.aircraft {
+		if a.deaths > 0 {
+			t.Fatalf("bot %d died %d times", slot, a.deaths)
+		}
+		if y := a.model.State.Position.Y; y < 1500 {
+			t.Fatalf("bot %d sagging at %.0f m", slot, y)
+		}
+	}
+}
+
 // TestFurballRespawn: open mode respawns after the pause.
 func TestFurballRespawn(t *testing.T) {
 	i := build(t, "furball", nil, 2)

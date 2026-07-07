@@ -16,6 +16,7 @@ package furball
 
 import (
 	"encoding/binary"
+	"fmt"
 	"errors"
 	"math"
 	"sort"
@@ -69,17 +70,38 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 		mode = "furball"
 	}
 	allowed, _ := session.Parameters["missiles"].(bool)
-	return &instance{
+	i := &instance{
 		mode:        mode,
 		missiles:    allowed,
 		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
 		aircraft:    map[int]*craft{},
-	}, nil
+	}
+	// Practice bots (#81 verification / solo flying): server-flown aircraft on
+	// scripted gentle manoeuvres, filling slots from the TOP so the framework's
+	// low-slot assignment for real players cannot collide in practice. Open
+	// mode only — a joust is strictly the human pair.
+	if bots := number(session.Parameters, "bots"); mode != "joust" && bots > 0 {
+		count := int(bots)
+		if count > 99 {
+			count = 99
+		}
+		for n := 0; n < count; n++ {
+			slot := 99 - n
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
+			i.spawn(slot, m)
+			b := &craft{player: game.Player{Name: fmt.Sprintf("Bot %d", n+1), Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true}
+			b.arm()
+			i.aircraft[slot] = b
+		}
+	}
+	return i, nil
 }
 
 type craft struct {
 	player    game.Player
 	kind      string // aircraft catalogue name
+	bot       bool   // server-flown practice aircraft: scripted inputs, no link
+	close     map[int]bool // this recipient's sticky near set (interest hysteresis)
 	model     *flight.Model
 	body      battle.Body
 	condition battle.Condition
@@ -217,6 +239,11 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	a.arm()
 	i.aircraft[player.Slot] = a
 	i.events = append(i.events, map[string]any{"kind": "roster", "slot": player.Slot, "name": player.Name})
+	for slot, b := range i.aircraft {
+		if b.bot {
+			i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": b.player.Name})
+		}
+	}
 	if i.mode == "joust" && len(i.aircraft) == 2 && !i.started {
 		// The pair is complete THIS instant: the match starts, and both merge
 		// fresh and simultaneously however long the first arrival sat frozen.
@@ -343,6 +370,28 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	}
 	if i.mode == "joust" && !i.started {
 		return // waiting room: no physics until the opponent arrives (the lone jet hangs frozen at the ring; Join starts the match and merges both fresh)
+	}
+	for _, slot := range i.slots() {
+		if a := i.aircraft[slot]; a.bot && a.alive {
+			// Bot autopilot: CLOSED loops, not open-loop weaves (those spiralled
+			// every bot into the sea within minutes). Bank tracks a slow
+			// slot-staggered wander, pitch holds a per-slot altitude with climb
+			// damping plus a bank-compensation bias, throttle holds airspeed.
+			s := &a.model.State
+			up := s.Attitude.Rotate(flight.Vec3{Y: 1})
+			right := s.Attitude.Rotate(flight.Vec3{Z: 1})
+			bank := math.Atan2(right.Y, up.Y)
+			t := float64(tick) / 60
+			phase := float64(slot) * 2.399
+			bankTarget := 0.35 * math.Sin(t*0.03+phase)
+			altTarget := 3200 + float64(slot%40)*60
+			speed := s.Velocity.Length()
+			a.latest = flight.Inputs{
+				Throttle: clamp(0.55+(200-speed)*0.01, 0.3, 1),
+				Roll:     clamp((bank-bankTarget)*1.5, -0.5, 0.5), // positive stick rolls right = NEGATIVE bank in the atan2(right.Y, up.Y) convention (the first sign spiralled every bot inverted within seconds)
+				Pitch:    clamp((altTarget-s.Position.Y)*4e-4-s.Velocity.Y*4e-3+math.Abs(bank)*0.15, -0.3, 0.5),
+			}
+		}
 	}
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
@@ -698,8 +747,9 @@ func (i *instance) finish(winner int, loser int) {
 // hot path: names arrive in the welcome and the session mirror, and clients
 // count kills from the kill events.
 const (
-	near   = 20 // nearest remotes in every pose blob (sized with roving + missiles to fit the poses datagram)
-	roving = 8  // far-tail remotes rotated through per snapshot
+	near   = 20 // rank at which a remote ENTERS the recipient's sticky near set
+	depart = 24 // rank past which it leaves (hysteresis: weaving aircraft at the boundary flapped between full- and slow-rate updates — the jerk was visible)
+	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
 
 // pose packs one aircraft into the 34-byte wire record.
@@ -783,14 +833,49 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		})
 		picked := others
 		if len(others) > near {
-			far := others[near:]
+			// Sticky near set with hysteresis: enter at rank <= near, leave past
+			// rank depart — a jet weaving across the plain rank-20 boundary used
+			// to flap between full-rate and round-robin updates.
+			if me.close == nil {
+				me.close = map[int]bool{}
+			}
+			rank := map[int]int{}
+			for r, slot := range others {
+				rank[slot] = r
+			}
+			for slot := range me.close {
+				if r, ok := rank[slot]; !ok || r >= depart {
+					delete(me.close, slot)
+				}
+			}
+			for _, slot := range others[:near] {
+				me.close[slot] = true
+			}
+			for len(me.close) > depart { // bound the set: evict the worst-ranked
+				worst, at := -1, -1
+				for slot := range me.close {
+					if rank[slot] > at {
+						worst, at = slot, rank[slot]
+					}
+				}
+				delete(me.close, worst)
+			}
+			set := make([]int, 0, len(me.close))
+			far := make([]int, 0, len(others)-len(me.close))
+			for _, slot := range others { // keep distance order within each group
+				if me.close[slot] {
+					set = append(set, slot)
+				} else {
+					far = append(far, slot)
+				}
+			}
 			cycle := (len(far) + roving - 1) / roving
 			at := int(tick/4%uint64(cycle)) * roving
 			stop := at + roving
 			if stop > len(far) {
 				stop = len(far)
 			}
-			picked = append(append([]int{}, others[:near]...), far[at:stop]...)
+			picked = append(set, far[at:stop]...)
 		}
 		blob := make([]byte, 0, (len(picked)+1)*34)
 		blob = append(blob, pose(self, me)...) // self first: the client's no-prediction fallback reads its own pose from the wire
