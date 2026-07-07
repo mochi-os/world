@@ -92,7 +92,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 		droopTarget = c.Droop.Angle * clamp(1-pressure/c.Droop.Pressure, 0, 1)
 		slatFloor = 12 * math.Pi / 180 * clamp(1-pressure/c.Droop.Pressure, 0, 1) // NATOPS flaps HALF droops the LEADING edge too (12°); washed out with q̄ like the trailing-edge droop
 		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
-		flapTarget = lateral * 0.30
+		// Wing leveler on deck: as lift builds down the stroke the wheels
+		// unload and the crosswind's rolling moment grows — with no roll
+		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
+		// The real FCS wing-levels on the cat; stick can still command roll.
+		up := m.State.Attitude.Rotate(Vec3{Y: 1})
+		bank := math.Atan2(-up.Z, up.Y)
+		flapTarget = clamp(lateral+bank*2.5-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
 		// Up and away: C* command with the carefree limiter.

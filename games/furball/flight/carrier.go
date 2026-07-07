@@ -88,11 +88,14 @@ func (m *Model) holdback(s *State, total *Forces) {
 	// rolls the jet on its struts — the endless "bounce and roll on capture".
 	// The XZ lever (nose ahead of the CG) still provides the yaw geometry.
 	// The lateral slot applies at CG HEIGHT (a deck-level side force rolls the
-	// jet on its struts — the capture "rock"); the along-track gather stays at
-	// the physical deck-level bar point: its pitch coupling is part of the
-	// tuned launch behaviour (raising it sank the flyaway).
+	// jet on its struts — the capture "rock"). The along-track gather blends
+	// by ENGINE POWER: docking happens at idle, where deck-level braking at
+	// the nose pitched the jet over its nose gear (a -37°/s slam on arrival);
+	// the run-up happens at full power, where the deck-level pitch coupling
+	// is part of the tuned flyaway behaviour (raising it sank the shot).
 	m.apply(s, slot, Vec3{X: point.X, Y: s.Position.Y, Z: point.Z}, total)
-	m.apply(s, gather, point, total)
+	power := clamp((s.Engine[0].Spool-0.2)/0.5, 0, 1)
+	m.apply(s, gather, Vec3{X: point.X, Y: s.Position.Y + (point.Y-s.Position.Y)*power, Z: point.Z}, total)
 	forward := s.Attitude.Rotate(Vec3{X: 1})
 	swing := forward.X*track.Z - forward.Z*track.X // + when nose is left of track
 	if s.Gear.Stroke <= -3 {
