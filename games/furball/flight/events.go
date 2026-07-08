@@ -79,9 +79,16 @@ func (m *Model) touch(s *State) {
 func (m *Model) probes(s *State) {
 	s.Gear.Contact = -1
 	for i, at := range m.Airframe.Probes {
-		point := s.Position.Add(s.Attitude.Rotate(at.Subtract(m.center)))
+		body := at.Subtract(m.center)
+		point := s.Position.Add(s.Attitude.Rotate(body))
 		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)
 		if found && point.Y <= height {
+			// The probes judge contact at FLYING speed — that is what cartwheels
+			// an airframe. Below it (the wingtip dropping at the end of a belly
+			// slide, a slow taxi scrape) contact is ground handling, not a crash.
+			if s.Velocity.Add(s.Attitude.Rotate(s.Omega.Cross(body))).Length() < 20 {
+				continue
+			}
 			s.Gear.Contact = i
 			return
 		}

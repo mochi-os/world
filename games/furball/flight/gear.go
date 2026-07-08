@@ -40,6 +40,9 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 	}
 	if down < 0.95 { // belly skids carry a gear-up arrival
 		for i := range a.Belly {
+			if math.Abs(a.Belly[i].Z) > 3 && s.Velocity.Length() >= 20 {
+				continue // wingtip rests only exist at ground speed — at flying speed a tip in the dirt is the crash probes' business
+			}
 			m.skid(s, a.Belly[i], total)
 		}
 	}
