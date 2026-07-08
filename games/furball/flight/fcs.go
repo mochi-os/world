@@ -83,6 +83,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// Follow the current alpha instead — no error, no windup; the
 			// stick passes through for checks and early rotation stays manual.
 			demand = a + stick*(12*math.Pi/180) // full aft stick rotates ~12° above deck alpha — field takeoffs need real rotation authority
+			if in.Throttle < 0.3 {
+				// Rollout derotation: pure alpha-follow is a RATCHET — every
+				// nose-up disturbance becomes the new setpoint, deceleration
+				// trims nose-up, and by ~11° the wing re-flies (the touchdown
+				// bounce, live-traced at #72). At idle the nose flies gently
+				// down instead; the catapult and takeoffs run power and are
+				// untouched.
+				demand -= 2.5 * math.Pi / 180
+			}
 			f.Integral = 0
 			f.Reference = pitch // leave the deck holding the deck attitude
 		}
