@@ -1,0 +1,113 @@
+package furball
+
+import (
+	"fmt"
+	"math"
+	"testing"
+	"world/games/furball/aircraft"
+	"world/games/furball/flight"
+)
+
+// sustained hunts the Ps=0 load factor at one speed/altitude: fly a bank-held
+// level turn at candidate n (bank from cos φ = 1/n, stick trimmed onto n),
+// measure specific excess power over a settled window, bisect n.
+func sustained(speed, altitude float64) (float64, float64) {
+	measure := func(n float64) float64 {
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m.State.Position = flight.Vec3{Y: altitude}
+		m.State.Velocity = flight.Vec3{X: speed}
+		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+		m.State.Fuel = 2450 // ~half internal: the EM reference weight
+		m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
+		m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
+		stick := clamp((n-1)/6.5, 0.1, 1)
+		target := -math.Acos(clamp(1/n, 0, 1)) // level-turn bank for n
+		var joules0, joules1 float64
+		for tick := 0; tick < 240*8; tick++ {
+			s := &m.State
+			up := s.Attitude.Rotate(flight.Vec3{Y: 1})
+			right := s.Attitude.Rotate(flight.Vec3{Z: 1})
+			bank := math.Atan2(right.Y, up.Y)
+			roll := clamp((bank-target)*2.5, -1, 1)
+			stick = clamp(stick+clamp((n-s.Fcs.Normal)*0.01, -0.01, 0.01), 0.05, 1)
+			m.Step(flight.Inputs{Pitch: stick, Roll: roll, Throttle: 1, Reheat: 1})
+			v := s.Velocity.Length()
+			if tick == 240*5 {
+				joules0 = s.Position.Y + v*v/19.62
+			}
+			if tick == 240*8-1 {
+				joules1 = s.Position.Y + v*v/19.62
+			}
+		}
+		return (joules1 - joules0) / 3 // Ps, m/s, over the settled 3 s window
+	}
+	low, high := 1.5, 7.5
+	for i := 0; i < 9; i++ {
+		mid := (low + high) / 2
+		if measure(mid) > 0 {
+			low = mid
+		} else {
+			high = mid
+		}
+	}
+	n := (low + high) / 2
+	omega := 9.81 * math.Sqrt(n*n-1) / speed * 180 / math.Pi
+	return n, omega
+}
+
+// TestEnvelopeMap is the EM regression battery (#131): the sustained-turn
+// envelope calibrated against the published F/A-18C chart shape (~34,000 lb,
+// sea level, max afterburner). Bands are deliberately generous — the gate
+// catches envelope DRIFT, not chart-transcription pedantry.
+func TestEnvelopeMap(t *testing.T) {
+	if testing.Short() {
+		t.Skip("several simulated minutes of trim hunting")
+	}
+	type point struct{ kt, ft, gLow, gHigh, rateLow float64 }
+	for _, at := range []point{
+		{250, 1500, 3.5, 4.3, 15.0},  // low speed: the radius fight regime
+		{350, 1500, 5.3, 6.1, 16.5},  // the corner-speed sustained benchmark (~18 deg/s real)
+		{450, 1500, 7.0, 7.5, 17.0},  // past the knee: the limiter IS the sustained bound
+		{550, 1500, 7.0, 7.5, 14.0},  // high speed: limiter-bound, rate falling geometrically
+		{350, 15000, 3.3, 4.2, 10.0}, // altitude: thrust lapse bites
+	} {
+		speed := at.kt / 1.944
+		altitude := at.ft / 3.281
+		n, omega := sustained(speed, altitude)
+		fmt.Printf("%4.0f kt @ %5.0f ft: sustained %.2f g, %.1f deg/s\n", at.kt, at.ft, n, omega)
+		if n < at.gLow || n > at.gHigh {
+			t.Fatalf("%.0f kt/%.0f ft: sustained %.2f g outside [%.1f, %.1f]", at.kt, at.ft, n, at.gLow, at.gHigh)
+		}
+		if omega < at.rateLow {
+			t.Fatalf("%.0f kt/%.0f ft: sustained rate %.1f deg/s below %.1f", at.kt, at.ft, omega, at.rateLow)
+		}
+	}
+}
+
+// TestTopSpeed locks the just-validated transonic anchor: a clean jet at low
+// altitude in full afterburner tops out around Mach 1.0 — the drag work above
+// must never quietly turn the Hornet into something faster.
+func TestTopSpeed(t *testing.T) {
+	if testing.Short() {
+		t.Skip("a long acceleration run")
+	}
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	m.State.Position = flight.Vec3{Y: 1500}
+	m.State.Velocity = flight.Vec3{X: 250}
+	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	m.State.Fuel = 2450
+	m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
+	m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
+	stick := 0.0
+	for tick := 0; tick < 240*120; tick++ {
+		s := &m.State
+		// hold roughly level with a gentle altitude loop
+		stick = clamp(stick+clamp(((1500-s.Position.Y)*0.001-s.Velocity.Y*0.01-stick*4)*0.001, -0.002, 0.002), -0.3, 0.5)
+		m.Step(flight.Inputs{Pitch: stick, Throttle: 1, Reheat: 1})
+	}
+	local := 340.3 * math.Sqrt(1-2.2558e-5*1500*6.5/288) // rough local sound speed
+	mach := m.State.Velocity.Length() / local
+	if mach < 0.93 || mach > 1.12 {
+		t.Fatalf("clean sea-level top speed M%.2f: the transonic anchor moved", mach)
+	}
+}

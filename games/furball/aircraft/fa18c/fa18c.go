@@ -56,8 +56,8 @@ func build() *flight.Airframe {
 	a.Control.Slat.Limit = 25 * math.Pi / 180
 	a.Control.Flap.Slope = 0.5
 	a.Control.Flap.Offset = 0.03
-	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°, washed out by ~350 KCAS
-	a.Control.Flap.Pressure = 25000
+	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°
+	a.Control.Flap.Pressure = 45000 // washout complete ~M0.78 at sea level (#131): the real AUTO schedule keys on Mach, not 350 KCAS — at 25 kPa the wing fought its combat-CL turns camber-less and sustained rates ran 1.5-2 deg/s short
 	a.Control.Droop.Angle = 26 * math.Pi / 180 // PA droop, HELD through the approach band (see the fcs schedule). Calibrated to the on-speed anchor (134 kt at alpha 8.1, envelope_test.go): the camber model lifts more per degree than the real TEF, so the NATOPS 30/45° labels over-lift — this is the angle whose LIFT matches the real approach numbers
 	a.Control.Droop.Pressure = 10000 // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
 	a.Control.Toe = 30 * math.Pi / 180 // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
@@ -94,7 +94,7 @@ func build() *flight.Airframe {
 	for _, side := range []float64{-1, 1} {
 		// Main wing: the C panel is ~80% of the F's area on 84% of the span.
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
-			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.22,
+			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.19, // K to the documented classic F-18 polar (#131): at 0.22 the sustained-turn map ran 0.5-0.7 g short of the EM chart across 250-400 kt
 			Vortex: 0.6, Breakdown: 22 * math.Pi / 180, Channel: flight.Differential,
 		}, 8, span{1.0, 5.7, side}, chord{4.0, 1.1}, sweep{0.55, -1.75}, twist{0.017, -0.052}, &wing, 0.25, 0.52))
 		// LEX: the C's original strake — the E/F enlarged it by a third.

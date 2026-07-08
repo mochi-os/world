@@ -860,6 +860,9 @@ func TestEngagement(t *testing.T) {
 		i := build(t, "furball", nil, 2)
 		kinds := map[string]int{}
 		for tick := 0; tick < 60*8; tick++ {
+			if i.aircraft[1].model == nil {
+				break // wrecked mid-script: the #131 polar made this tracking fire lethal enough to kill inside the window
+			}
 			place(i, 0, 1, 220)
 			i.aircraft[0].model.State.Position.Y = 3000
 			i.aircraft[1].model.State.Position.Y = 3000

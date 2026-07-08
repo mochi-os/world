@@ -182,7 +182,7 @@ func TestTrap(t *testing.T) {
 	m.State.Engine[1] = EngineState{Spool: 0.7}
 	caught := false
 	for i := 0; i < 240*10; i++ {
-		m.Step(Inputs{Gear: true, Hook: true, Throttle: 0.45})
+		m.Step(Inputs{Gear: true, Hook: true, Throttle: 0.42}) // 0.45 -> 0.42 with the #131 polar calibration: less drag-due-to-lift at approach CL floats the same scripted pass past the wires
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}
