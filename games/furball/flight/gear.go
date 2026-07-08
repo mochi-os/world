@@ -38,6 +38,20 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 		m.strut(s, &a.Gear.Left, in, down, false, total)
 		m.strut(s, &a.Gear.Right, in, down, false, total)
 	}
+	if s.Gear.Wow {
+		// Ground roll stability: planted on the wheels, the tires and gear
+		// resist roll — the contact patches can't scrub sideways freely. A
+		// restoring + damping roll moment that does NOT depend on airspeed, so
+		// the hard low-speed arrest (nose-down pitch unloads the mains and the
+		// flaperon leveler has no air to bite) can't bank away uncontrolled
+		// (#72: the trap banked up to ~15° at the stop, worse at low frame
+		// rates). Damping-dominant; scaled by extension so a gear-up belly has
+		// none.
+		up := s.Attitude.Rotate(Vec3{Y: 1})
+		right := s.Attitude.Rotate(Vec3{Z: 1})
+		bank := math.Atan2(right.Y, up.Y)
+		total.Moment = total.Moment.Add(Vec3{X: -(bank*6e5 + s.Omega.X*1.2e6) * down})
+	}
 	if down < 0.95 { // belly skids carry a gear-up arrival
 		carried := m.carried(s)
 		nose := s.Attitude.Rotate(Vec3{X: 1}).Y
