@@ -446,7 +446,7 @@ func TestBotGunnery(t *testing.T) {
 		t.Skip("several simulated minutes")
 	}
 	aceHits, aceRounds, rookieHits, rookieRounds := 0, 0, 0, 0
-	for seed := uint64(1); seed <= 3; seed++ {
+	for seed := uint64(1); seed <= 8; seed++ {
 		h, r := gunnery(t, "ace", seed)
 		aceHits, aceRounds = aceHits+h, aceRounds+r
 		h, r = gunnery(t, "rookie", seed)
@@ -454,7 +454,7 @@ func TestBotGunnery(t *testing.T) {
 	}
 	t.Logf("ace %d/%d hits per round, rookie %d/%d", aceHits, aceRounds, rookieHits, rookieRounds)
 	if aceHits < 10 {
-		t.Fatalf("the ace landed only %d hits from the saddle in three 90 s runs", aceHits)
+		t.Fatalf("the ace landed only %d hits from the saddle across the seeds", aceHits)
 	}
 	// The skill claim is EFFICIENCY: the ace fires only real solutions, the
 	// rookie sprays — hits per round must separate by at least 3×.

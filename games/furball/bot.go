@@ -631,6 +631,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.aim, _ = i.bearing(me.Position, spot)
 		if direction.Dot(nose) > 0.94 && tail > 0.2 {
 			b.mode = "saddle"
+			b.g = math.Min(b.g, 4) // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
 			b.throttle = clamp(0.7-closure*0.006, 0.2, 1) // match his speed, sit in the zone
 			b.reheat = 0
 			if closure > 90 && b.skill.library >= 3 {

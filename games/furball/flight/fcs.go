@@ -43,7 +43,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	// trim jump. While the gear is in transit, decay it to zero: each law
 	// re-learns its own trim during the ~2 s of travel, behind the demand faders.
 	if extension := m.State.Gear.Extension; extension > 0.02 && extension < 0.98 {
-		f.Integral *= 1 - 1.2*Dt   // gentle: still fully laundered over the ~6 s of gear travel (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
+		f.Integral *= 1 - 1.2*Dt // gentle: still fully laundered over the ~6 s of gear travel (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
 	}
 
 	if m.Direct {
@@ -88,7 +88,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		}
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
-		stabTarget = -(errorTerm*0.34 + f.Integral) - stick*0.10 // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
+		stabTarget = -(errorTerm*0.34 + f.Integral) - stick*0.10      // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
 		// Hold-then-washout: the real TEF schedule HOLDS the commanded setting
 		// through the approach band and retracts approaching the flap limit —
 		// the old linear fade left only ~2/3 droop at on-speed ("flaps up" on
@@ -96,7 +96,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
 		droopTarget = c.Droop.Angle * schedule
 		slatFloor = 12 * math.Pi / 180 * schedule // NATOPS flaps HALF droops the LEADING edge too (12°)
-		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
+		brakeTarget = 0                           // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		// Wing leveler on deck: as lift builds down the stroke the wheels
 		// unload and the crosswind's rolling moment grows — with no roll
 		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
@@ -196,7 +196,11 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if star*f.Integral < 0 {
 			delta = clamp(star, -1.5, 1.5) // unwinding: release trim fast — clamping both ways held wound-up nose-up trim through a deceleration (the low-power balloon)
 		}
-		f.Integral = clamp(f.Integral+flying*delta*gain*0.3*Dt, -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce)
+		fast := 0.0 // the boundary-hold rate: a full-stick pull PINS the demand at the g limit, and only there does the trim need to hurry — at a flat 0.3 sustained pulls parked ~1 g short for ~15 s; anything error-based misfires on fine tracking, whose small stick wiggles are LARGE demand swings
+		if f.Demand > ceiling-0.5 || f.Demand < floor+0.5 {
+			fast = 0.7
+		}
+		f.Integral = clamp(f.Integral+flying*delta*gain*(0.3+fast)*Dt, -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce). ERROR-ADAPTIVE rate (#131): the gentle 0.3 keeps fine tracking calm, but against a large persistent error it triples — at a flat 0.3 the boundary trim needed ~15 s to close the last g and sustained pulls parked at 6.5
 		// Stick feedforward: the real CAS has a direct forward path, so a
 		// slam bites the surface immediately while the g loop trims behind
 		// it — without it the response is bandwidth-limited and reads mushy.
