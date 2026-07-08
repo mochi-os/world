@@ -40,9 +40,13 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 	}
 	if down < 0.95 { // belly skids carry a gear-up arrival
 		carried := m.carried(s)
+		nose := s.Attitude.Rotate(Vec3{X: 1}).Y
 		for i := range a.Belly {
 			if math.Abs(a.Belly[i].Z) > 3 && !carried && s.Velocity.Length() >= 20 {
 				continue // an unsupported tip in the dirt at flying speed is the crash probes' business — but once the BELLY bears the jet, a tip grinding out the end of the slide is structure at any speed
+			}
+			if a.Belly[i].X > 4 && nose < -0.08 {
+				continue // nose-first beyond the keel's flat range: the nose barrel is no load path — the crash probes judge that arrival (the measured deep nose point otherwise cushioned a crash dive)
 			}
 			m.skid(s, a.Belly[i], total)
 		}
@@ -118,6 +122,9 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 // contact — the jet is riding its belly, so wingtip touches are grinding
 // scrapes, not arrivals.
 func (m *Model) carried(s *State) bool {
+	if s.Velocity.Y < -6 {
+		return false // slamming, not riding: past a survivable sink the belly is not a load path and the probes judge the arrival
+	}
 	for i := range m.Airframe.Belly {
 		at := m.Airframe.Belly[i]
 		if math.Abs(at.Z) > 3 {

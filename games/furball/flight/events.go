@@ -78,10 +78,10 @@ func (m *Model) touch(s *State) {
 // crash).
 func (m *Model) probes(s *State) {
 	s.Gear.Contact = -1
-	sliding := s.Gear.Extension < 0.95 && m.carried(s) // riding the belly: wingtip contact is the grinding end of a slide, not an arrival
+	sliding := s.Gear.Extension < 0.95 && m.carried(s) // riding the belly (carried excludes slamming arrivals): contact while the belly bears the jet is grinding, not arriving
 	for i, at := range m.Airframe.Probes {
-		if sliding && math.Abs(at.Z) > 3 {
-			continue
+		if sliding {
+			continue // every probe yields while the belly carries — the deep measured keel otherwise walks the nose probe onto the ground during an ordinary slide
 		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))

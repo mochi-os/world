@@ -149,8 +149,8 @@ func build() *flight.Airframe {
 	a.Hook.Length = 2.4
 	// Crash probes and belly skid points, scaled to the shorter airframe.
 	a.Probes = []flight.Vec3{{X: 8.0, Y: -0.4}, {X: -8.0, Y: 0.3}, {X: -1.4, Z: -5.7}, {X: -1.4, Z: 5.7}, {X: -5.6, Y: 2.9, Z: -1.3}, {X: -5.6, Y: 2.9, Z: 1.3}}
-	a.Belly = []flight.Vec3{{X: 6.3, Y: -0.95}, {X: 2.7, Y: -1.15}, {X: -0.9, Y: -1.2}, {X: -4.2, Y: -1.1}, // the nose-barrel point (#72): with only aft points the decelerating slide dropped the nose onto the crash probe — a gentle belly landing always ended in a crash instead of a scrape
-		{X: -1.4, Y: -0.35, Z: -5.7}, {X: -1.4, Y: -0.35, Z: 5.7}} // wingtip rests: at GROUND speed the tips are supportive structure carrying a settled wing (gear.go gates them off at flying speed, where the crash probes own the tips)
+	a.Belly = []flight.Vec3{{X: 6.3, Y: -1.2}, {X: 2.7, Y: -1.3}, {X: -0.9, Y: -1.35}, {X: -4.2, Y: -1.3}, // fuselage keel MEASURED from the rendered mesh (dev_measure, #72): deepest -1.35 mid, -1.32 at the ventral fins, -1.26 at the nose barrel — eyeballed shallower values sank the model visibly into the runway. The nose point exists because with only aft points the decelerating slide dropped the nose onto the crash probe
+		{X: 0.2, Y: -0.77, Z: -6.26}, {X: 0.2, Y: -0.77, Z: 6.26}} // wingtip rests at the MEASURED rail (y -0.77, z 6.26): the old inboard/shallow guess let a topple lean ~8 degrees and dip the stabilators into the runway; the real rail catches at ~5 and the stabs stay clear (gear.go gates the tips off for unsupported flying-speed arrivals, where the crash probes own them)
 	return a
 }
 
