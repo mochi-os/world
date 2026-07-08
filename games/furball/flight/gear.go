@@ -51,6 +51,15 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 		right := s.Attitude.Rotate(Vec3{Z: 1})
 		bank := math.Atan2(right.Y, up.Y)
 		total.Moment = total.Moment.Add(Vec3{X: -(bank*6e5 + s.Omega.X*1.2e6) * down})
+		if s.Gear.Wire >= 0 {
+			// Pitch RATE damping DURING THE ARREST only (wire caught): the hard
+			// wire deceleration yanks the nose down (hook below CG) and the nose
+			// strut rebounds — the pitch oscillated (nose-down, then a nose-up
+			// topple) into a crash at low/variable frame rates (#72). Gated on
+			// the wire so it never resists the hook reaching the deck to catch,
+			// nor a takeoff rotation. Pitch = rotation about the lateral (Z) axis.
+			total.Moment = total.Moment.Add(Vec3{Z: -s.Omega.Z * 1.5e6})
+		}
 	}
 	if down < 0.95 { // belly skids carry a gear-up arrival
 		carried := m.carried(s)
