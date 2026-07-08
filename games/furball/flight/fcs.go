@@ -83,7 +83,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// Follow the current alpha instead — no error, no windup; the
 			// stick passes through for checks and early rotation stays manual.
 			demand = a + stick*(12*math.Pi/180) // full aft stick rotates ~12° above deck alpha — field takeoffs need real rotation authority
-			if in.Throttle < 0.3 {
+			if in.Throttle < 0.3 && m.State.Gear.Wire < 0 {
 				// Rollout derotation: pure alpha-follow is a RATCHET — every
 				// nose-up disturbance becomes the new setpoint, deceleration
 				// trims nose-up, and by ~11° the wing re-flies (the touchdown
@@ -111,7 +111,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
 		// The real FCS wing-levels on the cat; stick can still command roll.
 		up := m.State.Attitude.Rotate(Vec3{Y: 1})
-		bank := math.Atan2(-up.Z, up.Y)
+		starboard := m.State.Attitude.Rotate(Vec3{Z: 1})
+		bank := math.Atan2(starboard.Y, up.Y) // heading-independent roll: the old atan2(-up.Z, up.Y) is world-frame and reads pitch as PHANTOM BANK on any off-axis heading — on the carrier strip (~30 deg off world X) at the trap runout's -8 deg pitch the leveler chased ~4 deg of fiction at gain 2.5 and ground-looped the rollout (#72 scenario 9)
 		flapTarget = clamp(lateral+bank*2.5-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {

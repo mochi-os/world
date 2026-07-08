@@ -22,7 +22,7 @@ const (
 	capture  = 5.0    // m: catapult attach radius around the shuttle
 	tension  = 3000.0 // N per metre of cable payout (at the reference weight setting)
 	absorb   = 8000.0 // N·s/m of payout rate (at the reference weight setting)
-	greatest = 6.0e5  // cable tension ceiling, N (at the reference weight setting)
+	greatest = 4.2e5  // cable tension ceiling, N (at the reference weight setting): sized so a mid-weight engagement nets ~300 kN ≈ 2.4 g and ~100 m of runout, the Mk 7 class — at 6e5 the wire pulled 4.7 g and crushed the nose gear to a fuselage strike; at 3e5 the setting-scaled pull fell to 220 kN and the runout ran 156 m off the angle deck (#72 scenario 9)
 	// The energy the constants above were tuned at: the setting formula below
 	// evaluated at TestTrap's condition (fa18c, full internal fuel 15,600 kg,
 	// sea-level deck: expected engagement 1.16×stall ≈ 76.5 m/s). Defined
@@ -124,7 +124,7 @@ func (m *Model) holdback(s *State, total *Forces) {
 		return
 	}
 	// Nose-down-the-track trim on top of the emergent rolling alignment.
-	trim := clamp(1-velocity.Length()/2.0, 0, 1) // fades in through the final creep: while rolling fast the nose-point tow self-aligns the body like a trailer (caster) and a yaw torque only fights it; below ~2 m/s the wheels still roll enough to yaw, and the trim squares the last few degrees before tire grip locks the pose
+	trim := clamp(1-velocity.Length()/2.0, 0, 1)                                                              // fades in through the final creep: while rolling fast the nose-point tow self-aligns the body like a trailer (caster) and a yaw torque only fights it; below ~2 m/s the wheels still roll enough to yaw, and the trim squares the last few degrees before tire grip locks the pose
 	total.Moment = total.Moment.Add(Vec3{Y: -swing * 1.2e6 * trim}.Subtract(Vec3{Y: s.Omega.Y * 8e5 * trim})) // -swing: see the tension note; strength doubled — the regularised tire friction yields slowly and the weaker trim parked offset arrivals 12° crabbed
 }
 
@@ -209,7 +209,7 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 	setting := m.mass * engage * engage / reference
 	pull := clamp(setting*(tension*payout+absorb*rate), 0, setting*greatest)
 	if rate < 0 {
-		pull = clamp(setting*tension*payout*0.12, 0, setting*greatest) // the arresting engine dissipates: almost no recoil
+		pull = 0 // the arresting engine dissipates: no recoil — even a 12%-of-payout residual dragged the stopped jet 68 m backwards down the deck (#72 scenario 9)
 	}
 	direction := legA.Normalize().Add(legB.Normalize()).Normalize()
 	m.apply(s, direction.Scale(pull), tip, total)

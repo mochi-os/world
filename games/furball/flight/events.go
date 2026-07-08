@@ -234,8 +234,8 @@ func (m *Model) wire(s *State, in Inputs) {
 	now := m.hook(s)
 	before := now.Subtract(s.Velocity.Scale(Dt)) // the swept path, derived — nothing stored
 	local := c.local(now, s.Time, m.Environment.Wrap)
-	if local.Y < -3 || local.Y > 4 {
-		return // hook nowhere near the deck plane
+	if local.Y < -1 || local.Y > 0.15 {
+		return // the wires sit centimetres proud of the deck: the tip must be SCRAPING, not passing overhead — the old 4 m band snagged wires in mid-air and yanked the jet down mid-flight (the scenario-9 topple)
 	}
 	previous := c.local(before, s.Time, m.Environment.Wrap)
 	for i := range c.Wires {
