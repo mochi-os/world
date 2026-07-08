@@ -36,7 +36,7 @@ const (
 	pause    = 5.0    // seconds from death to respawn (furball mode)
 	rounds   = 578    // M61 magazine per life
 	rate     = 100.0  // rounds per second (6,000 rpm)
-	muzzle   = 6.0    // m forward of the datum, matching the client's tracer port
+	muzzle   = 6.53   // m forward of the datum — the M61 port on the nose top, matching the client's tracer origin
 	derelict = 30.0   // s a pilot-dead/ejected wreck keeps flying
 )
 
