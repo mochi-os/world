@@ -84,6 +84,98 @@ func TestEnvelopeMap(t *testing.T) {
 	}
 }
 
+// TestAcceleration: the straight-line envelope — a clean jet at sea level in
+// full afterburner takes roughly 20-30 s from 300 to 600 kt. This gate would
+// have caught the lean-afterburner SFC bug from the other direction.
+func TestAcceleration(t *testing.T) {
+	if testing.Short() {
+		t.Skip("a long acceleration run")
+	}
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	m.State.Position = flight.Vec3{Y: 1500}
+	m.State.Velocity = flight.Vec3{X: 300 / 1.944}
+	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	m.State.Fuel = 2450
+	m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
+	m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
+	stick, elapsed := 0.0, -1.0
+	for tick := 0; tick < 240*60; tick++ {
+		s := &m.State
+		stick = clamp(stick+clamp(((1500-s.Position.Y)*0.001-s.Velocity.Y*0.01-stick*4)*0.001, -0.002, 0.002), -0.3, 0.5)
+		m.Step(flight.Inputs{Pitch: stick, Throttle: 1, Reheat: 1})
+		if s.Velocity.Length() >= 600/1.944 {
+			elapsed = float64(tick) / 240
+			break
+		}
+	}
+	fmt.Printf("300->600 kt at sea level: %.1f s\n", elapsed)
+	if elapsed < 0 {
+		t.Fatal("never reached 600 kt in a minute of full afterburner")
+	}
+	if elapsed < 15 || elapsed > 40 {
+		t.Fatalf("300->600 kt took %.1f s: expected ~20-30", elapsed)
+	}
+}
+
+// TestClimb: the 1-g specific excess power at sea level — the real jet climbs
+// ~44,000 ft/min (~220 m/s of Ps) at combat weight in full afterburner.
+func TestClimb(t *testing.T) {
+	if testing.Short() {
+		t.Skip("an energy-rate measurement")
+	}
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	m.State.Position = flight.Vec3{Y: 1000}
+	m.State.Velocity = flight.Vec3{X: 180} // ~350 kt: near best climb speed
+	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	m.State.Fuel = 2450
+	m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
+	m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
+	// Level full-burner run: Ps at 1 g is the energy-height rate, measured
+	// over a settled window regardless of how it splits into climb vs accel.
+	var joules0, joules1 float64
+	stick := 0.0
+	for tick := 0; tick < 240*8; tick++ {
+		s := &m.State
+		stick = clamp(stick+clamp(((1000-s.Position.Y)*0.001-s.Velocity.Y*0.01-stick*4)*0.001, -0.002, 0.002), -0.3, 0.5)
+		m.Step(flight.Inputs{Pitch: stick, Throttle: 1, Reheat: 1})
+		v := s.Velocity.Length()
+		if tick == 240*3 {
+			joules0 = s.Position.Y + v*v/19.62
+		}
+		if tick == 240*8-1 {
+			joules1 = s.Position.Y + v*v/19.62
+		}
+	}
+	rate := (joules1 - joules0) / 5
+	fmt.Printf("sea-level 1 g Ps at ~350 kt: %.0f m/s (%.0f ft/min equivalent)\n", rate, rate*197)
+	if rate < 150 || rate > 300 {
+		t.Fatalf("1 g Ps %.0f m/s: expected ~180-260 (the ~44,000 ft/min class)", rate)
+	}
+}
+
+// TestRoll: full lateral stick at combat speed — the Hornet rolls
+// ~180-220 deg/s; the FCS commands 3.8 rad/s tempered by speed and alpha.
+func TestRoll(t *testing.T) {
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	m.State.Position = flight.Vec3{Y: 1500}
+	m.State.Velocity = flight.Vec3{X: 180}
+	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	m.State.Fuel = 2450
+	m.State.Engine[0] = flight.EngineState{Spool: 1}
+	m.State.Engine[1] = flight.EngineState{Spool: 1}
+	peak := 0.0
+	for tick := 0; tick < 240*3; tick++ {
+		m.Step(flight.Inputs{Roll: 1, Throttle: 0.8})
+		if r := math.Abs(m.State.Omega.X) * 180 / math.Pi; r > peak {
+			peak = r
+		}
+	}
+	fmt.Printf("full-stick roll at 350 kt: %.0f deg/s peak\n", peak)
+	if peak < 150 || peak > 260 {
+		t.Fatalf("roll rate %.0f deg/s: expected the 180-220 class", peak)
+	}
+}
+
 // TestTopSpeed locks the just-validated transonic anchor: a clean jet at low
 // altitude in full afterburner tops out around Mach 1.0 — the drag work above
 // must never quietly turn the Hornet into something faster.
