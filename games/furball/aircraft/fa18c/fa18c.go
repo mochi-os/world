@@ -149,7 +149,7 @@ func build() *flight.Airframe {
 	a.Hook.Length = 2.4
 	// Crash probes and belly skid points, scaled to the shorter airframe.
 	a.Probes = []flight.Vec3{{X: 8.0, Y: -0.4}, {X: -8.0, Y: 0.3}, {X: -1.4, Z: -5.7}, {X: -1.4, Z: 5.7}, {X: -5.6, Y: 2.9, Z: -1.3}, {X: -5.6, Y: 2.9, Z: 1.3}}
-	a.Belly = []flight.Vec3{{X: 6.3, Y: -0.8}, {X: 2.7, Y: -1.0}, {X: -0.9, Y: -1.05}, {X: -4.2, Y: -0.95}, // the nose-barrel point (#72): with only aft points the decelerating slide dropped the nose onto the crash probe — a gentle belly landing always ended in a crash instead of a scrape
+	a.Belly = []flight.Vec3{{X: 6.3, Y: -0.95}, {X: 2.7, Y: -1.15}, {X: -0.9, Y: -1.2}, {X: -4.2, Y: -1.1}, // the nose-barrel point (#72): with only aft points the decelerating slide dropped the nose onto the crash probe — a gentle belly landing always ended in a crash instead of a scrape
 		{X: -1.4, Y: -0.35, Z: -5.7}, {X: -1.4, Y: -0.35, Z: 5.7}} // wingtip rests: at GROUND speed the tips are supportive structure carrying a settled wing (gear.go gates them off at flying speed, where the crash probes own the tips)
 	return a
 }

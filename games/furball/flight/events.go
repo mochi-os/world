@@ -78,7 +78,11 @@ func (m *Model) touch(s *State) {
 // crash).
 func (m *Model) probes(s *State) {
 	s.Gear.Contact = -1
+	sliding := s.Gear.Extension < 0.95 && m.carried(s) // riding the belly: wingtip contact is the grinding end of a slide, not an arrival
 	for i, at := range m.Airframe.Probes {
+		if sliding && math.Abs(at.Z) > 3 {
+			continue
+		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
 		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)

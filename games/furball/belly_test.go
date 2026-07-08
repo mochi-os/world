@@ -18,6 +18,9 @@ func TestBellyProbe(t *testing.T) {
 	m.State.Attitude = flight.Axis(flight.Vec3{Z: 1}, 5*math.Pi/180)
 	m.State.Gear = flight.GearState{Extension: 0, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	for tick := 0; tick < 240*40; tick++ {
+		if tick == 240*12 {
+			m.State.Omega.X = 0.3 // mid-slide roll disturbance (a joystick twitch): the wing falls and the tip grinds while still above 20 m/s — the end of most real gear-up slides, and it must be a scrape, not a crash
+		}
 		m.Step(flight.Inputs{})
 		if m.State.Gear.Contact >= 0 {
 			t.Fatalf("tick %d: crash probe %d fired during the belly slide (v=%.0f pitch=%.1f)", tick, m.State.Gear.Contact,

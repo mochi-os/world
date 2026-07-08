@@ -39,9 +39,10 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 		m.strut(s, &a.Gear.Right, in, down, false, total)
 	}
 	if down < 0.95 { // belly skids carry a gear-up arrival
+		carried := m.carried(s)
 		for i := range a.Belly {
-			if math.Abs(a.Belly[i].Z) > 3 && s.Velocity.Length() >= 20 {
-				continue // wingtip rests only exist at ground speed — at flying speed a tip in the dirt is the crash probes' business
+			if math.Abs(a.Belly[i].Z) > 3 && !carried && s.Velocity.Length() >= 20 {
+				continue // an unsupported tip in the dirt at flying speed is the crash probes' business — but once the BELLY bears the jet, a tip grinding out the end of the slide is structure at any speed
 			}
 			m.skid(s, a.Belly[i], total)
 		}
@@ -113,6 +114,24 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 
 // skid is one belly contact point: a stiff structure spring with skid
 // friction — survivable by design; the host judges the arrival.
+// carried reports whether the fuselage belly (the |Z|<3 points) is in ground
+// contact — the jet is riding its belly, so wingtip touches are grinding
+// scrapes, not arrivals.
+func (m *Model) carried(s *State) bool {
+	for i := range m.Airframe.Belly {
+		at := m.Airframe.Belly[i]
+		if math.Abs(at.Z) > 3 {
+			continue
+		}
+		point := s.Position.Add(s.Attitude.Rotate(at.Subtract(m.center)))
+		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+		if found && height-point.Y > -0.15 {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Model) skid(s *State, at Vec3, total *Forces) {
 	body := at.Subtract(m.center)
 	point := s.Position.Add(s.Attitude.Rotate(body))
