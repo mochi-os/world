@@ -343,15 +343,30 @@ func TestBotsFight(t *testing.T) {
 		t.Fatal(err)
 	}
 	i := made.(*instance)
+	living := map[int]bool{}
+	for slot, a := range i.aircraft {
+		living[slot] = a.alive
+	}
+	splashes := 0
 	for tick := uint64(0); tick < 60*180; tick++ {
 		i.Step(tick, nil)
+		for slot, a := range i.aircraft {
+			if living[slot] && !a.alive {
+				mode := "-"
+				if a.brain != nil {
+					mode = a.brain.mode
+				}
+				t.Logf("t=%ds slot %d died: mode=%s y=%.0f damager=%d", tick/60, slot, mode, a.model.State.Position.Y, a.condition.Damager)
+				if a.condition.Damager < 0 {
+					splashes++ // judged AT the death: the end-of-run condition belongs to the respawned jet, not the corpse
+				}
+			}
+			living[slot] = a.alive
+		}
 	}
-	kills, splashes := 0, 0
+	kills := 0
 	for _, a := range i.aircraft {
 		kills += a.kills
-		if a.deaths > 0 && a.condition.Damager < 0 {
-			splashes++ // died with no damager on record: the sea got them
-		}
 	}
 	// Kill count among EQUALS is dice (see TestBotDuel's reasoning; the skill
 	// gate is TestBotGunnery). The stable invariant here is terrain discipline.
@@ -566,6 +581,124 @@ func TestBandit(t *testing.T) {
 	}
 }
 
+// missileRange builds a two-craft arena for direct missile physics tests:
+// the shooter at slot 0, the target at slot 1, one missile in flight.
+func missileRange(t *testing.T, position, velocity flight.Vec3) (*instance, *craft, *missile) {
+	t.Helper()
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "range", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+		Parameters: map[string]any{"missiles": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	for slot := 0; slot < 2; slot++ {
+		if _, err := i.Join(game.Player{Name: "p", Slot: slot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := i.aircraft[1]
+	target.model.State.Position = position
+	target.model.State.Velocity = velocity
+	target.model.State.Attitude = flight.Look(velocity.Normalize())
+	shooter := i.aircraft[0]
+	shooter.model.State.Position = flight.Vec3{Y: 3000}
+	shooter.model.State.Velocity = flight.Vec3{X: 250}
+	shooter.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	i.launched++
+	sight, _ := i.bearing(shooter.model.State.Position, position)
+	m := &missile{shooter: 0, target: 1, position: shooter.model.State.Position, life: missile_life,
+		velocity: flight.Vec3{X: 280}, burn: missile_boost, sight: sight, number: i.launched}
+	i.flying = append(i.flying, m)
+	return i, target, m
+}
+
+// fly advances only the missile world; the target flies a straight line.
+func fly(i *instance, target *craft, seconds float64) int {
+	dt := 1.0 / 60
+	ticks := int(seconds * 60)
+	for tick := 0; tick < ticks; tick++ {
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		i.pursue(dt, uint64(tick))
+		if len(i.flying) == 0 {
+			return tick
+		}
+	}
+	return ticks
+}
+
+// TestMissileBoost: the motor accelerates hard for three seconds, then the
+// coast bleeds against drag — no more constant-speed darts.
+func TestMissileBoost(t *testing.T) {
+	i, target, m := missileRange(t, flight.Vec3{X: 12000, Y: 3000}, flight.Vec3{X: 250})
+	fly(i, target, 2.9)
+	peak := m.velocity.Length()
+	if peak < 900 {
+		t.Fatalf("end of boost at %.0f m/s: the motor is weak", peak)
+	}
+	fly(i, target, 8)
+	if len(i.flying) > 0 && m.velocity.Length() > peak-150 {
+		t.Fatalf("eight seconds of coast barely bled (%.0f -> %.0f)", peak, m.velocity.Length())
+	}
+}
+
+// TestMissilePn: proportional navigation intercepts a CROSSING target — the
+// geometry pure pursuit chronically loses.
+func TestMissilePn(t *testing.T) {
+	i, target, _ := missileRange(t, flight.Vec3{X: 2500, Y: 3000, Z: -1200}, flight.Vec3{Z: 240})
+	before := target.deaths
+	fly(i, target, 12)
+	if target.deaths == before && target.condition.Damager != 0 {
+		t.Fatal("the crossing target was never engaged")
+	}
+	if target.condition.Damager != 0 {
+		t.Fatal("PN never brought the warhead to the crossing target")
+	}
+}
+
+// TestMissileGimbal: a target that drags the line of sight past the seeker
+// gimbal breaks the lock — the missile goes ballistic and never fuses.
+func TestMissileGimbal(t *testing.T) {
+	i, target, m := missileRange(t, flight.Vec3{X: 1400, Y: 3000, Z: 60}, flight.Vec3{X: -80, Z: 320})
+	fly(i, target, 10)
+	if !m.loose && target.condition.Damager == 0 {
+		t.Fatal("the beam drag neither broke the lock nor missed")
+	}
+	if target.condition.Damager == 0 && !m.loose {
+		t.Fatal("expected a broken lock")
+	}
+}
+
+// TestMissileArm: inside the arming time there is no fuse — a point-blank
+// launch flies through.
+func TestMissileArm(t *testing.T) {
+	i, target, _ := missileRange(t, flight.Vec3{X: 180, Y: 3000}, flight.Vec3{X: 250})
+	dt := 1.0 / 60
+	for tick := 0; tick < 30; tick++ { // half a second: inside missile_arm
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		i.pursue(dt, uint64(tick))
+	}
+	if target.condition.Damager == 0 && target.deaths > 0 {
+		t.Fatal("the fuse fired inside the arming time")
+	}
+	if target.condition.Damaged == 0 && target.deaths > 0 {
+		t.Fatal("armed too early")
+	}
+}
+
+// TestMissileEnergy: a stern shot at the edge on a fleeing afterburning
+// target dies of energy, not of luck.
+func TestMissileEnergy(t *testing.T) {
+	i, target, _ := missileRange(t, flight.Vec3{X: 4800, Y: 3000}, flight.Vec3{X: 320})
+	survived := fly(i, target, float64(missile_life))
+	if target.condition.Damager == 0 && target.deaths > 0 {
+		t.Fatal("the runner should outlast this shot")
+	}
+	if survived == int(missile_life)*60 && len(i.flying) > 0 {
+		t.Fatal("the missile never expired")
+	}
+}
+
 // TestFurballRespawn: open mode respawns after the pause.
 func TestFurballRespawn(t *testing.T) {
 	i := build(t, "furball", nil, 2)
@@ -598,9 +731,8 @@ func TestMissiles(t *testing.T) {
 	}
 	for tick := 0; tick < 60*12; tick++ {
 		allowed.Step(uint64(tick), nil)
-		if tick < 60*2 {
-			place(allowed, 0, 1, 2000) // hold the geometry while the missile runs in
-		}
+		// (no per-tick re-pin: teleporting the target reads as impossible LOS
+		// motion and the seeker's track-rate ceiling correctly breaks lock)
 		if !allowed.aircraft[1].alive {
 			return // killed outright by the warhead
 		}
@@ -626,14 +758,27 @@ func TestDecoy(t *testing.T) {
 		t.Fatalf("expected 6 missiles, got %d", len(i.flying))
 	}
 	place(i, 0, 1, 3000)
-	fire(i, 1, map[string]any{"flare": true})
-	i.Step(1, nil)
-	remaining := len(i.flying)
-	if remaining == 6 {
-		t.Fatal("no missile decoyed: the flare did nothing")
+	// A decoyed missile is no longer removed — it is SEDUCED: it chases the
+	// falling flare. Count seductions across a few flare windows.
+	seduced := map[uint64]bool{}
+	tick := uint64(1)
+	for round := 0; round < 5; round++ {
+		fire(i, 1, map[string]any{"flare": true})
+		for step := 0; step < 60; step++ {
+			i.Step(tick, nil)
+			tick++
+			for _, m := range i.flying {
+				if m.blind > 0 {
+					seduced[m.number] = true
+				}
+			}
+		}
 	}
-	if remaining == 0 {
-		t.Fatal("every missile decoyed: rear-aspect flares should not be certain")
+	if len(seduced) == 0 {
+		t.Fatal("five flares and no missile was ever seduced")
+	}
+	if len(seduced) >= 6 {
+		t.Fatal("every missile seduced: rear-aspect flares against the 9M should not be certain")
 	}
 }
 

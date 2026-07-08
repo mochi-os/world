@@ -104,12 +104,12 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, mode: "cruise", target: -1, known: map[int]*track{}, missiles: 4}
+	return &brain{skill: s, mode: "cruise", target: -1, known: map[int]*track{}, missiles: 2}
 }
 
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
-	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 4, 0
+	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -687,8 +687,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 // aimed breaks into the sea.
 func (i *instance) guard(b *brain, me *flight.State, pace float64) {
 	speed := me.Velocity.Length()
-	if me.Position.Y < 1500 && b.aim.Y < 0.05 {
-		b.aim = flight.Vec3{X: b.aim.X, Y: 0.05, Z: b.aim.Z}.Normalize()
+	if me.Position.Y < 1500 && b.aim.Y < 0.12 {
+		b.aim = flight.Vec3{X: b.aim.X, Y: 0.12, Z: b.aim.Z}.Normalize() // PN missiles chase bots into harder low breaks: keep the deck fights gently climbing
 	}
 	if lid := clamp(speed/pace-0.6, 0.12, 1.0); b.aim.Y > lid {
 		b.aim = flight.Vec3{X: b.aim.X, Y: lid, Z: b.aim.Z}.Normalize()
@@ -727,7 +727,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 			loss *= 1.8 // rolled past the horizon: the recovery must roll upright before the pull exists
 		}
 	}
-	if (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*2.6 < 400 { // 2.6×: the unloaded roll to upright eats altitude before the ideal-g pull exists
+	if (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*3.0 < 400 { // 3.0×: the unloaded roll to upright eats altitude before the ideal-g pull exists
 		flat := flight.Vec3{X: s.Velocity.X, Z: s.Velocity.Z}.Normalize()
 		aim = flat.Add(flight.Vec3{Y: 0.3}).Normalize()
 		want = m.Airframe.Limit.Positive

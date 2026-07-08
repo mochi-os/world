@@ -16,8 +16,8 @@ package furball
 
 import (
 	"encoding/binary"
-	"fmt"
 	"errors"
+	"fmt"
 	"math"
 	"sort"
 
@@ -42,13 +42,27 @@ const (
 
 // Missile constants: pursuit guidance with an aspect-aware seeker, graded
 // flare decoys, and a real proximity fuse feeding the battle warhead.
+// The AIM-9M (#126): a boost-coast point mass flying PROPORTIONAL NAVIGATION
+// off its seeker's line-of-sight rate — a collision intercept, not a chase.
+// The seeker has a gimbal cone and a track-rate ceiling; the airframe has a
+// g limit that fades with airspeed and pays every turn in induced drag; the
+// fuse arms after launch separation. Kills come from energy and geometry,
+// and so do the escapes: beam it while it is slow and it cannot follow.
 const (
-	missile_speed = 700.0  // m/s, constant
-	missile_life  = 12.0   // s
-	missile_fuse  = 12.0   // m, proximity fuse envelope (battle grades the warhead inside)
-	missile_range = 5000.0 // rear-aspect acquisition range (m); weak head-on
-	missile_cone  = 0.866  // cos of the acquisition half-angle (~30°)
-	flare_window  = 0.8    // s after a flare drop in which it can decoy
+	missile_boost  = 3.0    // s, Mk 36 burn
+	missile_thrust = 260.0  // m/s² net boost acceleration (ΔV ≈ +780)
+	missile_dragk  = 5.0e-5 // base drag: dv/dt = -k·v² (about -45 m/s² at Mach 2.7)
+	missile_life   = 20.0   // s battery/coolant; energy death usually wins first
+	missile_fuse   = 12.0   // m, proximity fuse envelope (battle grades the warhead inside)
+	missile_arm    = 0.6    // s of flight before the fuse (and the guidance) arms
+	missile_range  = 5000.0 // rear-aspect acquisition range (m); weak head-on
+	missile_cone   = 0.866  // cos of the acquisition half-angle (~30°)
+	missile_gimbal = 0.766  // cos of the ±40° seeker gimbal — beyond it the lock breaks
+	missile_track  = 0.35   // rad/s seeker track ceiling (~20°/s) — beam it to saturate
+	missile_g      = 35.0   // structural lateral limit, g
+	missile_n      = 3.5    // the proportional-navigation constant
+	flare_window   = 0.8    // s after a flare drop in which it can decoy
+	flare_reject   = 0.55   // the 9M's counter-countermeasures: flares work this fraction as often
 )
 
 type Furball struct{}
@@ -124,23 +138,23 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 }
 
 type craft struct {
-	player    game.Player
-	kind      string // aircraft catalogue name
-	bot       bool   // server-flown practice aircraft: scripted inputs, no link
-	brain     *brain // fighting bots think; drones (and humans) carry nil
-	close     map[int]bool // this recipient's sticky near set (interest hysteresis)
-	model     *flight.Model
-	body      battle.Body
-	condition battle.Condition
-	latest    flight.Inputs
-	alive     bool
+	player     game.Player
+	kind       string       // aircraft catalogue name
+	bot        bool         // server-flown practice aircraft: scripted inputs, no link
+	brain      *brain       // fighting bots think; drones (and humans) carry nil
+	close      map[int]bool // this recipient's sticky near set (interest hysteresis)
+	model      *flight.Model
+	body       battle.Body
+	condition  battle.Condition
+	latest     flight.Inputs
+	alive      bool
 	ammunition int     // gun rounds left this life
-	charge    float64 // fractional rounds accumulated at the fire rate
-	ejected   bool    // eject edge consumed this life
-	wait      float64 // seconds until respawn (furball mode)
-	flared    float64 // sim seconds since the last flare drop (large when none)
-	kills     int
-	deaths    int
+	charge     float64 // fractional rounds accumulated at the fire rate
+	ejected    bool    // eject edge consumed this life
+	wait       float64 // seconds until respawn (furball mode)
+	flared     float64 // sim seconds since the last flare drop (large when none)
+	kills      int
+	deaths     int
 }
 
 // arm rebinds the craft's battle body to its current model's damage state.
@@ -158,6 +172,12 @@ func (a *craft) arm() {
 }
 
 type missile struct {
+	sight    flight.Vec3 // last line-of-sight unit vector (the PN rate measurement)
+	burn     float64     // boost seconds remaining
+	flew     float64     // seconds since launch (fuse arming)
+	lure     flight.Vec3 // a swallowed flare's fall point; guided at while blind
+	blind    float64     // seconds left chasing the lure (then ballistic)
+	loose    bool        // lock broken (gimbal/track/energy): ballistic, fuse still live
 	shooter  int
 	target   int
 	position flight.Vec3
@@ -512,7 +532,7 @@ func (i *instance) drift(dt float64) {
 		state := &w.model.State
 		if w.life <= 0 || state.Position.Y <= sea || state.Gear.Contact >= 0 {
 			i.events = append(i.events, map[string]any{
-				"kind": "splash",
+				"kind":     "splash",
 				"position": []float64{state.Position.X, state.Position.Y, state.Position.Z},
 			})
 			continue
@@ -616,12 +636,16 @@ func (i *instance) launch(slot int, a *craft) {
 		return
 	}
 	i.launched++
+	separation := a.model.State.Velocity.Add(forward.Scale(30)) // off the rail at aircraft speed; the motor does the rest
+	sight, _ := i.bearing(a.model.State.Position, i.aircraft[best].model.State.Position)
 	i.flying = append(i.flying, &missile{
 		shooter:  slot,
 		target:   best,
-		position: a.model.State.Position,
-		velocity: flight.Vec3{X: forward.X * missile_speed, Y: forward.Y * missile_speed, Z: forward.Z * missile_speed},
+		position: a.model.State.Position.Add(forward.Scale(3)),
+		velocity: separation,
 		life:     missile_life,
+		burn:     missile_boost,
+		sight:    sight,
 		number:   i.launched,
 	})
 	i.events = append(i.events, map[string]any{"kind": "missile", "slot": slot, "target": best})
@@ -634,56 +658,122 @@ func (i *instance) pursue(dt float64, tick uint64) {
 	alive := i.flying[:0]
 	for _, m := range i.flying {
 		m.life -= dt
+		m.flew += dt
+		speed := m.velocity.Length()
 		target := i.aircraft[m.target]
-		if m.life <= 0 || target == nil || !target.alive {
+		tracking := !m.loose && m.blind <= 0 && target != nil && target.alive
+		if m.life <= 0 || (m.target >= 0 && target == nil) {
 			continue
 		}
-		// A flare inside the window decoys with aspect-graded probability:
-		// looking up a hot tailpipe the seeker holds; from the beam a flare
-		// is the brighter thing in view. Reheat anchors the seeker harder.
-		if target.flared < flare_window {
+		// Flare seduction: inside the window, an aspect-graded roll — tempered
+		// by the 9M's counter-countermeasures — hands the seeker the flare.
+		// The missile then chases the falling flare point until it gives up.
+		if tracking && target.flared < flare_window {
 			if !m.window {
 				m.window = true
 				direction, _ := i.bearing(m.position, target.model.State.Position)
 				tail := direction.Dot(target.model.State.Attitude.Rotate(flight.Vec3{X: 1}))
-				decoy := 0.35 + 0.40*(1-clamp(tail, 0, 1))
+				decoy := (0.35 + 0.40*(1-clamp(tail, 0, 1))) * flare_reject
 				if target.latest.Reheat > 0.05 {
-					decoy *= 0.5
+					decoy *= 0.5 // the burner is the brightest thing in view
 				}
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
+					m.lure = target.model.State.Position.Add(flight.Vec3{Y: -30})
+					m.blind = 1.5
+					tracking = false
 					i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
-					continue
 				}
 			}
 		} else {
 			m.window = false
 		}
-		direction, distance := i.bearing(m.position, target.model.State.Position)
-		if distance < missile_fuse {
-			kill, events := battle.Blast(m.position, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
-			target.condition.Damager = m.shooter
-			target.condition.Damaged = 0
-			for _, event := range events {
-				if event.Kind != "explode" {
-					i.raise(m.target, event)
+
+		// The guidance point: the target, or a swallowed flare falling away.
+		var aim flight.Vec3
+		var mark *flight.Vec3
+		if tracking {
+			aim = target.model.State.Position
+			mark = &aim
+		} else if m.blind > 0 {
+			m.blind -= dt
+			m.lure.Y -= 45 * dt // flares fall
+			aim = m.lure
+			mark = &aim
+		}
+
+		if mark != nil && m.flew > missile_arm {
+			direction, distance := i.bearing(m.position, *mark)
+			// Proximity fuse (armed): the warhead judges the pass.
+			if tracking && distance < missile_fuse {
+				kill, events := battle.Blast(m.position, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+				target.condition.Damager = m.shooter
+				target.condition.Damaged = 0
+				for _, event := range events {
+					if event.Kind != "explode" {
+						i.raise(m.target, event)
+					}
+				}
+				if kill {
+					i.kill(m.target, m.shooter)
+				}
+				continue
+			}
+			// The seeker: gimbal cone off the velocity axis, and a track-rate
+			// ceiling. Beyond either the lock breaks — ballistic, fuse live.
+			axis := m.velocity.Normalize()
+			if direction.Dot(axis) < missile_gimbal {
+				m.loose = true
+			}
+			rate := direction.Subtract(m.sight).Scale(1 / math.Max(dt, 1e-6))
+			rate = rate.Subtract(direction.Scale(rate.Dot(direction))) // the rotation component only
+			if rate.Length() > missile_track {
+				m.loose = true
+			}
+			m.sight = direction
+			if !m.loose {
+				// PROPORTIONAL NAVIGATION: a = N·Vc·λ̇, perpendicular to the
+				// line of sight — zero LOS rate means collision course.
+				closing := 0.0
+				if tracking {
+					closing = target.model.State.Velocity.Subtract(m.velocity).Dot(direction)
+				} else {
+					closing = -m.velocity.Dot(direction)
+				}
+				closing = math.Abs(closing)
+				accel := rate.Scale(missile_n * closing)
+				// The airframe: the structural limit fades as dynamic pressure
+				// dies — a slow missile cannot pull.
+				limit := missile_g * 9.81 * clamp(speed/600, 0.15, 1)
+				if pull := accel.Length(); pull > limit {
+					accel = accel.Scale(limit / pull)
+				}
+				m.velocity = m.velocity.Add(accel.Scale(dt))
+				// Induced drag: every commanded g is paid for in airspeed.
+				speed = m.velocity.Length()
+				bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
+				m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
+				// Energy death: coasting below convergence speed, opening — done.
+				if m.burn <= 0 && tracking && speed < target.model.State.Velocity.Length()+60 && closing < 40 {
+					continue
 				}
 			}
-			if kill {
-				i.kill(m.target, m.shooter)
+		} else if m.flew <= missile_arm {
+			// Not yet armed: fly out straight; remember the boresight LOS.
+			if mark != nil {
+				m.sight, _ = i.bearing(m.position, *mark)
 			}
-			continue
 		}
-		// Steer the velocity toward the target with a limited blend rate —
-		// pursuit guidance at the placeholder fidelity level.
-		turn := 4.0 * dt
-		v := flight.Vec3{
-			X: m.velocity.X + (direction.X*missile_speed-m.velocity.X)*turn,
-			Y: m.velocity.Y + (direction.Y*missile_speed-m.velocity.Y)*turn,
-			Z: m.velocity.Z + (direction.Z*missile_speed-m.velocity.Z)*turn,
+
+		// Propulsion: boost hard, then coast against the base drag.
+		if m.burn > 0 {
+			m.burn -= dt
+			axis := m.velocity.Normalize()
+			m.velocity = m.velocity.Add(axis.Scale(missile_thrust * dt))
+		} else if m.loose || mark == nil {
+			speed = m.velocity.Length()
+			m.velocity = m.velocity.Scale(math.Max(speed-missile_dragk*speed*speed*dt, 60) / math.Max(speed, 1e-6))
 		}
-		length := math.Sqrt(v.X*v.X+v.Y*v.Y+v.Z*v.Z) + 1e-9
-		m.velocity = flight.Vec3{X: v.X / length * missile_speed, Y: v.Y / length * missile_speed, Z: v.Z / length * missile_speed}
-		m.position = flight.Vec3{X: m.position.X + m.velocity.X*dt, Y: m.position.Y + m.velocity.Y*dt, Z: m.position.Z + m.velocity.Z*dt}
+		m.position = m.position.Add(m.velocity.Scale(dt))
 		if m.position.Y <= 0 {
 			continue // splashed
 		}
@@ -779,7 +869,9 @@ func pose(slot int, a *craft) []byte {
 	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(s.Position.X)))
 	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(s.Position.Y)))
 	binary.LittleEndian.PutUint32(b[9:], math.Float32bits(float32(s.Position.Z)))
-	quat := func(offset int, v float64) { binary.LittleEndian.PutUint16(b[offset:], uint16(int16(clamp(v, -1, 1)*32767))) }
+	quat := func(offset int, v float64) {
+		binary.LittleEndian.PutUint16(b[offset:], uint16(int16(clamp(v, -1, 1)*32767)))
+	}
 	quat(13, s.Attitude.W)
 	quat(15, s.Attitude.X)
 	quat(17, s.Attitude.Y)
@@ -944,7 +1036,9 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(s.Position.X)))
 		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(s.Position.Y)))
 		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(s.Position.Z)))
-		quat := func(offset int, v float64) { binary.LittleEndian.PutUint16(d[offset:], uint16(int16(clamp(v, -1, 1)*32767))) }
+		quat := func(offset int, v float64) {
+			binary.LittleEndian.PutUint16(d[offset:], uint16(int16(clamp(v, -1, 1)*32767)))
+		}
 		quat(12, s.Attitude.W)
 		quat(14, s.Attitude.X)
 		quat(16, s.Attitude.Y)
