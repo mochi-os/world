@@ -32,7 +32,7 @@ const (
 	ring     = 2778   // spawn radius (1.5 NM)
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
-	fuel     = 3000.0 // spawn fuel load, kg (~half internal)
+	fuel     = 3000.0 // default spawn fuel load, kg (~6,600 lb — the session may choose otherwise)
 	pause    = 5.0    // seconds from death to respawn (furball mode)
 	rounds   = 578    // M61 magazine per life
 	rate     = 100.0  // rounds per second (6,000 rpm)
@@ -99,6 +99,10 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 	}
 	if tod, _ := session.Parameters["tod"].(string); tod == "night" {
 		i.night = true
+	}
+	i.tank = fuel
+	if pounds := number(session.Parameters, "fuel"); pounds > 0 {
+		i.tank = clamp(pounds/2.2046, 500, 4900) // the UI speaks pounds like the IFEI; the sim burns kilograms
 	}
 	// Practice bots: the parameter is a per-level count map {"drone": n,
 	// "rookie": n, ...} — the match creator chooses how many of each. A bare
@@ -199,7 +203,8 @@ type instance struct {
 	mode        string // furball (open, endless) or joust (1v1, first kill ends it)
 	started     bool   // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
 	merged      bool   // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
-	missiles    bool   // rule: missiles allowed
+	missiles    bool    // rule: missiles allowed
+	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
 	sky         string // session cloud preset (bot visibility occlusion)
 	night       bool   // session time of day (bot visual range and glare)
@@ -233,7 +238,7 @@ func (i *instance) spawn(slot int, m *flight.Model) {
 	}
 	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
-	m.State = flight.Level(m, position, inward, speed, fuel)
+	m.State = flight.Level(m, position, inward, speed, i.tank)
 }
 
 // state_payload is one aircraft's snapshot entry: the legacy derived fields

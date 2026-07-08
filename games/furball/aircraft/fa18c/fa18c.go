@@ -82,8 +82,8 @@ func build() *flight.Airframe {
 			Dry:      48900, // N, F404-GE-402 (11,000 lbf)
 			Reheat:   78700, // N (17,700 lbf)
 		}
-		a.Engines[i].Flow.Dry = 2.3e-5 // kg/(N·s). Tunable.
-		a.Engines[i].Flow.Reheat = 5.2e-5
+		a.Engines[i].Flow.Dry = 2.3e-5    // kg/(N·s): mil SFC ~0.81 lb/lbf·hr — both engines ≈ 2.25 kg/s at full mil
+		a.Engines[i].Flow.Reheat = 9.3e-5 // kg/(N·s) on the BOOST thrust: AB SFC ~1.74 lb/lbf·hr total — both in full reheat ≈ 7.8 kg/s (a 3,000 kg load is ~6½ minutes of pure burner)
 	}
 
 	wing := flight.Section{Slope: 5.9, Stall: 0.19, Drag: 0.006, Ratio: 3.5}

@@ -673,6 +673,20 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	i.guard(b, me, pace)
 
+	// Fuel discipline (tier 2+): at BINGO (3,000 lb) the burner is rationed;
+	// at FUEL LO (1,600 lb) the fight is over — fly home level and economical.
+	// Rookies never look down: they run the tanks dry and become gliders.
+	if b.skill.library >= 2 {
+		if a.model.State.Fuel < 726 {
+			b.mode = "bingo"
+			b.aim = level(me.Velocity.Normalize())
+			b.throttle, b.reheat = 0.5, 0
+			b.shoot, b.loose = false, false
+		} else if a.model.State.Fuel < 1361 {
+			b.reheat = 0
+		}
+	}
+
 	// The aim wander: where this pilot's nose actually points. Re-rolled on a
 	// slow clock, NOT per decision — sloppiness is a consistent bias, which is
 	// exactly why sloppy pilots are easy to track and gun, while per-decision

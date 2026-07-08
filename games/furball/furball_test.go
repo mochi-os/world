@@ -699,6 +699,31 @@ func TestMissileEnergy(t *testing.T) {
 	}
 }
 
+// TestFuelBurn: the F404-402 calibration — both engines at full military
+// burn ~2.2 kg/s, in full reheat ~7.8 kg/s (sea level, mid subsonic). A
+// 3,000 kg load is minutes of burner, not a free button.
+func TestFuelBurn(t *testing.T) {
+	rate := func(reheat float64) float64 {
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m.State.Position = flight.Vec3{Y: 300}
+		m.State.Velocity = flight.Vec3{X: 180}
+		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+		m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: reheat}
+		m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: reheat}
+		start := m.State.Fuel
+		for tick := 0; tick < 240*10; tick++ {
+			m.Step(flight.Inputs{Throttle: 1, Reheat: reheat})
+		}
+		return (start - m.State.Fuel) / 10
+	}
+	if mil := rate(0); mil < 1.7 || mil > 2.9 {
+		t.Fatalf("military burn %.2f kg/s: expected ~2.2", mil)
+	}
+	if wet := rate(1); wet < 6.0 || wet > 9.5 {
+		t.Fatalf("full reheat burn %.2f kg/s: expected ~7.8", wet)
+	}
+}
+
 // TestFurballRespawn: open mode respawns after the pause.
 func TestFurballRespawn(t *testing.T) {
 	i := build(t, "furball", nil, 2)
