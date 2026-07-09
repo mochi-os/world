@@ -61,8 +61,28 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		return lex * (health[0] + health[1]) * 0.5
 	}
 
-	// Ground effect: closer than a span, induced flow weakens.
-	height := math.Max(s.Position.Y-m.World.Sea, 1)
+	// Ground effect: closer than a span, induced flow weakens. Height is above
+	// the surface actually beneath the jet, so an ELEVATED airfield keeps its
+	// cushion (#132) — sea-referencing gave a raised strip none at all, and
+	// Midway's ~6 m field only a fraction. Land only: coastlines are crossed
+	// far above effect range, so the surface step never snaps, while the
+	// CARRIER ramp is crossed at ~3 m and stepping 19 m of reference there
+	// tipped the marginal trap into a ramp strike — the deck stays
+	// sea-referenced until the carrier float gets its own treatment. The probe
+	// is gated to low altitude so cruise pays nothing.
+	beneath := m.World.Sea
+	ceiling := m.World.Sea // the probe gate must clear the world's HIGHEST field: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
+	for fi := range m.World.Fields {
+		if m.World.Fields[fi].Height > ceiling {
+			ceiling = m.World.Fields[fi].Height
+		}
+	}
+	if s.Position.Y-ceiling < 6*a.Reference.Span {
+		if top, kind, _, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap); found && kind != Deck && top > beneath {
+			beneath = top
+		}
+	}
+	height := math.Max(s.Position.Y-beneath, 1)
 	ratio := 16 * height / a.Reference.Span
 	ground := ratio * ratio / (1 + ratio*ratio)
 
