@@ -62,23 +62,26 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	}
 
 	// Ground effect: closer than a span, induced flow weakens. Height is above
-	// the surface actually beneath the jet, so an ELEVATED airfield keeps its
-	// cushion (#132) — sea-referencing gave a raised strip none at all, and
-	// Midway's ~6 m field only a fraction. Land only: coastlines are crossed
-	// far above effect range, so the surface step never snaps, while the
-	// CARRIER ramp is crossed at ~3 m and stepping 19 m of reference there
-	// tipped the marginal trap into a ramp strike — the deck stays
-	// sea-referenced until the carrier float gets its own treatment. The probe
-	// is gated to low altitude so cruise pays nothing.
+	// the surface actually beneath the jet — an elevated airfield or the
+	// CARRIER DECK, not just sea level (#132): sea-referencing gave a raised
+	// strip no cushion at all and the deck none either. The reference steps
+	// abruptly at the round-down (sea to deck, ~19 m) — deliberately unsmoothed:
+	// the real jet crossing the ramp at hook height experiences exactly this
+	// sudden onset (the carrier "ramp burble"), and blending would need a
+	// distance-to-edge query this hot path doesn't otherwise want. The probe is
+	// gated to low altitude so cruise pays nothing.
 	beneath := m.World.Sea
-	ceiling := m.World.Sea // the probe gate must clear the world's HIGHEST field: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
+	ceiling := m.World.Sea // the probe gate must clear the world's HIGHEST surface: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
 	for fi := range m.World.Fields {
 		if m.World.Fields[fi].Height > ceiling {
 			ceiling = m.World.Fields[fi].Height
 		}
 	}
+	if c := m.World.Carrier; c != nil && c.Position.Y > ceiling {
+		ceiling = c.Position.Y
+	}
 	if s.Position.Y-ceiling < 6*a.Reference.Span {
-		if top, kind, _, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap); found && kind != Deck && top > beneath {
+		if top, _, _, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap); found && top > beneath {
 			beneath = top
 		}
 	}

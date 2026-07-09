@@ -175,14 +175,18 @@ func TestUnhook(t *testing.T) {
 func TestTrap(t *testing.T) {
 	m := aboard()
 	m.State.Position = Vec3{X: -300, Y: 25.5, Z: 0} // low enough to touch down BEFORE the wires and scrape in: the deck-height wire catch no longer snags mid-air crossings (the old 4 m band did, and this pass leaned on it)
-	m.State.Velocity = Vec3{X: 65, Y: -3.4}
+	m.State.Velocity = Vec3{X: 59, Y: -3.4} // 65 -> 59 with deck ground effect (#132): the cushion floated the faster pass into a bounce clean over all the wires; 59 catches the middle wire across the whole 0.30-0.42 throttle range
 	m.State.Attitude = Axis(Vec3{Z: 1}, 0.10)
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	m.State.Engine[0] = EngineState{Spool: 0.7}
 	m.State.Engine[1] = EngineState{Spool: 0.7}
 	caught := false
 	for i := 0; i < 240*10; i++ {
-		m.Step(Inputs{Gear: true, Hook: true, Throttle: 0.42}) // 0.45 -> 0.42 with the #131 polar calibration: less drag-due-to-lift at approach CL floats the same scripted pass past the wires
+		throttle := 0.42 // 0.45 -> 0.42 with the #131 polar calibration: less drag-due-to-lift at approach CL floats the same scripted pass past the wires
+		if caught {
+			throttle = 0 // throttle to idle in the wire, as the real procedure has it — the gentler low-energy arrest otherwise lets approach power creep the trapped jet
+		}
+		m.Step(Inputs{Gear: true, Hook: true, Throttle: throttle})
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}
