@@ -373,6 +373,47 @@ func vsSustained(fuel, alt, speed float64) float64 {
 	return 9.81 * math.Sqrt(math.Max(n*n-1, 0)) / speed * 180 / math.Pi
 }
 
+// vsCorner finds CORNER SPEED — the slowest speed at which a snap full-stick
+// pull delivers as much g as it delivers at any speed. This is the fly-by-wire
+// jet's answer to Va: with envelope protection the classical maneuvering
+// speed's structural meaning is moot (abrupt full deflection is safe at any
+// speed — the point of the carefree FCS). Note the FCS shapes the snap pull:
+// the limiter's trim reaches ~6.4 g in 2.5 s and only asymptotes to ~7.3 over
+// ~10 s of pinned demand (the #131 boundary-trim compromise), so corner is
+// measured against the 2.5 s plateau — the g a player actually gets — and the
+// plateau is reported alongside the speed.
+func vsCorner(fuel, alt, stall float64) (float64, float64) {
+	snap := func(v float64) float64 {
+		m := vsJet(fuel, alt, v, false)
+		m.State.Engine[0] = EngineState{Spool: 1, Reheat: 1}
+		m.State.Engine[1] = EngineState{Spool: 1, Reheat: 1}
+		peak := 0.0
+		for i := 0; i < 240*5/2; i++ {
+			m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: 1})
+			s := &m.State
+			if s.Fcs.Normal > peak && s.Velocity.Length() > 0.9*v {
+				peak = s.Fcs.Normal
+			}
+		}
+		return peak
+	}
+	plateau := snap(2.4 * stall)
+	target := 0.97 * plateau
+	if snap(stall*1.02) >= target {
+		return stall * 1.02, plateau
+	}
+	lo, hi := 1.02*stall, 2.4*stall
+	for i := 0; i < 9; i++ {
+		mid := (lo + hi) / 2
+		if snap(mid) >= target {
+			hi = mid
+		} else {
+			lo = mid
+		}
+	}
+	return hi, plateau
+}
+
 // vsBestRate sweeps speeds for the maximum sustained turn rate.
 func vsBestRate(fuel, alt float64) (float64, float64) {
 	lo, hi := 140.0, 260.0
@@ -452,6 +493,8 @@ func TestVSpeeds(t *testing.T) {
 			} else {
 				fmt.Printf("Vmc  minimum control (AB):   below stall - not limiting (near-centreline engines)\n")
 			}
+			corner, plateau := vsCorner(w.fuel, at.m, vs1)
+			fmt.Printf("corner speed (snap-pull):    %s  (%.1f g in 2.5 s — the Va-equivalent; envelope protection makes classical Va moot)\n", vsBoth(corner, at.m), plateau)
 			bv, bw := vsBestRate(w.fuel, at.m)
 			fmt.Printf("best sustained turn:         %s  (%.1f deg/s, AB)\n", vsBoth(bv, at.m), bw)
 		}
