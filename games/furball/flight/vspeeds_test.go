@@ -305,27 +305,59 @@ func vsVmc(fuel, alt, stall float64) float64 {
 	return high
 }
 
-// vsApproach lets the PA law fly stick-free (it holds on-speed alpha) down a
-// ~3 degree glideslope with throttle trimmed to the descent — the real
-// approach geometry; holding LEVEL gear-down flight at altitude can exceed
-// available thrust and drove the settled speed below the stall, a nonsense
-// reading. Returns the settled TAS: Vapp.
+// vsApproach measures on-speed: the E-bracket speed, where the landing
+// configuration TRIMS at the airframe's on-speed alpha (8.1 deg) descending
+// the 3 degree glideslope. Static trim solve, the same m.forces route as
+// vsVmc: an inner bisection trims the stabilator to null the pitch moment,
+// an outer one finds the speed where the body-normal force balances weight.
+// A flown stick-free approach has NO unique settled speed to measure: the PA
+// law's neutral demand tracks the alpha LEVEL FLIGHT needs at whatever speed
+// the throttle gives it (fcs.go), so speed is set entirely by the throttle,
+// and a sink-tracking throttle governor leaves the phugoid undamped — the
+// averaging window sampled whatever phase it landed on (Vapp read 1.01 Vs0
+// at max gross from one such sample).
 func vsApproach(fuel, alt float64) float64 {
+	gamma := 3 * math.Pi / 180
 	m := vsJet(fuel, alt, 75, true)
-	throttle := 0.6
-	sum, n := 0.0, 0
-	for i := 0; i < 240*40; i++ {
-		s := &m.State
-		v := s.Velocity.Length()
-		sink := -0.052 * v // 3 degrees
-		throttle = clamp(throttle+clamp((sink-s.Velocity.Y)*0.0002, -0.003, 0.003), 0, 1) // sinking below the glideslope (vy < sink) -> positive error -> more thrust
-		m.Step(Inputs{Gear: true, Throttle: throttle})
-		if i >= 240*32 {
-			sum += v
-			n++
+	c := m.Airframe.Control
+	local := air(alt, Environment{})
+	weight := (10700 + fuel) * 9.81
+	normal := func(v float64) float64 {
+		q := 0.5 * local.Density * v * v
+		schedule := clamp((c.Droop.Pressure-q)/(c.Droop.Pressure*0.55), 0, 1) // the FCS droop washout
+		droop := c.Droop.Angle * schedule
+		alpha := c.Onspeed
+		trial := m.State
+		trial.Velocity = Vec3{X: v * math.Cos(gamma), Y: -v * math.Sin(gamma)}
+		trial.Attitude = Axis(Vec3{Z: 1}, alpha-gamma)
+		trial.Engine[0] = EngineState{Spool: 0.6}
+		trial.Engine[1] = EngineState{Spool: 0.6}
+		trial.Fcs.Flaperon = Pair{Left: droop, Right: droop} // the flaperon actuator carries the droop; Fcs.Flap is a readout
+		trial.Fcs.Slat = math.Max(clamp(c.Slat.Slope*(alpha-c.Slat.Offset), 0, c.Slat.Limit), 12*math.Pi/180*schedule)
+		low, high := -c.Throw.Down, c.Throw.Up // positive = trailing edge down = nose-down moment
+		var total Forces
+		for i := 0; i < 16; i++ {
+			mid := (low + high) / 2
+			trial.Fcs.Stabilator = Pair{Left: mid, Right: mid}
+			total = m.forces(&trial, Inputs{}, local)
+			if total.Moment.Z > 0 {
+				low = mid
+			} else {
+				high = mid
+			}
+		}
+		return total.Force.Y + trial.Attitude.Unrotate(Vec3{Y: -weight}).Y
+	}
+	low, high := 35.0, 250.0
+	for i := 0; i < 24; i++ {
+		mid := (low + high) / 2
+		if normal(mid) > 0 {
+			high = mid
+		} else {
+			low = mid
 		}
 	}
-	return sum / float64(n)
+	return (low + high) / 2
 }
 
 // vsSustained bisects the Ps=0 load factor at one speed (the envelope-map
