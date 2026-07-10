@@ -179,14 +179,11 @@ func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64, reheat bool) (
 // the statically-estimated steady climb (attitude and velocity vector both on
 // the climb angle): entering level, the jet spent the whole window pulling
 // into a 45-degree climb — sustained n>1 burning the excess in induced drag —
-// and read HALF the true low-speed Ps, smearing Vx into Vy. se kills the
-// second engine.
-func vsClimbPoint(fuel, alt, target float64, se bool, reheat bool) float64 {
+// and read HALF the true low-speed Ps, smearing Vx into Vy. engines counts
+// the live engines: 2, or 1 for the single-engine rows. (A zero-engine glide
+// through this machinery porpoises — vsGlide measures that statically.)
+func vsClimbPoint(fuel, alt, target float64, engines float64, reheat bool) float64 {
 	m := vsJet(fuel, alt, target, false)
-	engines := 2.0
-	if se {
-		engines = 1
-	}
 	alpha, gamma := vsClimbTrim(m, fuel, alt, target, engines, reheat)
 	m.State.Velocity = Vec3{X: target * math.Cos(gamma), Y: target * math.Sin(gamma)}
 	m.State.Attitude = Axis(Vec3{Z: 1}, gamma+alpha)
@@ -196,7 +193,7 @@ func vsClimbPoint(fuel, alt, target float64, se bool, reheat bool) float64 {
 	}
 	m.State.Engine[0] = EngineState{Spool: 1, Reheat: wet}
 	m.State.Engine[1] = EngineState{Spool: 1, Reheat: wet}
-	if se {
+	if engines < 2 {
 		m.State.Damage.Engine[1] = 1
 	}
 	stick := 0.05
@@ -229,10 +226,10 @@ func vsClimbPoint(fuel, alt, target float64, se bool, reheat bool) float64 {
 
 // vsClimbSweep finds Vy (best rate) and Vx (best gradient) over a speed grid,
 // refining around each maximum.
-func vsClimbSweep(fuel, alt, stall float64, se bool, reheat bool) (vx, gx, vy, ry float64) {
+func vsClimbSweep(fuel, alt, stall float64, engines float64, reheat bool) (vx, gx, vy, ry float64) {
 	type point struct{ v, rate, grad float64 }
 	measure := func(v float64) point {
-		r := vsClimbPoint(fuel, alt, v, se, reheat)
+		r := vsClimbPoint(fuel, alt, v, engines, reheat)
 		if math.IsNaN(r) {
 			return point{v, math.Inf(-1), math.Inf(-1)}
 		}
@@ -279,6 +276,91 @@ func vsClimbSweep(fuel, alt, stall float64, se bool, reheat bool) (vx, gx, vy, r
 	r := best(func(p point) float64 { return p.rate })
 	g := best(func(p point) float64 { return p.grad })
 	return g.v, math.Asin(clamp(g.rate/g.v, -1, 1)) * 180 / math.Pi, r.v, r.rate
+}
+
+// vsGlide finds best glide — the shallowest dead-stick descent — by STATIC
+// trim on the same m.forces route as vsVh: at each speed, an inner bisection
+// trims the stabilator (pitch moment), a middle one trims alpha (path-normal
+// balance), and a fixed-point iteration settles the slope where the
+// path-tangential force balances. FLYING the glide with a speed-governor
+// stick porpoised through the UA law's negative-g range (±4 g swings read
+// L/D 2.3 at every speed) — like the approach, an idle steady state has no
+// unique dynamic attractor for a simple governor to hold. Returns the best
+// speed and its glide angle (rad, negative).
+func vsGlide(fuel, alt, stall float64) (float64, float64) {
+	m := vsJet(fuel, alt, 150, false)
+	m.State.Damage.Engine[0] = 1
+	m.State.Damage.Engine[1] = 1
+	c := m.Airframe.Control
+	local := air(alt, Environment{})
+	weight := (10700 + fuel) * 9.81
+	glide := func(v float64) float64 {
+		q := 0.5 * local.Density * v * v
+		blow := clamp(c.Blowdown/math.Max(q, 1), 0, 1)
+		gamma := -0.1
+		for iteration := 0; iteration < 14; iteration++ {
+			evaluate := func(alpha float64) (normal, tangential float64) {
+				trial := m.State
+				trial.Velocity = Vec3{X: v * math.Cos(gamma), Y: v * math.Sin(gamma)}
+				trial.Attitude = Axis(Vec3{Z: 1}, alpha+gamma)
+				trial.Engine[0] = EngineState{}
+				trial.Engine[1] = EngineState{}
+				lo, hi := -c.Throw.Down*blow, c.Throw.Up*blow
+				var total Forces
+				for i := 0; i < 16; i++ {
+					mid := (lo + hi) / 2
+					trial.Fcs.Stabilator = Pair{Left: mid, Right: mid}
+					total = m.forces(&trial, Inputs{}, local)
+					if total.Moment.Z > 0 {
+						lo = mid
+					} else {
+						hi = mid
+					}
+				}
+				force := total.Force.Add(trial.Attitude.Unrotate(Vec3{Y: -weight}))
+				path := trial.Attitude.Unrotate(trial.Velocity).Scale(1 / v)
+				return force.X*(-path.Y) + force.Y*path.X, force.Dot(path)
+			}
+			lo, hi := -0.02, 0.35
+			tangential := 0.0
+			for i := 0; i < 16; i++ {
+				mid := (lo + hi) / 2
+				var normal float64
+				normal, tangential = evaluate(mid)
+				if normal < 0 {
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			// Steeper slope adds forward weight component: walk gamma to the
+			// tangential balance.
+			gamma = clamp(gamma+tangential/weight, -1.2, -0.005)
+		}
+		return gamma
+	}
+	lo := 1.05 * stall
+	bestV, bestG := lo, glide(lo)
+	for v := lo + 10; v <= lo+150; v += 10 {
+		if g := glide(v); g > bestG {
+			bestV, bestG = v, g
+		}
+	}
+	for step := 5.0; step >= 0.2; step /= 2 {
+		for moved := true; moved; {
+			moved = false
+			for _, dv := range []float64{-step, step} {
+				if bestV+dv < lo {
+					continue
+				}
+				if g := glide(bestV + dv); g > bestG {
+					bestV, bestG = bestV+dv, g
+					moved = true
+				}
+			}
+		}
+	}
+	return bestV, bestG
 }
 
 // vsVmc finds the minimum control speed by STATIC moment balance: the yaw
@@ -378,17 +460,96 @@ func vsApproach(fuel, alt float64) float64 {
 	return (low + high) / 2
 }
 
+// vsVh finds the maximum level speed at full afterburner: the static
+// thrust=drag crossing on the same m.forces route as vsApproach — inner
+// stabilator-trim bisection (pitch moment), middle alpha bisection (normal
+// balance), outer speed search on the longitudinal residual. A dynamic
+// acceleration run asymptotes to this crossing far too slowly to read to a
+// knot. The outer search scans DOWN from far beyond the envelope for the
+// highest thrust-sufficient speed before bisecting, so a transonic pinch in
+// the excess curve cannot strand the answer on a lower crossing.
+func vsVh(fuel, alt float64) float64 {
+	m := vsJet(fuel, alt, 200, false)
+	c := m.Airframe.Control
+	local := air(alt, Environment{})
+	weight := (10700 + fuel) * 9.81
+	excess := func(v float64) float64 {
+		q := 0.5 * local.Density * v * v
+		blow := clamp(c.Blowdown/math.Max(q, 1), 0, 1) // actuator authority washes out with q; the trim needs little, but stay honest
+		trim := func(alpha float64) (Forces, Vec3) {
+			trial := m.State
+			trial.Velocity = Vec3{X: v}
+			trial.Attitude = Axis(Vec3{Z: 1}, alpha)
+			trial.Engine[0] = EngineState{Spool: 1, Reheat: 1}
+			trial.Engine[1] = EngineState{Spool: 1, Reheat: 1}
+			lo, hi := -c.Throw.Down*blow, c.Throw.Up*blow
+			var total Forces
+			for i := 0; i < 16; i++ {
+				mid := (lo + hi) / 2
+				trial.Fcs.Stabilator = Pair{Left: mid, Right: mid}
+				total = m.forces(&trial, Inputs{}, local)
+				if total.Moment.Z > 0 {
+					lo = mid
+				} else {
+					hi = mid
+				}
+			}
+			return total, trial.Attitude.Unrotate(Vec3{Y: -weight})
+		}
+		lo, hi := -0.05, 0.3
+		var total Forces
+		var down Vec3
+		for i := 0; i < 16; i++ {
+			mid := (lo + hi) / 2
+			total, down = trim(mid)
+			if total.Force.Y+down.Y < 0 {
+				lo = mid
+			} else {
+				hi = mid
+			}
+		}
+		return total.Force.X + down.X
+	}
+	top := 800.0
+	if excess(top) > 0 {
+		return top // beyond any speed the model should be trusted at; flag rather than chase
+	}
+	v := top
+	for ; v > 60; v -= 20 {
+		if excess(v) > 0 {
+			break
+		}
+	}
+	lo, hi := v, v+20
+	for i := 0; i < 20; i++ {
+		mid := (lo + hi) / 2
+		if excess(mid) > 0 {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	return (lo + hi) / 2
+}
+
 // vsSustained bisects the Ps=0 load factor at one speed (the envelope-map
-// method) and returns the sustained turn rate there, deg/s. Full afterburner.
-func vsSustained(fuel, alt, speed float64) float64 {
+// method) and returns the sustained turn rate there (deg/s) with the turn
+// radius (m). Full afterburner. A trial only counts as sustained when the FCS
+// ACHIEVED the commanded g (window mean within 0.5): below the lift boundary
+// the jet mushes at the alpha limiter while full burner still grows specific
+// energy — the Ps test alone called that "sustaining 7.6 g at 90 m/s" and
+// raced the radius search to zero speed. Rate and radius are computed from
+// the achieved g, not the commanded one.
+func vsSustained(fuel, alt, speed float64) (float64, float64) {
 	alt = math.Max(alt, 457) // high-g trials DESCEND tens of metres while converging: from a 30 m "sea level" start they sank into sea-surface ground effect (and then under the waves — open water has no collision), where the slashed induced drag read as "sustains the limiter at 467 KTAS at max gross". The EM battery runs at 1500 ft for the same reason.
-	measure := func(n float64) float64 {
+	measure := func(n float64) (float64, float64) {
 		m := vsJet(fuel, alt, speed, false)
 		m.State.Engine[0] = EngineState{Spool: 1, Reheat: 1}
 		m.State.Engine[1] = EngineState{Spool: 1, Reheat: 1}
 		stick := clamp((n-1)/6.5, 0.1, 1)
 		target := -math.Acos(clamp(1/n, 0, 1))
-		var e0, e1 float64
+		var e0, e1, sum float64
+		count := 0
 		for tick := 0; tick < 240*10; tick++ {
 			s := &m.State
 			up := s.Attitude.Rotate(Vec3{Y: 1})
@@ -398,29 +559,38 @@ func vsSustained(fuel, alt, speed float64) float64 {
 			stick = clamp(stick+clamp((n-s.Fcs.Normal)*0.01, -0.01, 0.01), 0.05, 1)
 			m.Step(Inputs{Pitch: stick, Roll: roll, Throttle: 1, Reheat: 1})
 			if s.Position.Y < alt-250 {
-				return -1e9 // a "sustained level turn" that has dived 250 m is not one: unsustainable — without this the spiral kept diving to the sea, where ground effect (and then flying UNDER the water) read as sustained
+				return -1e9, 0 // a "sustained level turn" that has dived 250 m is not one: unsustainable — without this the spiral kept diving to the sea, where ground effect (and then flying UNDER the water) read as sustained
 			}
 			v := s.Velocity.Length()
 			if tick == 240*6 {
 				e0 = s.Position.Y + v*v/19.62 // the heavy high-g turn takes ~5 s to wind up: an earlier window catches the ENTRY transient and inflates the bisected g
 			}
+			if tick >= 240*6 {
+				sum += s.Fcs.Normal
+				count++
+			}
 			if tick == 240*10-1 {
 				e1 = s.Position.Y + v*v/19.62
 			}
 		}
-		return (e1 - e0) / 4
+		return (e1 - e0) / 4, sum / float64(count)
 	}
 	low, high := 1.2, 7.6
+	held := 0.0
 	for i := 0; i < 16; i++ { // 0.0001 g: fine enough that a 1 kt speed step still moves the bisected rate monotonically, not in 0.05 g quantization noise
 		mid := (low + high) / 2
-		if measure(mid) > 0 {
+		if ps, achieved := measure(mid); ps > 0 && achieved > mid-0.5 {
 			low = mid
+			held = achieved
 		} else {
 			high = mid
 		}
 	}
-	n := (low + high) / 2
-	return 9.81 * math.Sqrt(math.Max(n*n-1, 0)) / speed * 180 / math.Pi
+	lateral := 9.81 * math.Sqrt(math.Max(held*held-1, 0))
+	if lateral < 0.1 {
+		return 0, math.Inf(1)
+	}
+	return lateral / speed * 180 / math.Pi, speed * speed / lateral
 }
 
 // vsCorner finds CORNER SPEED — the slowest speed at which a snap full-stick
@@ -478,7 +648,7 @@ func vsBestRate(fuel, alt float64) (float64, float64) {
 		if w, ok := cache[v]; ok {
 			return w
 		}
-		w := vsSustained(fuel, alt, v)
+		w, _ := vsSustained(fuel, alt, v)
 		cache[v] = w
 		return w
 	}
@@ -501,6 +671,44 @@ func vsBestRate(fuel, alt float64) (float64, float64) {
 		}
 	}
 	return bestV, bestW
+}
+
+// vsRadius sweeps the lower speed band for the TIGHTEST sustained turn — the
+// minimum Ps=0 radius. It sits below the best-rate speed: giving up a little
+// rate buys a disproportionately smaller circle until the thrust boundary
+// collapses the sustainable g. Returns speed, radius (m), and rate (deg/s).
+func vsRadius(fuel, alt, stall, ceiling float64) (float64, float64, float64) {
+	cache := map[float64][2]float64{}
+	sample := func(v float64) (float64, float64) {
+		if r, ok := cache[v]; ok {
+			return r[0], r[1]
+		}
+		w, radius := vsSustained(fuel, alt, v)
+		cache[v] = [2]float64{w, radius}
+		return w, radius
+	}
+	floor := 1.05 * stall
+	bestV, bestW, bestR := 0.0, 0.0, math.Inf(1)
+	for v := 1.1 * stall; v <= ceiling; v += 20 {
+		if w, r := sample(v); r < bestR {
+			bestV, bestW, bestR = v, w, r
+		}
+	}
+	for step := 10.0; step >= 0.2; step /= 2 {
+		for moved := true; moved; {
+			moved = false
+			for _, dv := range []float64{-step, step} {
+				if bestV+dv < floor {
+					continue
+				}
+				if w, r := sample(bestV + dv); r < bestR {
+					bestV, bestW, bestR = bestV+dv, w, r
+					moved = true
+				}
+			}
+		}
+	}
+	return bestV, bestR, bestW
 }
 
 func TestVSpeeds(t *testing.T) {
@@ -536,24 +744,28 @@ func TestVSpeeds(t *testing.T) {
 			fmt.Printf("Vs0  landing config stall:   %s%s\n", vsBoth(vs0, at.m), note)
 			vapp := vsApproach(w.fuel, at.m)
 			fmt.Printf("Vapp on-speed approach:      %s  (%.2f Vs0)%s\n", vsBoth(vapp, at.m), vapp/vs0, note)
-			vx, gx, vy, ry := vsClimbSweep(w.fuel, at.m, vs1, false, false)
+			vx, gx, vy, ry := vsClimbSweep(w.fuel, at.m, vs1, 2, false)
 			fmt.Printf("Vx   best angle (MIL):       %s  (+%.1f deg)\n", vsBoth(vx, at.m), gx)
 			fmt.Printf("Vy   best rate  (MIL):       %s  (%+.0f fpm)\n", vsBoth(vy, at.m), ry*196.85)
 			sigma := air(at.m, Environment{}).Density / air(0, Environment{}).Density
 			if 2*78700*sigma >= weight {
 				fmt.Printf("Vx   best angle (AB):        vertical — T/W %.2f here: any speed above stall sustains 90 deg\n", 2*78700*sigma/weight)
 			} else {
-				vxb, gxb, _, _ := vsClimbSweep(w.fuel, at.m, vs1, false, true)
+				vxb, gxb, _, _ := vsClimbSweep(w.fuel, at.m, vs1, 2, true)
 				fmt.Printf("Vx   best angle (AB):        %s  (+%.1f deg)\n", vsBoth(vxb, at.m), gxb)
 			}
-			_, _, vyb, ryb := vsClimbSweep(w.fuel, at.m, vs1, false, true)
+			_, _, vyb, ryb := vsClimbSweep(w.fuel, at.m, vs1, 2, true)
 			fmt.Printf("Vy   best rate  (AB):        %s  (%+.0f fpm)\n", vsBoth(vyb, at.m), ryb*196.85)
-			vxse, gxse, vyse, ryse := vsClimbSweep(w.fuel, at.m, vs1, true, false)
+			vxse, gxse, vyse, ryse := vsClimbSweep(w.fuel, at.m, vs1, 1, false)
 			fmt.Printf("Vxse single-engine (MIL):    %s  (%+.1f deg)\n", vsBoth(vxse, at.m), gxse)
 			fmt.Printf("Vyse single-engine (MIL):    %s  (%+.0f fpm)\n", vsBoth(vyse, at.m), ryse*196.85)
-			vxsb, gxsb, vysb, rysb := vsClimbSweep(w.fuel, at.m, vs1, true, true)
+			vxsb, gxsb, vysb, rysb := vsClimbSweep(w.fuel, at.m, vs1, 1, true)
 			fmt.Printf("Vxse single-engine (AB):     %s  (%+.1f deg)\n", vsBoth(vxsb, at.m), gxsb)
 			fmt.Printf("Vyse single-engine (AB):     %s  (%+.0f fpm)\n", vsBoth(vysb, at.m), rysb*196.85)
+			glide, slope := vsGlide(w.fuel, at.m, vs1)
+			fmt.Printf("best glide (engines out):    %s  (%.1f deg, L/D %.1f)\n", vsBoth(glide, at.m), slope*180/math.Pi, 1/math.Tan(-slope))
+			vh := vsVh(w.fuel, at.m)
+			fmt.Printf("Vh   maximum level (AB):     %s  (M %.2f)\n", vsBoth(vh, at.m), vh/air(at.m, Environment{}).Sound)
 			if vmc := vsVmc(w.fuel, at.m, vs1); vmc > 0 {
 				fmt.Printf("Vmc  minimum control (AB):   %s\n", vsBoth(vmc, at.m))
 			} else {
@@ -563,6 +775,8 @@ func TestVSpeeds(t *testing.T) {
 			fmt.Printf("corner speed (snap-pull):    %s  (%.1f g in 2.5 s — the Va-equivalent; envelope protection makes classical Va moot)\n", vsBoth(corner, at.m), plateau)
 			bv, bw := vsBestRate(w.fuel, at.m)
 			fmt.Printf("best sustained turn:         %s  (%.1f deg/s, AB)\n", vsBoth(bv, at.m), bw)
+			tv, tr, tw := vsRadius(w.fuel, at.m, vs1, bv)
+			fmt.Printf("tightest sustained turn:     %s  (radius %.0f m, %.1f deg/s, AB)\n", vsBoth(tv, at.m), tr, tw)
 		}
 	}
 }
