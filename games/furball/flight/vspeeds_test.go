@@ -137,7 +137,7 @@ func vsRotate(fuel float64) (float64, float64) {
 // vsClimbTrim bisects the level-trim alpha at a speed and returns it with the
 // STATIC steady-climb estimate (thrust minus trimmed drag): the entry state
 // for the dynamic measurement below.
-func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64) (float64, float64) {
+func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64, reheat bool) (float64, float64) {
 	w := (10700 + fuel) * 9.81
 	local := air(alt, Environment{})
 	lift := func(alpha float64) float64 {
@@ -165,8 +165,12 @@ func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64) (float64, floa
 	trial.Engine[1] = EngineState{}
 	drag := -trial.Attitude.Rotate(m.forces(&trial, Inputs{}, local).Force).X
 	mach := v / local.Sound
-	dry, _ := output(EngineState{Spool: 1}, &m.Airframe.Engines[0], local.Density, mach)
-	gamma := math.Asin(clamp((engines*dry-drag)/w, -0.95, 0.95))
+	dry, boost := output(EngineState{Spool: 1, Reheat: 1}, &m.Airframe.Engines[0], local.Density, mach)
+	thrust := engines * dry
+	if reheat {
+		thrust = engines * (dry + boost)
+	}
+	gamma := math.Asin(clamp((thrust-drag)/w, -0.95, 0.95))
 	return alpha, gamma
 }
 
@@ -177,17 +181,21 @@ func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64) (float64, floa
 // into a 45-degree climb — sustained n>1 burning the excess in induced drag —
 // and read HALF the true low-speed Ps, smearing Vx into Vy. se kills the
 // second engine.
-func vsClimbPoint(fuel, alt, target float64, se bool) float64 {
+func vsClimbPoint(fuel, alt, target float64, se bool, reheat bool) float64 {
 	m := vsJet(fuel, alt, target, false)
 	engines := 2.0
 	if se {
 		engines = 1
 	}
-	alpha, gamma := vsClimbTrim(m, fuel, alt, target, engines)
+	alpha, gamma := vsClimbTrim(m, fuel, alt, target, engines, reheat)
 	m.State.Velocity = Vec3{X: target * math.Cos(gamma), Y: target * math.Sin(gamma)}
 	m.State.Attitude = Axis(Vec3{Z: 1}, gamma+alpha)
-	m.State.Engine[0] = EngineState{Spool: 1}
-	m.State.Engine[1] = EngineState{Spool: 1}
+	wet := 0.0
+	if reheat {
+		wet = 1
+	}
+	m.State.Engine[0] = EngineState{Spool: 1, Reheat: wet}
+	m.State.Engine[1] = EngineState{Spool: 1, Reheat: wet}
 	if se {
 		m.State.Damage.Engine[1] = 1
 	}
@@ -205,7 +213,7 @@ func vsClimbPoint(fuel, alt, target float64, se bool) float64 {
 		body := s.Attitude.Unrotate(s.Velocity)
 		beta := math.Asin(clamp(body.Z/math.Max(v, 1), -1, 1))
 		pedal := clamp(-beta*3-s.Omega.Y*4, -1, 1) // sideslip-nulling + rate damping: a rate-only pedal leaves the dead-engine moment balanced by STEADY sideslip, whose drag turned a +10 deg single-engine climb into -5
-		m.Step(Inputs{Throttle: 1, Pitch: stick, Roll: roll, Yaw: pedal})
+		m.Step(Inputs{Throttle: 1, Reheat: wet, Pitch: stick, Roll: roll, Yaw: pedal})
 		if i == settle {
 			e0 = s.Position.Y + v*v/19.62
 		}
@@ -221,10 +229,10 @@ func vsClimbPoint(fuel, alt, target float64, se bool) float64 {
 
 // vsClimbSweep finds Vy (best rate) and Vx (best gradient) over a speed grid,
 // refining around each maximum.
-func vsClimbSweep(fuel, alt, stall float64, se bool) (vx, gx, vy, ry float64) {
+func vsClimbSweep(fuel, alt, stall float64, se bool, reheat bool) (vx, gx, vy, ry float64) {
 	type point struct{ v, rate, grad float64 }
 	measure := func(v float64) point {
-		r := vsClimbPoint(fuel, alt, v, se)
+		r := vsClimbPoint(fuel, alt, v, se, reheat)
 		if math.IsNaN(r) {
 			return point{v, math.Inf(-1), math.Inf(-1)}
 		}
@@ -421,12 +429,24 @@ func TestVSpeeds(t *testing.T) {
 			fmt.Printf("Vs0  landing config stall:   %s%s\n", vsBoth(vs0, at.m), note)
 			vapp := vsApproach(w.fuel, at.m)
 			fmt.Printf("Vapp on-speed approach:      %s  (%.2f Vs0)%s\n", vsBoth(vapp, at.m), vapp/vs0, note)
-			vx, gx, vy, ry := vsClimbSweep(w.fuel, at.m, vs1, false)
+			vx, gx, vy, ry := vsClimbSweep(w.fuel, at.m, vs1, false, false)
 			fmt.Printf("Vx   best angle (MIL):       %s  (+%.1f deg)\n", vsBoth(vx, at.m), gx)
 			fmt.Printf("Vy   best rate  (MIL):       %s  (%+.0f fpm)\n", vsBoth(vy, at.m), ry*196.85)
-			vxse, gxse, vyse, ryse := vsClimbSweep(w.fuel, at.m, vs1, true)
-			fmt.Printf("Vxse single-engine angle:    %s  (%+.1f deg)\n", vsBoth(vxse, at.m), gxse)
-			fmt.Printf("Vyse single-engine rate:     %s  (%+.0f fpm)\n", vsBoth(vyse, at.m), ryse*196.85)
+			sigma := air(at.m, Environment{}).Density / air(0, Environment{}).Density
+			if 2*78700*sigma >= weight {
+				fmt.Printf("Vx   best angle (AB):        vertical — T/W %.2f here: any speed above stall sustains 90 deg\n", 2*78700*sigma/weight)
+			} else {
+				vxb, gxb, _, _ := vsClimbSweep(w.fuel, at.m, vs1, false, true)
+				fmt.Printf("Vx   best angle (AB):        %s  (+%.1f deg)\n", vsBoth(vxb, at.m), gxb)
+			}
+			_, _, vyb, ryb := vsClimbSweep(w.fuel, at.m, vs1, false, true)
+			fmt.Printf("Vy   best rate  (AB):        %s  (%+.0f fpm)\n", vsBoth(vyb, at.m), ryb*196.85)
+			vxse, gxse, vyse, ryse := vsClimbSweep(w.fuel, at.m, vs1, true, false)
+			fmt.Printf("Vxse single-engine (MIL):    %s  (%+.1f deg)\n", vsBoth(vxse, at.m), gxse)
+			fmt.Printf("Vyse single-engine (MIL):    %s  (%+.0f fpm)\n", vsBoth(vyse, at.m), ryse*196.85)
+			vxsb, gxsb, vysb, rysb := vsClimbSweep(w.fuel, at.m, vs1, true, true)
+			fmt.Printf("Vxse single-engine (AB):     %s  (%+.1f deg)\n", vsBoth(vxsb, at.m), gxsb)
+			fmt.Printf("Vyse single-engine (AB):     %s  (%+.0f fpm)\n", vsBoth(vysb, at.m), rysb*196.85)
 			if vmc := vsVmc(w.fuel, at.m, vs1); vmc > 0 {
 				fmt.Printf("Vmc  minimum control (AB):   %s\n", vsBoth(vmc, at.m))
 			} else {
