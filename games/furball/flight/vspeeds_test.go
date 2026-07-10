@@ -243,6 +243,15 @@ func vsClimbSweep(fuel, alt, stall float64, se bool, reheat bool) (vx, gx, vy, r
 	for v := lo; v <= lo+220; v += 15 {
 		pts = append(pts, measure(v))
 	}
+	cache := map[float64]point{}
+	sample := func(v float64) point {
+		if p, ok := cache[v]; ok {
+			return p
+		}
+		p := measure(v)
+		cache[v] = p
+		return p
+	}
 	best := func(key func(point) float64) point {
 		b := pts[0]
 		for _, p := range pts {
@@ -250,10 +259,19 @@ func vsClimbSweep(fuel, alt, stall float64, se bool, reheat bool) (vx, gx, vy, r
 				b = p
 			}
 		}
-		for _, dv := range []float64{-7.5, 7.5} { // one refinement ring
-			p := measure(b.v + dv)
-			if key(p) > key(b) {
-				b = p
+		// Multi-stage ring refinement: hill-climb at each scale until the
+		// centre is the local maximum, then halve, down to ~0.5 kt. The climb
+		// may walk past the coarse grid's top — that also recovers a peak the
+		// grid ceiling would otherwise clip.
+		for step := 7.5; step >= 0.2; step /= 2 {
+			for moved := true; moved; {
+				moved = false
+				for _, dv := range []float64{-step, step} {
+					if p := sample(b.v + dv); key(p) > key(b) {
+						b = p
+						moved = true
+					}
+				}
 			}
 		}
 		return b
@@ -393,7 +411,7 @@ func vsSustained(fuel, alt, speed float64) float64 {
 		return (e1 - e0) / 4
 	}
 	low, high := 1.2, 7.6
-	for i := 0; i < 7; i++ {
+	for i := 0; i < 16; i++ { // 0.0001 g: fine enough that a 1 kt speed step still moves the bisected rate monotonically, not in 0.05 g quantization noise
 		mid := (low + high) / 2
 		if measure(mid) > 0 {
 			low = mid
@@ -435,7 +453,7 @@ func vsCorner(fuel, alt, stall float64) (float64, float64) {
 		return stall * 1.02, plateau
 	}
 	lo, hi := 1.02*stall, 2.4*stall
-	for i := 0; i < 9; i++ {
+	for i := 0; i < 12; i++ { // ~0.05 kt over the ~110 m/s span
 		mid := (lo + hi) / 2
 		if snap(mid) >= target {
 			hi = mid
@@ -455,15 +473,31 @@ func vsBestRate(fuel, alt float64) (float64, float64) {
 	if alt > 7000 {
 		lo, hi = 190, 330
 	}
+	cache := map[float64]float64{}
+	sample := func(v float64) float64 {
+		if w, ok := cache[v]; ok {
+			return w
+		}
+		w := vsSustained(fuel, alt, v)
+		cache[v] = w
+		return w
+	}
 	bestV, bestW := 0.0, -1.0
 	for v := lo; v <= hi; v += 20 {
-		if w := vsSustained(fuel, alt, v); w > bestW {
+		if w := sample(v); w > bestW {
 			bestV, bestW = v, w
 		}
 	}
-	for _, dv := range []float64{-10, 10} {
-		if w := vsSustained(fuel, alt, bestV+dv); w > bestW {
-			bestV, bestW = bestV+dv, w
+	// Multi-stage ring refinement to ~0.5 kt (see vsClimbSweep).
+	for step := 10.0; step >= 0.2; step /= 2 {
+		for moved := true; moved; {
+			moved = false
+			for _, dv := range []float64{-step, step} {
+				if w := sample(bestV + dv); w > bestW {
+					bestV, bestW = bestV+dv, w
+					moved = true
+				}
+			}
 		}
 	}
 	return bestV, bestW
