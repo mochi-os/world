@@ -134,25 +134,66 @@ func vsRotate(fuel float64) (float64, float64) {
 	return vr, math.NaN()
 }
 
+// vsClimbTrim bisects the level-trim alpha at a speed and returns it with the
+// STATIC steady-climb estimate (thrust minus trimmed drag): the entry state
+// for the dynamic measurement below.
+func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64) (float64, float64) {
+	w := (10700 + fuel) * 9.81
+	local := air(alt, Environment{})
+	lift := func(alpha float64) float64 {
+		trial := m.State
+		trial.Velocity = Vec3{X: v}
+		trial.Attitude = Axis(Vec3{Z: 1}, alpha)
+		trial.Engine[0] = EngineState{}
+		trial.Engine[1] = EngineState{}
+		return trial.Attitude.Rotate(m.forces(&trial, Inputs{}, local).Force).Y
+	}
+	lo, hi := 0.0, 0.35
+	for i := 0; i < 20; i++ {
+		mid := (lo + hi) / 2
+		if lift(mid) < w {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	alpha := (lo + hi) / 2
+	trial := m.State
+	trial.Velocity = Vec3{X: v}
+	trial.Attitude = Axis(Vec3{Z: 1}, alpha)
+	trial.Engine[0] = EngineState{}
+	trial.Engine[1] = EngineState{}
+	drag := -trial.Attitude.Rotate(m.forces(&trial, Inputs{}, local).Force).X
+	mach := v / local.Sound
+	dry, _ := output(EngineState{Spool: 1}, &m.Airframe.Engines[0], local.Density, mach)
+	gamma := math.Asin(clamp((engines*dry-drag)/w, -0.95, 0.95))
+	return alpha, gamma
+}
+
 // vsClimbPoint measures the climb capability at one speed as the SPECIFIC
-// ENERGY rate (Ps) over a windowed MIL run — the EM-harness method: the stick
-// holds the target speed only loosely, and any drift is energy-accounted, so
-// the number is the true steady climb rate without waiting for a long
-// geometric settle (the light jet's dry thrust-to-weight is ~0.9 and its
-// steady climb angles are extreme). se kills the second engine.
+// ENERGY rate (Ps) over a windowed MIL run. The entry is PRE-ESTABLISHED in
+// the statically-estimated steady climb (attitude and velocity vector both on
+// the climb angle): entering level, the jet spent the whole window pulling
+// into a 45-degree climb — sustained n>1 burning the excess in induced drag —
+// and read HALF the true low-speed Ps, smearing Vx into Vy. se kills the
+// second engine.
 func vsClimbPoint(fuel, alt, target float64, se bool) float64 {
 	m := vsJet(fuel, alt, target, false)
-	rho := air(alt, Environment{}).Density
-	trim := clamp(2*(10700+fuel)*9.81/(rho*target*target*37.16)/4.7+0.01, 0, 0.3)
-	m.State.Attitude = Axis(Vec3{Z: 1}, trim)
+	engines := 2.0
+	if se {
+		engines = 1
+	}
+	alpha, gamma := vsClimbTrim(m, fuel, alt, target, engines)
+	m.State.Velocity = Vec3{X: target * math.Cos(gamma), Y: target * math.Sin(gamma)}
+	m.State.Attitude = Axis(Vec3{Z: 1}, gamma+alpha)
 	m.State.Engine[0] = EngineState{Spool: 1}
 	m.State.Engine[1] = EngineState{Spool: 1}
 	if se {
 		m.State.Damage.Engine[1] = 1
 	}
-	stick := 0.1
+	stick := 0.05
 	var e0, e1 float64
-	const settle, window = 240 * 4, 240 * 10
+	const settle, window = 240 * 4, 240 * 8
 	for i := 0; i < settle+window; i++ {
 		s := &m.State
 		v := s.Velocity.Length()
@@ -161,14 +202,16 @@ func vsClimbPoint(fuel, alt, target float64, se bool) float64 {
 		right := s.Attitude.Rotate(Vec3{Z: 1})
 		bank := math.Atan2(right.Y, up.Y)
 		roll := clamp(bank*2.5, -1, 1)
-		pedal := clamp(-s.Omega.Y*6, -1, 1) // yaw damping (matters single-engine)
+		body := s.Attitude.Unrotate(s.Velocity)
+		beta := math.Asin(clamp(body.Z/math.Max(v, 1), -1, 1))
+		pedal := clamp(-beta*3-s.Omega.Y*4, -1, 1) // sideslip-nulling + rate damping: a rate-only pedal leaves the dead-engine moment balanced by STEADY sideslip, whose drag turned a +10 deg single-engine climb into -5
 		m.Step(Inputs{Throttle: 1, Pitch: stick, Roll: roll, Yaw: pedal})
 		if i == settle {
 			e0 = s.Position.Y + v*v/19.62
 		}
 		if i == settle+window-1 {
 			e1 = s.Position.Y + v*v/19.62
-			if math.Abs(v-target) > 25 {
+			if math.Abs(v-target) > 20 {
 				return math.NaN() // the hold lost the point entirely
 			}
 		}
@@ -189,7 +232,7 @@ func vsClimbSweep(fuel, alt, stall float64, se bool) (vx, gx, vy, ry float64) {
 	}
 	var pts []point
 	lo := math.Max(1.15*stall, 80)
-	for v := lo; v <= lo+150; v += 15 {
+	for v := lo; v <= lo+220; v += 15 {
 		pts = append(pts, measure(v))
 	}
 	best := func(key func(point) float64) point {
