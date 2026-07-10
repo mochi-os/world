@@ -323,6 +323,7 @@ func vsApproach(fuel, alt float64) float64 {
 // vsSustained bisects the Ps=0 load factor at one speed (the envelope-map
 // method) and returns the sustained turn rate there, deg/s. Full afterburner.
 func vsSustained(fuel, alt, speed float64) float64 {
+	alt = math.Max(alt, 457) // high-g trials DESCEND tens of metres while converging: from a 30 m "sea level" start they sank into sea-surface ground effect (and then under the waves — open water has no collision), where the slashed induced drag read as "sustains the limiter at 467 KTAS at max gross". The EM battery runs at 1500 ft for the same reason.
 	measure := func(n float64) float64 {
 		m := vsJet(fuel, alt, speed, false)
 		m.State.Engine[0] = EngineState{Spool: 1, Reheat: 1}
@@ -330,7 +331,7 @@ func vsSustained(fuel, alt, speed float64) float64 {
 		stick := clamp((n-1)/6.5, 0.1, 1)
 		target := -math.Acos(clamp(1/n, 0, 1))
 		var e0, e1 float64
-		for tick := 0; tick < 240*7; tick++ {
+		for tick := 0; tick < 240*10; tick++ {
 			s := &m.State
 			up := s.Attitude.Rotate(Vec3{Y: 1})
 			right := s.Attitude.Rotate(Vec3{Z: 1})
@@ -338,15 +339,18 @@ func vsSustained(fuel, alt, speed float64) float64 {
 			roll := clamp((bank-target)*2.5, -1, 1)
 			stick = clamp(stick+clamp((n-s.Fcs.Normal)*0.01, -0.01, 0.01), 0.05, 1)
 			m.Step(Inputs{Pitch: stick, Roll: roll, Throttle: 1, Reheat: 1})
-			v := s.Velocity.Length()
-			if tick == 240*4 {
-				e0 = s.Position.Y + v*v/19.62
+			if s.Position.Y < alt-250 {
+				return -1e9 // a "sustained level turn" that has dived 250 m is not one: unsustainable — without this the spiral kept diving to the sea, where ground effect (and then flying UNDER the water) read as sustained
 			}
-			if tick == 240*7-1 {
+			v := s.Velocity.Length()
+			if tick == 240*6 {
+				e0 = s.Position.Y + v*v/19.62 // the heavy high-g turn takes ~5 s to wind up: an earlier window catches the ENTRY transient and inflates the bisected g
+			}
+			if tick == 240*10-1 {
 				e1 = s.Position.Y + v*v/19.62
 			}
 		}
-		return (e1 - e0) / 3
+		return (e1 - e0) / 4
 	}
 	low, high := 1.2, 7.6
 	for i := 0; i < 7; i++ {
