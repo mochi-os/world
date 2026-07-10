@@ -402,7 +402,11 @@ func TestVSpeeds(t *testing.T) {
 	fmt.Println("F/A-18C V-speed survey — standard atmosphere, calm air")
 	fmt.Println("climbs at MIL; sustained turns and Vmc at full afterburner; flaps schedule automatically")
 	for _, w := range weights {
-		fmt.Printf("\n===== %s: %.0f kg (%.0f kg fuel) =====\n", w.label, 10700+w.fuel, w.fuel)
+		weight := (10700 + w.fuel) * 9.81
+		fmt.Printf("\n===== %s: %.0f kg (%.0f kg fuel) — static T/W: %.2f MIL, %.2f AB =====\n", w.label, 10700+w.fuel, w.fuel, 2*48900/weight, 2*78700/weight)
+		if 2*78700 > weight {
+			fmt.Println("(T/W exceeds 1 in reheat: the jet climbs vertically, accelerating — a best CLIMB ANGLE only exists at MIL, where Vx below is measured; in AB the concept is degenerate)")
+		}
 		vr, vlof := vsRotate(w.fuel)
 		fmt.Printf("Vr  minimum rotation (SL, MIL): %s   (liftoff %s)\n", vsBoth(vr, 0), vsBoth(vlof, 0))
 		for _, at := range vspeedAlts {
