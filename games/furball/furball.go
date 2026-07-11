@@ -100,6 +100,11 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 	if tod, _ := session.Parameters["tod"].(string); tod == "night" {
 		i.night = true
 	}
+	if cheats, found := session.Parameters["cheats"].(map[string]any); found {
+		i.cheat.invulnerable, _ = cheats["invulnerable"].(bool)
+		i.cheat.ammunition, _ = cheats["ammunition"].(bool)
+		i.cheat.fuel, _ = cheats["fuel"].(bool)
+	}
 	i.tank = fuel
 	if pounds := number(session.Parameters, "fuel"); pounds > 0 {
 		i.tank = clamp(pounds/2.2046, 500, 4900) // the UI speaks pounds like the IFEI; the sim burns kilograms
@@ -208,6 +213,11 @@ type instance struct {
 	environment flight.Environment
 	sky         string // session cloud preset (bot visibility occlusion)
 	night       bool   // session time of day (bot visual range and glare)
+	cheat       struct {
+		invulnerable bool // humans take no weapon damage; bots still do (crashes still kill)
+		ammunition   bool // guns and missiles never deplete — humans and bots alike
+		fuel         bool // the tank never depletes — humans and bots alike
+	}
 	aircraft    map[int]*craft
 	flying      []*missile
 	wrecks      []*wreck
@@ -460,6 +470,9 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(a.latest) // 4 × Dt (1/240) per 60 Hz tick
 		}
+		if i.cheat.fuel {
+			a.model.State.Fuel = i.tank // the cheat tank never depletes — humans and bots alike
+		}
 		// The damage cascade: fires feed or starve on the throttle, fuel
 		// fires run their fuse, weakened wings shed under g.
 		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, 60, i.environment.Seed, uint64(slot), tick) {
@@ -566,10 +579,12 @@ func (i *instance) guns(dt float64, tick uint64) {
 			continue
 		}
 		a.charge -= float64(burst)
-		if burst > a.ammunition {
-			burst = a.ammunition
+		if !i.cheat.ammunition {
+			if burst > a.ammunition {
+				burst = a.ammunition
+			}
+			a.ammunition -= burst
 		}
-		a.ammunition -= burst
 		state := &a.model.State
 		shooter := battle.Pose{
 			Position: state.Position.Add(state.Attitude.Rotate(flight.Vec3{X: muzzle})),
@@ -581,6 +596,9 @@ func (i *instance) guns(dt float64, tick uint64) {
 			b := i.aircraft[other]
 			if other == slot || !b.alive {
 				continue
+			}
+			if i.cheat.invulnerable && !b.bot {
+				continue // the burst passes through a human under the cheat; bots still bleed
 			}
 			hits, events := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick)
 			if hits == 0 {
@@ -710,6 +728,9 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			direction, distance := i.bearing(m.position, *mark)
 			// Proximity fuse (armed): the warhead judges the pass.
 			if tracking && distance < missile_fuse {
+				if i.cheat.invulnerable && !target.bot {
+					continue // the fuse fires but the warhead cannot hurt a human under the cheat
+				}
 				kill, events := battle.Blast(m.position, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
 				target.condition.Damager = m.shooter
 				target.condition.Damaged = 0

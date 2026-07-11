@@ -171,7 +171,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		if i.missiles && i.free() && b.missiles > 0 {
 			before := len(i.flying)
 			i.launch(slot, a)
-			if len(i.flying) > before {
+			if len(i.flying) > before && !i.cheat.ammunition {
 				b.missiles--
 			}
 		}

@@ -100,6 +100,47 @@ func total(element []float64) float64 {
 	return sum
 }
 
+// TestCheats: with the match cheats on, a tracked burst passes through a
+// HUMAN untouched while a bot under the same fire still bleeds; the shooter's
+// ammunition and fuel never deplete.
+func TestCheats(t *testing.T) {
+	i := build(t, "furball", map[string]any{
+		"cheats": map[string]any{"invulnerable": true, "ammunition": true, "fuel": true},
+		"bots":   map[string]any{"drone": 1.0},
+	}, 2)
+	steady := map[string]any{"throttle": 1.0, "reheat": 1.0, "fire": true}
+	for tick := 0; tick < 60*5; tick++ { // 5 s of held trigger at 250 m astern of the human
+		place(i, 0, 1, 250)
+		i.aircraft[0].model.State.Position.Y = 400
+		i.aircraft[1].model.State.Position.Y = 400
+		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}}) // real ticks: a pinned tick freezes the dispersion roll
+	}
+	human := &i.aircraft[1].model.State.Damage
+	if human.Engine[0]+human.Engine[1] > 0 || human.Leak > 0 || total(human.Element) > 0 || i.aircraft[1].condition.Killed {
+		t.Fatalf("invulnerable human took damage: engines %.2f/%.2f leak %.2f elements %.2f killed %v",
+			human.Engine[0], human.Engine[1], human.Leak, total(human.Element), i.aircraft[1].condition.Killed)
+	}
+	if i.aircraft[0].ammunition != rounds {
+		t.Fatalf("infinite ammunition depleted: %d of %d rounds left", i.aircraft[0].ammunition, rounds)
+	}
+	if fuel := i.aircraft[0].model.State.Fuel; fuel != i.tank {
+		t.Fatalf("infinite fuel depleted: %.1f of %.1f kg left after 5 s in reheat", fuel, i.tank)
+	}
+	for tick := 0; tick < 60*5; tick++ { // the same burst against the BOT drone must still wound it
+		if !i.aircraft[99].alive {
+			break
+		}
+		place(i, 0, 99, 250)
+		i.aircraft[0].model.State.Position.Y = 400
+		i.aircraft[99].model.State.Position.Y = 400
+		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
+	}
+	drone := &i.aircraft[99].model.State.Damage
+	if drone.Engine[0]+drone.Engine[1] == 0 && drone.Leak == 0 && total(drone.Element) == 0 && i.aircraft[99].alive {
+		t.Fatal("invulnerability protected a bot: 5 s of tracking fire left the drone untouched")
+	}
+}
+
 // TestJoustLeave: abandoning a live joust hands the win to the stayer.
 func TestJoustLeave(t *testing.T) {
 	i := build(t, "joust", nil, 2)
