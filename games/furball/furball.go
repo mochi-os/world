@@ -32,7 +32,7 @@ const (
 	ring     = 2778   // spawn radius (1.5 NM)
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
-	fuel     = 3000.0 // default spawn fuel load, kg (~6,600 lb — the session may choose otherwise)
+	fuel     = 2722.0 // default spawn fuel load, kg (~6,000 lb — the session may choose otherwise)
 	pause    = 5.0    // seconds from death to respawn (furball mode)
 	rounds   = 578    // M61 magazine per life
 	rate     = 100.0  // rounds per second (6,000 rpm)
