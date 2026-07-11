@@ -56,7 +56,7 @@ func TestAccelerate(t *testing.T) {
 	reached := -1.0
 	for i := 0; i < 240*140; i++ {
 		pitch := clamp((altitude-m.State.Position.Y)*0.002-m.State.Velocity.Y*0.04, -0.4, 0.4)
-		m.Step(flight.Inputs{Throttle: 1, Reheat: true, Pitch: pitch})
+		m.Step(flight.Inputs{Throttle: 1, Reheat: 1, Pitch: pitch})
 		if m.Mach() >= 1.2 {
 			reached = m.State.Time
 			break
@@ -134,7 +134,7 @@ func TestDeck(t *testing.T) {
 	}
 	released := false
 	for i := 0; i < 240*8; i++ {
-		m.Step(flight.Inputs{Gear: true, Throttle: 1, Reheat: true, Launch: i > 480})
+		m.Step(flight.Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: i > 480})
 		if m.State.Gear.Catapult < 0 && !released && i > 480 {
 			released = true
 			if speed := m.State.Velocity.Length(); speed < 80 {

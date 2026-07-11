@@ -104,6 +104,7 @@ func (f *Furball) Create(session game.Session) (game.Instance, error) {
 		i.cheat.invulnerable, _ = cheats["invulnerable"].(bool)
 		i.cheat.ammunition, _ = cheats["ammunition"].(bool)
 		i.cheat.fuel, _ = cheats["fuel"].(bool)
+		i.environment.Cheat.Fuel = i.cheat.fuel // the flight core itself freezes the tank — every model made from this environment (bots here, humans at Join) inherits it, and the client's wasm core mirrors it from the welcome
 	}
 	i.tank = fuel
 	if pounds := number(session.Parameters, "fuel"); pounds > 0 {
@@ -469,9 +470,6 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		}
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(a.latest) // 4 × Dt (1/240) per 60 Hz tick
-		}
-		if i.cheat.fuel {
-			a.model.State.Fuel = i.tank // the cheat tank never depletes — humans and bots alike
 		}
 		// The damage cascade: fires feed or starve on the throttle, fuel
 		// fires run their fuse, weakened wings shed under g.

@@ -84,6 +84,9 @@ func (m *Model) propulsion(s *State, total *Forces, local Air) {
 
 // burn decrements fuel by the flow the current condition demands.
 func (m *Model) burn() {
+	if m.Environment.Cheat.Fuel {
+		return // infinite-fuel cheat: the tank (and with it the leak drain) stays frozen at the spawn load
+	}
 	local := air(m.State.Position.Y, m.Environment)
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 	mach := v.Length() / local.Sound

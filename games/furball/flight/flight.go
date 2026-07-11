@@ -32,6 +32,9 @@ type Environment struct {
 	Pressure    float64 // sea-level pressure, Pa (0 = ISA standard 101325)
 	Wrap        float64 // toroidal world size, m; 0 = none
 	Cloud       Cloud   // convective cloud layer (zero = clear/stratiform/smooth)
+	Cheat       struct {
+		Fuel bool // mission cheat: the tank never depletes — burn() leaves State.Fuel exactly where the spawn set it, so mass stays constant and the same flag drives the server and the client's wasm core identically
+	}
 }
 
 // Shortest returns the minimum-image difference b-a along one axis of the
