@@ -1035,15 +1035,16 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		if len(shots) > 6 {
 			shots = shots[:6]
 		}
-		darts := make([]byte, 0, len(shots)*24)
+		darts := make([]byte, 0, len(shots)*25)
 		for _, sh := range shots {
-			var d [24]byte
+			var d [25]byte
 			binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(sh.m.position.X)))
 			binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(sh.m.position.Y)))
 			binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(sh.m.position.Z)))
 			binary.LittleEndian.PutUint32(d[12:], math.Float32bits(float32(sh.m.velocity.X)))
 			binary.LittleEndian.PutUint32(d[16:], math.Float32bits(float32(sh.m.velocity.Y)))
 			binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(sh.m.velocity.Z)))
+			d[24] = byte(sh.m.shooter) // the client hides its OWN darts (it already flies the launch visual) and shows everyone else's
 			darts = append(darts, d[:]...)
 		}
 		poses[self] = map[string]any{"blob": blob, "missiles": darts}
