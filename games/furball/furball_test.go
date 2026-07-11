@@ -974,3 +974,150 @@ func TestEngagement(t *testing.T) {
 		t.Fatalf("the same scripted fight diverged: %v/%v vs %v/%v, events %v vs %v", engines, elements, engines2, elements2, first, second)
 	}
 }
+
+// TestBurstWounds: the non-binary promise at match level — a SHORT tracking
+// burst wounds the target without destroying it. TestJoust proves five
+// seconds wrecks; half a second must merely hurt.
+func TestBurstWounds(t *testing.T) {
+	i := build(t, "furball", nil, 2)
+	steady := map[string]any{"throttle": 0.85, "fire": true}
+	for tick := 0; tick < 36; tick++ { // 0.6 s of trigger at 250 m astern
+		place(i, 0, 1, 250)
+		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
+	}
+	damage := &i.aircraft[1].model.State.Damage
+	wounded := damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0 || damage.Jam != nil
+	if !wounded {
+		t.Fatal("0.6 s of tracking fire left no wound at all")
+	}
+	if !i.aircraft[1].alive || i.aircraft[1].condition.Killed {
+		t.Fatal("a short burst must wound, not destroy")
+	}
+}
+
+// TestBlastCredits: the missile path end to end — launch, pursuit, proximity
+// fuse, a real wound, and the DAMAGER credited to the shooter so any later
+// death (cascade or splash) scores correctly. TestJoust proves the guns
+// half of the credit chain; this proves the Blast half.
+func TestBlastCredits(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	place(i, 0, 1, 700)
+	i.Step(0, map[int][]game.Input{0: {{Sequence: 1, Data: map[string]any{"throttle": 0.85, "missile": true}}}})
+	if len(i.flying) == 0 {
+		t.Fatal("the missile never launched")
+	}
+	for tick := uint64(1); tick < 60*15 && len(i.flying) > 0; tick++ {
+		i.Step(tick, nil)
+		i.events = i.events[:0]
+	}
+	if len(i.flying) > 0 {
+		t.Fatal("the missile never fused or timed out within 15 s")
+	}
+	damage := &i.aircraft[1].model.State.Damage
+	wounded := damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0 || i.aircraft[1].condition.Killed
+	if !wounded {
+		t.Fatal("the warhead fused without wounding the target")
+	}
+	if i.aircraft[1].condition.Damager != 0 {
+		t.Fatalf("the blast wound is credited to %d, want shooter 0", i.aircraft[1].condition.Damager)
+	}
+}
+
+// TestRespawnPristine: damage must not leak across lives — the respawned jet
+// carries a zeroed damage state, full ammunition, and a full tank.
+func TestRespawnPristine(t *testing.T) {
+	i := build(t, "furball", nil, 2)
+	steady := map[string]any{"throttle": 0.85, "fire": true}
+	for tick := 0; tick < 60*5; tick++ { // wreck it: 5 s of pinned tracking fire...
+		place(i, 0, 1, 250)
+		i.aircraft[0].model.State.Position.Y = 400 // fight on the deck so the wreck splashes fast
+		i.aircraft[1].model.State.Position.Y = 400
+		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
+	}
+	for tick := 0; tick < 60*60 && i.aircraft[1].alive; tick++ {
+		i.Step(uint64(tick), nil) // ...then stop pinning the pose and let the wreck fall
+		i.events = i.events[:0]
+	}
+	if i.aircraft[1].alive {
+		t.Fatal("the wrecked target never went down")
+	}
+	reborn := false
+	for tick := uint64(0); tick < 60*10 && !reborn; tick++ {
+		i.Step(tick, nil)
+		for _, e := range i.events {
+			if e["kind"] == "respawn" && e["slot"] == 1 {
+				reborn = true
+			}
+		}
+		i.events = i.events[:0]
+	}
+	if !reborn {
+		t.Fatal("the victim never respawned")
+	}
+	a := i.aircraft[1]
+	damage := &a.model.State.Damage
+	if total(damage.Element) > 0 || damage.Jam != nil || damage.Engine[0] > 0 || damage.Engine[1] > 0 || damage.Leak > 0 || damage.Loss > 0 || damage.Stress > 0 {
+		t.Fatal("damage leaked across the respawn")
+	}
+	if a.ammunition != rounds {
+		t.Fatalf("the respawn shortchanged the guns: %d of %d rounds", a.ammunition, rounds)
+	}
+	if a.model.State.Fuel != i.tank {
+		t.Fatalf("the respawn shortchanged the tank: %.0f of %.0f kg", a.model.State.Fuel, i.tank)
+	}
+	if a.condition.Killed {
+		t.Fatal("the pilot stayed dead through the respawn")
+	}
+}
+
+// TestLethalityBand: a seeded balance gate — from a perfect 300 m tracking
+// position, guns kill within a plausible window: never inside half a second
+// (no one-burst deletions), always within thirty (guns stay lethal). Catches
+// balance regressions from aero or battle edits.
+func TestLethalityBand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("five seeded duels")
+	}
+	for _, seed := range []uint64{2, 5, 9, 11, 17} {
+		g := New()
+		made, err := g.Create(game.Session{Identifier: "band", Game: "furball", Mode: "furball", Capacity: 16, Seed: seed})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		for slot := 0; slot < 2; slot++ {
+			if _, err := i.Join(game.Player{Name: "p", Slot: slot}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		steady := map[string]any{"throttle": 0.85, "fire": true}
+		killed := -1
+		for tick := 0; tick < 60*5 && killed < 0; tick++ { // 5 s of pinned tracking fire
+			place(i, 0, 1, 300)
+			i.aircraft[0].model.State.Position.Y = 400
+			i.aircraft[1].model.State.Position.Y = 400
+			i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
+			for _, e := range i.events {
+				if e["kind"] == "kill" && e["slot"] == 1 {
+					killed = tick
+				}
+			}
+			i.events = i.events[:0]
+		}
+		if killed >= 0 && killed < 30 {
+			t.Fatalf("seed %d: killed in %.2f s — one-burst deletions are out of band", seed, float64(killed)/60)
+		}
+		for tick := 60 * 5; tick < 60*35 && killed < 0; tick++ { // release the pose: the wreck must fall and score
+			i.Step(uint64(tick), nil)
+			for _, e := range i.events {
+				if e["kind"] == "kill" && e["slot"] == 1 {
+					killed = tick
+				}
+			}
+			i.events = i.events[:0]
+		}
+		if killed < 0 {
+			t.Fatalf("seed %d: 5 s of perfect tracking fire plus the fall never killed", seed)
+		}
+	}
+}

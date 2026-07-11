@@ -181,3 +181,38 @@ func TestBlast(t *testing.T) {
 		t.Fatal("a 9 m burst threw no effective fragments")
 	}
 }
+
+// TestFringeFlies: the non-binary promise — a fringe blast (the same 9 m
+// miss TestBlast proves is not a kill) leaves a jet that still FLIES. Eight
+// seconds later, under a plain altitude-holding stick with the cascade
+// running, it is neither exploded nor falling out of the sky.
+func TestFringeFlies(t *testing.T) {
+	body, m := target()
+	kill, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
+	if kill {
+		t.Fatal("the fringe blast killed outright — the premise of this test needs re-basing")
+	}
+	altitude := m.State.Position.Y
+	stick := 0.0
+	for tick := uint64(0); tick < 60*8; tick++ {
+		for step := 0; step < 4; step++ {
+			s := &m.State
+			stick = clamp(stick+clamp(((altitude-s.Position.Y)*0.002-s.Velocity.Y*0.02-stick*4)*0.002, -0.004, 0.004), -0.5, 1)
+			m.Step(flight.Inputs{Throttle: 0.8, Pitch: stick})
+		}
+		for _, e := range Advance(body, m, 0.8, 60, 7, 3, tick) {
+			if e.Kind == "explode" {
+				t.Fatal("the fringe wound cascaded to an explosion within 8 s")
+			}
+		}
+		if body.Condition.Killed {
+			t.Fatal("the fringe wound killed the pilot")
+		}
+	}
+	if m.State.Position.Y < altitude-150 {
+		t.Fatalf("the wounded jet is falling, not flying: lost %.0f m in 8 s", altitude-m.State.Position.Y)
+	}
+	if m.State.Velocity.Length() < 100 {
+		t.Fatalf("the wounded jet cannot hold flying speed: %.0f m/s", m.State.Velocity.Length())
+	}
+}

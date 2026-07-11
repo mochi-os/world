@@ -18,9 +18,11 @@ test:
 	go test ./...
 
 # Run the simulation-core tests on the browser target: the golden-trace
-# comparison under wasm IS the native-versus-wasm divergence bound.
+# comparison under wasm IS the native-versus-wasm divergence bound. The
+# battle package rides along — the single-player client judges damage with
+# the same Go via wasm, so its tests passing there pin that parity claim.
 test-wasm:
-	GOOS=js GOARCH=wasm PATH="$(shell go env GOROOT)/lib/wasm:$$PATH" go test $(testflags) ./games/furball/flight/
+	GOOS=js GOARCH=wasm PATH="$(shell go env GOROOT)/lib/wasm:$$PATH" go test $(testflags) ./games/furball/flight/ ./games/furball/battle/
 
 # Compile-check the simulation core and its boundary for the browser target.
 wasm:
