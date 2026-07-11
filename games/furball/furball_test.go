@@ -141,6 +141,50 @@ func TestCheats(t *testing.T) {
 	}
 }
 
+// TestCheatMissile: the invulnerability cheat gates the missile warhead
+// (battle.Blast) exactly as it gates guns — a human is spared, a bot is not.
+// TestCheats fires only guns, so without this the Blast guard is untested and
+// could regress silently. The bot case is the control: it proves the missile
+// actually reached the fuse, so the human being unhurt is the guard, not a miss.
+func TestCheatMissile(t *testing.T) {
+	hurt := func(bot bool) bool {
+		g := New()
+		made, err := g.Create(game.Session{Identifier: "cheatmissile", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+			Parameters: map[string]any{"missiles": true, "cheats": map[string]any{"invulnerable": true}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		for slot := 0; slot < 2; slot++ {
+			if _, err := i.Join(game.Player{Name: "p", Slot: slot}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		target := i.aircraft[1]
+		target.bot = bot // the ONLY difference between the two runs
+		target.model.State.Position = flight.Vec3{X: 1500, Y: 3000}
+		target.model.State.Velocity = flight.Vec3{X: 250}
+		target.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
+		shooter := i.aircraft[0]
+		shooter.model.State.Position = flight.Vec3{Y: 3000}
+		shooter.model.State.Velocity = flight.Vec3{X: 250}
+		shooter.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
+		i.launched++
+		sight, _ := i.bearing(shooter.model.State.Position, target.model.State.Position)
+		i.flying = append(i.flying, &missile{shooter: 0, target: 1, position: shooter.model.State.Position,
+			life: missile_life, velocity: flight.Vec3{X: 280}, burn: missile_boost, sight: sight, number: i.launched})
+		fly(i, target, 12)
+		d := &target.model.State.Damage
+		return d.Engine[0]+d.Engine[1] > 0 || d.Leak > 0 || total(d.Element) > 0 || target.condition.Killed || !target.alive
+	}
+	if hurt(false) {
+		t.Fatal("a missile damaged the invulnerable human")
+	}
+	if !hurt(true) {
+		t.Fatal("the same missile left a bot unharmed — the fuse never fired, so the test proves nothing")
+	}
+}
+
 // TestJoustLeave: abandoning a live joust hands the win to the stayer.
 func TestJoustLeave(t *testing.T) {
 	i := build(t, "joust", nil, 2)
