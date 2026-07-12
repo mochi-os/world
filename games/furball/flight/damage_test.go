@@ -181,10 +181,17 @@ func clamped(v float64, low float64, high float64) float64 {
 
 // TestWingLossStalls: losing the INBOARD wing structure (both sides, so the
 // jet stays level) must wreck slow flight — the surviving area demands far
-// more speed for the same weight. The inboard half is the gate because it
-// carries the lift; outboard tips detach first at the boundary in this model
-// and clipping them measurably LOWERS the sink onset (~6% — a tip-stall/trim
-// artifact worth eyes at some point), so they make a treacherous assertion.
+// more speed for the same weight. The inboard half is the gate because
+// OUTBOARD clipping lowers the flown sink onset ~6% — an accepted quirk
+// (investigated 2026-07-12): the pass-1 induced-wash mean keeps dead
+// elements' area, so amputated tips hand the survivors their downwash relief
+// (statics stay correct — the clipped jet needs 14.2° for level flight at
+// 95 m/s against 12.7° pristine — and the choice is right for scattered
+// hole damage), while the FCS alpha backstop gates the FLOWN onset by alpha
+// rather than lift margin, letting the lift-poor jet ride ~1° deeper. Real
+// combat damage is scattered or asymmetric, so the clean symmetric
+// amputation that triggers the inversion is synthetic. See the induced-wash
+// note in aero.go pass 1.
 func TestWingLossStalls(t *testing.T) {
 	pristine := stalls(t, func(m *flight.Model) {})
 	clipped := stalls(t, func(m *flight.Model) {

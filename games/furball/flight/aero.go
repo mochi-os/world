@@ -128,7 +128,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 					extra, _ := vortex(surface.Vortex, surface.Breakdown, raw)
 					cl += extra
 				}
-				cl *= m.State.Damage.element(m.base[si] + ei) // damaged elements stop lifting in BOTH passes, so the induced wash tracks the damaged loading
+				cl *= m.State.Damage.element(m.base[si] + ei) // damaged elements stop lifting in BOTH passes, so the induced wash tracks the damaged loading. Dead elements keep their AREA in this mean and the aspect ratio stays full-span: right for scattered hole damage (circulation drops, span doesn't), but a contiguous tip amputation hands the survivors the tips' downwash relief, and with the FCS alpha backstop gating the flown onset by alpha the sink onset INVERTS ~6% under clean symmetric clipping — accepted (see TestWingLossStalls; the honest alternative is a span-tracking effective aspect ratio)
 				sum += cl * e.Area
 				area += e.Area
 			}
