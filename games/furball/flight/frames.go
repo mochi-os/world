@@ -74,9 +74,28 @@ func (m *Model) Mach() float64 {
 	return m.State.Velocity.Length() / air(m.State.Position.Y, m.Environment).Sound
 }
 
-// Cas approximates calibrated airspeed as equivalent airspeed.
+// Cas returns calibrated airspeed — what the ADC feeds the HUD box: the
+// compressible pitot equations against the standard sea-level references,
+// with the Rayleigh branch behind the normal shock above Mach 1 (#133; it
+// read as plain EAS before, understating up to ~20 kt fast and high).
 func (m *Model) Cas() float64 {
 	local := air(m.State.Position.Y, m.Environment)
-	sea := air(0, m.Environment)
-	return m.State.Velocity.Length() * math.Sqrt(local.Density/sea.Density)
+	mach := m.State.Velocity.Length() / local.Sound
+	var impact float64
+	if mach <= 1 {
+		impact = local.Pressure * (math.Pow(1+0.2*mach*mach, 3.5) - 1)
+	} else {
+		impact = local.Pressure * (166.9215767*math.Pow(mach, 7)/math.Pow(7*mach*mach-1, 2.5) - 1)
+	}
+	sound := math.Sqrt(heat * gas * isa_temperature)
+	ratio := impact / isa_pressure
+	cas := sound * math.Sqrt(5*(math.Pow(ratio+1, 2.0/7)-1))
+	if cas > sound { // the subsonic form is invalid past a0: invert the supersonic pitot form by fixed point
+		mc := cas / sound
+		for i := 0; i < 30; i++ {
+			mc = 0.881284 * math.Sqrt((ratio+1)*math.Pow(1-1/(7*mc*mc), 2.5))
+		}
+		cas = mc * sound
+	}
+	return cas
 }
