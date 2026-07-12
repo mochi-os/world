@@ -117,6 +117,7 @@ func TestEncodeDamage(t *testing.T) {
 	s.Damage.Jam[flight.ChannelRudder] = 0.5
 	s.Damage.Loss = 300
 	s.Damage.Stress = 2.5
+	s.Damage.Shift = flight.Vec3{Z: -0.08} // the shed-wing CG walk
 	buffer := make([]float64, flight.Size)
 	if n := s.Encode(buffer); n != flight.Size {
 		t.Fatalf("Encode returned %d, want %d", n, flight.Size)
@@ -125,9 +126,36 @@ func TestEncodeDamage(t *testing.T) {
 	if back.Damage.Element[7] != 0.5 || back.Damage.Element[33] != 1 || back.Damage.Jam[flight.ChannelRudder] != 0.5 || back.Damage.Loss != 300 || back.Damage.Stress != 2.5 {
 		t.Fatal("damage did not survive the round trip")
 	}
+	if back.Damage.Shift != (flight.Vec3{Z: -0.08}) {
+		t.Fatal("the CG shift did not survive the round trip")
+	}
 	clean := flight.Decode(make([]float64, flight.Size))
 	if clean.Damage.Element != nil || clean.Damage.Jam != nil {
 		t.Fatal("a pristine wire must decode to nil slices")
+	}
+}
+
+// TestShiftRolls: the shed-wing CG walk (Damage.Shift) must roll the jet —
+// lift acting off the displaced centre is a real moment, mirror-symmetric
+// between sides. Exaggerated shift, Direct mode, no element damage: this
+// isolates the CG path from the lift-asymmetry path TestElementLossRolls
+// already covers.
+func TestShiftRolls(t *testing.T) {
+	rate := func(shift float64) float64 {
+		m := cruising(t)
+		m.Direct = true
+		m.State.Damage.Shift = flight.Vec3{Z: shift}
+		for i := 0; i < 48; i++ { // 0.2 s
+			m.Step(flight.Inputs{Throttle: 0.5})
+		}
+		return m.State.Omega.X
+	}
+	left, right := rate(-0.3), rate(0.3)
+	if math.Abs(left) < 0.05 {
+		t.Fatalf("a 30 cm CG walk produced no meaningful roll: %.3f rad/s after 0.2 s", left)
+	}
+	if math.Abs(left+right) > 0.01 {
+		t.Fatalf("the CG roll must be mirror-symmetric: %.3f vs %.3f", left, right)
 	}
 }
 
