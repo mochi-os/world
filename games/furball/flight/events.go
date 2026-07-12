@@ -47,7 +47,8 @@ func (m *Model) touch(s *State) {
 		}
 		points = [3]Vec3{a.Belly[0], a.Belly[1], a.Belly[2]}
 	}
-	for _, at := range points {
+	gear := s.Gear.Extension >= 0.95
+	for leg, at := range points {
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
 		height, k, carried, found := m.World.surface(point, s.Time, m.Environment.Wrap)
@@ -59,6 +60,13 @@ func (m *Model) touch(s *State) {
 		velocity := s.Velocity.Add(s.Attitude.Rotate(s.Omega.Cross(body))).Subtract(carried)
 		if -velocity.Y > sink {
 			sink = -velocity.Y
+		}
+		// Hard-touchdown overload (#78): closure beyond what the oleo absorbs
+		// wounds THAT leg, integrating while the strike lasts — a mechanical
+		// exposure the airframe measures itself, like Stress. The 7 m/s
+		// tolerance is the type's carrier-rated sink.
+		if gear && -velocity.Y > tolerable {
+			s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+(-velocity.Y-tolerable)*overload*Dt)
 		}
 	}
 	if wow && !s.Gear.Wow {

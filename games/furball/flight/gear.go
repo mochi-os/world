@@ -24,6 +24,9 @@ const (
 	cornering = 0.8  // lateral tyre friction
 	sliding   = 0.25 // belly-skid friction
 	soft_drag = 0.18 // extra rolling coefficient on unpaved ground
+	flat      = 0.12 // extra rolling coefficient of a blown tyre grinding on the rim (#78), scaled by the leg's damage
+	tolerable = 7.0  // m/s: sink the oleo absorbs without harm (the type's carrier-rated ~7.3 with margin shaved for gameplay)
+	overload  = 18.0 // damage per (m/s beyond tolerable)·s while a hard strike lasts (#78): ~9 m/s blows the tyre, ~12 folds the leg
 )
 
 // contact accumulates gear, belly, catapult, and cable forces for a trial
@@ -34,9 +37,9 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 	a := m.Airframe
 	down := s.Gear.Extension
 	if down > 0.05 {
-		m.strut(s, &a.Gear.Nose, in, down, true, total)
-		m.strut(s, &a.Gear.Left, in, down, false, total)
-		m.strut(s, &a.Gear.Right, in, down, false, total)
+		m.strut(s, &a.Gear.Nose, in, down, true, s.Damage.Gear[0], total)
+		m.strut(s, &a.Gear.Left, in, down, false, s.Damage.Gear[1], total)
+		m.strut(s, &a.Gear.Right, in, down, false, s.Damage.Gear[2], total)
 	}
 	if s.Gear.Wow {
 		// Ground roll stability: planted on the wheels, the tires and gear
@@ -61,7 +64,7 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 			total.Moment = total.Moment.Add(Vec3{Z: -s.Omega.Z * 1.5e6})
 		}
 	}
-	if down < 0.95 { // belly skids carry a gear-up arrival
+	if down < 0.95 || s.Damage.Gear[0] > GearCollapse || s.Damage.Gear[1] > GearCollapse || s.Damage.Gear[2] > GearCollapse { // belly skids carry a gear-up arrival — or the corner a collapsed leg dropped (#78)
 		carried := m.carried(s)
 		nose := s.Attitude.Rotate(Vec3{X: 1}).Y
 		for i := range a.Belly {
@@ -79,8 +82,14 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 }
 
 // strut is one landing-gear leg: a spring-damper normal force plus tyre
-// friction, all applied at the wheel's own contact point.
-func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, total *Forces) {
+// friction, all applied at the wheel's own contact point. harm is the leg's
+// damage (#78): the spring softens and the blown tyre drags, pulls, and
+// loses braking as it grows; past collapse the leg folds and carries
+// nothing (the belly skids inherit the corner).
+func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, harm float64, total *Forces) {
+	if harm > GearCollapse {
+		return
+	}
 	body := leg.Attach.Subtract(m.center)
 	point := s.Position.Add(s.Attitude.Rotate(body))
 	height, kind, carried, found := m.World.surface(point, s.Time, m.Environment.Wrap)
@@ -95,7 +104,8 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 		depth = leg.Travel * 3 // bottomed out — the wheel never vanishes underground
 	}
 	velocity := s.Velocity.Add(s.Attitude.Rotate(s.Omega.Cross(body))).Subtract(carried)
-	normal := (leg.Stiffness*depth - leg.Damping*velocity.Y) * down
+	soft := 1 - 0.4*harm // a wounded strut gives: less spring, less damping
+	normal := (leg.Stiffness*soft*depth - leg.Damping*soft*velocity.Y) * down
 	if normal <= 0 {
 		return
 	}
@@ -126,12 +136,15 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	if kind == Soft {
 		grip += soft_drag
 	}
+	if harm > GearTyre {
+		grip += flat * harm // a blown tyre grinds on the rim: rolling drag on THIS leg pulls the jet toward it
+	}
 	if in.Brake && !nose {
-		grip += braking
+		grip += braking * (1 - harm) // the wounded leg brakes weakly — asymmetric under a blown tyre
 		knee = regular / 10 // held brakes approximate stiction: idle thrust must not creep the parked jet
 	}
 	force = force.Add(roll.Scale(-grip * normal * along / math.Max(math.Abs(along), knee)))
-	corner := cornering
+	corner := cornering * (1 - 0.6*harm)
 	if nose && s.Gear.Catapult >= 0 && s.Gear.Stroke < 0 {
 		corner = cornering * 0.2 // hookup: the nosewheel mostly casters while the bar rides the slot (full grip fights the lateral tow and parks the jet crabbed) — but not freely: some cornering keeps lateral damping in the nose, or the capture rolls and wobbles
 	}

@@ -216,3 +216,31 @@ func TestFringeFlies(t *testing.T) {
 		t.Fatalf("the wounded jet cannot hold flying speed: %.0f m/s", m.State.Velocity.Length())
 	}
 }
+
+// TestGearShot: a round up into a landing-gear leg wounds THAT leg (#78) —
+// the gear capsules are live hit geometry like any other part.
+func TestGearShot(t *testing.T) {
+	body, _ := target()
+	leg := fa18c.Airframe.Gear.Left.Attach
+	origin := leg.Add(flight.Vec3{Y: -8})
+	hit, _ := trace(body.Parts, origin, flight.Vec3{Y: 1}, 20)
+	if hit < 0 || body.Parts[hit].Kind != Gear {
+		t.Fatalf("the ray up into the left leg missed the gear capsule: part %d", hit)
+	}
+	events := strike(body, &body.Parts[hit], 1, 7, 3, 1, 1)
+	if body.Damage.Gear[1] <= 0 {
+		t.Fatalf("the gear hit dealt nothing: %v", body.Damage.Gear)
+	}
+	if body.Damage.Gear[0] != 0 || body.Damage.Gear[2] != 0 {
+		t.Fatalf("the wound leaked to other legs: %v", body.Damage.Gear)
+	}
+	found := false
+	for _, e := range events {
+		if e.Kind == "gear" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("no gear event raised for the wound")
+	}
+}

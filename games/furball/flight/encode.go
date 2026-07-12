@@ -14,7 +14,7 @@
 package flight
 
 // Size is the encoded state length in float64 words.
-const Size = 57 + Elements + Channels + 1 // 106: base state, per-element loss, per-channel jams, lost mass
+const Size = 57 + Elements + Channels + 1 + 3 // 109: base state, per-element loss, per-channel jams, lost mass, per-strut gear damage
 
 // Encode writes the state into out (at least Size long) and returns Size.
 func (s *State) Encode(out []float64) int {
@@ -64,6 +64,7 @@ func (s *State) Encode(out []float64) int {
 		out[57+Elements+c] = v
 	}
 	out[57+Elements+Channels] = d.Loss
+	out[57+Elements+Channels+1], out[57+Elements+Channels+2], out[57+Elements+Channels+3] = d.Gear[0], d.Gear[1], d.Gear[2]
 	return Size
 }
 
@@ -122,6 +123,7 @@ func Decode(in []float64) State {
 		}
 	}
 	d.Loss = in[57+Elements+Channels]
+	d.Gear[0], d.Gear[1], d.Gear[2] = in[57+Elements+Channels+1], in[57+Elements+Channels+2], in[57+Elements+Channels+3]
 	return s
 }
 

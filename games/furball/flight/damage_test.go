@@ -286,3 +286,98 @@ func TestLossLightens(t *testing.T) {
 		t.Fatalf("a 3 t lighter jet must out-accelerate the pristine one: %.2f vs %.2f m/s gained", lighter, pristine)
 	}
 }
+
+// runway builds a jet standing (or descending onto) a paved strip.
+func runway(sink float64, speed float64) *flight.Model {
+	world := flight.World{Sea: -10, Fields: []flight.Field{{Height: 0, Strips: []flight.Strip{{A: flight.Vec3{X: -2000}, B: flight.Vec3{X: 4000}, Width: 60}}}}}
+	m := flight.New(fa18c.Airframe, flight.Environment{}, world)
+	m.State.Position = flight.Vec3{Y: 3} // wheels a hand's breadth off the pavement: the fall must not add sink the test didn't ask for
+	m.State.Velocity = flight.Vec3{X: speed, Y: -sink}
+	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	m.State.Fuel = 2000
+	m.State.Gear = flight.GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	return m
+}
+
+func worst(m *flight.Model) float64 {
+	return math.Max(m.State.Damage.Gear[0], math.Max(m.State.Damage.Gear[1], m.State.Damage.Gear[2]))
+}
+
+// TestHardLandingWounds: the land-or-crash binary becomes gear STATES — a
+// firm carrier-style arrival is free, a hard one blows tyres, a brutal one
+// folds the leg (#78).
+func TestHardLandingWounds(t *testing.T) {
+	arrive := func(sink float64) float64 {
+		m := runway(sink, 60)
+		for i := 0; i < 240*3; i++ {
+			m.Step(flight.Inputs{Gear: true})
+		}
+		return worst(m)
+	}
+	if d := arrive(5); d != 0 {
+		t.Fatalf("a 5 m/s arrival is inside the oleo rating and must be free: damage %.2f", d)
+	}
+	hard := arrive(9)
+	if hard <= flight.GearTyre || hard > flight.GearCollapse {
+		t.Fatalf("a 9 m/s arrival should blow tyres without folding: damage %.2f", hard)
+	}
+	brutal := arrive(13)
+	if brutal <= flight.GearCollapse {
+		t.Fatalf("a 13 m/s arrival must fold the gear: damage %.2f", brutal)
+	}
+}
+
+// TestBlownTyreVeers: a blown main drags its side — the rollout pulls
+// toward the wounded leg, mirror-symmetric.
+func TestBlownTyreVeers(t *testing.T) {
+	veer := func(leg int) float64 {
+		m := runway(0, 55)
+		m.State.Position.Y = 0.1
+		m.State.Damage.Gear[leg] = 0.6
+		for i := 0; i < 240*3; i++ {
+			m.Step(flight.Inputs{Gear: true})
+		}
+		return m.State.Velocity.Z
+	}
+	left, right := veer(1), veer(2)
+	if math.Abs(left) < 0.3 {
+		t.Fatalf("a blown tyre pulled nothing: lateral %.2f m/s after 3 s", left)
+	}
+	if left*right >= 0 {
+		t.Fatalf("the pull must mirror with the leg: left-blown %.2f, right-blown %.2f", left, right)
+	}
+}
+
+// TestCollapsedLegSettles: a folded main drops its corner onto the belly
+// skids — the jet leans and rests instead of exploding through the runway.
+func TestCollapsedLegSettles(t *testing.T) {
+	m := runway(0, 0)
+	m.State.Position.Y = 1
+	m.State.Damage.Gear[1] = 1 // left main folded
+	for i := 0; i < 240*5; i++ {
+		m.Step(flight.Inputs{Gear: true})
+	}
+	right := m.State.Attitude.Rotate(flight.Vec3{Z: 1})
+	bank := math.Atan2(right.Y, m.State.Attitude.Rotate(flight.Vec3{Y: 1}).Y) * 180 / math.Pi
+	if math.IsNaN(bank) || m.State.Position.Y < -2 {
+		t.Fatalf("the collapse blew up the integration: bank %.1f, y %.1f", bank, m.State.Position.Y)
+	}
+	if math.Abs(bank) < 1 {
+		t.Fatalf("a folded left main must lean the jet: bank %.2f deg", bank)
+	}
+	if m.State.Velocity.Length() > 1 {
+		t.Fatalf("the settled jet is still moving: %.1f m/s", m.State.Velocity.Length())
+	}
+}
+
+// TestEncodeGear: per-strut damage survives the wire.
+func TestEncodeGear(t *testing.T) {
+	s := flight.State{}
+	s.Damage.Gear = [3]float64{0.2, 0.8, 1}
+	buffer := make([]float64, flight.Size)
+	s.Encode(buffer)
+	back := flight.Decode(buffer)
+	if back.Damage.Gear != s.Damage.Gear {
+		t.Fatalf("gear damage did not survive the round trip: %v", back.Damage.Gear)
+	}
+}

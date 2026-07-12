@@ -32,6 +32,7 @@ const (
 	flash     = 0.05  // chance a wet-wing hit lights the fuel
 	mortal    = 0.40  // chance a cockpit hit kills the pilot
 	plumbing  = 0.12  // chance a fuselage hit cuts a hydraulic run
+	wheel     = 0.45  // gear-leg damage per hit: one hit blows the tyre, two fold the leg (#78)
 )
 
 // strike applies one hit to a part. The three hash words identify the hit
@@ -87,6 +88,9 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 			body.Condition.Killed = true
 			events = append(events, Event{Kind: "pilot", Engine: -1, Surface: -1})
 		}
+	case Gear:
+		damage.Gear[part.Index] = math.Min(1, damage.Gear[part.Index]+wheel*severity)
+		events = append(events, Event{Kind: "gear", Engine: -1, Surface: -1})
 	case Fuselage:
 		damage.Drag += clutter * severity
 		if chance(plumbing, 8) {

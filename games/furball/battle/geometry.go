@@ -24,6 +24,7 @@ const (
 	Turbine          // an engine
 	Cockpit          // the pilot
 	Tank             // the fuel tank
+	Gear             // a landing-gear leg (nose, left, right)
 )
 
 // Part is one capsule of hit geometry in the target's body frame.
@@ -93,6 +94,10 @@ func Parts(a *flight.Airframe) []Part {
 	parts = append(parts, Part{Kind: Cockpit, Index: 0, Surface: -1, A: a.Cockpit, B: a.Cockpit, Radius: 0.7})
 	parts = append(parts, Part{Kind: Tank, Index: 0, Surface: -1,
 		A: a.Tank.Subtract(flight.Vec3{X: 1.8}), B: a.Tank.Add(flight.Vec3{X: 1.8}), Radius: 0.8})
+	for gi, leg := range [3]flight.Strut{a.Gear.Nose, a.Gear.Left, a.Gear.Right} {
+		parts = append(parts, Part{Kind: Gear, Index: gi, Surface: -1,
+			A: leg.Attach, B: leg.Attach.Add(flight.Vec3{Y: -1.2}), Radius: 0.3}) // the bay and the leg below it: hittable stowed too — doors are no armour
+	}
 	return parts
 }
 
