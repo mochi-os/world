@@ -87,6 +87,8 @@ type brain struct {
 	phase    float64    // current jink roll phase
 	missiles int
 	alert    uint64  // tick an inbound missile was first noticed (react delay runs from here)
+	noticed  map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
+	judged   map[uint64]bool // rounds whose one launch-sighting roll has been taken
 	plan     string  // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
 	planned  uint64  // tick the plan was chosen
 	side     float64 // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
@@ -249,16 +251,41 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
 	b.g, b.throttle, b.reheat, b.brake, b.shoot = b.skill.pull, 0.85, 0, 0, false
 
-	// Inbound missile: react (after the skill's delay) with flares, cold
+	// Inbound missile: the AIM-9 is passive — no warning tone, only eyes. The
+	// launch plume is the visible moment: one aspect-weighted sighting roll
+	// per round, with the blind wedge behind the canopy covered only by
+	// check-six discipline. A round unseen at launch is nearly smokeless in
+	// the coast and is only caught late, at a discipline-scaled slant. Once
+	// sighted, the skill's reaction delay runs as before: flares, cold
 	// engines, and an orthogonal break. Trumps everything but the floor.
 	inbound := flight.Vec3{}
 	threatened := false
+	if len(b.judged) > 64 { // rounds despawn and numbers only grow: reset rather than leak (a live round re-rolls once, harmlessly)
+		b.noticed, b.judged = nil, nil
+	}
 	for _, m := range i.flying {
 		if m.target != slot {
 			continue
 		}
 		direction, distance := i.bearing(me.Position, m.position)
-		if distance < 4500 {
+		if b.judged == nil {
+			b.noticed, b.judged = map[uint64]bool{}, map[uint64]bool{}
+		}
+		if !b.judged[m.number] {
+			b.judged[m.number] = true
+			body := me.Attitude.Unrotate(direction)
+			sight := 0.6 + 0.4*b.skill.discipline
+			if body.X < -0.35 && body.Y < 0.25 {
+				sight = 0.7 * b.skill.discipline // launched from the blind wedge: only lookout discipline catches the flash
+			}
+			if battle.Roll(i.environment.Seed, uint64(slot), m.number, 51) < sight {
+				b.noticed[m.number] = true
+			}
+		}
+		if !b.noticed[m.number] && distance < 500+1000*b.skill.discipline {
+			b.noticed[m.number] = true // the corner of the eye, late
+		}
+		if b.noticed[m.number] && distance < 4500 {
 			threatened, inbound = true, direction
 			break
 		}
@@ -282,6 +309,34 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	} else {
 		b.alert = 0
+	}
+
+	// Doctrine flares: an enemy assessed on my six inside the 9M envelope and
+	// I cannot watch him — keep decoy coverage up so the launch I cannot see
+	// meets a fresh flare. The cadence is the flare's own coverage window (a
+	// lapse is exactly the gap an unseen round flies through); whether the
+	// pilot actually flies the doctrine at each lapse is his lookout
+	// discipline, so an ace keeps near-continuous coverage and a rookie
+	// almost never thinks of it.
+	if !threatened && a.flared > flare_window {
+		blind := uint64(b.skill.delay*60) * 2
+		for s, t := range b.known {
+			direction, distance := i.bearing(me.Position, t.position)
+			if distance > 3000 {
+				continue
+			}
+			body := me.Attitude.Unrotate(direction)
+			if body.X > -0.2 {
+				continue // ahead of my 3/9 line: I can watch him and flare on the flash instead
+			}
+			if tick-t.when < blind {
+				continue // still fresh eyes on him (a high six is visible over the shoulder)
+			}
+			if battle.Roll(i.environment.Seed, uint64(slot), uint64(s), tick/uint64(flare_window*60), 52) < b.skill.discipline {
+				b.drop = true
+			}
+			break
+		}
 	}
 
 	// Maneuver commitment: the aim stands until the hold expires — only the
