@@ -1121,3 +1121,62 @@ func TestLethalityBand(t *testing.T) {
 		}
 	}
 }
+
+// TestMissileEvadingFuse: a hard-turning target saturates the seeker's
+// track-rate ceiling in the terminal frames and the lock breaks — the
+// proximity fuse must stay live regardless and grade the pass at the
+// closest approach. The old tracking-gated fuse silently disarmed with the
+// lock, so an evading bandit absorbed entire magazines untouched.
+func TestMissileEvadingFuse(t *testing.T) {
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "evadefuse", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+		Parameters: map[string]any{"missiles": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	for slot := 0; slot < 2; slot++ {
+		if _, err := i.Join(game.Player{Name: "p", Slot: slot}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	target := i.aircraft[1]
+	target.bot = true
+	target.model.State.Position = flight.Vec3{X: 1500, Y: 3000}
+	target.model.State.Velocity = flight.Vec3{Z: 250} // crossing the shot line: PN lags a turning crosser by metres, so the terminal LOS-rate spike breaks the lock with a small (lethal) miss pending
+	target.model.State.Attitude = flight.Look(flight.Vec3{Z: 1})
+	shooter := i.aircraft[0]
+	shooter.model.State.Position = flight.Vec3{Y: 3000}
+	shooter.model.State.Velocity = flight.Vec3{X: 250}
+	shooter.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	i.launched++
+	sight, _ := i.bearing(shooter.model.State.Position, target.model.State.Position)
+	i.flying = append(i.flying, &missile{shooter: 0, target: 1, position: shooter.model.State.Position,
+		life: missile_life, velocity: flight.Vec3{X: 280}, burn: missile_boost, sight: sight, number: i.launched})
+	dt := 1.0 / 60
+	round := i.flying[0]
+	minimum := 1e9
+	for tick := 0; tick < 20*60 && len(i.flying) > 0; tick++ {
+		if !round.loose && round.position.Subtract(target.model.State.Position).Length() < 150 {
+			round.loose = true // the terminal lock break every near-miss course suffers (LOS rate diverges as range closes): the warhead must stay live regardless
+		}
+		if d := round.position.Subtract(target.model.State.Position).Length(); d < minimum {
+			minimum = d
+		}
+		// The evasion: a level 7 g turn, velocity rotating in the horizontal plane.
+		velocity := &target.model.State.Velocity
+		speed := velocity.Length()
+		turn := 7 * 9.81 / speed * dt
+		x := velocity.X*math.Cos(turn) + velocity.Z*math.Sin(turn)
+		z := -velocity.X*math.Sin(turn) + velocity.Z*math.Cos(turn)
+		velocity.X, velocity.Z = x, z
+		target.model.State.Attitude = flight.Look(velocity.Scale(1 / speed))
+		target.model.State.Position = target.model.State.Position.Add(velocity.Scale(dt))
+		i.pursue(dt, uint64(tick))
+	}
+	t.Logf("closest approach %.2f m, loose %v, flew %.2f s", minimum, round.loose, round.flew)
+	d := &target.model.State.Damage
+	if !(d.Engine[0]+d.Engine[1] > 0 || d.Leak > 0 || total(d.Element) > 0 || target.condition.Killed || !target.alive) {
+		t.Fatal("the evading target absorbed the missile untouched — the fuse died with the lock again")
+	}
+}

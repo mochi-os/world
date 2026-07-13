@@ -702,11 +702,52 @@ func (i *instance) pursue(dt float64, tick uint64) {
 					m.lure = target.model.State.Position.Add(flight.Vec3{Y: -30})
 					m.blind = 1.5
 					tracking = false
+					m.sight, _ = i.bearing(m.position, m.lure) // the seeker is ON the flare now: re-reference the track, or the aim-point swap reads as an LOS-rate spike and breaks the lock at the seduction instant
 					i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
 				}
 			}
 		} else {
 			m.window = false
+		}
+
+		// Proximity fuse (armed): independent of the seeker — a broken lock
+		// leaves the warhead live, as the loose comment always promised but
+		// the old tracking-gated check never delivered (the terminal LOS
+		// rate breaks the lock against any evading target, which disarmed
+		// every such pass). Detonates at the CLOSEST APPROACH inside this
+		// step: fusing at the first per-tick range sample under the
+		// envelope burst at 8-12 m — outside the 5 m lethal radius — so no
+		// pass ever scored the direct kill.
+		if m.flew > missile_arm && target != nil && target.alive {
+			relative := flight.Vec3{
+				X: flight.Shortest(m.position.X, target.model.State.Position.X, i.environment.Wrap),
+				Y: target.model.State.Position.Y - m.position.Y,
+				Z: flight.Shortest(m.position.Z, target.model.State.Position.Z, i.environment.Wrap),
+			}
+			closure := target.model.State.Velocity.Subtract(m.velocity)
+			step := 0.0
+			if squared := closure.Dot(closure); squared > 1e-9 {
+				step = clamp(-relative.Dot(closure)/squared, 0, dt)
+			}
+			closest := relative.Add(closure.Scale(step))
+			if closest.Length() < missile_fuse {
+				if i.cheat.invulnerable && !target.bot {
+					continue // the fuse fires but the warhead cannot hurt a human under the cheat
+				}
+				burst := target.model.State.Position.Subtract(closest) // the missile at its nearest point, anchored to the target
+				kill, events := battle.Blast(burst, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+				target.condition.Damager = m.shooter
+				target.condition.Damaged = 0
+				for _, event := range events {
+					if event.Kind != "explode" {
+						i.raise(m.target, event)
+					}
+				}
+				if kill {
+					i.kill(m.target, m.shooter)
+				}
+				continue
+			}
 		}
 
 		// The guidance point: the target, or a swallowed flare falling away.
@@ -720,28 +761,13 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			m.lure.Y -= 45 * dt // flares fall
 			aim = m.lure
 			mark = &aim
+			if m.blind <= 0 {
+				m.loose = true // a swallowed flare is terminal: the seeker stares at the burnt-out decoy and never re-acquires (9M-realistic) — ballistic from here, fuse still live
+			}
 		}
 
 		if mark != nil && m.flew > missile_arm {
-			direction, distance := i.bearing(m.position, *mark)
-			// Proximity fuse (armed): the warhead judges the pass.
-			if tracking && distance < missile_fuse {
-				if i.cheat.invulnerable && !target.bot {
-					continue // the fuse fires but the warhead cannot hurt a human under the cheat
-				}
-				kill, events := battle.Blast(m.position, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
-				target.condition.Damager = m.shooter
-				target.condition.Damaged = 0
-				for _, event := range events {
-					if event.Kind != "explode" {
-						i.raise(m.target, event)
-					}
-				}
-				if kill {
-					i.kill(m.target, m.shooter)
-				}
-				continue
-			}
+			direction, _ := i.bearing(m.position, *mark)
 			// The seeker: gimbal cone off the velocity axis, and a track-rate
 			// ceiling. Beyond either the lock breaks — ballistic, fuse live.
 			axis := m.velocity.Normalize()
