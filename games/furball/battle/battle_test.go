@@ -56,8 +56,8 @@ func TestTraceElement(t *testing.T) {
 func TestBurstDeterminism(t *testing.T) {
 	first, m1 := target()
 	second, m2 := target()
-	h1, _ := Burst(astern(m1), m1.State.Position, m1.State.Attitude, first, 50, 0, 7, 3, 999)
-	h2, _ := Burst(astern(m2), m2.State.Position, m2.State.Attitude, second, 50, 0, 7, 3, 999)
+	h1, _ := Burst(astern(m1), m1.State.Position, m1.State.Attitude, m1.State.Velocity, first, 50, 0, 7, 3, 999)
+	h2, _ := Burst(astern(m2), m2.State.Position, m2.State.Attitude, m2.State.Velocity, second, 50, 0, 7, 3, 999)
 	if h1 != h2 {
 		t.Fatalf("determinism broken: %d vs %d hits", h1, h2)
 	}
@@ -78,7 +78,7 @@ func TestBurstLethality(t *testing.T) {
 		if tick%3 == 0 {
 			rounds = 1
 		}
-		hits, _ := Burst(astern(m), m.State.Position, m.State.Attitude, body, rounds, 0, 7, 3, tick)
+		hits, _ := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, rounds, 0, 7, 3, tick)
 		total += hits
 	}
 	if total < 10 {
@@ -242,5 +242,32 @@ func TestGearShot(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no gear event raised for the wound")
+	}
+}
+
+// TestBurstDeflection: rounds fly real time of flight now — a burst aimed at
+// a beam-crossing target ITSELF misses wholesale (his velocity carries him
+// out of the stream during the flight), and the same trigger squeeze from
+// the led bore hits. This is the contract the bot's lead point and the HUD
+// director pipper both build on.
+func TestBurstDeflection(t *testing.T) {
+	shoot := func(led bool) int {
+		body, m := target()
+		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
+		aim := m.State.Position
+		if led {
+			time := 600.0 / Muzzle
+			aim = aim.Add(m.State.Velocity.Scale(time)).Add(flight.Vec3{Y: 4.9 * time * time})
+		}
+		bore := aim.Subtract(muzzle).Normalize()
+		pose := Pose{Position: muzzle, Forward: bore, Up: flight.Vec3{Y: 1}, Right: bore.Cross(flight.Vec3{Y: 1})}
+		hits, _ := Burst(pose, m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
+		return hits
+	}
+	if direct := shoot(false); direct > 2 {
+		t.Fatalf("a no-lead burst against a beam crosser landed %d/100 — the time of flight is not being flown", direct)
+	}
+	if led := shoot(true); led < 20 {
+		t.Fatalf("the led burst landed only %d/100 — the lead solution does not match the gunnery", led)
 	}
 }

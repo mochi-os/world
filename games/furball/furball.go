@@ -589,6 +589,7 @@ func (i *instance) guns(dt float64, tick uint64) {
 			Forward:  state.Attitude.Rotate(flight.Vec3{X: 1}),
 			Up:       state.Attitude.Rotate(flight.Vec3{Y: 1}),
 			Right:    state.Attitude.Rotate(flight.Vec3{Z: 1}),
+			Velocity: state.Velocity,
 		}
 		for _, other := range i.slots() {
 			b := i.aircraft[other]
@@ -598,7 +599,7 @@ func (i *instance) guns(dt float64, tick uint64) {
 			if i.cheat.invulnerable && !b.bot {
 				continue // the burst passes through a human under the cheat; bots still bleed
 			}
-			hits, events := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick)
+			hits, events := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, b.model.State.Velocity, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick)
 			if hits == 0 {
 				continue
 			}

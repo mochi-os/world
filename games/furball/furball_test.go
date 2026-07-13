@@ -1028,10 +1028,12 @@ func TestBlastCredits(t *testing.T) {
 func TestRespawnPristine(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 	steady := map[string]any{"throttle": 0.85, "fire": true}
-	for tick := 0; tick < 60*5; tick++ { // wreck it: 5 s of pinned tracking fire...
-		place(i, 0, 1, 250)
-		i.aircraft[0].model.State.Position.Y = 400 // fight on the deck so the wreck splashes fast
-		i.aircraft[1].model.State.Position.Y = 400
+	for tick := 0; tick < 60*5 && i.aircraft[1].alive; tick++ { // wreck it: 5 s of pinned tracking fire (or until it dies outright — the strike rolls may cascade to an explosion under sustained guns)
+		if i.aircraft[1].model != nil {
+			place(i, 0, 1, 250)
+			i.aircraft[0].model.State.Position.Y = 400 // fight on the deck so the wreck splashes fast
+			i.aircraft[1].model.State.Position.Y = 400
+		}
 		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
 	}
 	for tick := 0; tick < 60*60 && i.aircraft[1].alive; tick++ {

@@ -16,7 +16,9 @@
 // burst input words: 0 target (-1 ownship, else hulk), 1-3 shooter
 // position, 4-6 forward, 7-9 up, 10-12 target position, 13-16 target
 // attitude (hulk targets; the ownship poses from its model), 17 rounds,
-// 18 shooter identity, 19 tick. Output: 0 hits, 1 event mask.
+// 18 shooter identity, 19 tick, 20-22 shooter velocity, 23-25 target
+// velocity (hulk targets; the ownship's comes from its model).
+// Output: 0 hits, 1 event mask.
 //
 // blast input words: 0 target, 1-3 burst point, 4-6 target position,
 // 7-10 attitude, 11 shooter identity, 12 tick. Output: 0 kill, 1 mask.
@@ -142,7 +144,7 @@ func parts() []battle.Part {
 }
 
 func burst(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], arsenal[:20])
+	receive(arguments[0], arsenal[:26])
 	body, position, attitude := aim(arsenal)
 	if body == nil {
 		return 0
@@ -151,13 +153,18 @@ func burst(this js.Value, arguments []js.Value) any {
 		Position: flight.Vec3{X: arsenal[1], Y: arsenal[2], Z: arsenal[3]},
 		Forward:  flight.Vec3{X: arsenal[4], Y: arsenal[5], Z: arsenal[6]},
 		Up:       flight.Vec3{X: arsenal[7], Y: arsenal[8], Z: arsenal[9]},
+		Velocity: flight.Vec3{X: arsenal[20], Y: arsenal[21], Z: arsenal[22]},
 	}
 	shooter.Right = shooter.Forward.Cross(shooter.Up)
+	velocity := flight.Vec3{X: arsenal[23], Y: arsenal[24], Z: arsenal[25]}
+	if int(arsenal[0]) < 0 && model != nil {
+		velocity = model.State.Velocity // the ownship as the target: its motion comes from its own model
+	}
 	wrap := 0.0
 	if model != nil {
 		wrap = model.Environment.Wrap
 	}
-	hits, raised := battle.Burst(shooter, position, attitude, body, int(arsenal[17]), wrap,
+	hits, raised := battle.Burst(shooter, position, attitude, velocity, body, int(arsenal[17]), wrap,
 		model.Environment.Seed, uint64(arsenal[18]), uint64(arsenal[19]))
 	if hits > 0 {
 		body.Condition.Damager = int(arsenal[18])

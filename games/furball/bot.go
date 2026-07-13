@@ -677,13 +677,19 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = false
 	}
 
-	// Inside gun range the aim is the target ITSELF: battle.Burst is a
-	// hitscan (rounds trace instantly against his position at the fire tick),
-	// so pipper-on-target is the whole gun solution — the lead-point version
-	// precision-aimed every round a hundred metres from the hit test. In the
-	// control zone, SADDLE: kill the closure and hold the track.
+	// Inside gun range the aim is the LEAD POINT: rounds fly real time of
+	// flight now, so the bore belongs where the target WILL be — his velocity
+	// carries him across the flight, my own velocity rides on every round,
+	// and gravity pulls the round the whole way. This mirrors battle.Burst's
+	// solution exactly (a bot that aims at the man himself misses every
+	// crosser, which is precisely the deflection game). In the control zone,
+	// SADDLE: kill the closure and hold the track.
 	if b.shoot && b.prey != nil && distance < b.skill.open*1.4 {
-		b.aim, _ = i.bearing(me.Position, spot)
+		time := distance / math.Max(battle.Muzzle+closure, 200)
+		lead := spot.Add(prey.velocity.Scale(time)).
+			Subtract(me.Velocity.Scale(time)).
+			Add(flight.Vec3{Y: 4.9 * time * time})
+		b.aim, _ = i.bearing(me.Position, lead)
 		if direction.Dot(nose) > 0.94 && tail > 0.2 {
 			b.mode = "saddle"
 			b.g = math.Min(b.g, 4) // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
