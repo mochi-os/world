@@ -16,6 +16,7 @@ package air
 import (
 	"world/game"
 	"world/games/air/aircraft"
+	"world/games/air/battle"
 	"world/games/air/flight"
 )
 
@@ -109,3 +110,18 @@ func (b *Bandit) Step() (fire bool, flare bool) {
 
 // State exposes the bandit's flight state for the client to render.
 func (b *Bandit) State() *flight.State { return &b.craft.model.State }
+
+// Wound mirrors the client's damage authority into the harness: the wasm
+// battle hulk owns the bandit's damage and fires, and copying them here is
+// what lets the brain fly wounded (#130) — and the flight model fly the
+// honest degraded dynamics — in single-player, exactly as they do on the
+// server where damage lives in the real model.
+func (b *Bandit) Wound(damage flight.DamageState, condition battle.Condition) {
+	b.craft.model.State.Damage = damage
+	b.craft.condition = condition
+}
+
+// Throttle reports the brain's current commanded throttle: the client's fire
+// cascade feeds engine fires on it, so the fire drill can actually starve
+// them (a hardcoded cascade throttle would burn a drilling bandit forever).
+func (b *Bandit) Throttle() float64 { return b.craft.latest.Throttle }

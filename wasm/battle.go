@@ -233,7 +233,11 @@ func progress(this js.Value, arguments []js.Value) any {
 		if !h.used {
 			continue
 		}
-		raised := battle.Advance(&h.body, nil, 0.8, 60, model.Environment.Seed, uint64(i+1), tick)
+		throttle := 0.8
+		if i == 0 && bandit != nil {
+			throttle = bandit.Throttle() // the bandit's fires feed on ITS lever, so the brain's fire drill (#130) can starve them
+		}
+		raised := battle.Advance(&h.body, nil, throttle, 60, model.Environment.Seed, uint64(i+1), tick)
 		base := 6 + i*8
 		out[base], out[base+1] = h.condition.Fire[0], h.condition.Fire[1]
 		out[base+2], out[base+3] = bit(h.condition.Burning), bit(h.condition.Killed)

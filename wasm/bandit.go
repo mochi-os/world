@@ -105,6 +105,9 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return -1
 	}
+	if fleet[0].used {
+		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
+	}
 	fire, flare := bandit.Step()
 	bandit.State().Encode(back[:])
 	send(back[:], arguments[0])

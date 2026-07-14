@@ -97,6 +97,7 @@ type brain struct {
 	hold     uint64  // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
 	stuck    int     // consecutive decisions of neutral non-progress (stalemate detector)
 	tangle   int     // consecutive decisions locked in close combat (scissors detector)
+	saddle   int     // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
 	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
 }
 
@@ -112,6 +113,7 @@ func mind(level string) *brain {
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
+	b.saddle = 0
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -168,6 +170,13 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		i.decide(slot, a, tick)
 	}
 	a.latest = b.steer(a.model, tick)
+	// The fire drill (#130, deferred from #78): engine fires feed on throttle
+	// and starve at idle (battle.Advance) — chopping the power IS the drill,
+	// and it overrides every plan except a live missile evade (twenty seconds
+	// of fire loses to three seconds of missile).
+	if (a.condition.Fire[0] > 0 || a.condition.Fire[1] > 0) && b.mode != "evade" {
+		a.latest.Throttle, a.latest.Reheat = 0, 0
+	}
 	if b.loose {
 		b.loose = false
 		if i.missiles && i.free() && b.missiles > 0 {
@@ -250,6 +259,13 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	pace := corner(a.model)
 	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
 	b.g, b.throttle, b.reheat, b.brake, b.shoot = b.skill.pull, 0.85, 0, 0, false
+
+	// Wounded flying (#130, deferred from #78): the brain reads its own jet.
+	// Shed structure caps the commanded g — the pilot can see pieces of the
+	// wing missing, and the ultimate-load margin they carried is gone with them.
+	if me.Damage.Loss > 0 {
+		b.g = math.Min(b.g, 4.5)
+	}
 
 	// Inbound missile: the AIM-9 is passive — no warning tone, only eyes. The
 	// launch plume is the visible moment: one aspect-weighted sighting roll
@@ -337,6 +353,39 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 			break
 		}
+	}
+
+	// Crippled (#130, deferred from #78): most of the thrust gone, or a fuel
+	// fire on its fuse — the fight is over. Extend LOW AND FAST away from the
+	// nearest known threat: altitude is a bank the engines can no longer
+	// refill, so it gets spent as speed (the guard keeps the floor). A
+	// straight-line cripple is a free kill, so a lazy jink rides under the
+	// extension while anyone is close. Overrides any held maneuver.
+	if thrust := 1 - (me.Damage.Engine[0]+me.Damage.Engine[1])/2; thrust < 0.35 || a.condition.Burning {
+		b.mode = "limp"
+		b.prey = nil
+		b.shoot, b.loose = false, false
+		away, gap := level(me.Velocity.Normalize()), math.MaxFloat64
+		for _, t := range b.known {
+			if d, span := i.bearing(me.Position, t.position); span < gap {
+				away, gap = d.Scale(-1), span
+			}
+		}
+		b.aim = flight.Vec3{X: away.X, Y: clamp(away.Y, -0.25, 0), Z: away.Z}.Normalize()
+		b.g = 2
+		b.throttle, b.reheat = 1, 1 // whatever thrust remains (think()'s fire drill takes it back while an engine burns)
+		if gap < 1200 {
+			if tick >= b.jink {
+				b.phase = battle.Roll(i.environment.Seed, uint64(slot), tick) * 2 * math.Pi
+				b.jink = tick + 50 + uint64(battle.Roll(i.environment.Seed, uint64(slot)+7, tick)*40)
+			}
+			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
+			b.aim = b.aim.Scale(1.2).Add(up.Scale(0.5 * math.Cos(b.phase))).Add(side.Scale(0.5 * math.Sin(b.phase))).Normalize()
+			b.g = 4
+		}
+		i.guard(b, me, pace)
+		return
 	}
 
 	// Maneuver commitment: the aim stands until the hold expires — only the
@@ -467,9 +516,46 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			return
 		}
 		b.rolling = 0
-		if b.skill.library >= 3 && span < 900 {
+		// Drag when spent (tier 2+, #130): a break at mush speed is a tracking
+		// gift — the turn neither defeats his solution nor keeps the corner.
+		// Unload away from him, burner, slightly downhill, and rebuild to
+		// fighting speed before offering another angle. Only with real
+		// separation: inside 900 m an extension hands him the saddle and the
+		// break stays mandatory however slow it is.
+		if b.skill.library >= 2 && speed < 0.68*pace && span > 900 {
+			b.mode = "drag"
+			away := at.Scale(-1)
+			b.aim = flight.Vec3{X: away.X, Y: -0.08, Z: away.Z}.Normalize()
+			b.throttle, b.reheat = 1, 1
+			b.shoot = false
+			b.hold = tick + 120
+			i.guard(b, me, pace)
+			return
+		}
+		// His solution proximity, read from the track: the velocity vector is
+		// his nose for this purpose. POINTED means a gun solution is imminent;
+		// ESTABLISHED means he is saddled behind but not yet on — and it must
+		// PERSIST (the saddle counter) before it justifies a committed spiral:
+		// a one-decision transient during an overshoot is the reversal's
+		// moment, and a spiral hold taken there masks the flank flip.
+		on := foe.velocity.Normalize().Dot(at.Scale(-1))
+		pointed := on > 0.985 && span < 1100
+		if on > 0.90 {
+			b.saddle++
+		} else {
+			b.saddle = 0
+		}
+		switch {
+		case b.skill.library >= 4 && span < 700 && foe.velocity.Length() > speed+60:
+			b.mode = "scissors" // he's overshooting hot: brakes out, reverse into him
+			b.brake = 1
+			b.aim = at
+		case b.skill.library >= 3 && span < 900 && (pointed || b.skill.library < 4):
 			// Guns jink: irregular out-of-plane rolls off the break, re-rolled
-			// on a deterministic clock so it can't be learned.
+			// on a deterministic clock so it can't be learned. Tier 4 TIMES the
+			// break off his gun solution — jinking while his nose is off just
+			// spends the energy the fight will be decided by (tier 3 jinks
+			// whenever he's close, wasteful and authentic).
 			if tick >= b.jink {
 				b.phase = battle.Roll(i.environment.Seed, uint64(slot), tick) * 2 * math.Pi
 				b.jink = tick + 40 + uint64(battle.Roll(i.environment.Seed, uint64(slot)+7, tick)*35)
@@ -477,17 +563,23 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
 			b.aim = me.Velocity.Normalize().Scale(0.4).Add(up.Scale(math.Cos(b.phase))).Add(side.Scale(math.Sin(b.phase))).Normalize()
-		} else if b.skill.library >= 4 && span < 700 && foe.velocity.Length() > speed+60 {
-			b.mode = "scissors" // he's overshooting hot: brakes out, reverse into him
-			b.brake = 1
-			b.aim = at
-		} else {
+		case b.skill.library >= 3 && on > 0.90 && b.saddle > 2 && span < 1400 && me.Position.Y > 2300:
+			// DEFENSIVE SPIRAL (#130): saddled but not yet shot at, with altitude
+			// in the bank — nose-low maximum-rate descending turn. Gravity pays
+			// for the rate his level pursuit cannot match without overshooting,
+			// and the guard flattens it before the floor.
+			b.mode = "spiral"
+			b.aim = flight.Vec3{X: at.X, Y: -0.5, Z: at.Z}.Normalize()
+			b.throttle, b.reheat = 0.8, 0
+			b.hold = tick + 150
+		default:
 			b.aim = level(at) // break INTO him at corner speed
 		}
 		i.guard(b, me, pace)
 		return
 	case tail > 0.35: // offensive: behind his 3/9
 		b.mode = "offense"
+		b.saddle = 0
 		b.shoot = true
 		// PURE pursuit: with a hitscan gun, pipper-on-target is both the chase
 		// and the terminal solution. The intercept-lead variant predated the
@@ -568,6 +660,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	case tail < -0.35: // neutral: converging head-on
 		b.mode = "neutral"
+		b.saddle = 0
 		// The face shot: rookies spray it (authentic), the disciplined decline
 		// it and fight the turn instead — training doctrine, and it keeps the
 		// merge a fight rather than a coin toss.
@@ -616,6 +709,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	default: // flanking: lead-turn into his future
 		b.mode = "offense"
+		b.saddle = 0
 		b.shoot = true
 		b.aim = direction.Add(prey.velocity.Scale(2.0 / math.Max(distance, 200))).Normalize()
 		b.throttle, b.reheat = 1, boost(speed, pace, 0)

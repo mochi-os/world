@@ -621,6 +621,146 @@ func TestBotReversal(t *testing.T) {
 	}
 }
 
+// wounded builds the ace-vs-drone pair used by the wounded-flying tests.
+func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
+	t.Helper()
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "wounded", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
+		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
+	i := made.(*instance)
+	ace, foe := i.aircraft[99], i.aircraft[98]
+	if ace.brain == nil {
+		ace, foe = i.aircraft[98], i.aircraft[99]
+	}
+	return i, ace, foe
+}
+
+// TestBotFireDrill: an engine fire pulls the lever to idle (battle.Advance
+// starves fires below 0.1 throttle), and once it burns out the power returns.
+func TestBotFireDrill(t *testing.T) {
+	i, ace, _ := wounded(t, 5)
+	ace.condition.Fire[0] = 0.5
+	drilled, recovered := false, false
+	for tick := uint64(0); tick < 60*20; tick++ {
+		i.Step(tick, nil)
+		if ace.condition.Fire[0] > 0 && ace.latest.Throttle == 0 && ace.latest.Reheat == 0 {
+			drilled = true
+		}
+		if drilled && ace.condition.Fire[0] <= 0 && ace.latest.Throttle > 0 {
+			recovered = true
+			break
+		}
+	}
+	if !drilled {
+		t.Fatal("the burning ace never chopped the throttle")
+	}
+	if !recovered {
+		t.Fatal("the fire never starved out (or the power never came back)")
+	}
+}
+
+// TestBotLimp: with the thrust gone the fight is over — the bot goes to
+// "limp" and opens the range instead of continuing the engagement.
+func TestBotLimp(t *testing.T) {
+	i, ace, foe := wounded(t, 6)
+	// The foe crossing 1.5 km ahead, well inside visual range.
+	s := &ace.model.State
+	ahead := s.Attitude.Rotate(flight.Vec3{X: 1})
+	foe.model.State.Position = s.Position.Add(ahead.Scale(1500))
+	foe.model.State.Velocity = s.Attitude.Rotate(flight.Vec3{X: 30, Z: 200})
+	ace.model.State.Damage.Engine[0] = 1
+	ace.model.State.Damage.Engine[1] = 1
+	limped := false
+	for tick := uint64(0); tick < 60*6; tick++ {
+		i.Step(tick, nil)
+		if ace.brain.mode == "limp" {
+			limped = true
+		}
+	}
+	if !limped {
+		t.Fatal("thrust gone and the ace never went to limp")
+	}
+}
+
+// TestBotWingCap: shed structure caps the commanded g at 4.5 — the wounded
+// wing no longer carries the limiter's margin.
+func TestBotWingCap(t *testing.T) {
+	i, ace, foe := wounded(t, 7)
+	s := &ace.model.State
+	ahead := s.Attitude.Rotate(flight.Vec3{X: 1})
+	foe.model.State.Position = s.Position.Add(ahead.Scale(1200))
+	ace.model.State.Damage.Loss = 200
+	for tick := uint64(0); tick < 60; tick++ {
+		i.Step(tick, nil)
+	}
+	if ace.brain.g > 4.5 {
+		t.Fatalf("shed structure but the brain still commands %.1f g", ace.brain.g)
+	}
+}
+
+// TestBotDrag: defensive at mush speed, the tiered brain unloads AWAY (drag)
+// instead of offering a hopeless slow break.
+func TestBotDrag(t *testing.T) {
+	i, ace, foe := wounded(t, 8)
+	place := func() {
+		s := &ace.model.State
+		behind := s.Attitude.Rotate(flight.Vec3{X: -1})
+		lift := s.Attitude.Rotate(flight.Vec3{Y: 1})
+		foe.model.State.Position = s.Position.Add(behind.Scale(1100)).Add(lift.Scale(420)) // high enough to clear the blind wedge at this range
+		to, _ := i.bearing(foe.model.State.Position, s.Position)
+		foe.model.State.Velocity = to.Scale(250) // nose on, closing
+		foe.model.State.Attitude = flight.Look(to)
+	}
+	dragged := false
+	for tick := uint64(0); tick < 60*8; tick++ {
+		place()
+		s := &ace.model.State
+		if speed := s.Velocity.Length(); speed > 0.66*corner(ace.model) {
+			s.Velocity = s.Velocity.Scale(0.6 * corner(ace.model) / speed) // hold him spent: the burner would rebuild through the gate mid-test
+		}
+		i.Step(tick, nil)
+		if ace.brain.mode == "drag" {
+			dragged = true
+			break
+		}
+	}
+	if !dragged {
+		t.Fatal("spent and saddled, but the ace never dragged")
+	}
+}
+
+// TestBotSpiral: saddled from behind but not yet shot at, with altitude in
+// the bank — the brain flies the defensive spiral.
+func TestBotSpiral(t *testing.T) {
+	i, ace, foe := wounded(t, 9)
+	place := func() {
+		s := &ace.model.State
+		if s.Position.Y < 3000 {
+			s.Position.Y = 3500
+		}
+		behind := s.Attitude.Rotate(flight.Vec3{X: -1})
+		lift := s.Attitude.Rotate(flight.Vec3{Y: 1})
+		side := s.Attitude.Rotate(flight.Vec3{Z: 1})
+		foe.model.State.Position = s.Position.Add(behind.Scale(900)).Add(lift.Scale(280))
+		to, _ := i.bearing(foe.model.State.Position, s.Position)
+		off := to.Add(side.Scale(0.22)).Normalize() // ~12 degrees off my tail: established, NOT pointed
+		foe.model.State.Velocity = off.Scale(240)
+		foe.model.State.Attitude = flight.Look(off)
+	}
+	spiralled := false
+	for tick := uint64(0); tick < 60*8; tick++ {
+		place()
+		i.Step(tick, nil)
+		if ace.brain.mode == "spiral" {
+			spiralled = true
+			break
+		}
+	}
+	if !spiralled {
+		t.Fatal("saddled with altitude in the bank, but the ace never spiralled")
+	}
+}
+
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
