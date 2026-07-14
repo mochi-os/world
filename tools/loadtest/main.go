@@ -1,4 +1,4 @@
-// Furball world-server load harness (#81).
+// Air world-server load harness (#81).
 //
 // Opens N real WebTransport clients against a single match, drives 60 Hz input
 // on each, and measures the server's health from the snapshot stream each
@@ -52,7 +52,7 @@ func main() {
 	// Create a fresh match sized for the clients (no bots: every aircraft is a
 	// real connection, so both the physics AND the per-client send are loaded).
 	body, _ := json.Marshal(map[string]any{
-		"game": "furball", "mode": "furball", "label": "loadtest",
+		"game": "air", "mode": "furball", "label": "loadtest",
 		"capacity": *clients, "parameters": map[string]any{"missiles": true},
 	})
 	resp, err := insecure.Post(*lobby+"/sessions", "application/json", bytes.NewReader(body))

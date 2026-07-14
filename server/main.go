@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"world/games/echo"
-	"world/games/furball"
+	"world/games/air"
 )
 
 var (
@@ -38,7 +38,7 @@ func main() {
 	info("mochi-world %s starting", build_version)
 
 	games_register(echo.New())
-	games_register(furball.New())
+	games_register(air.New())
 
 	sessions_standing()
 	certificate_start()

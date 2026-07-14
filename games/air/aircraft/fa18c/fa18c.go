@@ -17,7 +17,7 @@ package fa18c
 import (
 	"math"
 
-	"world/games/furball/flight"
+	"world/games/air/flight"
 )
 
 // Airframe is the F/A-18C dataset.

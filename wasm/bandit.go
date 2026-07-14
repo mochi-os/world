@@ -6,7 +6,7 @@
 
 //go:build js && wasm
 
-// The SP joust opponent across the wasm boundary: the same furball.Bandit
+// The SP joust opponent across the wasm boundary: the same air.Bandit
 // brain-and-airframe harness the server flies for multiplayer bots. The
 // client mirrors the player's state in, steps the bandit, and reads its
 // encoded state back out — one crossing per rendered frame, same buffer
@@ -18,12 +18,12 @@ import (
 	"encoding/json"
 	"syscall/js"
 
-	"world/games/furball"
-	"world/games/furball/flight"
+	"world/games/air"
+	"world/games/air/flight"
 )
 
 var (
-	bandit *furball.Bandit
+	bandit *air.Bandit
 	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive)
 	back   [flight.Size]float64     // bandit state out
 	shots  [36]float64              // up to six player missiles, six words each
@@ -52,7 +52,7 @@ func banditInitialize(this js.Value, arguments []js.Value) any {
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = furball.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night)
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night)
 	return ""
 }
 

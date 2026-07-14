@@ -11,8 +11,8 @@
 package aircraft
 
 import (
-	"world/games/furball/aircraft/fa18c"
-	"world/games/furball/flight"
+	"world/games/air/aircraft/fa18c"
+	"world/games/air/flight"
 )
 
 // Get resolves an aircraft name to its airframe; nil for unknown names.

@@ -1,10 +1,10 @@
-// Mochi world: Furball game module
+// Mochi world: Air game module
 // Copyright © 2026 Mochi OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Furball multiplayer: air combat over the atoll with the real blade-element
+// Air multiplayer: air combat over the atoll with the real blade-element
 // flight model (package flight) and server-authoritative weapons. Two modes:
 // "furball" — long-running, anyone joins or leaves at any time, endless
 // respawns (the standing match uses this); "joust" — 1v1, ends the moment one
@@ -12,7 +12,7 @@
 // parameters: "tod", "clouds" (relayed to clients in the welcome) and
 // "missiles" (enforced here). Matches are air-start; deck operations stay
 // single-player for now, so ANY surface contact in multiplayer is a kill.
-package furball
+package air
 
 import (
 	"encoding/binary"
@@ -22,9 +22,9 @@ import (
 	"sort"
 
 	"world/game"
-	"world/games/furball/aircraft"
-	"world/games/furball/battle"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/battle"
+	"world/games/air/flight"
 )
 
 const (
@@ -33,7 +33,7 @@ const (
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
 	fuel     = 2722.0 // default spawn fuel load, kg (~6,000 lb — the session may choose otherwise)
-	pause    = 5.0    // seconds from death to respawn (furball mode)
+	pause    = 5.0    // seconds from death to respawn (air mode)
 	rounds   = 578    // M61 magazine per life
 	rate     = 100.0  // rounds per second (6,000 rpm)
 	muzzle   = 6.53   // m forward of the datum — the M61 port on the nose top, matching the client's tracer origin
@@ -65,14 +65,14 @@ const (
 	flare_reject   = 0.55   // the 9M's counter-countermeasures: flares work this fraction as often
 )
 
-type Furball struct{}
+type Air struct{}
 
-func New() *Furball { return &Furball{} }
+func New() *Air { return &Air{} }
 
-func (f *Furball) Name() string     { return "furball" }
-func (f *Furball) Rate() (int, int) { return 60, 20 }
+func (f *Air) Name() string     { return "air" }
+func (f *Air) Rate() (int, int) { return 60, 20 }
 
-func (f *Furball) Create(session game.Session) (game.Instance, error) {
+func (f *Air) Create(session game.Session) (game.Instance, error) {
 	wrap := 250000.0
 	if v, found := session.Parameters["wrap"]; found {
 		if n, valid := v.(float64); valid && n >= 0 {
@@ -161,7 +161,7 @@ type craft struct {
 	ammunition int     // gun rounds left this life
 	charge     float64 // fractional rounds accumulated at the fire rate
 	ejected    bool    // eject edge consumed this life
-	wait       float64 // seconds until respawn (furball mode)
+	wait       float64 // seconds until respawn (air mode)
 	flared     float64 // sim seconds since the last flare drop (large when none)
 	kills      int
 	deaths     int

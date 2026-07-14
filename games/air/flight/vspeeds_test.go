@@ -4,7 +4,7 @@
 //
 // Deliberately NOT part of the normal suite (several minutes of simulation):
 // run it with tools/vspeeds.sh, or
-//   VSPEEDS=1 go test ./games/furball/flight -run TestVSpeeds -v -timeout 30m
+//   VSPEEDS=1 go test ./games/air/flight -run TestVSpeeds -v -timeout 30m
 //
 // Conventions: standard atmosphere, calm air. Climbs at MIL (dry) power, the
 // charted convention; sustained turns at full afterburner (fighter EM

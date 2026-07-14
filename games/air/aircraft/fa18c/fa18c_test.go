@@ -14,7 +14,7 @@ import (
 	"math"
 	"testing"
 
-	"world/games/furball/flight"
+	"world/games/air/flight"
 )
 
 func model() *flight.Model {

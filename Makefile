@@ -22,11 +22,11 @@ test:
 # battle package rides along — the single-player client judges damage with
 # the same Go via wasm, so its tests passing there pin that parity claim.
 test-wasm:
-	GOOS=js GOARCH=wasm PATH="$(shell go env GOROOT)/lib/wasm:$$PATH" go test $(testflags) ./games/furball/flight/ ./games/furball/battle/
+	GOOS=js GOARCH=wasm PATH="$(shell go env GOROOT)/lib/wasm:$$PATH" go test $(testflags) ./games/air/flight/ ./games/air/battle/
 
 # Compile-check the simulation core and its boundary for the browser target.
 wasm:
-	GOOS=js GOARCH=wasm CGO_ENABLED=0 go build ./games/furball/flight/ ./wasm/
+	GOOS=js GOARCH=wasm CGO_ENABLED=0 go build ./games/air/flight/ ./wasm/
 
 clean:
 	rm -f $(bin)/mochi-world

@@ -9,13 +9,13 @@
 // maneuver library unlocked, and execution precision. No stat cheats: guns
 // are nose-traced by the host, so a sharper bot simply points better.
 
-package furball
+package air
 
 import (
 	"math"
 
-	"world/games/furball/battle"
-	"world/games/furball/flight"
+	"world/games/air/battle"
+	"world/games/air/flight"
 )
 
 // skill is one row of the ladder.
@@ -41,7 +41,7 @@ var skills = map[string]skill{
 }
 
 // layer is the server's view of a client cloud preset. base/top/cover MUST
-// track the CLOUDS table in apps/furball/web/src/game/engine.ts (which points
+// track the CLOUDS table in apps/air/web/src/game/engine.ts (which points
 // back here) — drift means bots see through decks players think are solid.
 type layer struct{ base, top, cover float64 }
 

@@ -14,7 +14,7 @@ package battle
 import (
 	"math"
 
-	"world/games/furball/flight"
+	"world/games/air/flight"
 )
 
 // Part kinds.

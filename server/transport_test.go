@@ -19,7 +19,7 @@ import (
 	"github.com/quic-go/webtransport-go"
 
 	"world/games/echo"
-	"world/games/furball"
+	"world/games/air"
 )
 
 const test_port = 19700
@@ -29,7 +29,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("MOCHI_TRANSPORT_PORT", fmt.Sprint(test_port))
 	os.Setenv("MOCHI_LIMITS_IDLE", "1")
 	games_register(echo.New())
-	games_register(furball.New())
+	games_register(air.New())
 	certificate_start()
 	go transport_start()
 	time.Sleep(200 * time.Millisecond)
@@ -160,10 +160,10 @@ func TestSweep(t *testing.T) {
 	t.Fatal("idle session was not swept")
 }
 
-// TestFurball joins a furball session and expects the authoritative aircraft
+// TestAir joins a air session and expects the authoritative aircraft
 // to fly: consecutive snapshots must show the spawn position advancing.
-func TestFurball(t *testing.T) {
-	s, err := sessions_create("furball", "joust", "test flight", 4, nil)
+func TestAir(t *testing.T) {
+	s, err := sessions_create("air", "joust", "test flight", 4, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestFurball(t *testing.T) {
 // TestPair joins two players and expects each to appear in the other's
 // snapshots — the headless stand-in for the two-browser test.
 func TestPair(t *testing.T) {
-	s, err := sessions_create("furball", "joust", "pair test", 4, nil)
+	s, err := sessions_create("air", "joust", "pair test", 4, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -264,15 +264,18 @@ func TestPair(t *testing.T) {
 // survive the idle sweep that ends ordinary empty sessions.
 func TestStanding(t *testing.T) {
 	sessions_standing() // default: one standing session per game except echo
-	list := sessions_list("furball")
+	list := sessions_list("air")
 	var standing string
 	for _, entry := range list {
 		if entry["permanent"] == true {
 			standing = entry["session"].(string)
+			if entry["label"] != "Furball" {
+				t.Fatalf("standing session label %v, want Furball (the free-for-all mode's name, not the game's)", entry["label"])
+			}
 		}
 	}
 	if standing == "" {
-		t.Fatal("no standing furball session")
+		t.Fatal("no standing air session")
 	}
 	if list[0]["permanent"] != true {
 		t.Fatal("standing session not listed first")

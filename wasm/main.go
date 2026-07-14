@@ -6,8 +6,8 @@
 
 //go:build js && wasm
 
-// The furball flight core compiled for the browser. One JS object,
-// globalThis.furball_flight, with one boundary crossing per rendered frame:
+// The air flight core compiled for the browser. One JS object,
+// globalThis.air_flight, with one boundary crossing per rendered frame:
 // the client fills a small input buffer, frame() steps the model and fills
 // the output buffer (encoded state plus derived instruments). Prediction
 // rings live on this side; a reconciliation replay never crosses the
@@ -30,8 +30,8 @@ import (
 	"math"
 	"syscall/js"
 
-	"world/games/furball/aircraft"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 // Extra is the instrument tail appended to the encoded state.
@@ -73,7 +73,7 @@ func main() {
 	for name, export := range bandits() {
 		exports[name] = export
 	}
-	js.Global().Set("furball_flight", js.ValueOf(exports))
+	js.Global().Set("air_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
 }
 

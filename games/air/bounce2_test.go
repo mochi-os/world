@@ -1,11 +1,11 @@
-package furball
+package air
 
 import (
 	"fmt"
 	"math"
 	"testing"
-	"world/games/furball/aircraft"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 // The FIXED harness semantics: freeze until first contact, release instantly.

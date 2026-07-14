@@ -4,7 +4,7 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Validation harness for the furball flight core. Subcommands:
+// Validation harness for the air flight core. Subcommands:
 //
 //	trim  -speed 200 -altitude 3000        bare-airframe glide trim
 //	fly   -seconds 20 [doublets]           scripted flight, CSV on stdout
@@ -28,8 +28,8 @@ import (
 	"strings"
 	"time"
 
-	"world/games/furball/aircraft"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 const gravity = 9.80665

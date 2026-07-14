@@ -13,8 +13,8 @@ import (
 	"math"
 	"testing"
 
-	"world/games/furball/aircraft/fa18c"
-	"world/games/furball/flight"
+	"world/games/air/aircraft/fa18c"
+	"world/games/air/flight"
 )
 
 func cruising(t *testing.T) *flight.Model {

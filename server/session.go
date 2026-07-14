@@ -111,8 +111,11 @@ func sessions_standing() {
 			warn("standing session: unknown game %q", name)
 			continue
 		}
-		label := strings.ToUpper(name[:1]) + name[1:]
-		if _, err := sessions_make(name, "furball", label, 0, nil, true); err != nil {
+		// The standing session is the always-on free-for-all: it carries the MODE's
+		// name ("Furball", the dogfight term) in the match list, not the game's.
+		mode := "furball"
+		label := strings.ToUpper(mode[:1]) + mode[1:]
+		if _, err := sessions_make(name, mode, label, 0, nil, true); err != nil {
 			warn("standing session %s: %v", name, err)
 		}
 	}

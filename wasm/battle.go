@@ -33,9 +33,9 @@ package main
 import (
 	"syscall/js"
 
-	"world/games/furball/aircraft"
-	"world/games/furball/battle"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/battle"
+	"world/games/air/flight"
 )
 
 // The event mask bits shared with the client.

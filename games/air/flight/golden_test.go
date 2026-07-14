@@ -9,7 +9,7 @@
 // tolerance: run natively it catches behavioural regressions; run under
 // GOOS=js (make test-wasm) it is the native-versus-wasm divergence bound the
 // plan requires. Regenerate deliberately with:
-//   go test ./games/furball/flight -run TestGolden -update
+//   go test ./games/air/flight -run TestGolden -update
 // and review the diff like any other behavioural change.
 
 package flight

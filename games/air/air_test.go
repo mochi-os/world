@@ -1,10 +1,10 @@
-// Mochi world: Furball game module tests
+// Mochi world: Air game module tests
 // Copyright © 2026 Mochi OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-package furball
+package air
 
 import (
 	"math"
@@ -13,14 +13,14 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"world/game"
-	"world/games/furball/flight"
-	"world/games/furball/aircraft"
+	"world/games/air/flight"
+	"world/games/air/aircraft"
 )
 
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "test", Game: "furball", Mode: mode, Capacity: 16, Seed: 2, Parameters: parameters})
+	made, err := g.Create(game.Session{Identifier: "test", Game: "air", Mode: mode, Capacity: 16, Seed: 2, Parameters: parameters})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestCheats(t *testing.T) {
 func TestCheatMissile(t *testing.T) {
 	hurt := func(bot bool) bool {
 		g := New()
-		made, err := g.Create(game.Session{Identifier: "cheatmissile", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+		made, err := g.Create(game.Session{Identifier: "cheatmissile", Game: "air", Mode: "furball", Capacity: 16, Seed: 3,
 			Parameters: map[string]any{"missiles": true, "cheats": map[string]any{"invulnerable": true}}})
 		if err != nil {
 			t.Fatal(err)
@@ -263,10 +263,10 @@ func TestJoustMerge(t *testing.T) {
 
 // BenchmarkStep100: one 60 Hz tick of a full 100-player match (each tick runs
 // 4 flight substeps per aircraft plus the battle cascade and gun processing) —
-// the server CPU budget check for #81. Run: go test ./games/furball -bench Step100 -run xx
+// the server CPU budget check for #81. Run: go test ./games/air -bench Step100 -run xx
 func BenchmarkStep100(b *testing.B) {
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "bench", Game: "furball", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 99.0}})
+	made, err := g.Create(game.Session{Identifier: "bench", Game: "air", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 99.0}})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestBotsEndure(t *testing.T) {
 		t.Skip("two simulated minutes")
 	}
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "endure", Game: "furball", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
+	made, err := g.Create(game.Session{Identifier: "endure", Game: "air", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -312,7 +312,7 @@ func TestBotsEndure(t *testing.T) {
 func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, when uint64) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "duel", Game: "furball", Mode: "furball", Capacity: 100, Seed: seed,
+	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 1.0, "rookie": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +381,7 @@ func TestBotLadder(t *testing.T) {
 		t.Skip("six simulated minutes")
 	}
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "ladder", Game: "furball", Mode: "furball", Capacity: 100, Seed: 11,
+	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 100, Seed: 11,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "rookie": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -416,13 +416,13 @@ func TestBotDeterminism(t *testing.T) {
 	}
 }
 
-// TestBotsFight: a six-ace furball produces kills and nobody flies into the sea.
+// TestBotsFight: a six-ace air produces kills and nobody flies into the sea.
 func TestBotsFight(t *testing.T) {
 	if testing.Short() {
 		t.Skip("three simulated minutes")
 	}
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "brawl", Game: "furball", Mode: "furball", Capacity: 100, Seed: 5,
+	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 100, Seed: 5,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 6.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -465,7 +465,7 @@ func TestBotsFight(t *testing.T) {
 // not react until the attacker fires or enters view.
 func TestBotBlind(t *testing.T) {
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "blind", Game: "furball", Mode: "furball", Capacity: 100, Seed: 7,
+	made, err := g.Create(game.Session{Identifier: "blind", Game: "air", Mode: "furball", Capacity: 100, Seed: 7,
 		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -495,7 +495,7 @@ func TestBotBlind(t *testing.T) {
 func gunnery(t *testing.T, level string, seed uint64) (int, int) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "guns", Game: "furball", Mode: "furball", Capacity: 100, Seed: seed,
+	made, err := g.Create(game.Session{Identifier: "guns", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
 		Parameters: map[string]any{"bots": map[string]any{"drone": 1.0, level: 1.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -554,7 +554,7 @@ func TestBotGunnery(t *testing.T) {
 func TestBotCircles(t *testing.T) {
 	stage := func(speed float64, height float64) string {
 		g := New()
-		made, _ := g.Create(game.Session{Identifier: "circle", Game: "furball", Mode: "furball", Capacity: 100, Seed: 4,
+		made, _ := g.Create(game.Session{Identifier: "circle", Game: "air", Mode: "furball", Capacity: 100, Seed: 4,
 			Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
 		i := made.(*instance)
 		ace, mark := i.aircraft[99], i.aircraft[98] // map order: ace 99, drone 98
@@ -585,7 +585,7 @@ func TestBotCircles(t *testing.T) {
 // the stale break.
 func TestBotReversal(t *testing.T) {
 	g := New()
-	made, _ := g.Create(game.Session{Identifier: "reverse", Game: "furball", Mode: "furball", Capacity: 100, Seed: 4,
+	made, _ := g.Create(game.Session{Identifier: "reverse", Game: "air", Mode: "furball", Capacity: 100, Seed: 4,
 		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
 	i := made.(*instance)
 	ace, foe := i.aircraft[99], i.aircraft[98]
@@ -671,7 +671,7 @@ func TestBandit(t *testing.T) {
 func missileRange(t *testing.T, position, velocity flight.Vec3) (*instance, *craft, *missile) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "range", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+	made, err := g.Create(game.Session{Identifier: "range", Game: "air", Mode: "furball", Capacity: 16, Seed: 3,
 		Parameters: map[string]any{"missiles": true}})
 	if err != nil {
 		t.Fatal(err)
@@ -809,8 +809,8 @@ func TestFuelBurn(t *testing.T) {
 	}
 }
 
-// TestFurballRespawn: open mode respawns after the pause.
-func TestFurballRespawn(t *testing.T) {
+// TestAirRespawn: open mode respawns after the pause.
+func TestAirRespawn(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 	i.kill(1, 0)
 	if done, _ := i.Finished(); done {
@@ -1082,7 +1082,7 @@ func TestLethalityBand(t *testing.T) {
 	}
 	for _, seed := range []uint64{2, 5, 9, 11, 17} {
 		g := New()
-		made, err := g.Create(game.Session{Identifier: "band", Game: "furball", Mode: "furball", Capacity: 16, Seed: seed})
+		made, err := g.Create(game.Session{Identifier: "band", Game: "air", Mode: "furball", Capacity: 16, Seed: seed})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1131,7 +1131,7 @@ func TestLethalityBand(t *testing.T) {
 // lock, so an evading bandit absorbed entire magazines untouched.
 func TestMissileEvadingFuse(t *testing.T) {
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "evadefuse", Game: "furball", Mode: "furball", Capacity: 16, Seed: 3,
+	made, err := g.Create(game.Session{Identifier: "evadefuse", Game: "air", Mode: "furball", Capacity: 16, Seed: 3,
 		Parameters: map[string]any{"missiles": true}})
 	if err != nil {
 		t.Fatal(err)

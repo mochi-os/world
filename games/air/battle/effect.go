@@ -13,7 +13,7 @@ package battle
 import (
 	"math"
 
-	"world/games/furball/flight"
+	"world/games/air/flight"
 )
 
 // Strike damage per 20 mm HEI-class hit; missile fragments apply severity 2.

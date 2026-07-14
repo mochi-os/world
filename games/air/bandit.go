@@ -11,12 +11,12 @@
 // its trigger/flare decisions. Compiled into the browser wasm boundary, so
 // the joust ace IS the multiplayer ace, bit for bit.
 
-package furball
+package air
 
 import (
 	"world/game"
-	"world/games/furball/aircraft"
-	"world/games/furball/flight"
+	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 type Bandit struct {

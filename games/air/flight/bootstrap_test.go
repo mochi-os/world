@@ -14,8 +14,8 @@ import (
 	"os"
 	"testing"
 
-	"world/games/furball/aircraft/fa18c"
-	"world/games/furball/flight"
+	"world/games/air/aircraft/fa18c"
+	"world/games/air/flight"
 )
 
 func TestMain(m *testing.M) {

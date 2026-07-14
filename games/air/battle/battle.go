@@ -17,7 +17,7 @@ package battle
 import (
 	"math"
 
-	"world/games/furball/flight"
+	"world/games/air/flight"
 )
 
 // Condition is the host-side damage state that the flight core never needs:
