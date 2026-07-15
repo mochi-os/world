@@ -474,7 +474,7 @@ func TestBotBlind(t *testing.T) {
 	ace := i.aircraft[99]
 	// A human-slot craft glued to the ace's blind cone: behind and below.
 	m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-	i.spawn(0, m)
+	i.spawn(0, m, "")
 	shadow := &craft{player: game.Player{Name: "shadow", Slot: 0}, kind: "fa18c", model: m, alive: true, flared: 1e9}
 	shadow.arm()
 	i.aircraft[0] = shadow
@@ -618,6 +618,305 @@ func TestBotReversal(t *testing.T) {
 	}
 	if !reversed {
 		t.Fatal("the attacker crossed the flight path and the ace never reversed")
+	}
+}
+
+// TestBotSection (#138): the section tactics must EARN their keep. Two
+// veterans fly against four pilots — once with section tactics, once with
+// brain.solo (the control: same skill, same airframe, same opposition) —
+// and the sweep is the claim, because per-seed outcomes ride missile-decoy
+// dice. What the tactics buy, measured: mutual support keeps the pair ALIVE
+// (the attacker converting on your six gets sandwiched before he arrives),
+// so the section arm's deaths must come in strictly under the control's,
+// and its net (kills minus deaths) must beat it. Kill totals alone are a
+// wash — section flying is first a defensive contract, and the numbers say
+// exactly that (calibration sweep 2026-07-15: deaths 1 vs 7, net +4 vs -2).
+func TestBotSection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("several simulated minutes")
+	}
+	arm := func(seed uint64, solo bool) (kills, deaths int) {
+		g := New()
+		made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
+			Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+				"red":  map[string]any{"veteran": 2.0},
+				"blue": map[string]any{"pilot": 4.0},
+			}}})
+		i := made.(*instance)
+		for _, slot := range i.slots() {
+			if a := i.aircraft[slot]; a.team == "red" && a.brain != nil {
+				a.brain.solo = solo
+			}
+		}
+		for tick := uint64(0); tick < 60*300; tick++ {
+			i.Step(tick, nil)
+		}
+		for _, slot := range i.slots() {
+			if a := i.aircraft[slot]; a.team == "red" {
+				deaths += a.deaths
+			}
+		}
+		return i.score["red"], deaths
+	}
+	sectionNet, soloNet, sectionDeaths, soloDeaths := 0, 0, 0, 0
+	for seed := uint64(1); seed <= 6; seed++ {
+		sk, sd := arm(seed, false)
+		lk, ld := arm(seed, true)
+		t.Logf("seed %d: section %d kills %d deaths | solo %d kills %d deaths", seed, sk, sd, lk, ld)
+		sectionNet += sk - sd
+		soloNet += lk - ld
+		sectionDeaths += sd
+		soloDeaths += ld
+	}
+	t.Logf("sweep: section net %d deaths %d | solo net %d deaths %d", sectionNet, sectionDeaths, soloNet, soloDeaths)
+	if sectionDeaths >= soloDeaths {
+		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
+	}
+	if sectionNet <= soloNet {
+		t.Fatalf("the section pair netted %d to the solo pair's %d — the tactics are not earning their keep", sectionNet, soloNet)
+	}
+}
+
+// TestTeamsJoin: pick-on-join honours a valid choice and balances the rest;
+// the welcome carries the side and the running score.
+func TestTeamsJoin(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "teams", Game: "air", Mode: "teams", Capacity: 16, Seed: 2})
+	i := made.(*instance)
+	welcome, err := i.Join(game.Player{Name: "a", Slot: 0, Team: "red"})
+	if err != nil || welcome["team"] != "red" {
+		t.Fatalf("chosen side not honoured: %v %v", welcome["team"], err)
+	}
+	welcome, _ = i.Join(game.Player{Name: "b", Slot: 1}) // no choice: the smaller side
+	if welcome["team"] != "blue" {
+		t.Fatalf("balance assigned %v, want blue", welcome["team"])
+	}
+	if welcome["score"] == nil {
+		t.Fatal("welcome carries no team score")
+	}
+	welcome, _ = i.Join(game.Player{Name: "c", Slot: 2, Team: "purple"}) // invalid: balanced (tie -> red)
+	if welcome["team"] != "red" {
+		t.Fatalf("invalid side assigned %v, want red", welcome["team"])
+	}
+}
+
+// TestTeamsSpawnSides: the sides spawn in opposing arcs of the merge ring.
+func TestTeamsSpawnSides(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "sides", Game: "air", Mode: "teams", Capacity: 16, Seed: 2,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"rookie": 3.0},
+			"blue": map[string]any{"rookie": 3.0},
+		}}})
+	i := made.(*instance)
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
+		if a.team == "red" && a.model.State.Position.X <= 0 {
+			t.Fatalf("red slot %d spawned on the blue side (x %.0f)", slot, a.model.State.Position.X)
+		}
+		if a.team == "blue" && a.model.State.Position.X >= 0 {
+			t.Fatalf("blue slot %d spawned on the red side (x %.0f)", slot, a.model.State.Position.X)
+		}
+	}
+}
+
+// TestTeamsFriendlyFire: a teammate kill scores minus one for the shooter
+// and the side; an enemy kill scores plus one.
+func TestTeamsFriendlyFire(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "ff", Game: "air", Mode: "teams", Capacity: 16, Seed: 2})
+	i := made.(*instance)
+	i.Join(game.Player{Name: "a", Slot: 0, Team: "red"})
+	i.Join(game.Player{Name: "b", Slot: 1, Team: "red"})
+	i.Join(game.Player{Name: "c", Slot: 2, Team: "blue"})
+	i.kill(1, 0) // red guns red
+	if i.aircraft[0].kills != -1 || i.score["red"] != -1 {
+		t.Fatalf("friendly kill scored %d (team %d), want -1/-1", i.aircraft[0].kills, i.score["red"])
+	}
+	i.kill(2, 0) // red guns blue
+	if i.aircraft[0].kills != 0 || i.score["red"] != 0 {
+		t.Fatalf("enemy kill scored %d (team %d), want 0/0 after the earlier minus", i.aircraft[0].kills, i.score["red"])
+	}
+}
+
+// teams builds a red ace with a red drone teammate and two blue rookies for
+// the section-tactics tests, all teleported by the caller.
+func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
+	t.Helper()
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: 2,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
+			"blue": map[string]any{"rookie": 2.0},
+		}}})
+	i := made.(*instance)
+	var ace, mate, blue1, blue2 *craft
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
+		switch {
+		case a.team == "red" && a.brain != nil:
+			ace = a
+		case a.team == "red":
+			mate = a
+		case blue1 == nil:
+			blue1 = a
+		default:
+			blue2 = a
+		}
+	}
+	return i, ace, mate, blue1, blue2
+}
+
+// aloft parks a craft at a position with a velocity, well above the floor.
+func aloft(c *craft, position, velocity flight.Vec3) {
+	c.model.State.Position = position
+	c.model.State.Velocity = velocity
+	c.model.State.Attitude = flight.Look(velocity.Normalize())
+}
+
+// TestTeamsSandwich: the enemy running an attack on a teammate outranks a
+// nearer, harmless one.
+func TestTeamsSandwich(t *testing.T) {
+	i, ace, mate, blue1, blue2 := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	for tick := uint64(0); tick < 90; tick++ {
+		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(mate, base.Add(flight.Vec3{X: 3800, Z: 600}), flight.Vec3{X: 220})
+		aloft(blue1, base.Add(flight.Vec3{X: 1800, Z: -400}), flight.Vec3{X: 220})                       // nearer, minding its own business
+		aloft(blue2, base.Add(flight.Vec3{X: 2400, Z: 600, Y: 200}), flight.Vec3{X: 240, Y: -10})        // running in on the mate from its six
+		i.Step(tick, nil)
+	}
+	if ace.brain.target != blue2.player.Slot {
+		t.Fatalf("ace targets slot %d, want the teammate's attacker %d", ace.brain.target, blue2.player.Slot)
+	}
+}
+
+// TestTeamsSupport: a closer teammate already engaged with the target puts
+// the section mate on the energy perch, not into the pile.
+func TestTeamsSupport(t *testing.T) {
+	i, ace, mate, blue1, blue2 := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	supported := false
+	for tick := uint64(0); tick < 240; tick++ {
+		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(mate, base.Add(flight.Vec3{X: 3300, Z: 150}), flight.Vec3{X: 220})
+		aloft(blue1, base.Add(flight.Vec3{X: 3600, Z: 300}), flight.Vec3{Z: 230}) // engaged with the mate, beam-on to the ace
+		aloft(blue2, base.Add(flight.Vec3{X: 3600, Z: -9000}), flight.Vec3{Z: -230})
+		i.Step(tick, nil)
+		if ace.brain.mode == "support" {
+			supported = true
+			break
+		}
+	}
+	if !supported {
+		t.Fatal("teammate engaged, but the ace piled in instead of flying support")
+	}
+}
+
+// TestTeamsHoldFire: a friendly inside the stream's corridor, nearer than
+// the target, holds the trigger; clearing the line releases it.
+func TestTeamsHoldFire(t *testing.T) {
+	i, ace, mate, blue1, _ := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	forward := flight.Vec3{X: 220}
+	rig := func(lateral float64) bool {
+		aloft(ace, base, forward)
+		aloft(mate, base.Add(flight.Vec3{X: 300, Z: lateral}), forward)
+		aloft(blue1, base.Add(flight.Vec3{X: 500}), forward)
+		b := ace.brain
+		slot := ace.player.Slot
+		b.decided = 1000 // skip decide: the rigged fire state must survive
+		b.prey = &track{when: 1000, position: blue1.model.State.Position, velocity: blue1.model.State.Velocity}
+		b.distance = 500
+		b.shoot = true
+		b.mode = "offense"
+		b.aim, _ = i.bearing(base, blue1.model.State.Position)
+		i.think(slot, ace, 1000)
+		return ace.latest.Fire
+	}
+	if rig(0) {
+		t.Fatal("fired straight through the teammate")
+	}
+	if !rig(250) {
+		t.Fatal("teammate well clear of the line, but the trigger stayed held")
+	}
+}
+
+// TestTeamsFormation: with nothing to fight, a paired wingman leaves the solo
+// weave and holds combat spread — line abreast, near 1.5 km — off his lead,
+// and the pair cruises on a common heading.
+func TestTeamsFormation(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "form", Game: "air", Mode: "teams", Capacity: 16, Seed: 3,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red": map[string]any{"pilot": 2.0},
+		}}})
+	i := made.(*instance)
+	lead, wing := i.aircraft[98], i.aircraft[99] // created 99 first: the later, lower slot leads
+	if lead.brain.mate != 99 || wing.brain.mate != 98 {
+		t.Fatalf("pairing wrong: lead mate %d, wing mate %d", lead.brain.mate, wing.brain.mate)
+	}
+	for tick := uint64(0); tick < 60*120; tick++ {
+		i.Step(tick, nil)
+	}
+	if lead.brain.mode != "cruise" || wing.brain.mode != "form" {
+		t.Fatalf("lead %q wing %q, want cruise/form", lead.brain.mode, wing.brain.mode)
+	}
+	_, span := i.bearing(lead.model.State.Position, wing.model.State.Position)
+	if span < 700 || span > 2600 {
+		t.Fatalf("wing %.0f m off the lead, want combat spread near 1500", span)
+	}
+	if lead.model.State.Velocity.Normalize().Dot(wing.model.State.Velocity.Normalize()) < 0.7 {
+		t.Fatal("the pair cruises on different headings")
+	}
+}
+
+// TestTeamsHumanLead: the odd bot a roster leaves unpaired attaches to a human
+// teammate and flies the player's wing.
+func TestTeamsHumanLead(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "wing", Game: "air", Mode: "teams", Capacity: 16, Seed: 3,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red": map[string]any{"pilot": 1.0},
+		}}})
+	i := made.(*instance)
+	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
+	human, bot := i.aircraft[0], i.aircraft[99]
+	if bot.brain.mate != -1 {
+		t.Fatalf("odd bot paired with %d, want unpaired", bot.brain.mate)
+	}
+	for tick := uint64(0); tick < 60*30; tick++ {
+		aloft(human, flight.Vec3{X: 0, Y: 4000, Z: 0}, flight.Vec3{X: 220})
+		i.Step(tick, nil)
+	}
+	if bot.brain.mode != "form" {
+		t.Fatalf("bot mode %q, want form on the human lead", bot.brain.mode)
+	}
+}
+
+// TestTeamsRadio: an engaged lead's target call reaches the wing — a night
+// contact beyond the wing's own eyes lands in his track table and he commits.
+func TestTeamsRadio(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "radio", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
+		Parameters: map[string]any{"tod": "night", "bots": map[string]any{
+			"red":  map[string]any{"pilot": 2.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	lead, wing, enemy := i.aircraft[98], i.aircraft[99], i.aircraft[97]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	for tick := uint64(0); tick < 90; tick++ {
+		aloft(wing, base, flight.Vec3{X: 220})
+		aloft(lead, base.Add(flight.Vec3{Z: 1500}), flight.Vec3{X: 220})
+		aloft(enemy, base.Add(flight.Vec3{Z: 7000}), flight.Vec3{X: 220}) // 5.5 km from the lead (night eyes reach 6), 7 km from the wing (they don't)
+		i.Step(tick, nil)
+	}
+	if lead.brain.target != enemy.player.Slot {
+		t.Fatalf("lead targets %d, want the drone %d", lead.brain.target, enemy.player.Slot)
+	}
+	if wing.brain.target != enemy.player.Slot {
+		t.Fatalf("wing targets %d, want the lead's called drone %d", wing.brain.target, enemy.player.Slot)
 	}
 }
 

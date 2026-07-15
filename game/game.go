@@ -13,11 +13,14 @@ package game
 // Player identifies one participant. Identity is self-asserted in the open
 // model (a later verified tier adds proof without changing this shape);
 // Name is the display name shown to other players; Slot is assigned by the
-// instance at Join and is stable for the life of the session.
+// instance at Join and is stable for the life of the session. Team is the
+// player's game-defined join choice (a side in a team mode), passed through
+// from the join message verbatim — games that have no sides ignore it.
 type Player struct {
 	Identity string
 	Name     string
 	Slot     int
+	Team     string
 }
 
 // Session carries the parameters a session was created with. Parameters is

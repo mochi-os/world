@@ -42,7 +42,11 @@ func connection_serve(l link) {
 	if len(name) > 32 {
 		name = name[:32]
 	}
-	joiner := game.Player{Identity: text(message, "identity"), Name: name}
+	team := text(message, "team")
+	if len(team) > 16 {
+		team = team[:16]
+	}
+	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team}
 	reply := make(chan answer, 1)
 	select {
 	case s.inbox <- order{kind: "join", player: joiner, link: l, reply: reply}:

@@ -80,7 +80,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		}
 	}
 	mode := session.Mode
-	if mode != "joust" {
+	if mode != "joust" && mode != "teams" {
 		mode = "furball"
 	}
 	allowed, _ := session.Parameters["missiles"].(bool)
@@ -89,6 +89,9 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		missiles:    allowed,
 		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
 		aircraft:    map[int]*craft{},
+	}
+	if mode == "teams" {
+		i.score = map[string]int{"red": 0, "blue": 0}
 	}
 	// Practice bots (#81 verification / solo flying): server-flown aircraft on
 	// scripted gentle manoeuvres, filling slots from the TOP so the framework's
@@ -119,26 +122,64 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		type order struct {
 			level string
 			count int
+			team  string
 		}
 		wanted := []order{}
-		if flat := number(session.Parameters, "bots"); flat > 0 {
-			wanted = append(wanted, order{"drone", int(flat)})
-		} else if levels, found := session.Parameters["bots"].(map[string]any); found {
+		gather := func(levels map[string]any, team string) {
 			for _, level := range []string{"drone", "rookie", "pilot", "veteran", "ace"} {
 				if n := int(number(levels, level)); n > 0 {
-					wanted = append(wanted, order{level, n})
+					wanted = append(wanted, order{level, n, team})
 				}
 			}
 		}
+		if flat := number(session.Parameters, "bots"); flat > 0 {
+			wanted = append(wanted, order{"drone", int(flat), ""})
+		} else if levels, found := session.Parameters["bots"].(map[string]any); found {
+			// Teams mode places bots per side ({red:{level:n}, blue:{...}});
+			// a flat per-level map still works anywhere and alternates sides.
+			sided := false
+			for _, team := range []string{"red", "blue"} {
+				if per, found := levels[team].(map[string]any); found {
+					gather(per, team)
+					sided = true
+				}
+			}
+			if !sided {
+				gather(levels, "")
+			}
+		}
 		slot, total := 99, 0
+		single := map[string]int{} // per side: the fighting bot still waiting for a pair partner
 		for _, w := range wanted {
 			for n := 1; n <= w.count && total < 99; n++ {
+				team := w.team
+				if mode != "teams" {
+					team = "" // sides exist only in the teams mode
+				} else if team == "" {
+					team = []string{"red", "blue"}[total%2] // sideless counts in a team match: alternate
+				}
 				m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-				i.spawn(slot, m)
+				i.spawn(slot, m, team)
 				title := fmt.Sprintf("%s%s %d", string(w.level[0]-32), w.level[1:], n)
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level)}
+				if team != "" {
+					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
+				}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level), team: team}
 				b.arm()
 				i.aircraft[slot] = b
+				// Wingman pairs (#140): consecutive fighting bots on a side fly
+				// as a section, for the instance's life. Levels are created in
+				// ladder order, so the later (lower-slot) member is the senior —
+				// he leads. An odd bot stays single and attaches to a human lead.
+				if b.brain != nil && team != "" {
+					if p, found := single[team]; found {
+						b.brain.mate = p
+						i.aircraft[p].brain.mate = slot
+						delete(single, team)
+					} else {
+						single[team] = slot
+					}
+				}
 				slot--
 				total++
 			}
@@ -163,8 +204,63 @@ type craft struct {
 	ejected    bool    // eject edge consumed this life
 	wait       float64 // seconds until respawn (air mode)
 	flared     float64 // sim seconds since the last flare drop (large when none)
+	team       string  // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
+}
+
+// hostile reports whether two craft may engage each other: everyone in the
+// modes without sides, the other team when sides exist.
+func hostile(a, b *craft) bool {
+	return a.team == "" || b.team == "" || a.team != b.team
+}
+
+// nearest_mate finds the closest living teammate, or nil (always nil outside
+// the teams mode). Friendly positions are radio truth — no perception model.
+func (i *instance) nearest_mate(slot int, a *craft) *craft {
+	if a.team == "" {
+		return nil
+	}
+	var best *craft
+	gap := math.MaxFloat64
+	for _, other := range i.slots() {
+		mate := i.aircraft[other]
+		if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
+			continue
+		}
+		if _, span := i.bearing(a.model.State.Position, mate.model.State.Position); span < gap {
+			best, gap = mate, span
+		}
+	}
+	return best
+}
+
+// leader resolves the aircraft a bot holds formation on between engagements
+// (#140): the assigned pair lead for a wingman, or — for the odd bot a roster
+// leaves unpaired — the senior human teammate, so the bot flies the player's
+// wing. Leads themselves get nil (their wing formates on them), as do
+// solo-flagged control bots and anyone whose partner is dead or gone.
+func (i *instance) leader(slot int, a *craft) *craft {
+	b := a.brain
+	if a.team == "" || b == nil || b.solo {
+		return nil
+	}
+	if b.mate >= 0 {
+		if slot < b.mate {
+			return nil // I lead the pair
+		}
+		if mate := i.aircraft[b.mate]; mate != nil && mate.alive && mate.model != nil {
+			return mate
+		}
+		return nil
+	}
+	for _, other := range i.slots() {
+		c := i.aircraft[other]
+		if other != slot && c != nil && !c.bot && c.alive && c.model != nil && c.team == a.team {
+			return c
+		}
+	}
+	return nil
 }
 
 // arm rebinds the craft's battle body to its current model's damage state.
@@ -226,6 +322,7 @@ type instance struct {
 	events      []map[string]any
 	finished    bool
 	results     map[string]any
+	score       map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
 }
 
 // slots iterates the aircraft in slot order: map order is random per
@@ -241,11 +338,20 @@ func (i *instance) slots() []int {
 }
 
 // spawn resets a model to the merge ring, facing the centre: slots 0/1 meet
-// head-on (the joust pair); later slots spread by the golden angle.
-func (i *instance) spawn(slot int, m *flight.Model) {
+// head-on (the joust pair); later slots spread by the golden angle. Sides
+// spawn in opposing 120° arcs — red centred on one bearing, blue opposite —
+// so a team match opens as a line-abreast wall meeting a wall.
+func (i *instance) spawn(slot int, m *flight.Model, team string) {
 	angle := float64(slot) * math.Pi
 	if slot > 1 {
 		angle = float64(slot) * 2.399963
+	}
+	if team != "" {
+		base := 0.0
+		if team == "blue" {
+			base = math.Pi
+		}
+		angle = base + (math.Mod(float64(slot)*2.399963, 2)-1)*math.Pi/3
 	}
 	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
@@ -298,16 +404,39 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		return nil, errors.New("full")
 	}
 	kind := "fa18c" // the only catalogue entry today; a requested type would arrive on the join payload
+	team := ""
+	if i.mode == "teams" {
+		// Pick-on-join: honour a valid choice, assign anything else to the
+		// smaller side (red on a tie — deterministic, and the client suggests
+		// the smaller side anyway so the server assignment is the fallback).
+		team = player.Team
+		if team != "red" && team != "blue" {
+			red, blue := 0, 0
+			for _, b := range i.aircraft {
+				switch b.team {
+				case "red":
+					red++
+				case "blue":
+					blue++
+				}
+			}
+			team = "red"
+			if blue < red {
+				team = "blue"
+			}
+		}
+	}
 	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
-	i.spawn(player.Slot, m)
-	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9}
+	i.spawn(player.Slot, m, team)
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, team: team}
 	a.arm()
 	i.aircraft[player.Slot] = a
-	i.events = append(i.events, map[string]any{"kind": "roster", "slot": player.Slot, "name": player.Name})
-	for slot, b := range i.aircraft {
-		if b.bot {
-			i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": b.player.Name})
-		}
+	// The full roster on every join: names AND sides for bots and humans
+	// alike (the transport's own player list carries no team, so a late
+	// joiner would otherwise never learn the sides already in the fight).
+	for _, slot := range i.slots() {
+		b := i.aircraft[slot]
+		i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": b.player.Name, "team": b.team})
 	}
 	if i.mode == "joust" && len(i.aircraft) == 2 && !i.started {
 		// The pair is complete THIS instant: the match starts, and both merge
@@ -315,7 +444,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		i.started = true
 		for _, slot := range i.slots() {
 			b := i.aircraft[slot]
-			i.spawn(slot, b.model)
+			i.spawn(slot, b.model, b.team)
 			b.model.State.Damage = flight.DamageState{}
 			b.arm()
 			b.alive = true
@@ -323,7 +452,12 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 	}
 	waiting := i.mode == "joust" && !i.started
-	return map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode}, nil
+	welcome := map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode}
+	if i.mode == "teams" {
+		welcome["team"] = team
+		welcome["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
+	}
+	return welcome, nil
 }
 
 func (i *instance) Leave(player game.Player) {
@@ -457,7 +591,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				if a.model == nil { // the previous airframe left as a wreck
 					a.model = flight.New(aircraft.Get(a.kind), i.environment, flight.World{Sea: sea})
 				}
-				i.spawn(slot, a.model)
+				i.spawn(slot, a.model, a.team)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
 				if a.brain != nil {
@@ -867,12 +1001,26 @@ func (i *instance) kill(victim int, by int) {
 	a.wait = pause
 	a.deaths++
 	if killer := i.aircraft[by]; by >= 0 && killer != nil {
-		killer.kills++
+		// Friendly fire is live in the teams mode, and it costs: a teammate
+		// kill scores MINUS one for the shooter and the side.
+		if killer.team != "" && killer.team == a.team {
+			killer.kills--
+			i.score[killer.team]--
+		} else {
+			killer.kills++
+			if killer.team != "" {
+				i.score[killer.team]++
+			}
+		}
 	}
-	i.events = append(i.events, map[string]any{
+	event := map[string]any{
 		"kind": "kill", "slot": victim, "by": by,
 		"position": []float64{a.model.State.Position.X, a.model.State.Position.Y, a.model.State.Position.Z},
-	})
+	}
+	if i.score != nil {
+		event["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
+	}
+	i.events = append(i.events, event)
 	if i.mode == "joust" && !i.finished {
 		winner := by
 		if winner < 0 { // flew into the sea: the other player wins

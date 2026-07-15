@@ -68,7 +68,7 @@ type track struct {
 // cadence and writes the command set; steer() turns it into Inputs every tick.
 type brain struct {
 	skill    skill
-	mode     string // cruise, offense, defense, neutral, evade
+	mode     string // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
 	target   int    // slot, -1 none
 	decided  uint64 // last decision tick
 	known    map[int]*track
@@ -98,6 +98,8 @@ type brain struct {
 	stuck    int     // consecutive decisions of neutral non-progress (stalemate detector)
 	tangle   int     // consecutive decisions locked in close combat (scissors detector)
 	saddle   int     // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
+	solo     bool    // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
+	mate     int     // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
 	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
 }
 
@@ -107,7 +109,7 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, mode: "cruise", target: -1, known: map[int]*track{}, missiles: 2}
+	return &brain{skill: s, mode: "cruise", target: -1, mate: -1, known: map[int]*track{}, missiles: 2}
 }
 
 // reborn resets the per-life state after a respawn.
@@ -177,6 +179,27 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	if (a.condition.Fire[0] > 0 || a.condition.Fire[1] > 0) && b.mode != "evade" {
 		a.latest.Throttle, a.latest.Reheat = 0, 0
 	}
+	// Shot discipline (teams, #130): never fire through a teammate's line —
+	// hold whenever a friendly sits inside the stream's corridor, nearer than
+	// the target. The trigger comes back by itself as the geometry clears.
+	if a.latest.Fire && a.team != "" {
+		s := &a.model.State
+		bore := s.Attitude.Rotate(flight.Vec3{X: 1})
+		for _, other := range i.slots() {
+			mate := i.aircraft[other]
+			if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
+				continue
+			}
+			direction, span := i.bearing(s.Position, mate.model.State.Position)
+			if span > b.distance+300 {
+				continue // beyond the target: the burst is spent before it reaches him
+			}
+			if miss := math.Acos(clamp(bore.Dot(direction), -1, 1)) * span; miss < 60 {
+				a.latest.Fire = false
+				break
+			}
+		}
+	}
 	if b.loose {
 		b.loose = false
 		if i.missiles && i.free() && b.missiles > 0 {
@@ -207,6 +230,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if other == slot || c == nil || !c.alive || c.model == nil {
 			continue
 		}
+		if !hostile(a, c) {
+			continue // teammates are never tracks: their picture arrives by radio (read fresh from the instance where the section tactics need it)
+		}
 		if t, found := b.known[other]; found && tick-t.when < stale {
 			continue
 		}
@@ -225,6 +251,20 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.known[other] = &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity}
 		}
 	}
+	// The radio (#140): an engaged pair partner calls his target — the wing
+	// fights from the section's picture, not just his own eyes, so the pair
+	// enters every fight together. Pair-scoped: a human lead has no track
+	// table to share.
+	if b.mate >= 0 && !b.solo {
+		if mate := i.aircraft[b.mate]; mate != nil && mate.alive && mate.brain != nil && mate.brain.target >= 0 {
+			if called, found := mate.brain.known[mate.brain.target]; found {
+				if mine, exists := b.known[mate.brain.target]; !exists || called.when > mine.when {
+					heard := *called
+					b.known[mate.brain.target] = &heard
+				}
+			}
+		}
+	}
 	for s, t := range b.known { // forget the dead, the departed, and the long-lost
 		if c := i.aircraft[s]; c == nil || !c.alive || tick-t.when > 15*60 {
 			delete(b.known, s)
@@ -235,17 +275,42 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 
 	// Target selection: nearest seen contact, weighted against dogpiles,
-	// with 30% hysteresis before switching.
+	// with 30% hysteresis before switching. In a team fight the dogpile
+	// count is MY side's (sorting targets across the section), and an enemy
+	// established on a teammate outranks everything nearer — the sandwich:
+	// the threatened wingman's problem is the section's problem, and a human
+	// teammate is defended exactly like a bot one.
 	attackers := map[int]int{}
 	for _, other := range i.slots() {
 		if c := i.aircraft[other]; c != nil && c.bot && c.brain != nil && c.brain.target >= 0 {
-			attackers[c.brain.target]++
+			if a.team == "" || b.solo || c.team == a.team {
+				attackers[c.brain.target]++
+			}
+		}
+	}
+	menacing := map[int]bool{}
+	if a.team != "" && !b.solo {
+		for s, t := range b.known {
+			for _, other := range i.slots() {
+				mate := i.aircraft[other]
+				if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
+					continue
+				}
+				to, span := i.bearing(t.position, mate.model.State.Position)
+				if span < 2200 && t.velocity.Normalize().Dot(to) > 0.92 {
+					menacing[s] = true // nose committed on my teammate, in range: he is running an attack (a loose 0.8 cone flagged anyone merely flying this way)
+					break
+				}
+			}
 		}
 	}
 	best, cost := -1, math.MaxFloat64
 	for s, t := range b.known {
 		_, distance := i.bearing(me.Position, t.position)
 		weight := distance * float64(1+attackers[s])
+		if menacing[s] {
+			weight *= 0.3
+		}
 		if s == b.target {
 			weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
 		}
@@ -371,6 +436,12 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				away, gap = d.Scale(-1), span
 			}
 		}
+		if mate := i.nearest_mate(slot, a); mate != nil && !b.solo {
+			toward, span := i.bearing(me.Position, mate.model.State.Position)
+			if span < 15000 && toward.Dot(away) > -0.3 {
+				away = away.Add(toward.Scale(0.6)).Normalize() // limp toward friends: home is where the section is
+			}
+		}
 		b.aim = flight.Vec3{X: away.X, Y: clamp(away.Y, -0.25, 0), Z: away.Z}.Normalize()
 		b.g = 2
 		b.throttle, b.reheat = 1, 1 // whatever thrust remains (think()'s fire drill takes it back while an engine burns)
@@ -416,10 +487,48 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		return
 	}
 
-	// No target: cruise the drone weave.
+	// No target: cruise. A wingman holds combat spread off his lead (#140) —
+	// line abreast, 1.5 km — instead of the solo weave, so the section arrives
+	// at every fight together with the engaged/support split already standing,
+	// and re-forms on the lead after each kill (a crippled lead limping home
+	// collects an escort the same way). Leads, solo-flagged bots, and single
+	// bots with no human to follow keep the free weave.
 	if b.target < 0 {
-		b.mode = "cruise"
 		b.prey = nil
+		if lead := i.leader(slot, a); lead != nil {
+			b.mode = "form"
+			him := &lead.model.State
+			ahead := him.Velocity.Normalize()
+			if him.Velocity.Length() < 1 {
+				ahead = him.Attitude.Rotate(flight.Vec3{X: 1})
+			}
+			abeam := ahead.Cross(flight.Vec3{Y: 1})
+			if abeam.Length() < 0.1 {
+				abeam = him.Attitude.Rotate(flight.Vec3{Z: 1}) // lead pointed straight up or down: his wings still define a side
+			}
+			abeam = abeam.Normalize()
+			if out, _ := i.bearing(him.Position, me.Position); out.Dot(abeam) < 0 {
+				abeam = abeam.Scale(-1) // hold my own side: no cross-unders
+			}
+			station := him.Position.Add(abeam.Scale(1500))
+			direction, span := i.bearing(me.Position, station)
+			near := clamp(span/1200, 0, 1) // far: fly at the station; close: fly the lead's heading and let the station drift in
+			mixed := ahead.Scale(1 - near).Add(direction.Scale(near))
+			if mixed.Length() < 0.1 {
+				mixed = ahead // overran the station dead ahead: the blend cancels — hold heading and let the throttle law drop me back
+			}
+			b.aim = mixed.Normalize()
+			b.g = 3 // station keeping is not a limiter business
+			want := him.Velocity.Length() + clamp((span-150)*0.05, -40, 80)
+			b.throttle = clamp(0.55+(want-speed)*0.01, 0.25, 1)
+			b.reheat = 0
+			if span > 3000 {
+				b.reheat = 1 // rejoin: cut the corner in burner
+			}
+			i.guard(b, me, pace)
+			return
+		}
+		b.mode = "cruise"
 		weave(slot, a, tick)
 		return
 	}
@@ -445,6 +554,42 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		to, span := i.bearing(t.position, me.Position)
 		if span < gap && me.Attitude.Unrotate(to.Scale(-1)).X < -0.2 && t.velocity.Normalize().Dot(to) > 0.6 {
 			menace, gap = s, span
+		}
+	}
+
+	// Section flying (teams, #130): the engaged/supporting split. When a
+	// CLOSER teammate is already fighting my target and the target is busy
+	// with him — not menacing anyone, not nose-on me — piling in just fouls
+	// the teammate's fight (and his line of fire). Fly SUPPORT instead: an
+	// energy perch above and behind the fight, ready to convert the instant
+	// the picture changes (the target threatening my teammate is the
+	// sandwich, which the selection weighting turns into an immediate attack;
+	// the target coming nose-on me makes it my fight through `tail`).
+	if a.team != "" && !b.solo && menace < 0 && b.target >= 0 && !menacing[b.target] && tail > -0.2 {
+		engaged := false
+		for _, other := range i.slots() {
+			mate := i.aircraft[other]
+			if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
+				continue
+			}
+			if _, span := i.bearing(mate.model.State.Position, spot); span < math.Min(0.75*distance, 2200) {
+				engaged = true
+				break
+			}
+		}
+		if engaged && distance < 6000 {
+			b.mode = "support"
+			b.shoot = false
+			perch := spot.Subtract(chase.Scale(1100)).Add(flight.Vec3{Y: 500})
+			if distance < 1300 {
+				out, _ := i.bearing(spot, me.Position)
+				perch = me.Position.Add(out.Scale(600)).Add(flight.Vec3{Y: 300}) // too close: open out, never through the fight
+			}
+			b.aim, _ = i.bearing(me.Position, perch)
+			b.g = math.Min(b.g, 4)
+			b.throttle, b.reheat = 1, boost(speed, pace, 60) // the perch is an energy bank
+			i.guard(b, me, pace)
+			return
 		}
 	}
 
@@ -525,6 +670,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if b.skill.library >= 2 && speed < 0.68*pace && span > 900 {
 			b.mode = "drag"
 			away := at.Scale(-1)
+			// Drag-AND-BAG (teams): the extension bends toward the nearest
+			// living teammate — the pursuer gets dragged across a friendly
+			// nose instead of into empty sky.
+			if mate := i.nearest_mate(slot, a); mate != nil && !b.solo {
+				toward, span := i.bearing(me.Position, mate.model.State.Position)
+				if span < 10000 && toward.Dot(away) > -0.3 { // never a reversal INTO the pursuer just to reach a friend
+					away = away.Add(toward.Scale(0.8)).Normalize()
+				}
+			}
 			b.aim = flight.Vec3{X: away.X, Y: -0.08, Z: away.Z}.Normalize()
 			b.throttle, b.reheat = 1, 1
 			b.shoot = false
