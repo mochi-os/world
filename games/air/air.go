@@ -1,5 +1,5 @@
 // Mochi world: Air game module
-// Copyright © 2026 Mochi OÜ
+// Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
@@ -291,6 +291,7 @@ type missile struct {
 	life     float64
 	number   uint64 // per-instance launch counter, for deterministic decoys
 	window   bool   // a flare window has been judged (one decoy roll per flare)
+	called   bool   // a teammate has called this launch to its victim (#146): one call per round, ever
 }
 
 // wreck is a pilot-dead or ejected airframe that keeps flying until it hits
