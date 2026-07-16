@@ -40,6 +40,112 @@ var skills = map[string]skill{
 	"ace":     {delay: 0.15, cadence: 8, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 550},
 }
 
+// tactics is the shared tactical doctrine: the hand-picked constants the
+// maneuver decisions gate on, extracted (#143) so the tuning battery can fly
+// same-brain-one-number-different arms. Each brain carries a copy — a harness
+// may amend one bot's doctrine without touching the roster. The skill ladder
+// (library, cadence, wander, pull, discipline) is deliberately NOT here:
+// tiers are a constraint the tuning respects, never a variable it moves.
+type tactics struct {
+	drag struct {
+		pace float64 // drag-when-spent below this fraction of corner speed
+		span float64 // ... and only beyond this separation, m (closer, the break is mandatory)
+	}
+	bag struct {
+		reach float64 // drag-and-bag: bend toward a mate within this range, m
+		bend  float64 // how hard the extension bends toward him
+	}
+	spiral struct {
+		nose   float64 // attacker established: his velocity dotted on my line
+		span   float64 // saddle range, m
+		floor  float64 // minimum altitude to trade, m
+		saddle int     // consecutive established decisions before committing
+		hold   uint64  // committed ticks
+	}
+	jink struct {
+		span   float64 // guns-defense range, m
+		base   uint64  // ticks between re-rolls...
+		spread uint64  // ...plus up to this many more, per the deterministic roll
+	}
+	high struct {
+		closure float64 // high yo-yo: overtake past this, m/s
+		span    float64 // inside this range, m
+		tail    float64 // and not dead astern (tail below this)
+		hold    uint64  // committed ticks
+	}
+	low struct {
+		near float64 // low yo-yo: opening slower than this, m/s (negative)
+		far  float64 // but not opening faster than this, m/s (negative)
+		tail float64 // crossing target only (tail below this)
+		rise float64 // never against one climbing away (LOS Y above this)
+	}
+	plan struct {
+		deficit float64 // one-circle: energy height below his by this, m
+	}
+	lead struct {
+		closure float64 // lead-turn range as a multiple of closure (seconds of arrival)
+		floor   float64 // but never later than this range, m
+		angle   float64 // the cut across his side, radians
+	}
+	missile struct {
+		tail   float64 // disciplined shooters demand at least this aspect
+		span   float64 // ... inside this range, m
+		margin float64 // nose-on-target gate at zero discipline...
+		step   float64 // ...tightened by this per unit discipline
+		base   float64 // envelope: head-on fraction of missile_range
+		slope  float64 // ...growing by this at square rear aspect
+		floor  float64 // envelope: fraction granted at zero discipline
+		gain   float64 // ...growing by this at full discipline
+	}
+	sandwich struct {
+		span   float64 // an enemy this close to a teammate, m
+		nose   float64 // with his nose committed on him (velocity dot)
+		weight float64 // outranks nearer targets by this factor
+	}
+	support struct {
+		span    float64 // fights farther than this are not mine to crowd, m
+		share   float64 // engaged = a mate closer to my target than this share of my range
+		engaged float64 // ... capped at this absolute range, m
+		behind  float64 // perch: behind the fight along his track, m
+		above   float64 // perch: above the fight, m
+		near    float64 // too close to the fight: open out inside this, m
+		out     float64 // ... by this much laterally, m
+		rise    float64 // ... and this much up, m
+		limit   float64 // g cap on the perch (an energy bank, not a fight)
+	}
+	form struct {
+		abeam  float64 // combat spread: line abreast off the lead, m
+		blend  float64 // fly-at-the-station beyond this off-station distance, m
+		burner float64 // rejoin in reheat beyond this, m
+	}
+}
+
+// standard is the doctrine every brain flies today: the defaults the tuning
+// battery measures candidates against. Every value here was hand-picked with
+// a reason a pilot would recognise; a candidate that beats one without such
+// a reason is a bot-metagame artifact, not doctrine (#143).
+func standard() tactics {
+	var t tactics
+	t.drag.pace, t.drag.span = 0.68, 900
+	t.bag.reach, t.bag.bend = 10000, 0.8
+	t.spiral.nose, t.spiral.span, t.spiral.floor, t.spiral.saddle, t.spiral.hold = 0.90, 1400, 2300, 2, 150
+	t.jink.span, t.jink.base, t.jink.spread = 900, 40, 35
+	t.high.closure, t.high.span, t.high.tail, t.high.hold = 90, 1200, 0.85, 120
+	t.low.near, t.low.far, t.low.tail, t.low.rise = -30, -140, 0.85, 0.2
+	t.plan.deficit = 400
+	t.lead.closure, t.lead.floor, t.lead.angle = 2.0, 600, 1.3
+	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0.06
+	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
+	t.sandwich.span, t.sandwich.nose, t.sandwich.weight = 2200, 0.92, 0.3
+	t.support.span, t.support.share, t.support.engaged = 6000, 0.75, 2200
+	t.support.behind, t.support.above, t.support.near, t.support.out, t.support.rise, t.support.limit = 1100, 500, 1300, 600, 300, 4
+	t.form.abeam, t.form.blend, t.form.burner = 1500, 1200, 3000
+	return t
+}
+
+// doctrine is the package default every mind() copies.
+var doctrine = standard()
+
 // layer is the server's view of a client cloud preset. base/top/cover MUST
 // track the CLOUDS table in apps/air/web/src/game/engine.ts (which points
 // back here) — drift means bots see through decks players think are solid.
@@ -68,6 +174,7 @@ type track struct {
 // cadence and writes the command set; steer() turns it into Inputs every tick.
 type brain struct {
 	skill    skill
+	tactics  tactics // per-brain copy of the doctrine (#143): the battery amends one bot's numbers without touching the roster
 	mode     string // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
 	target   int    // slot, -1 none
 	decided  uint64 // last decision tick
@@ -111,7 +218,7 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, mode: "cruise", target: -1, mate: -1, told: -1, known: map[int]*track{}, missiles: 2}
+	return &brain{skill: s, tactics: doctrine, mode: "cruise", target: -1, mate: -1, told: -1, known: map[int]*track{}, missiles: 2}
 }
 
 // reborn resets the per-life state after a respawn.
@@ -308,7 +415,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					continue
 				}
 				to, span := i.bearing(t.position, mate.model.State.Position)
-				if span < 2200 && t.velocity.Normalize().Dot(to) > 0.92 {
+				if span < b.tactics.sandwich.span && t.velocity.Normalize().Dot(to) > b.tactics.sandwich.nose {
 					menacing[s] = other // nose committed on my teammate, in range: he is running an attack (a loose 0.8 cone flagged anyone merely flying this way); slots() order puts humans first, so a human victim wins the record
 					// The BREAK call (#139): a human teammate with an attacker
 					// established close behind his 3/9 — where his own eyes are
@@ -344,7 +451,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		_, distance := i.bearing(me.Position, t.position)
 		weight := distance * float64(1+attackers[s])
 		if _, found := menacing[s]; found {
-			weight *= 0.3
+			weight *= b.tactics.sandwich.weight
 		}
 		if s == b.target {
 			weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
@@ -554,9 +661,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if out, _ := i.bearing(him.Position, me.Position); out.Dot(abeam) < 0 {
 				abeam = abeam.Scale(-1) // hold my own side: no cross-unders
 			}
-			station := him.Position.Add(abeam.Scale(1500))
+			station := him.Position.Add(abeam.Scale(b.tactics.form.abeam))
 			direction, span := i.bearing(me.Position, station)
-			near := clamp(span/1200, 0, 1) // far: fly at the station; close: fly the lead's heading and let the station drift in
+			near := clamp(span/b.tactics.form.blend, 0, 1) // far: fly at the station; close: fly the lead's heading and let the station drift in
 			mixed := ahead.Scale(1 - near).Add(direction.Scale(near))
 			if mixed.Length() < 0.1 {
 				mixed = ahead // overran the station dead ahead: the blend cancels — hold heading and let the throttle law drop me back
@@ -566,7 +673,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			want := him.Velocity.Length() + clamp((span-150)*0.05, -40, 80)
 			b.throttle = clamp(0.55+(want-speed)*0.01, 0.25, 1)
 			b.reheat = 0
-			if span > 3000 {
+			if span > b.tactics.form.burner {
 				b.reheat = 1 // rejoin: cut the corner in burner
 			}
 			i.guard(b, me, pace)
@@ -617,21 +724,21 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
 				continue
 			}
-			if _, span := i.bearing(mate.model.State.Position, spot); span < math.Min(0.75*distance, 2200) {
+			if _, span := i.bearing(mate.model.State.Position, spot); span < math.Min(b.tactics.support.share*distance, b.tactics.support.engaged) {
 				engaged = true
 				break
 			}
 		}
-		if engaged && distance < 6000 {
+		if engaged && distance < b.tactics.support.span {
 			b.mode = "support"
 			b.shoot = false
-			perch := spot.Subtract(chase.Scale(1100)).Add(flight.Vec3{Y: 500})
-			if distance < 1300 {
+			perch := spot.Subtract(chase.Scale(b.tactics.support.behind)).Add(flight.Vec3{Y: b.tactics.support.above})
+			if distance < b.tactics.support.near {
 				out, _ := i.bearing(spot, me.Position)
-				perch = me.Position.Add(out.Scale(600)).Add(flight.Vec3{Y: 300}) // too close: open out, never through the fight
+				perch = me.Position.Add(out.Scale(b.tactics.support.out)).Add(flight.Vec3{Y: b.tactics.support.rise}) // too close: open out, never through the fight
 			}
 			b.aim, _ = i.bearing(me.Position, perch)
-			b.g = math.Min(b.g, 4)
+			b.g = math.Min(b.g, b.tactics.support.limit)
 			b.throttle, b.reheat = 1, boost(speed, pace, 60) // the perch is an energy bank
 			i.guard(b, me, pace)
 			return
@@ -712,7 +819,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// fighting speed before offering another angle. Only with real
 		// separation: inside 900 m an extension hands him the saddle and the
 		// break stays mandatory however slow it is.
-		if b.skill.library >= 2 && speed < 0.68*pace && span > 900 {
+		if b.skill.library >= 2 && speed < b.tactics.drag.pace*pace && span > b.tactics.drag.span {
 			b.mode = "drag"
 			away := at.Scale(-1)
 			// Drag-AND-BAG (teams): the extension bends toward the nearest
@@ -720,8 +827,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// nose instead of into empty sky.
 			if mate := i.nearest_mate(slot, a); mate != nil && !b.solo {
 				toward, span := i.bearing(me.Position, mate.model.State.Position)
-				if span < 10000 && toward.Dot(away) > -0.3 { // never a reversal INTO the pursuer just to reach a friend
-					away = away.Add(toward.Scale(0.8)).Normalize()
+				if span < b.tactics.bag.reach && toward.Dot(away) > -0.3 { // never a reversal INTO the pursuer just to reach a friend
+					away = away.Add(toward.Scale(b.tactics.bag.bend)).Normalize()
 				}
 			}
 			b.aim = flight.Vec3{X: away.X, Y: -0.08, Z: away.Z}.Normalize()
@@ -739,7 +846,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// moment, and a spiral hold taken there masks the flank flip.
 		on := foe.velocity.Normalize().Dot(at.Scale(-1))
 		pointed := on > 0.985 && span < 1100
-		if on > 0.90 {
+		if on > b.tactics.spiral.nose {
 			b.saddle++
 		} else {
 			b.saddle = 0
@@ -749,7 +856,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.mode = "scissors" // he's overshooting hot: brakes out, reverse into him
 			b.brake = 1
 			b.aim = at
-		case b.skill.library >= 3 && span < 900 && (pointed || b.skill.library < 4):
+		case b.skill.library >= 3 && span < b.tactics.jink.span && (pointed || b.skill.library < 4):
 			// Guns jink: irregular out-of-plane rolls off the break, re-rolled
 			// on a deterministic clock so it can't be learned. Tier 4 TIMES the
 			// break off his gun solution — jinking while his nose is off just
@@ -757,12 +864,12 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// whenever he's close, wasteful and authentic).
 			if tick >= b.jink {
 				b.phase = battle.Roll(i.environment.Seed, uint64(slot), tick) * 2 * math.Pi
-				b.jink = tick + 40 + uint64(battle.Roll(i.environment.Seed, uint64(slot)+7, tick)*35)
+				b.jink = tick + b.tactics.jink.base + uint64(battle.Roll(i.environment.Seed, uint64(slot)+7, tick)*float64(b.tactics.jink.spread))
 			}
 			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
 			b.aim = me.Velocity.Normalize().Scale(0.4).Add(up.Scale(math.Cos(b.phase))).Add(side.Scale(math.Sin(b.phase))).Normalize()
-		case b.skill.library >= 3 && on > 0.90 && b.saddle > 2 && span < 1400 && me.Position.Y > 2300:
+		case b.skill.library >= 3 && on > b.tactics.spiral.nose && b.saddle > b.tactics.spiral.saddle && span < b.tactics.spiral.span && me.Position.Y > b.tactics.spiral.floor:
 			// DEFENSIVE SPIRAL (#130): saddled but not yet shot at, with altitude
 			// in the bank — nose-low maximum-rate descending turn. Gravity pays
 			// for the rate his level pursuit cannot match without overshooting,
@@ -770,7 +877,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.mode = "spiral"
 			b.aim = flight.Vec3{X: at.X, Y: -0.5, Z: at.Z}.Normalize()
 			b.throttle, b.reheat = 0.8, 0
-			b.hold = tick + 150
+			b.hold = tick + b.tactics.spiral.hold
 		default:
 			b.aim = level(at) // break INTO him at corner speed
 		}
@@ -836,7 +943,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.g = math.Min(b.g, 4.5)
 			b.throttle, b.reheat = 0.55, 0
 			b.hold = tick + uint64(b.skill.cadence)
-		case b.skill.library >= 3 && closure > 90 && distance < 1200 && tail < 0.85:
+		case b.skill.library >= 3 && closure > b.tactics.high.closure && distance < b.tactics.high.span && tail < b.tactics.high.tail:
 			// (dead-astern overtake is the closure discipline's job — boards,
 			// not vertical excursions that blow the approach every pass)
 			// High yo-yo: pull up out of plane, spend closure as height —
@@ -844,11 +951,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.aim = direction.Add(flight.Vec3{Y: 0.5}).Normalize()
 			b.g *= 0.8
 			b.throttle, b.reheat = 0.6, 0
-			b.hold = tick + 120
+			b.hold = tick + b.tactics.high.hold
 			if b.skill.library >= 4 {
 				b.brake = clamp((closure-150)/150, 0, 1)
 			}
-		case b.skill.library >= 2 && closure < -30 && closure > -140 && tail < 0.85 && direction.Y < 0.2:
+		case b.skill.library >= 2 && closure < b.tactics.low.near && closure > b.tactics.low.far && tail < b.tactics.low.tail && direction.Y < b.tactics.low.rise:
 			// Low yo-yo from trail: cut inside and below his TURNING circle —
 			// the cut needs a crossing target. Against a straight runner
 			// (dead-astern, big opening) it just lags the chase into the dirt;
@@ -884,7 +991,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// The LEAD TURN: begin the pull ~2 s before the pass so the post-merge
 		// angle is a quarter-circle, not a 12-second, 4 km turnaround — without
 		// it every merge is one-pass-haul-ass forever and nobody ever guns.
-		if closure > 0 && distance < math.Max(600, closure*2.0) {
+		if closure > 0 && distance < math.Max(b.tactics.lead.floor, closure*b.tactics.lead.closure) {
 			pass := math.Copysign(1, me.Velocity.Normalize().Cross(direction).Y) // his passing side
 			// The game plan (tier 3+): TWO-circle (rate fight — turn toward his
 			// side, fight at corner in burner) with the energy to rate; ONE-
@@ -892,14 +999,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// denying his nose) when slower or poorer. Held, not re-rolled.
 			turn := pass
 			if b.skill.library >= 3 {
-				if mine < theirs-400 {
+				if mine < theirs-b.tactics.plan.deficit {
 					b.plan, turn = "one", -pass // a REAL energy deficit: deny his rate game
 				} else {
 					b.plan = "two"
 				}
 				b.planned = tick
 			}
-			sin, cos := math.Sin(turn*1.3), math.Cos(turn*1.3)
+			sin, cos := math.Sin(turn*b.tactics.lead.angle), math.Cos(turn*b.tactics.lead.angle)
 			b.aim = flight.Vec3{X: direction.X*cos - direction.Z*sin, Y: 0.05, Z: direction.X*sin + direction.Z*cos}.Normalize()
 			b.throttle, b.reheat = 0.7, 0 // corner the pull, don't rocket past it
 			if b.plan == "one" {
@@ -1018,9 +1125,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// disciplined SAVE their missiles for rear-aspect close shots — the ones
 	// the victim's flare reaction cannot beat — instead of feeding flares at
 	// the merge like everyone's first sortie.
-	if b.missiles > 0 && b.shoot && (b.skill.discipline < 0.7 || (tail > 0.3 && distance < 2600)) {
-		margin := 0.87 + 0.06*b.skill.discipline
-		limit := missile_range * (0.4 + 0.6*math.Max(0, tail)) * (0.45 + 0.4*b.skill.discipline)
+	if b.missiles > 0 && b.shoot && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail && distance < b.tactics.missile.span)) {
+		margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
+		limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) * (b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
 		if distance < limit && nose.Dot(direction) > margin {
 			b.loose = true
 		}
