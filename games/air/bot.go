@@ -1,5 +1,5 @@
 // Mochi world: Bot intelligence — one brain, degraded by skill
-// Copyright © 2026 Mochi OÜ
+// Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
@@ -101,6 +101,7 @@ type tactics struct {
 		span   float64 // an enemy this close to a teammate, m
 		nose   float64 // with his nose committed on him (velocity dot)
 		weight float64 // outranks nearer targets by this factor
+		reach  float64 // ... but only within this range of ME (#144): a rescue 20 km out is a lonely transit to a stale fight, not a rescue
 	}
 	support struct {
 		span    float64 // fights farther than this are not mine to crowd, m
@@ -128,6 +129,26 @@ type tactics struct {
 	crowd struct {
 		weight float64 // target-selection distance penalty per friendly already attacking a contact: the knob that spreads a section across a target-rich picture instead of perching behind one fight
 	}
+	rejoin struct {
+		span  float64 // pair separation beyond which a distant fight waits, m
+		fight float64 // a target inside this range is my fight NOW, rejoined or not, m
+	}
+	zoom struct {
+		edge float64 // energy-height advantage that takes the merge upstairs, m
+		roof float64 // no vertical takes above this altitude, m
+		hold uint64  // commitment: an unheld zoom was a one-decision twitch
+	}
+	rope struct {
+		edge float64 // rope-a-dope: my energy height over his by this, m
+		near float64 // never inside this range (the break owns close defense), m
+		far  float64 // entry ceiling, m
+		nose float64 // only while he is NOT established (his velocity dot below this)
+		hold uint64  // the climb he cannot follow, committed
+	}
+	bracket struct {
+		span  float64 // two pairs running the same distant contact split beyond this range, m
+		angle float64 // the junior pair's offset off the direct line, radians
+	}
 }
 
 // standard is the doctrine every brain flies today: the defaults the tuning
@@ -146,12 +167,16 @@ func standard() tactics {
 	t.lead.closure, t.lead.floor, t.lead.angle = 2.0, 600, 1.3
 	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0.06
 	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
-	t.sandwich.span, t.sandwich.nose, t.sandwich.weight = 2200, 0.92, 0.3
+	t.sandwich.span, t.sandwich.nose, t.sandwich.weight, t.sandwich.reach = 2200, 0.92, 0.3, 10000
 	t.support.span, t.support.share, t.support.engaged = 6000, 0.75, 2200
 	t.support.behind, t.support.above, t.support.near, t.support.out, t.support.rise, t.support.limit = 1100, 500, 1300, 600, 300, 4
 	t.form.abeam, t.form.blend, t.form.burner = 1500, 1200, 3000
 	t.press.span, t.press.hold, t.press.loose, t.press.closure, t.press.gap = 1500, 300, 1.0, 45, 250
 	t.crowd.weight = 1
+	t.rejoin.span, t.rejoin.fight = 4000, 10000
+	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
+	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180
+	t.bracket.span, t.bracket.angle = 4500, 0.6
 	return t
 }
 
@@ -388,6 +413,18 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			continue
 		}
 		seen := i.visible(a, c, tick)
+		// Lost tally (#144): under load the head is pinned — the eyes hold
+		// the current target and the forward view, and everyone else goes
+		// unseen until the g comes off. Discipline raises the strain a pilot
+		// keeps the scan under. This is where the unseen saddles that finish
+		// real fights come from: bots that never lose sight never blunder.
+		if seen && other != b.target {
+			if load := math.Abs(a.model.State.Fcs.Normal); load > 4+3*b.skill.discipline {
+				if direction, _ := i.bearing(me.Position, c.model.State.Position); me.Attitude.Unrotate(direction).X < 0.3 {
+					seen = false // padlocked through the break: off-nose contacts drop out of the scan (rounds landing and tracers below still announce themselves)
+				}
+			}
+		}
 		if !seen {
 			if a.condition.Damager == other && a.condition.Damaged < 2 {
 				seen = true // his rounds are the introduction
@@ -496,8 +533,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	for s, t := range b.known {
 		_, distance := i.bearing(me.Position, t.position)
 		weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
-		if _, found := menacing[s]; found {
-			weight *= b.tactics.sandwich.weight
+		if _, found := menacing[s]; found && distance < b.tactics.sandwich.reach {
+			weight *= b.tactics.sandwich.weight // the radio warns at any range; the RESCUE priority stops where a lonely transit to a stale fight begins (#144)
 		}
 		if s == b.target {
 			weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
@@ -542,12 +579,48 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.noticed, b.judged = nil, nil
 	}
 	for _, m := range i.flying {
-		if m.target != slot {
-			continue
-		}
 		direction, distance := i.bearing(me.Position, m.position)
 		if b.judged == nil {
 			b.noticed, b.judged = map[uint64]bool{}, map[uint64]bool{}
+		}
+		if m.target != slot {
+			// Section missile defense (#146): a launch at a TEAMMATE that I
+			// sight gets called — the call is the victim's sighting (a
+			// padlocked or blind-wedged victim often never sees the plume at
+			// all), though his own reaction delay still runs. One call per
+			// round, ever; the most life-saving words on the radio.
+			if a.team == "" || b.solo || m.called {
+				continue
+			}
+			victim := i.aircraft[m.target]
+			if victim == nil || !victim.alive || victim.team != a.team {
+				continue
+			}
+			if !b.judged[m.number] {
+				b.judged[m.number] = true
+				body := me.Attitude.Unrotate(direction)
+				sight := 0.6 + 0.4*b.skill.discipline
+				if body.X < -0.35 && body.Y < 0.25 {
+					sight = 0.7 * b.skill.discipline
+				}
+				if battle.Roll(i.environment.Seed, uint64(slot), m.number, 51) < sight {
+					b.noticed[m.number] = true
+				}
+			}
+			if b.noticed[m.number] && distance < 6000 {
+				m.called = true
+				b.spoke = tick
+				if victim.bot && victim.brain != nil {
+					if victim.brain.judged == nil {
+						victim.brain.noticed, victim.brain.judged = map[uint64]bool{}, map[uint64]bool{}
+					}
+					victim.brain.noticed[m.number] = true
+					victim.brain.judged[m.number] = true
+				} else {
+					i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "missile", "target": m.target})
+				}
+			}
+			continue
 		}
 		if !b.judged[m.number] {
 			b.judged[m.number] = true
@@ -778,6 +851,27 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 
+	// Rejoin discipline (#144): never cross into a distant fight single-ship.
+	// The equal-tier probe found section bots dying 8-30 km from their pair —
+	// endless respawns scatter a section across the map, and a bot that
+	// transits alone arrives alone. With the fight still far and the pair
+	// split, fly to the pair first; both partners converge, so the section
+	// arrives together or not at all. A close fight is mine regardless.
+	if a.team != "" && !b.solo && b.mate >= 0 && menace < 0 && distance > b.tactics.rejoin.fight {
+		if mate := i.aircraft[b.mate]; mate != nil && mate.alive && mate.model != nil {
+			if toward, span := i.bearing(me.Position, mate.model.State.Position); span > b.tactics.rejoin.span {
+				b.mode = "rejoin"
+				b.press = 0
+				b.shoot = false
+				b.aim = flight.Vec3{X: toward.X, Y: clamp(toward.Y, -0.1, 0.15), Z: toward.Z}.Normalize()
+				b.g = 3
+				b.throttle, b.reheat = 1, boost(speed, pace, 40)
+				i.guard(b, me, pace)
+				return
+			}
+		}
+	}
+
 	// Section flying (teams, #130): the engaged/supporting split. When a
 	// CLOSER teammate is already fighting my target and the target is busy
 	// with him — not menacing anyone, not nose-on me — piling in just fouls
@@ -844,6 +938,25 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					b.aim = flight.Vec3{X: side.X, Y: 0.05, Z: side.Z}.Normalize()
 					b.hold = tick + 150
 				}
+				i.guard(b, me, pace)
+				return
+			}
+		}
+		// The ROPE-A-DOPE (#144 vertical literacy, tier 4): an attacker at
+		// range without an established saddle, and I hold the energy — climb
+		// at a rate he cannot sustain. He follows or he loses the angles; if
+		// he follows he arrives below, slow, and mushing, and the conversion
+		// is ordinary offense once the hold expires and his nose falls off.
+		if b.skill.library >= 4 && span > b.tactics.rope.near && span < b.tactics.rope.far {
+			foes := foe.position.Y + foe.velocity.Length()*foe.velocity.Length()/19.62
+			on := foe.velocity.Normalize().Dot(at.Scale(-1))
+			if mine > foes+b.tactics.rope.edge && on < b.tactics.rope.nose {
+				b.mode = "rope"
+				away := at.Scale(-1)
+				b.aim = flight.Vec3{X: away.X * 0.5, Y: 0.9, Z: away.Z * 0.5}.Normalize()
+				b.g = math.Min(b.g, 4)
+				b.throttle, b.reheat = 1, 1
+				b.hold = tick + b.tactics.rope.hold
 				i.guard(b, me, pace)
 				return
 			}
@@ -980,6 +1093,38 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				b.aim = toward
 			}
 		}
+		// The BRACKET (#144 division tactics): two pairs running the same
+		// distant contact split the approach — the junior pair offsets off the
+		// direct line, away from the senior, so the merge arrives from two
+		// bearings and someone always has the flank. Inside bracket.span the
+		// approaches straighten and it is an ordinary converging attack.
+		if a.team != "" && !b.solo && b.mate >= 0 && distance > b.tactics.bracket.span {
+			ours := b.mate
+			if slot < ours {
+				ours = slot
+			}
+			for _, other := range i.slots() {
+				c := i.aircraft[other]
+				if other == slot || other == b.mate || c == nil || !c.alive || c.model == nil || c.brain == nil || c.team != a.team {
+					continue
+				}
+				if c.brain.mate < 0 || c.brain.target != b.target {
+					continue
+				}
+				peers := c.brain.mate
+				if other < peers {
+					peers = other
+				}
+				if ours >= peers {
+					continue // the senior pair (created first, higher slots) flies the direct line
+				}
+				toward, _ := i.bearing(me.Position, c.model.State.Position)
+				side := -math.Copysign(1, b.aim.Cross(toward).Y) // offset AWAY from the other pair
+				sin, cos := math.Sin(side*b.tactics.bracket.angle), math.Cos(side*b.tactics.bracket.angle)
+				b.aim = flight.Vec3{X: b.aim.X*cos - b.aim.Z*sin, Y: b.aim.Y, Z: b.aim.X*sin + b.aim.Z*cos}.Normalize()
+				break
+			}
+		}
 		b.throttle, b.reheat = 1, boost(speed, pace, 40)
 		if closure < 20 && distance > 800 {
 			b.reheat = 1 // a stern chase that is not closing is no chase at all — the corner-speed boost cap parked pursuits behind a running target forever (#144: the battery's gunnery scenario sat beyond 1200 m for most of a 300 s drone chase)
@@ -1062,8 +1207,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = distance < b.skill.open && (tail > -0.7 || b.skill.discipline < 0.6)
 		b.throttle, b.reheat = 1, 1
 		switch {
-		case b.skill.library >= 4 && mine-theirs > 500 && me.Position.Y < 7000:
-			b.aim = direction.Add(flight.Vec3{Y: 1}).Normalize() // take it vertical on an energy edge
+		case b.skill.library >= 4 && mine-theirs > b.tactics.zoom.edge && me.Position.Y < b.tactics.zoom.roof:
+			// The ZOOM merge (#144 vertical literacy): on an energy edge, take
+			// the fight upstairs — and COMMIT, because an unheld zoom was a
+			// one-decision twitch that the next cadence flattened. The
+			// conversion needs no code: the hold expires with him below and
+			// slower, and the dive onto him is ordinary offense.
+			b.mode = "zoom"
+			b.aim = direction.Add(flight.Vec3{Y: 1}).Normalize()
+			b.hold = tick + b.tactics.zoom.hold
 		case b.skill.library >= 3 && b.plan == "one" && tick-b.planned < 720:
 			// Flying the one-circle plan: tight, lift vector ON him — the
 			// radius fight converts at the second pass, not by rate. Tight

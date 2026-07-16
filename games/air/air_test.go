@@ -1,5 +1,5 @@
 // Mochi world: Air game module tests
-// Copyright © 2026 Mochi OÜ
+// Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
@@ -623,27 +623,16 @@ func TestBotReversal(t *testing.T) {
 	}
 }
 
-// TestBotSection (#138): the section tactics must EARN their keep. Two
-// veterans fly against four pilots — once with section tactics, once with
-// brain.solo (the control: same skill, same airframe, same opposition) —
-// and the sweep is the claim, because per-seed outcomes ride missile-decoy
-// dice. What the tactics buy, measured: mutual support keeps the pair ALIVE
-// (the attacker converting on your six gets sandwiched before he arrives),
-// so the section arm's deaths must come in strictly under the control's,
-// and its net (kills minus deaths) must beat it. Kill totals alone are a
-// wash — section flying is first a defensive contract, and the numbers say
-// exactly that (calibration sweep 2026-07-15: deaths 1 vs 7, net +4 vs -2).
-func TestBotSection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes")
-	}
+// section runs one A/B arm sweep: the given roster once with section tactics
+// and once with brain.solo on red (the control: same skill, same airframe,
+// same opposition), returning the summed nets and deaths. The sweep is the
+// claim — per-seed outcomes ride missile-decoy dice.
+func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, sectionDeaths, soloNet, soloDeaths int) {
+	t.Helper()
 	arm := func(seed uint64, solo bool) (kills, deaths int) {
 		g := New()
 		made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
-			Parameters: map[string]any{"missiles": true, "bots": map[string]any{
-				"red":  map[string]any{"veteran": 2.0},
-				"blue": map[string]any{"pilot": 4.0},
-			}}})
+			Parameters: map[string]any{"missiles": true, "bots": map[string]any{"red": red, "blue": blue}}})
 		i := made.(*instance)
 		for _, slot := range i.slots() {
 			if a := i.aircraft[slot]; a.team == "red" && a.brain != nil {
@@ -660,11 +649,9 @@ func TestBotSection(t *testing.T) {
 		}
 		return i.score["red"], deaths
 	}
-	sweep := uint64(14) // realistic lethality made kills rarer for the skilled side: six seeds stopped resolving the differential (AIR_SWEEP overrides, e.g. 6 for a quick local run)
 	if n, err := strconv.Atoi(os.Getenv("AIR_SWEEP")); err == nil && n > 0 {
-		sweep = uint64(n)
+		sweep = uint64(n) // a quicker local run, or more resolution
 	}
-	sectionNet, soloNet, sectionDeaths, soloDeaths := 0, 0, 0, 0
 	for seed := uint64(1); seed <= sweep; seed++ {
 		sk, sd := arm(seed, false)
 		lk, ld := arm(seed, true)
@@ -675,6 +662,43 @@ func TestBotSection(t *testing.T) {
 		soloDeaths += ld
 	}
 	t.Logf("sweep: section net %d deaths %d | solo net %d deaths %d", sectionNet, sectionDeaths, soloNet, soloDeaths)
+	return
+}
+
+// TestBotSection (#138): the section tactics must EARN their keep against a
+// weaker, larger enemy — two veterans versus four pilots. The claim here is
+// the DEFENSIVE contract only: mutual support keeps the pair alive, so the
+// section arm's deaths come in strictly under the solo control's. Net is
+// deliberately NOT asserted in this scenario: measured (2026-07-16, after
+// realistic lethality and the padlock), a lone wolf farms weak opposition
+// faster than a disciplined section — trading some kill rate for section
+// integrity is the doctrine, not a defect. The offensive claim lives in
+// TestBotSectionEqual, where the enemy is good enough that teamwork must
+// pay both ways.
+func TestBotSection(t *testing.T) {
+	if testing.Short() {
+		t.Skip("several simulated minutes")
+	}
+	t.Parallel()
+	_, sectionDeaths, _, soloDeaths := section(t, 14,
+		map[string]any{"veteran": 2.0}, map[string]any{"pilot": 4.0})
+	if sectionDeaths >= soloDeaths {
+		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
+	}
+}
+
+// TestBotSectionEqual (#144): the same A/B against EQUAL opposition — two
+// veterans versus four veterans. Outnumbered with no skill edge, survival
+// and score both hang on the section actually working (this is the scenario
+// that caught the pre-rejoin tactics dying 8-30 km from their pair), so both
+// claims are asserted: fewer deaths AND a better net than the solo control.
+func TestBotSectionEqual(t *testing.T) {
+	if testing.Short() {
+		t.Skip("several simulated minutes")
+	}
+	t.Parallel()
+	sectionNet, sectionDeaths, soloNet, soloDeaths := section(t, 12,
+		map[string]any{"veteran": 2.0}, map[string]any{"veteran": 4.0})
 	if sectionDeaths >= soloDeaths {
 		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
 	}
@@ -923,6 +947,215 @@ func TestTeamsRadio(t *testing.T) {
 	}
 	if wing.brain.target != enemy.player.Slot {
 		t.Fatalf("wing targets %d, want the lead's called drone %d", wing.brain.target, enemy.player.Slot)
+	}
+}
+
+// TestBotRejoin: a paired bot with a distant target and a distant partner
+// flies to the pair first — never a lonely transit into a stale fight — and
+// fights normally once the section is together or the fight is close.
+func TestBotRejoin(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "rejoin", Game: "air", Mode: "teams", Capacity: 16, Seed: 8,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"veteran": 2.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	lead, wing, enemy := i.aircraft[98], i.aircraft[99], i.aircraft[97]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	run := func(apart, fight float64) string {
+		for tick := uint64(0); tick < 90; tick++ {
+			aloft(wing, base, flight.Vec3{X: 220})
+			aloft(lead, base.Add(flight.Vec3{Z: apart}), flight.Vec3{X: 220})
+			aloft(enemy, base.Add(flight.Vec3{X: fight}), flight.Vec3{X: 220})
+			i.Step(tick, nil)
+		}
+		return wing.brain.mode
+	}
+	if mode := run(8000, 11000); mode != "rejoin" { // fight beyond rejoin.fight (10 km, measured: 6 km cost too many kills against weak opposition), pair split
+		t.Fatalf("pair split, fight far: wing mode %q, want rejoin", mode)
+	}
+	if mode := run(1500, 11000); mode == "rejoin" {
+		t.Fatalf("pair together: wing still rejoining (%q) instead of fighting", mode)
+	}
+	if mode := run(8000, 3000); mode == "rejoin" {
+		t.Fatalf("fight close: wing rejoining (%q) instead of fighting", mode)
+	}
+}
+
+// TestBotPadlock: under heavy load the scan collapses to the target and the
+// forward view — an off-nose contact goes unseen until the g comes off (#144:
+// bots that never lose sight never blunder, and no guns fight ever resolved).
+func TestBotPadlock(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "padlock", Game: "air", Mode: "teams", Capacity: 16, Seed: 8,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"ace": 1.0},
+			"blue": map[string]any{"drone": 2.0},
+		}}})
+	i := made.(*instance)
+	var ace *craft
+	drones := []*craft{}
+	for _, slot := range i.slots() {
+		if a := i.aircraft[slot]; a.brain != nil {
+			ace = a
+		} else if a.team == "blue" {
+			drones = append(drones, a)
+		}
+	}
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	run := func(load float64) int {
+		ace.brain.reborn()
+		for tick := uint64(0); tick < 90; tick++ {
+			aloft(ace, base, flight.Vec3{X: 220})
+			aloft(drones[0], base.Add(flight.Vec3{X: 1200}), flight.Vec3{X: 220})      // dead ahead: the padlocked target
+			aloft(drones[1], base.Add(flight.Vec3{X: -600, Z: 2000}), flight.Vec3{X: 240}) // aft of the beam, outside the canopy blind wedge: visible relaxed, unseen under g
+			ace.model.State.Fcs.Normal = load
+			i.Step(tick, nil)
+		}
+		return len(ace.brain.known)
+	}
+	if known := run(1); known != 2 {
+		t.Fatalf("relaxed scan tracks %d contacts, want both", known)
+	}
+	if known := run(7.5); known != 1 {
+		t.Fatalf("padlocked at 7.5 g tracks %d contacts, want only the target", known)
+	}
+}
+
+// TestTeamsMissileCall: a wingman who sights a launch at his mate calls it —
+// the call IS the victim's sighting (a bot victim's noticed map is seeded, a
+// human victim gets the radio event) — once per round, ever.
+func TestTeamsMissileCall(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "plume", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
+		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+			"red":  map[string]any{"ace": 2.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
+	lead, wing, human := i.aircraft[98], i.aircraft[99], i.aircraft[0]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	shot := func(number uint64, target int) *missile {
+		m := &missile{shooter: 97, target: target, number: number, life: 10,
+			position: base.Add(flight.Vec3{X: 2500, Z: 600}), velocity: flight.Vec3{X: -400}}
+		i.flying = append(i.flying, m)
+		return m
+	}
+	fired := shot(1, wing.player.Slot) // at the bot wingman, ahead of the lead's nose
+	for tick := uint64(0); tick < 30; tick++ {
+		aloft(lead, base, flight.Vec3{X: 220})
+		aloft(wing, base.Add(flight.Vec3{Z: 1500}), flight.Vec3{X: 220})
+		aloft(human, base.Add(flight.Vec3{Z: 3000}), flight.Vec3{X: 220})
+		i.Step(tick, nil)
+	}
+	if !fired.called {
+		t.Fatal("the lead sighted nothing: launch at the wing never called")
+	}
+	if !wing.brain.noticed[1] {
+		t.Fatal("call made but the wing's sighting was not seeded")
+	}
+	at := shot(2, 0) // at the human
+	calls := 0
+	for tick := uint64(30); tick < 90; tick++ {
+		aloft(lead, base, flight.Vec3{X: 220})
+		aloft(wing, base.Add(flight.Vec3{Z: 1500}), flight.Vec3{X: 220})
+		aloft(human, base.Add(flight.Vec3{Z: 3000}), flight.Vec3{X: 220})
+		i.Step(tick, nil)
+		for _, e := range i.events {
+			if e["kind"] == "call" && e["call"] == "missile" {
+				if e["target"] != 0 {
+					t.Fatalf("missile call addressed to %v, want the human 0", e["target"])
+				}
+				calls++
+			}
+		}
+		i.events = nil
+	}
+	if !at.called || calls != 1 {
+		t.Fatalf("launch at the human: called %v with %d radio calls, want one", at.called, calls)
+	}
+}
+
+// TestBotZoom: an energy edge at the merge takes the fight upstairs — and
+// holds it there, because an unheld zoom was a one-decision twitch.
+func TestBotZoom(t *testing.T) {
+	i, ace, _, blue1, _ := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	zoomed := false
+	for tick := uint64(0); tick < 120; tick++ {
+		aloft(ace, base, flight.Vec3{X: 300})                                    // fast: the energy edge
+		aloft(blue1, base.Add(flight.Vec3{X: 2500, Y: -300}), flight.Vec3{X: -160}) // head-on, slow and low
+		i.Step(tick, nil)
+		if ace.brain.mode == "zoom" {
+			zoomed = true
+			break
+		}
+	}
+	if !zoomed {
+		t.Fatal("energy edge at the merge, but the ace never took it upstairs")
+	}
+	if ace.brain.aim.Y < 0.5 {
+		t.Fatalf("zoom aim Y %.2f, want steeply up", ace.brain.aim.Y)
+	}
+}
+
+// TestBotRope: an attacker at range without an established saddle, against a
+// defender with the energy bank — the defender climbs at a rate the attacker
+// cannot sustain instead of burning the edge in a level break.
+func TestBotRope(t *testing.T) {
+	i, ace, _, blue1, _ := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	roped := false
+	for tick := uint64(0); tick < 120; tick++ {
+		aloft(ace, base, flight.Vec3{X: 320})                                            // the bank: fast
+		aloft(blue1, base.Add(flight.Vec3{X: -500, Z: 1500}), flight.Vec3{X: 200, Z: -100}) // rear quarter outside the blind wedge, slow, nose loosely on
+		i.Step(tick, nil)
+		if ace.brain.mode == "rope" {
+			roped = true
+			break
+		}
+	}
+	if !roped {
+		t.Fatal("energy edge over a loose attacker, but the ace never roped him")
+	}
+	if ace.brain.aim.Y < 0.6 {
+		t.Fatalf("rope aim Y %.2f, want the climb he cannot follow", ace.brain.aim.Y)
+	}
+}
+
+// TestBotBracket: two pairs running the same distant contact split the
+// approach — the junior pair's aim leaves the direct line by the bracket
+// angle while the senior pair flies straight in.
+func TestBotBracket(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "bracket", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"veteran": 4.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	senior, junior, target := i.aircraft[98], i.aircraft[96], i.aircraft[95] // pairs (99,98) and (97,96); blue drone fills 95
+	if target.team != "blue" {
+		t.Fatalf("slot map surprise: 95 is %q", target.team)
+	}
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	for tick := uint64(0); tick < 90; tick++ {
+		aloft(i.aircraft[99], base, flight.Vec3{X: 220})
+		aloft(i.aircraft[98], base.Add(flight.Vec3{Z: 400}), flight.Vec3{X: 220})
+		aloft(i.aircraft[97], base.Add(flight.Vec3{Z: 1400}), flight.Vec3{X: 220})
+		aloft(i.aircraft[96], base.Add(flight.Vec3{Z: 1800}), flight.Vec3{X: 220})
+		aloft(target, base.Add(flight.Vec3{X: 6000, Z: 900}), flight.Vec3{X: 220})
+		i.Step(tick, nil)
+	}
+	direct, _ := i.bearing(i.aircraft[96].model.State.Position, target.model.State.Position)
+	if off := math.Acos(clamp(junior.brain.aim.Dot(direct), -1, 1)); off < 0.35 {
+		t.Fatalf("junior pair only %.2f rad off the direct line, want the bracket", off)
+	}
+	direct, _ = i.bearing(senior.model.State.Position, target.model.State.Position)
+	if off := math.Acos(clamp(senior.brain.aim.Dot(direct), -1, 1)); off > 0.35 {
+		t.Fatalf("senior pair %.2f rad off the direct line, want straight in", off)
 	}
 }
 

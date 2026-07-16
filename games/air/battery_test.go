@@ -1,5 +1,5 @@
 // Mochi world: Air tactics battery (#143)
-// Copyright © 2026 Mochi OÜ
+// Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
@@ -145,6 +145,32 @@ func amend(t *tactics, name string, value float64) bool {
 		t.press.gap = value
 	case "crowd.weight":
 		t.crowd.weight = value
+	case "sandwich.reach":
+		t.sandwich.reach = value
+	case "rejoin.span":
+		t.rejoin.span = value
+	case "rejoin.fight":
+		t.rejoin.fight = value
+	case "zoom.edge":
+		t.zoom.edge = value
+	case "zoom.roof":
+		t.zoom.roof = value
+	case "zoom.hold":
+		t.zoom.hold = uint64(value)
+	case "rope.edge":
+		t.rope.edge = value
+	case "rope.near":
+		t.rope.near = value
+	case "rope.far":
+		t.rope.far = value
+	case "rope.nose":
+		t.rope.nose = value
+	case "rope.hold":
+		t.rope.hold = uint64(value)
+	case "bracket.span":
+		t.bracket.span = value
+	case "bracket.angle":
+		t.bracket.angle = value
 	default:
 		return false
 	}

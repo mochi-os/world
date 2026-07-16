@@ -80,6 +80,14 @@ CONSTANTS = {
     "press.closure":   (45,   False, "the overtake ceiling of the run-in to the finishing gap"),
     "press.gap":       (250,  False, "dispersion is angular: half the range is four times the hit density"),
     "crowd.weight":    (1.0,  False, "spread the section across a target-rich picture; a perch is parked guns"),
+    "sandwich.reach":  (10000, False, "a rescue 20 km out is a lonely transit to a stale fight, not a rescue"),
+    "rejoin.span":     (4000, False, "a pair this far apart is two singles; re-form before crossing into a fight"),
+    "rejoin.fight":    (10000, False, "a target inside this is my fight now, rejoined or not"),
+    "zoom.edge":       (500,  False, "an energy edge worth spending upstairs, not on rate"),
+    "rope.edge":       (600,  False, "the climb he cannot follow needs a real bank balance"),
+    "rope.hold":       (180,  True,  "three committed seconds - a released rope is just a climb"),
+    "bracket.span":    (4500, False, "split the approach while there is still sky to split"),
+    "bracket.angle":   (0.6,  False, "~35 degrees off the direct line: a flank at the merge, not a detour"),
 }
 
 DEFAULT_SWEEP = [
