@@ -100,6 +100,8 @@ type brain struct {
 	saddle   int     // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
 	solo     bool    // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
 	mate     int     // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
+	spoke    uint64  // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
+	told     int     // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
 	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
 }
 
@@ -109,13 +111,14 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, mode: "cruise", target: -1, mate: -1, known: map[int]*track{}, missiles: 2}
+	return &brain{skill: s, mode: "cruise", target: -1, mate: -1, told: -1, known: map[int]*track{}, missiles: 2}
 }
 
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
 	b.saddle = 0
+	b.told = -1
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -203,10 +206,17 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	if b.loose {
 		b.loose = false
 		if i.missiles && i.free() && b.missiles > 0 {
-			before := len(i.flying)
-			i.launch(slot, a)
-			if len(i.flying) > before && !i.cheat.ammunition {
-				b.missiles--
+			// Missile shot discipline (#141): the seeker head has no IFF — it
+			// locks the best heat source in the cone whoever owns it. Checked
+			// at the moment of launch, not request (a decision-old request may
+			// be stale): decline while the seeker would acquire a teammate,
+			// and the request comes back by itself once the geometry clears.
+			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) {
+				before := len(i.flying)
+				i.launch(slot, a)
+				if len(i.flying) > before && !i.cheat.ammunition {
+					b.missiles--
+				}
 			}
 		}
 	}
@@ -288,7 +298,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 	}
-	menacing := map[int]bool{}
+	menacing := map[int]int{} // attacker slot -> the teammate he is running on
+	danger, closest := -1, math.MaxFloat64
 	if a.team != "" && !b.solo {
 		for s, t := range b.known {
 			for _, other := range i.slots() {
@@ -298,17 +309,41 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				}
 				to, span := i.bearing(t.position, mate.model.State.Position)
 				if span < 2200 && t.velocity.Normalize().Dot(to) > 0.92 {
-					menacing[s] = true // nose committed on my teammate, in range: he is running an attack (a loose 0.8 cone flagged anyone merely flying this way)
+					menacing[s] = other // nose committed on my teammate, in range: he is running an attack (a loose 0.8 cone flagged anyone merely flying this way); slots() order puts humans first, so a human victim wins the record
+					// The BREAK call (#139): a human teammate with an attacker
+					// established close behind his 3/9 — where his own eyes are
+					// weakest — gets warned by name. Nearest attacker only, so
+					// a two-bandit picture is one call, not a shouting match.
+					if !mate.bot && span < 1800 && span < closest {
+						if body := mate.model.State.Attitude.Unrotate(to.Scale(-1)); body.X < -0.2 {
+							danger, closest = s, span
+						}
+					}
 					break
 				}
 			}
+		}
+	}
+	if danger >= 0 && (b.spoke == 0 || tick-b.spoke > 300) {
+		victim := i.aircraft[menacing[danger]]
+		if i.warned == nil {
+			i.warned = map[int]uint64{}
+		}
+		if last, nagged := i.warned[menacing[danger]]; !nagged || tick-last > 300 { // one BREAK per victim per five seconds, whoever calls it
+			side := "left"
+			if at, _ := i.bearing(victim.model.State.Position, b.known[danger].position); victim.model.State.Attitude.Unrotate(at).Z > 0 {
+				side = "right" // break INTO the attack: toward the side he is coming from
+			}
+			b.spoke = tick
+			i.warned[menacing[danger]] = tick
+			i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "break", "direction": side, "target": menacing[danger]})
 		}
 	}
 	best, cost := -1, math.MaxFloat64
 	for s, t := range b.known {
 		_, distance := i.bearing(me.Position, t.position)
 		weight := distance * float64(1+attackers[s])
-		if menacing[s] {
+		if _, found := menacing[s]; found {
 			weight *= 0.3
 		}
 		if s == b.target {
@@ -319,6 +354,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 	b.target = best
+	// The ENGAGED call (#139): committing onto an enemy who is attacking a
+	// human teammate — the rescue the sandwich weighting just ordered is
+	// invisible from the victim's cockpit unless someone says so.
+	if victim, found := menacing[best]; found && best != b.told && (b.spoke == 0 || tick-b.spoke > 300) {
+		if mate := i.aircraft[victim]; mate != nil && !mate.bot {
+			b.spoke, b.told = tick, best
+			i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "engaged"})
+		}
+	}
 
 	speed := me.Velocity.Length()
 	pace := corner(a.model)
@@ -565,7 +609,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// the picture changes (the target threatening my teammate is the
 	// sandwich, which the selection weighting turns into an immediate attack;
 	// the target coming nose-on me makes it my fight through `tail`).
-	if a.team != "" && !b.solo && menace < 0 && b.target >= 0 && !menacing[b.target] && tail > -0.2 {
+	_, sandwich := menacing[b.target]
+	if a.team != "" && !b.solo && menace < 0 && b.target >= 0 && !sandwich && tail > -0.2 {
 		engaged := false
 		for _, other := range i.slots() {
 			mate := i.aircraft[other]

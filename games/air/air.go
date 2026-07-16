@@ -323,6 +323,7 @@ type instance struct {
 	finished    bool
 	results     map[string]any
 	score       map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
+	warned      map[int]uint64 // last BREAK call per menaced human slot (#139): one warning per victim per few seconds, whoever calls it
 }
 
 // slots iterates the aircraft in slot order: map order is random per
@@ -762,10 +763,10 @@ func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) 
 	return flight.Vec3{X: dx / distance, Y: dy / distance, Z: dz / distance}, distance
 }
 
-// launch fires a missile at the best target in the seeker cone. The seeker
-// is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
-// than a cold nose head-on.
-func (i *instance) launch(slot int, a *craft) {
+// acquire returns the slot the seeker head would lock right now: the nearest
+// living craft inside the cone and the aspect-weighted range — team-blind,
+// exactly like the hardware (an AIM-9 sees tailpipes, not sides).
+func (i *instance) acquire(slot int, a *craft) int {
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best, nearest := -1, missile_range+1
 	for _, other := range i.slots() {
@@ -788,6 +789,15 @@ func (i *instance) launch(slot int, a *craft) {
 			best, nearest = other, distance
 		}
 	}
+	return best
+}
+
+// launch fires a missile at the best target in the seeker cone. The seeker
+// is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
+// than a cold nose head-on.
+func (i *instance) launch(slot int, a *craft) {
+	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	best := i.acquire(slot, a)
 	if best < 0 {
 		return
 	}

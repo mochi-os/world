@@ -920,6 +920,113 @@ func TestTeamsRadio(t *testing.T) {
 	}
 }
 
+// TestTeamsMissileHold: a teammate the seeker would acquire declines the
+// launch — the AIM-9 has no IFF — and the shot comes back once the line
+// clears, locked on the enemy.
+func TestTeamsMissileHold(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "hold", Game: "air", Mode: "teams", Capacity: 16, Seed: 6,
+		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	var ace, mate, enemy *craft
+	for _, slot := range i.slots() { // levels are created drone-first: find by brain and side, not slot
+		a := i.aircraft[slot]
+		switch {
+		case a.team == "red" && a.brain != nil:
+			ace = a
+		case a.team == "red":
+			mate = a
+		default:
+			enemy = a
+		}
+	}
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	forward := flight.Vec3{X: 220}
+	rig := func(lateral float64) int {
+		aloft(ace, base, forward)
+		aloft(mate, base.Add(flight.Vec3{X: 800, Z: lateral}), forward)
+		aloft(enemy, base.Add(flight.Vec3{X: 1500}), forward) // tailpipe square at the shooter
+		b := ace.brain
+		b.decided = 1000 // skip decide: the rigged request must survive
+		b.loose = true
+		before := len(i.flying)
+		i.think(ace.player.Slot, ace, 1000)
+		if len(i.flying) > before {
+			return i.flying[len(i.flying)-1].target
+		}
+		return -1
+	}
+	if target := rig(0); target >= 0 {
+		t.Fatalf("launched at slot %d through the teammate on the seeker line", target)
+	}
+	if ace.brain.missiles != 2 {
+		t.Fatalf("declined launch spent a missile (%d left)", ace.brain.missiles)
+	}
+	if target := rig(2000); target != enemy.player.Slot {
+		t.Fatalf("line clear: locked slot %d, want the enemy %d", target, enemy.player.Slot)
+	}
+}
+
+// TestTeamsCalls: a bot teammate warns a human with BREAK toward the attack
+// side, announces ENGAGED when committing onto the human's attacker, rate-
+// limits the radio, and says nothing when the victim is another bot.
+func TestTeamsCalls(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "calls", Game: "air", Mode: "teams", Capacity: 16, Seed: 5,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"ace": 1.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
+	human, ace, drone := i.aircraft[0], i.aircraft[99], i.aircraft[98]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	for tick := uint64(0); tick < 600; tick++ {
+		aloft(human, base, flight.Vec3{X: 220})
+		aloft(ace, base.Add(flight.Vec3{X: -3000, Z: 1500}), flight.Vec3{X: 220})   // trailing the fight: the attacker sits ahead of his nose, not in the blind wedge
+		aloft(drone, base.Add(flight.Vec3{X: -1200, Z: 300}), flight.Vec3{X: 240}) // saddled behind the human's right rear quarter, nose on
+		i.Step(tick, nil)
+	}
+	breaks, engaged := 0, 0
+	for _, e := range i.events {
+		if e["kind"] != "call" {
+			continue
+		}
+		if e["call"] == "break" {
+			breaks++
+			if e["target"] != 0 || e["direction"] != "right" {
+				t.Fatalf("break call %v, want target 0 direction right", e)
+			}
+		}
+		if e["call"] == "engaged" {
+			engaged++
+		}
+	}
+	if breaks == 0 || engaged == 0 {
+		t.Fatalf("%d break and %d engaged calls, want both", breaks, engaged)
+	}
+	if breaks > 3 {
+		t.Fatalf("%d break calls in ten seconds: the radio is a chat storm", breaks)
+	}
+
+	// A bot victim earns no radio: the calls exist for the human's cockpit.
+	quiet, aceq, mateq, blue1, _ := teams(t)
+	for tick := uint64(0); tick < 300; tick++ {
+		aloft(aceq, base, flight.Vec3{X: 220})
+		aloft(mateq, base.Add(flight.Vec3{X: 3800, Z: 600}), flight.Vec3{X: 220})
+		aloft(blue1, base.Add(flight.Vec3{X: 2600, Z: 500}), flight.Vec3{X: 240}) // running in on the bot mate from behind
+		quiet.Step(tick, nil)
+	}
+	for _, e := range quiet.events {
+		if e["kind"] == "call" {
+			t.Fatalf("call %v for a bot victim", e)
+		}
+	}
+}
+
 // wounded builds the ace-vs-drone pair used by the wounded-flying tests.
 func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
 	t.Helper()
