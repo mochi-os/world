@@ -149,6 +149,9 @@ type tactics struct {
 		span  float64 // two pairs running the same distant contact split beyond this range, m
 		angle float64 // the junior pair's offset off the direct line, radians
 	}
+	wounded struct {
+		weight float64 // target-selection discount for a visibly hurt contact (#144): the smoking, burning, wing-shy bird pulls the eye
+	}
 }
 
 // standard is the doctrine every brain flies today: the defaults the tuning
@@ -177,6 +180,7 @@ func standard() tactics {
 	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
 	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180
 	t.bracket.span, t.bracket.angle = 4500, 0.6
+	t.wounded.weight = 0.6
 	return t
 }
 
@@ -377,7 +381,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			// at the moment of launch, not request (a decision-old request may
 			// be stale): decline while the seeker would acquire a teammate,
 			// and the request comes back by itself once the geometry clears.
-			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) {
+			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
 				before := len(i.flying)
 				i.launch(slot, a)
 				if len(i.flying) > before && !i.cheat.ammunition {
@@ -535,6 +539,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
 		if _, found := menacing[s]; found && distance < b.tactics.sandwich.reach {
 			weight *= b.tactics.sandwich.weight // the radio warns at any range; the RESCUE priority stops where a lonely transit to a stale fight begins (#144)
+		}
+		if c := i.aircraft[s]; c != nil && c.alive && c.model != nil {
+			// The wounded bird (#144): a contact trailing fire, fuel, or
+			// pieces pulls the eye — finish what is already dying. Smoke and
+			// vapor read at any range the contact is visible at.
+			if c.condition.Burning || c.condition.Fire[0] > 0 || c.condition.Fire[1] > 0 ||
+				c.model.State.Damage.Loss > 0 || c.model.State.Damage.Leak > 0.5 {
+				weight *= b.tactics.wounded.weight
+			}
 		}
 		if s == b.target {
 			weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
@@ -1419,6 +1432,26 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// noise had made even the rookie untrackable to an ace.
 	b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/150) - 0.5) * 2 * b.skill.wander
 	b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/150) - 0.5) * 2 * b.skill.wander
+}
+
+// committed reports whether a teammate's missile is already chasing the
+// target (#144 deconfliction): a second SHOOTER on one bandit wastes half
+// the section's warshots while another bandit roams free. A bot's own
+// follow-up shot stays legal (shoot-shoot-look is doctrine), and a missile
+// gone ballistic no longer blocks — nothing is chasing anymore.
+func (i *instance) committed(slot int, a *craft, target int) bool {
+	if a.team == "" || a.brain == nil || a.brain.solo {
+		return false
+	}
+	for _, m := range i.flying {
+		if m.target != target || m.loose || m.shooter == slot {
+			continue
+		}
+		if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.team == a.team {
+			return true
+		}
+	}
+	return false
 }
 
 // guard applies the terrain safety clamps to the decided aim: flat fighting

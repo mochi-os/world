@@ -88,6 +88,7 @@ CONSTANTS = {
     "rope.hold":       (180,  True,  "three committed seconds - a released rope is just a climb"),
     "bracket.span":    (4500, False, "split the approach while there is still sky to split"),
     "bracket.angle":   (0.6,  False, "~35 degrees off the direct line: a flank at the merge, not a detour"),
+    "wounded.weight":  (0.6,  False, "finish what is already dying - the smoking bird pulls the eye"),
 }
 
 DEFAULT_SWEEP = [

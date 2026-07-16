@@ -171,6 +171,8 @@ func amend(t *tactics, name string, value float64) bool {
 		t.bracket.span = value
 	case "bracket.angle":
 		t.bracket.angle = value
+	case "wounded.weight":
+		t.wounded.weight = value
 	default:
 		return false
 	}

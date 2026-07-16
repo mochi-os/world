@@ -1266,6 +1266,76 @@ func TestTeamsMissileHold(t *testing.T) {
 	}
 }
 
+// TestTeamsMissileShare: a teammate's missile already chasing the target
+// declines a second warshot — one bandit, one missile, while another bandit
+// roams — but a bot's own follow-up stays legal and a ballistic missile no
+// longer blocks.
+func TestTeamsMissileShare(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "share", Game: "air", Mode: "teams", Capacity: 16, Seed: 10,
+		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+			"red":  map[string]any{"ace": 2.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	lead, wing, enemy := i.aircraft[98], i.aircraft[99], i.aircraft[97]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	forward := flight.Vec3{X: 220}
+	rig := func(chasing *missile) int {
+		if chasing != nil {
+			i.flying = []*missile{chasing}
+		} else {
+			i.flying = nil
+		}
+		aloft(wing, base, forward)
+		aloft(lead, base.Add(flight.Vec3{Z: 800}), forward)
+		aloft(enemy, base.Add(flight.Vec3{X: 1500}), forward)
+		b := wing.brain
+		b.decided = 2000 // skip decide: the rigged request must survive
+		b.loose = true
+		b.missiles = 2
+		before := len(i.flying)
+		i.think(wing.player.Slot, wing, 2000)
+		if len(i.flying) > before {
+			return i.flying[len(i.flying)-1].target
+		}
+		return -1
+	}
+	mates := &missile{shooter: lead.player.Slot, target: enemy.player.Slot, number: 5, life: 10,
+		position: base.Add(flight.Vec3{X: 800, Z: 700}), velocity: flight.Vec3{X: 500}}
+	if target := rig(mates); target >= 0 {
+		t.Fatalf("launched at %d with the lead's missile already chasing it", target)
+	}
+	mates.loose = true
+	if target := rig(mates); target != enemy.player.Slot {
+		t.Fatalf("the lead's missile went ballistic but the wing still held (locked %d)", target)
+	}
+	own := &missile{shooter: wing.player.Slot, target: enemy.player.Slot, number: 6, life: 10,
+		position: base.Add(flight.Vec3{X: 800}), velocity: flight.Vec3{X: 500}}
+	if target := rig(own); target != enemy.player.Slot {
+		t.Fatalf("own follow-up shot held (locked %d) — shoot-shoot-look is doctrine", target)
+	}
+}
+
+// TestBotWounded: a visibly hurt contact — fire, fuel, missing structure —
+// pulls target priority over a nearer, healthy one.
+func TestBotWounded(t *testing.T) {
+	i, ace, mate, blue1, blue2 := teams(t)
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	for tick := uint64(0); tick < 90; tick++ {
+		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(mate, base.Add(flight.Vec3{Z: -9000}), flight.Vec3{X: 220})         // far out of the sandwich geometry
+		aloft(blue1, base.Add(flight.Vec3{X: 2000}), flight.Vec3{X: 220})          // nearer, healthy
+		aloft(blue2, base.Add(flight.Vec3{X: 2600, Z: 400}), flight.Vec3{X: 220}) // farther, burning
+		blue2.condition.Burning = true                                             // Advance runs the fuse: keep the fire lit for the rig
+		blue2.condition.Fuse = 30
+		i.Step(tick, nil)
+	}
+	if ace.brain.target != blue2.player.Slot {
+		t.Fatalf("ace targets %d, want the burning bird %d", ace.brain.target, blue2.player.Slot)
+	}
+}
+
 // TestTeamsCalls: a bot teammate warns a human with BREAK toward the attack
 // side, announces ENGAGED when committing onto the human's attacker, rate-
 // limits the radio, and says nothing when the victim is another bot.
