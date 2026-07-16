@@ -8,6 +8,8 @@ package air
 
 import (
 	"math"
+	"os"
+	"strconv"
 	"testing"
 
 	"github.com/fxamacker/cbor/v2"
@@ -658,8 +660,12 @@ func TestBotSection(t *testing.T) {
 		}
 		return i.score["red"], deaths
 	}
+	sweep := uint64(14) // realistic lethality made kills rarer for the skilled side: six seeds stopped resolving the differential (AIR_SWEEP overrides, e.g. 6 for a quick local run)
+	if n, err := strconv.Atoi(os.Getenv("AIR_SWEEP")); err == nil && n > 0 {
+		sweep = uint64(n)
+	}
 	sectionNet, soloNet, sectionDeaths, soloDeaths := 0, 0, 0, 0
-	for seed := uint64(1); seed <= 6; seed++ {
+	for seed := uint64(1); seed <= sweep; seed++ {
 		sk, sd := arm(seed, false)
 		lk, ld := arm(seed, true)
 		t.Logf("seed %d: section %d kills %d deaths | solo %d kills %d deaths", seed, sk, sd, lk, ld)
@@ -917,6 +923,63 @@ func TestTeamsRadio(t *testing.T) {
 	}
 	if wing.brain.target != enemy.player.Slot {
 		t.Fatalf("wing targets %d, want the lead's called drone %d", wing.brain.target, enemy.player.Slot)
+	}
+}
+
+// TestBotPress: held offensive advantage becomes the press — the counter
+// accumulates only in range behind his 3/9, the saddle converts to an
+// overtake once patience matures, losing the advantage resets it, and the
+// guns solution accepts the wider deflection only while pressing (#144).
+func TestBotPress(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "press", Game: "air", Mode: "teams", Capacity: 16, Seed: 7,
+		Parameters: map[string]any{"bots": map[string]any{
+			"red":  map[string]any{"ace": 1.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	ace, prey := i.aircraft[99], i.aircraft[98]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	forward := flight.Vec3{X: 220}
+	for tick := uint64(0); tick < 450; tick++ {
+		aloft(ace, base, forward)
+		aloft(prey, base.Add(flight.Vec3{X: 700}), forward) // parked in the control zone, dead ahead
+		i.Step(tick, nil)
+	}
+	if !ace.brain.pressing(449) || ace.brain.mode != "press" {
+		t.Fatalf("advantage held 7.5 s: press %d mode %q, want pressing in press mode", ace.brain.press, ace.brain.mode)
+	}
+	for tick := uint64(450); tick < 560; tick++ { // long enough for the press-mode maneuver hold to expire and a real decision to see the new picture
+		aloft(ace, base, forward)
+		aloft(prey, base.Add(flight.Vec3{X: 3000}), forward) // he opened past the press span: the advantage is gone
+		i.Step(tick, nil)
+	}
+	if ace.brain.press != 0 {
+		t.Fatalf("advantage lost but press still %d", ace.brain.press)
+	}
+
+	// The loose knob (neutral by default — measured: rounds trace the
+	// airframe, wider gates only spray): with it amended open, a pressing
+	// brain takes the ~35 m deflection at 400 m that patience declines.
+	ace.brain.tactics.press.loose = 1.8
+	rig := func(press uint64) bool {
+		aloft(ace, base, forward)
+		aloft(prey, base.Add(flight.Vec3{X: 400, Z: 35}), forward)
+		b := ace.brain
+		b.decided = 1000 // skip decide: the rigged state must survive
+		b.press = press  // 0 = no advantage; 1 = held since tick zero
+		b.shoot = true
+		b.prey = &track{when: 1000, position: prey.model.State.Position, velocity: prey.model.State.Velocity}
+		b.distance = 400
+		b.aim = flight.Vec3{X: 1}
+		i.think(ace.player.Slot, ace, 1000)
+		return ace.latest.Fire
+	}
+	if rig(0) {
+		t.Fatal("patient tracker took the deflection shot")
+	}
+	if !rig(1) {
+		t.Fatal("pressing, but the wider deflection still held fire")
 	}
 }
 

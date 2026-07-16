@@ -74,12 +74,19 @@ CONSTANTS = {
     "form.abeam":      (1500, False, "combat spread: mutual lookout without fouling each other's turns"),
     "form.blend":      (1200, False, "station-chasing inside the spread just S-turns forever"),
     "form.burner":     (3000, False, "a rejoin from far behind needs the corner cut in reheat"),
+    "press.span":      (1500, False, "the advantage clock runs only inside the fight, not on a transit"),
+    "press.hold":      (300,  True,  "five seconds of held angles before patience becomes the finish"),
+    "press.loose":     (1.0,  False, "measured: rounds trace the airframe, a wider gate only sprays"),
+    "press.closure":   (45,   False, "the overtake ceiling of the run-in to the finishing gap"),
+    "press.gap":       (250,  False, "dispersion is angular: half the range is four times the hit density"),
+    "crowd.weight":    (1.0,  False, "spread the section across a target-rich picture; a perch is parked guns"),
 }
 
 DEFAULT_SWEEP = [
     "drag.pace", "drag.span", "spiral.nose", "spiral.span", "spiral.saddle",
     "jink.span", "high.closure", "plan.deficit", "lead.closure",
     "missile.margin", "sandwich.weight", "support.behind", "form.abeam",
+    "press.hold", "press.closure", "press.gap", "crowd.weight",
 ]
 
 LINE = re.compile(r"BATTERY (\S+)((?: \S+=\S+)+) \((\d+) seeds\)")

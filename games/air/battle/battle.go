@@ -104,8 +104,10 @@ func Advance(body *Body, model *flight.Model, throttle float64, rate float64, se
 		normal := math.Abs(model.State.Fcs.Normal)
 		weaker, health := weakest(body)
 		strength := clamp(1-0.05*damage.Stress-0.6*(1-health), 0.35, 1)
-		if normal > ultimate*strength && weaker >= 0 {
-			shed(body, weaker)
+		if health <= 0 {
+			strength = 0.12 // spar severed (#144): the wing folds in any real maneuver — flying gently no longer keeps ten rounds through a root survivable
+		}
+		if normal > ultimate*strength && weaker >= 0 && shed(body, weaker) {
 			events = append(events, Event{Kind: "shed", Engine: -1, Surface: weaker})
 		}
 	}
@@ -150,8 +152,11 @@ func weakest(body *Body) (int, float64) {
 }
 
 // shed tears off the outboard half of a wing: the elements go, drag rises,
-// the CG walks toward the surviving wing, and the mass leaves.
-func shed(body *Body, surface int) {
+// the CG walks toward the surviving wing, and the mass leaves. Reports
+// whether anything was actually left to tear — a severed spar keeps the
+// failure condition true forever, and re-shedding a stump every tick piled
+// up phantom drag and mass (#144).
+func shed(body *Body, surface int) bool {
 	s := &body.Airframe.Surfaces[surface]
 	base := 0
 	for si := 0; si < surface; si++ {
@@ -160,12 +165,20 @@ func shed(body *Body, surface int) {
 	if body.Damage.Element == nil {
 		body.Damage.Element = make([]float64, flight.Elements)
 	}
+	torn := false
 	for ei := len(s.Elements) / 2; ei < len(s.Elements); ei++ {
+		if body.Damage.Element[base+ei] < 1 {
+			torn = true
+		}
 		body.Damage.Element[base+ei] = 1
+	}
+	if !torn {
+		return false
 	}
 	body.Damage.Drag += 0.15
 	body.Damage.Shift.Z += -s.Side * 0.08
 	body.Damage.Loss += 300
+	return true
 }
 
 func clamp(v float64, low float64, high float64) float64 {

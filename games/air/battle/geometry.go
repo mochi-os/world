@@ -13,6 +13,7 @@ package battle
 
 import (
 	"math"
+	"sort"
 
 	"world/games/air/flight"
 )
@@ -99,6 +100,30 @@ func Parts(a *flight.Airframe) []Part {
 			A: leg.Attach, B: leg.Attach.Add(flight.Vec3{Y: -1.2}), Radius: 0.3}) // the bay and the leg below it: hittable stowed too — doors are no armour
 	}
 	return parts
+}
+
+// pierce lists every part along the ray, nearest first — a 20 mm SAPHEI
+// round does not stop at the first thing it meets (#144: dead-astern rounds
+// parked in already-dead engines while the fuel and cockpit sat untouched
+// behind them, and the stern kill only ever came from the one fire the
+// victim's own fire drill could put out).
+func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) []int {
+	type met struct {
+		part  int
+		along float64
+	}
+	found := []met{}
+	for pi := range parts {
+		if t := capsule(origin, direction, parts[pi].A, parts[pi].B, parts[pi].Radius, reach); t >= 0 {
+			found = append(found, met{pi, t})
+		}
+	}
+	sort.Slice(found, func(x, y int) bool { return found[x].along < found[y].along })
+	order := make([]int, len(found))
+	for n, f := range found {
+		order[n] = f.part
+	}
+	return order
 }
 
 // trace finds the first part a ray hits: origin and direction in the

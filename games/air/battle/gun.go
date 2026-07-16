@@ -13,8 +13,11 @@ import (
 )
 
 const (
-	reach      = 1500  // m, useful gun range (tracer-burnout class)
-	dispersion = 0.003 // rad, one-sigma round scatter (M61 spec: 80% inside 8 mil)
+	reach       = 1500  // m, useful gun range (tracer-burnout class)
+	dispersion  = 0.003 // rad, one-sigma round scatter (M61 spec: 80% inside 8 mil)
+	penetration = 0.45  // severity retained through each part pierced (#144)
+	through     = 3     // parts one round can reach
+	spent       = 0.15  // severity below which the round has nothing left
 )
 
 // Muzzle is the M61 barrel speed, exported for the fire-control solutions
@@ -67,12 +70,22 @@ func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity fl
 			Add(shooter.Up.Scale(radius * math.Sin(angle)))
 		direction := bore.Scale(Muzzle).Add(shooter.Velocity).Subtract(velocity).Add(kick)
 		direction = attitude.Unrotate(direction).Normalize()
-		part, _ := trace(body.Parts, origin, direction, reach)
-		if part < 0 {
+		chain := pierce(body.Parts, origin, direction, reach)
+		if len(chain) == 0 {
 			continue
 		}
 		hits++
-		events = append(events, strike(body, &body.Parts[part], 1, seed, slot, tick, round)...)
+		// Penetration: SAPHEI keeps killing behind the first thing it meets —
+		// severity decays per part, and the round word is spread by depth so
+		// the chain's rolls stay independent.
+		severity := 1.0
+		for depth, part := range chain {
+			if depth >= through || severity < spent {
+				break
+			}
+			events = append(events, strike(body, &body.Parts[part], severity, seed, slot, tick, round*uint64(through)+uint64(depth))...)
+			severity *= penetration
+		}
 	}
 	if hits > 0 {
 		events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: hits})

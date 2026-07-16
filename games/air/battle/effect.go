@@ -29,6 +29,7 @@ const (
 	linkage   = 0.25  // chance a fin-root hit restricts the rudder
 	kindle    = 0.30  // chance a hit on an already-damaged engine starts a fire
 	torch     = 0.08  // chance a tank hit lights the fuel
+	detonate  = 0.03  // chance a tank hit simply blows the jet up (#144): HEI in vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty
 	flash     = 0.05  // chance a wet-wing hit lights the fuel
 	mortal    = 0.40  // chance a cockpit hit kills the pilot
 	plumbing  = 0.12  // chance a fuselage hit cuts a hydraulic run
@@ -79,7 +80,11 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 		}
 	case Tank:
 		damage.Leak += seep * severity
-		if chance(torch, 6) {
+		if chance(detonate, 10) {
+			ignite(body, seed, slot, tick)
+			body.Condition.Fuse = math.Min(body.Condition.Fuse, 0.3) // HEI in the vapour space: the fire IS the explosion
+			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
+		} else if chance(torch, 6) {
 			ignite(body, seed, slot, tick)
 			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 		}

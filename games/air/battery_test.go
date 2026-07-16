@@ -133,6 +133,18 @@ func amend(t *tactics, name string, value float64) bool {
 		t.form.blend = value
 	case "form.burner":
 		t.form.burner = value
+	case "press.span":
+		t.press.span = value
+	case "press.hold":
+		t.press.hold = value
+	case "press.loose":
+		t.press.loose = value
+	case "press.closure":
+		t.press.closure = value
+	case "press.gap":
+		t.press.gap = value
+	case "crowd.weight":
+		t.crowd.weight = value
 	default:
 		return false
 	}

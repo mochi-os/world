@@ -118,6 +118,16 @@ type tactics struct {
 		blend  float64 // fly-at-the-station beyond this off-station distance, m
 		burner float64 // rejoin in reheat beyond this, m
 	}
+	press struct {
+		span    float64 // advantage only counts inside this range, m
+		hold    float64 // ticks of held advantage before pressing
+		loose   float64 // guns tolerance multiplier while pressing (measured 1.0: wider only sprays — rounds trace the airframe, not the gate)
+		closure float64 // overtake ceiling while pressing, m/s, scheduled down to zero at the finishing range
+		gap     float64 // the finishing range the press parks at, m — half the range is four times the hit density
+	}
+	crowd struct {
+		weight float64 // target-selection distance penalty per friendly already attacking a contact: the knob that spreads a section across a target-rich picture instead of perching behind one fight
+	}
 }
 
 // standard is the doctrine every brain flies today: the defaults the tuning
@@ -140,6 +150,8 @@ func standard() tactics {
 	t.support.span, t.support.share, t.support.engaged = 6000, 0.75, 2200
 	t.support.behind, t.support.above, t.support.near, t.support.out, t.support.rise, t.support.limit = 1100, 500, 1300, 600, 300, 4
 	t.form.abeam, t.form.blend, t.form.burner = 1500, 1200, 3000
+	t.press.span, t.press.hold, t.press.loose, t.press.closure, t.press.gap = 1500, 300, 1.0, 45, 250
+	t.crowd.weight = 1
 	return t
 }
 
@@ -168,6 +180,18 @@ type track struct {
 	when     uint64 // tick last refreshed
 	position flight.Vec3
 	velocity flight.Vec3
+	swing    flight.Vec3 // velocity change per second between refreshes (#144): the turn the good shooters lead — a straight-line prediction lands every round behind a 6 g break
+}
+
+// predict projects a track horizon seconds past its refresh. The curved form
+// (tier 3+) bends the prediction along the observed turn — the difference
+// between gunning a runner and gunning a fighter in a 6 g break.
+func predict(t *track, horizon float64, curved bool) flight.Vec3 {
+	spot := t.position.Add(t.velocity.Scale(horizon))
+	if curved {
+		spot = spot.Add(t.swing.Scale(0.5 * horizon * horizon))
+	}
+	return spot
 }
 
 // brain is the per-bot fight state. The decision layer runs at the skill's
@@ -205,6 +229,7 @@ type brain struct {
 	stuck    int     // consecutive decisions of neutral non-progress (stalemate detector)
 	tangle   int     // consecutive decisions locked in close combat (scissors detector)
 	saddle   int     // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
+	press    uint64  // tick+1 the offensive advantage was first held in range (#144), 0 = none: patience becomes the finish once it has lasted (a tick clock, not a decision count — maneuver holds throttle decisions)
 	solo     bool    // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
 	mate     int     // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
 	spoke    uint64  // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
@@ -224,10 +249,19 @@ func mind(level string) *brain {
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
-	b.saddle = 0
+	b.saddle, b.press = 0, 0
 	b.told = -1
 	b.prey = nil
 	b.known = map[int]*track{}
+}
+
+// pressing reports whether the advantage has been held long enough to finish
+// the fight (#144): the deliberate acceptance of deflection risk that makes a
+// guns fight resolve — without it the saddle tracks patiently forever and the
+// jink defeats it indefinitely (the battery's skirmish and merge scenarios
+// recorded zero guns kills at every seed). Tier 3+: rookies already spray.
+func (b *brain) pressing(tick uint64) bool {
+	return b.skill.library >= 3 && b.press != 0 && float64(tick+1-b.press) > b.tactics.press.hold
 }
 
 // visible reports whether me can see other right now: visual range (halved at
@@ -365,7 +399,16 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 		if seen {
-			b.known[other] = &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity}
+			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity}
+			if t, found := b.known[other]; found {
+				if gap := float64(tick-t.when) / 60; gap > 0.05 && gap < 1.5 {
+					fresh.swing = fresh.velocity.Subtract(t.velocity).Scale(1 / gap)
+					if fresh.swing.Length() > 80 {
+						fresh.swing = fresh.swing.Normalize().Scale(80) // cap at ~8 g: track noise is not a maneuver
+					}
+				}
+			}
+			b.known[other] = fresh
 		}
 	}
 	// The radio (#140): an engaged pair partner calls his target — the wing
@@ -399,6 +442,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// teammate is defended exactly like a bot one.
 	attackers := map[int]int{}
 	for _, other := range i.slots() {
+		if other == slot {
+			continue // my own engagement is not a dogpile: self-counting made every bot penalize staying on its own target (#144)
+		}
 		if c := i.aircraft[other]; c != nil && c.bot && c.brain != nil && c.brain.target >= 0 {
 			if a.team == "" || b.solo || c.team == a.team {
 				attackers[c.brain.target]++
@@ -449,7 +495,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	best, cost := -1, math.MaxFloat64
 	for s, t := range b.known {
 		_, distance := i.bearing(me.Position, t.position)
-		weight := distance * float64(1+attackers[s])
+		weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
 		if _, found := menacing[s]; found {
 			weight *= b.tactics.sandwich.weight
 		}
@@ -528,6 +574,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 		if float64(tick-b.alert) >= b.skill.react*60 {
 			b.mode = "evade"
+			b.press = 0
 			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
 			if inbound.Dot(side) > 0 {
 				side = side.Scale(-1)
@@ -579,6 +626,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// extension while anyone is close. Overrides any held maneuver.
 	if thrust := 1 - (me.Damage.Engine[0]+me.Damage.Engine[1])/2; thrust < 0.35 || a.condition.Burning {
 		b.mode = "limp"
+		b.press = 0
 		b.prey = nil
 		b.shoot, b.loose = false, false
 		away, gap := level(me.Velocity.Normalize()), math.MaxFloat64
@@ -611,11 +659,30 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 
 	// Maneuver commitment: the aim stands until the hold expires — only the
-	// fire solution keeps updating underneath it.
+	// fire solution keeps updating underneath it. EXCEPT on the gun track:
+	// the saddle's hold pins the MODE, never the pipper — a lead point frozen
+	// for the hold's 0.75 s was the difference between a pinned tracker's 42%
+	// hit rate and a flown one's 4% (#144: the drone kill took fifteen
+	// minutes of match time before this).
 	if tick < b.hold && b.target >= 0 {
 		if prey, found := b.known[b.target]; found {
 			b.prey = prey
 			_, b.distance = i.bearing(me.Position, prey.position)
+			if (b.mode == "saddle" || b.mode == "press") && b.distance < b.skill.open*1.4 {
+				age := float64(tick-prey.when) / 60
+				horizon := 0.0
+				if b.skill.library >= 2 {
+					horizon = age
+				}
+				spot := predict(prey, horizon, b.skill.library >= 3)
+				direction, span := i.bearing(me.Position, spot)
+				closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
+				time := span / math.Max(battle.Muzzle+closure, 200)
+				lead := predict(prey, horizon+time, b.skill.library >= 3).
+					Subtract(me.Velocity.Scale(time)).
+					Add(flight.Vec3{Y: 4.9 * time * time})
+				b.aim, _ = i.bearing(me.Position, lead)
+			}
 		}
 		return
 	}
@@ -624,6 +691,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// corner — a stalled zoom otherwise floats for tens of seconds.
 	if speed < 0.55*pace {
 		b.mode = "rebuild"
+		b.press = 0
 		b.prey = nil
 		flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
 		b.aim = flat.Subtract(flight.Vec3{Y: 0.25}).Normalize()
@@ -646,6 +714,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// bots with no human to follow keep the free weave.
 	if b.target < 0 {
 		b.prey = nil
+		b.press = 0
 		if lead := i.leader(slot, a); lead != nil {
 			b.mode = "form"
 			him := &lead.model.State
@@ -687,10 +756,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	prey := b.known[b.target]
 	b.prey = prey
 	age := float64(tick-prey.when) / 60
-	spot := prey.position
+	horizon := 0.0
 	if b.skill.library >= 2 {
-		spot = spot.Add(prey.velocity.Scale(age)) // lead the stale track; the rookie chases where he WAS
+		horizon = age // lead the stale track; the rookie chases where he WAS
 	}
+	spot := predict(prey, horizon, b.skill.library >= 3)
 	direction, distance := i.bearing(me.Position, spot)
 	b.distance = distance
 	chase := prey.velocity.Normalize()
@@ -731,6 +801,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 		if engaged && distance < b.tactics.support.span {
 			b.mode = "support"
+			b.press = 0
 			b.shoot = false
 			perch := spot.Subtract(chase.Scale(b.tactics.support.behind)).Add(flight.Vec3{Y: b.tactics.support.above})
 			if distance < b.tactics.support.near {
@@ -748,6 +819,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	switch {
 	case menace >= 0 && (b.target != menace || tail < 0.35): // he's the problem: fight him
 		b.mode = "defense"
+		b.press = 0
 		foe := b.known[menace]
 		at, span := i.bearing(me.Position, foe.position)
 		b.throttle, b.reheat = 1, boost(speed, pace, -80)
@@ -886,6 +958,13 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	case tail > 0.35: // offensive: behind his 3/9
 		b.mode = "offense"
 		b.saddle = 0
+		if distance < b.tactics.press.span {
+			if b.press == 0 {
+				b.press = tick + 1 // the advantage clock starts (+1: tick zero is a real start, zero means none)
+			}
+		} else {
+			b.press = 0
+		}
 		b.shoot = true
 		// PURE pursuit: with a hitscan gun, pipper-on-target is both the chase
 		// and the terminal solution. The intercept-lead variant predated the
@@ -902,11 +981,21 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 		b.throttle, b.reheat = 1, boost(speed, pace, 40)
+		if closure < 20 && distance > 800 {
+			b.reheat = 1 // a stern chase that is not closing is no chase at all — the corner-speed boost cap parked pursuits behind a running target forever (#144: the battery's gunnery scenario sat beyond 1200 m for most of a 300 s drone chase)
+		}
 		if distance < 1500 {
 			// Closure discipline into the control zone: arrive with 40-ish
 			// overtake, not a hundred — a blown pass wastes the whole conversion.
-			b.throttle = clamp(1-(closure-40)/200, 0.35, 1)
+			goal := 40.0
+			if b.pressing(tick) {
+				goal += b.tactics.press.closure // finishing: arrive hot, not polite (#144)
+			}
+			b.throttle = clamp(1-(closure-goal)/200, 0.35, 1)
 			b.reheat = boost(speed, pace, -60)
+			if b.pressing(tick) {
+				b.reheat = boost(speed, pace, 40)
+			}
 		}
 		if nose.Dot(direction) < 0.3 && distance < 1500 {
 			// He's far off the nose IN CLOSE: a turnaround, not a chase — fly
@@ -966,7 +1055,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	case tail < -0.35: // neutral: converging head-on
 		b.mode = "neutral"
-		b.saddle = 0
+		b.saddle, b.press = 0, 0
 		// The face shot: rookies spray it (authentic), the disciplined decline
 		// it and fight the turn instead — training doctrine, and it keeps the
 		// merge a fight rather than a coin toss.
@@ -1015,7 +1104,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	default: // flanking: lead-turn into his future
 		b.mode = "offense"
-		b.saddle = 0
+		b.saddle, b.press = 0, 0 // angles not yet held: the press clock runs only behind his 3/9
 		b.shoot = true
 		b.aim = direction.Add(prey.velocity.Scale(2.0 / math.Max(distance, 200))).Normalize()
 		b.throttle, b.reheat = 1, boost(speed, pace, 0)
@@ -1041,8 +1130,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	} else if distance > 2500 {
 		b.tangle = 0
 	}
-	if b.skill.library >= 3 && b.tangle > int(1800/b.skill.cadence) {
+	if b.skill.library >= 3 && b.tangle > int(1800/b.skill.cadence) && !b.pressing(tick) {
+		// (never disengage while PRESSING — the reset exists for fights that
+		// cannot convert, and a held advantage is the conversion happening)
 		b.mode = "reset"
+		b.press = 0
 		b.aim = level(direction.Scale(-1))
 		b.throttle, b.reheat = 1, 1
 		b.shoot = false
@@ -1054,7 +1146,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// Stalemate displacement (tier 3+): a mutual circle between equal jets
 	// never resolves by rate — after ~8 s without progress, cut ACROSS the
 	// circle on a lag line toward his six, committed for three seconds.
-	if (b.mode == "neutral" || b.mode == "offense") && distance > 800 && distance < 3000 && math.Abs(closure) < 60 {
+	if (b.mode == "neutral" || b.mode == "offense") && distance > 800 && distance < 3000 && math.Abs(closure) < 60 && tail < 0.85 {
+		// (crossing targets only: a dead-astern runner is a CHASE — the lag
+		// cut that breaks a mutual circle just trails a runner at constant
+		// range forever, which is how the battery caught an ace parked 1.5 km
+		// behind a drone for five straight minutes)
 		b.stuck++
 	} else {
 		b.stuck = 0
@@ -1086,7 +1182,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// SADDLE: kill the closure and hold the track.
 	if b.shoot && b.prey != nil && distance < b.skill.open*1.4 {
 		time := distance / math.Max(battle.Muzzle+closure, 200)
-		lead := spot.Add(prey.velocity.Scale(time)).
+		lead := predict(prey, horizon+time, b.skill.library >= 3).
 			Subtract(me.Velocity.Scale(time)).
 			Add(flight.Vec3{Y: 4.9 * time * time})
 		b.aim, _ = i.bearing(me.Position, lead)
@@ -1097,6 +1193,22 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.reheat = 0
 			if closure > 90 && b.skill.library >= 3 {
 				b.brake = 1
+			}
+			if b.pressing(tick) {
+				// The PRESS (#144): the advantage has been held long enough —
+				// stop parking at the polite range and finish. Close to the
+				// finishing gap and park THERE: the gun's dispersion is
+				// angular, so half the range is four times the hit density,
+				// and it is the sustained short-range track that kills (an
+				// overtake through the zone measured worse than the patience
+				// it replaced — churn breaks the very track that finishes).
+				b.mode = "press"
+				goal := clamp((distance-b.tactics.press.gap)*0.15, 0, b.tactics.press.closure)
+				b.throttle = clamp(0.7-(closure-goal)*0.006, 0.2, 1)
+				b.brake = 0
+				if closure > goal+60 && b.skill.library >= 3 {
+					b.brake = 1
+				}
 			}
 			b.hold = tick + 45 // stay on the track: churn is what breaks gun solutions
 		}
@@ -1237,11 +1349,15 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 		return false
 	}
 	age := float64(tick-b.prey.when) / 60
-	spot := b.prey.position.Add(b.prey.velocity.Scale(age))
+	spot := predict(b.prey, age, b.skill.library >= 3)
 	direction := spot.Subtract(s.Position).Normalize()
 	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
 	miss := math.Acos(clamp(nose.Dot(direction), -1, 1)) * math.Max(b.distance, 50)
-	return miss < 22+b.skill.wander*b.distance*1.5 // snapshot tolerance: the burst is a stream, not a bullet; sloppier noses spray more and hit less
+	tolerance := 22 + b.skill.wander*b.distance*1.5 // snapshot tolerance: the burst is a stream, not a bullet; sloppier noses spray more and hit less
+	if b.pressing(tick) {
+		tolerance *= b.tactics.press.loose // finishing: accept the deflection shot the patient tracker declines (#144)
+	}
+	return miss < tolerance
 }
 
 // compose turns an aim direction and a g demand into stick, through the same
