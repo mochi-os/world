@@ -1393,6 +1393,66 @@ func TestTeamsCalls(t *testing.T) {
 	}
 }
 
+// TestTeamsFlavour (#146): the log-tier radio. TALLY when the wing's own
+// eyes replace the lead's radio picture (once per bandit per life), and a
+// rejoin call when the wing returns to the spread after the fight — both
+// only when a human teammate exists to hear them.
+func TestTeamsFlavour(t *testing.T) {
+	g := New()
+	made, _ := g.Create(game.Session{Identifier: "flavour", Game: "air", Mode: "teams", Capacity: 16, Seed: 11,
+		Parameters: map[string]any{"tod": "night", "bots": map[string]any{
+			"red":  map[string]any{"pilot": 2.0},
+			"blue": map[string]any{"drone": 1.0},
+		}}})
+	i := made.(*instance)
+	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
+	lead, wing, enemy := i.aircraft[98], i.aircraft[99], i.aircraft[97]
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	calls := map[string]int{}
+	drain := func() {
+		for _, e := range i.events {
+			if e["kind"] == "call" {
+				calls[e["call"].(string)]++
+			}
+		}
+		i.events = nil
+	}
+	pin := func(span float64) {
+		aloft(wing, base, flight.Vec3{X: 220})
+		aloft(lead, base.Add(flight.Vec3{Z: 1500}), flight.Vec3{X: 220})
+		aloft(enemy, base.Add(flight.Vec3{Z: span}), flight.Vec3{X: 220})
+	}
+	for tick := uint64(0); tick < 90; tick++ { // the lead sees at 5.5 km (night eyes reach 6), the wing at 7 cannot: the radio call
+		pin(7000)
+		i.Step(tick, nil)
+	}
+	drain()
+	if wing.brain.target != enemy.player.Slot || !wing.brain.known[enemy.player.Slot].heard {
+		t.Fatal("the wing is not fighting off the radio picture")
+	}
+	if calls["tally"] != 0 {
+		t.Fatal("TALLY before the wing's own eyes had the contact")
+	}
+	for tick := uint64(90); tick < 480; tick++ { // the bandit crosses into the wing's own view: TALLY, once
+		pin(3000)
+		i.Step(tick, nil)
+	}
+	drain()
+	if calls["tally"] != 1 {
+		t.Fatalf("%d TALLY calls, want exactly one", calls["tally"])
+	}
+	delete(i.aircraft, enemy.player.Slot) // fight over (a merely-dead bot respawns in five seconds): the wing re-forms on the lead and says so
+	for tick := uint64(480); tick < 600; tick++ {
+		aloft(wing, base, flight.Vec3{X: 220})
+		aloft(lead, base.Add(flight.Vec3{Z: 1500}), flight.Vec3{X: 220})
+		i.Step(tick, nil)
+	}
+	drain()
+	if calls["rejoin"] != 1 || wing.brain.mode != "form" {
+		t.Fatalf("rejoin %d in mode %q, want one call from the spread", calls["rejoin"], wing.brain.mode)
+	}
+}
+
 // wounded builds the ace-vs-drone pair used by the wounded-flying tests.
 func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
 	t.Helper()

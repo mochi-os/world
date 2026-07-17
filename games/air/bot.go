@@ -210,6 +210,7 @@ type track struct {
 	position flight.Vec3
 	velocity flight.Vec3
 	swing    flight.Vec3 // velocity change per second between refreshes (#144): the turn the good shooters lead — a straight-line prediction lands every round behind a 6 g break
+	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
 }
 
 // predict projects a track horizon seconds past its refresh. The curved form
@@ -263,6 +264,7 @@ type brain struct {
 	mate     int     // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
 	spoke    uint64  // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
 	told     int     // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
+	tallied  int     // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
 	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
 }
 
@@ -272,14 +274,14 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, tactics: doctrine, mode: "cruise", target: -1, mate: -1, told: -1, known: map[int]*track{}, missiles: 2}
+	return &brain{skill: s, tactics: doctrine, mode: "cruise", target: -1, mate: -1, told: -1, tallied: -1, known: map[int]*track{}, missiles: 2}
 }
 
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
 	b.saddle, b.press = 0, 0
-	b.told = -1
+	b.told, b.tallied = -1, -1
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -448,6 +450,13 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 						fresh.swing = fresh.swing.Normalize().Scale(80) // cap at ~8 g: track noise is not a maneuver
 					}
 				}
+				// TALLY (#146): my own eyes replace the radio picture — tell
+				// the lead his call was picked up. Once per bandit per life.
+				if t.heard && other == b.target && b.tallied != other && i.audible(a) && (b.spoke == 0 || tick-b.spoke > 300) {
+					b.tallied = other
+					b.spoke = tick
+					i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "tally"})
+				}
 			}
 			b.known[other] = fresh
 		}
@@ -460,8 +469,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if mate := i.aircraft[b.mate]; mate != nil && mate.alive && mate.brain != nil && mate.brain.target >= 0 {
 			if called, found := mate.brain.known[mate.brain.target]; found {
 				if mine, exists := b.known[mate.brain.target]; !exists || called.when > mine.when {
-					heard := *called
-					b.known[mate.brain.target] = &heard
+					word := *called
+					word.heard = true // the radio's picture, not my eyes — a real sighting replacing it is the TALLY moment (#146)
+					b.known[mate.brain.target] = &word
 				}
 			}
 		}
@@ -802,6 +812,10 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.prey = nil
 		b.press = 0
 		if lead := i.leader(slot, a); lead != nil {
+			if b.mode != "form" && b.mode != "cruise" && b.mode != "rejoin" && i.audible(a) && (b.spoke == 0 || tick-b.spoke > 300) {
+				b.spoke = tick // returning to the spread off a fight: say so (#146)
+				i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "rejoin"})
+			}
 			b.mode = "form"
 			him := &lead.model.State
 			ahead := him.Velocity.Normalize()

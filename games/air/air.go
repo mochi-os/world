@@ -215,6 +215,21 @@ func hostile(a, b *craft) bool {
 	return a.team == "" || b.team == "" || a.team != b.team
 }
 
+// audible reports whether anyone human flies on this craft's side — the
+// flavour radio (#146: TALLY, rejoin) speaks only when someone can hear it;
+// the urgent calls carry their own human-victim gates.
+func (i *instance) audible(a *craft) bool {
+	if a.team == "" {
+		return false
+	}
+	for _, slot := range i.slots() {
+		if c := i.aircraft[slot]; c != nil && !c.bot && c.team == a.team {
+			return true
+		}
+	}
+	return false
+}
+
 // Team reports the side a slot flies for, "" outside the teams mode — the
 // session's chat scoping asks (#84). Tick-goroutine only, like every other
 // instance call.
