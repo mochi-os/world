@@ -8,7 +8,6 @@ package main
 
 import (
 	"errors"
-	"strings"
 	"time"
 
 	"world/game"
@@ -165,18 +164,9 @@ func session_chat(s *session, o order) {
 	if len(p.talked) >= 3 {
 		return // flooding: dropped without ceremony
 	}
-	words := strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
-			return -1
-		}
-		return r
-	}, o.text)
-	words = strings.TrimSpace(words)
+	words := clean(o.text, 200)
 	if words == "" {
 		return
-	}
-	if runes := []rune(words); len(runes) > 200 {
-		words = string(runes[:200])
 	}
 	p.talked = append(p.talked, now)
 	scope, team := "all", ""

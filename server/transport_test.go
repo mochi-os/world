@@ -7,11 +7,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
@@ -360,5 +363,69 @@ func TestChat(t *testing.T) {
 	}
 	if replay := overheard(d, 1200*time.Millisecond); len(replay) != 3 {
 		t.Fatalf("delta's replay carried %v, want the full red-visible conversation", replay)
+	}
+}
+
+// TestLobbyChat (#84): the server-wide lobby ring — post, cursor reads,
+// sanitization, the structured made event, and the chat budget being
+// separate from the match-creation budget.
+func TestLobbyChat(t *testing.T) {
+	post := func(name string, words string) int {
+		body, _ := json.Marshal(map[string]any{"name": name, "text": words})
+		r := httptest.NewRequest("POST", "/chat", bytes.NewReader(body))
+		r.RemoteAddr = "192.0.2.9:1"
+		w := httptest.NewRecorder()
+		lobby_chat(w, r)
+		return w.Code
+	}
+	read := func(since uint64) ([]any, uint64) {
+		r := httptest.NewRequest("GET", fmt.Sprintf("/chat?since=%d", since), nil)
+		w := httptest.NewRecorder()
+		lobby_chat(w, r)
+		var reply map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&reply); err != nil {
+			t.Fatalf("read: %v", err)
+		}
+		lines, _ := reply["lines"].([]any)
+		return lines, uint64(number(reply, "sequence"))
+	}
+	_, cursor := read(0)
+	if code := post(" alpha ", " hello there "); code != 200 {
+		t.Fatalf("post refused: %d", code)
+	}
+	chat_made("bravo", "bravo's match")
+	lines, latest := read(cursor)
+	if len(lines) != 2 {
+		t.Fatalf("read %d lines after the cursor, want 2", len(lines))
+	}
+	first, _ := lines[0].(map[string]any)
+	if text(first, "name") != "alpha" || text(first, "text") != "hello there" {
+		t.Fatalf("line 1 = %v, want sanitized alpha/hello there", first)
+	}
+	second, _ := lines[1].(map[string]any)
+	if text(second, "event") != "made" || text(second, "name") != "bravo" || text(second, "label") != "bravo's match" {
+		t.Fatalf("line 2 = %v, want the made event", second)
+	}
+	if again, _ := read(latest); len(again) != 0 {
+		t.Fatalf("cursor at head still returned %d lines", len(again))
+	}
+	// The voice budget: 20 per minute per host — and spending it must leave
+	// the CREATE budget untouched.
+	refused := 0
+	for n := 0; n < 25; n++ {
+		if post("alpha", fmt.Sprintf("line %d", n)) == 429 {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("no flood refusals: the voice limiter is not engaged")
+	}
+	made, _ := json.Marshal(map[string]any{"game": "air", "mode": "furball", "label": "after the flood", "name": "alpha"})
+	r := httptest.NewRequest("POST", "/sessions", bytes.NewReader(made))
+	r.RemoteAddr = "192.0.2.9:1"
+	w := httptest.NewRecorder()
+	lobby_sessions(w, r)
+	if w.Code != 200 {
+		t.Fatalf("match creation refused (%d) after chat flood: the budgets are shared", w.Code)
 	}
 }
