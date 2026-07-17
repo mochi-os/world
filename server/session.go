@@ -31,15 +31,18 @@ type player struct {
 	sequence uint32       // highest input sequence applied (acknowledged in snapshots)
 	queue    []game.Input // inputs since the last step
 	seen     time.Time    // last input received — the application-level liveness signal
+	talked   []time.Time  // recent chat sends (#84): the flood limiter's window
 }
 
 // order is a control message from a connection to a session's tick goroutine.
 type order struct {
-	kind   string // join, leave, input
+	kind   string // join, leave, input, chat
 	player game.Player
 	link   link
 	inputs []game.Input
 	slot   int
+	text   string // chat only
+	scope  string // chat only: "team" or "all"
 	reply  chan answer // join only
 }
 
@@ -48,6 +51,20 @@ type order struct {
 type answer struct {
 	slot int
 	err  error
+}
+
+// spoken is one delivered chat line: the event as sent, plus the team it was
+// scoped to ("" = everyone) so the replay-on-join respects the same audience.
+type spoken struct {
+	event map[string]any
+	team  string
+}
+
+// sided is the optional game-instance interface the chat scoping asks: which
+// side a slot flies for ("" outside team modes). Called only from the
+// session's tick goroutine, which owns the instance.
+type sided interface {
+	Team(slot int) string
 }
 
 type session struct {
@@ -62,6 +79,7 @@ type session struct {
 	tick    uint64
 	players map[int]*player
 	empty   time.Time // since when no player has been connected
+	chats   []spoken  // the recent-chat ring (#84): replayed to joiners so a late arrival sees the conversation
 
 	permanent bool // a standing match: exempt from the idle sweep, recreated at startup
 

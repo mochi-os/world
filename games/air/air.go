@@ -215,6 +215,16 @@ func hostile(a, b *craft) bool {
 	return a.team == "" || b.team == "" || a.team != b.team
 }
 
+// Team reports the side a slot flies for, "" outside the teams mode — the
+// session's chat scoping asks (#84). Tick-goroutine only, like every other
+// instance call.
+func (i *instance) Team(slot int) string {
+	if a := i.aircraft[slot]; a != nil {
+		return a.team
+	}
+	return ""
+}
+
 // nearest_mate finds the closest living teammate, or nil (always nil outside
 // the teams mode). Friendly positions are radio truth — no perception model.
 func (i *instance) nearest_mate(slot int, a *craft) *craft {

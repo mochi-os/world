@@ -8,6 +8,7 @@ package main
 
 import (
 	"errors"
+	"strings"
 	"time"
 
 	"world/game"
@@ -135,10 +136,75 @@ func session_orders(s *session) {
 						p.queue = p.queue[len(p.queue)-64:]
 					}
 				}
+			case "chat":
+				session_chat(s, o)
 			}
 		default:
 			return
 		}
+	}
+}
+
+// session_chat sanitizes, scopes, and relays one chat line (#84). Team scope
+// is enforced HERE, not client-side — a client filter would put the other
+// team's tactics on the wire for anyone to read. The sender receives their
+// own line back: the echo is the delivery confirmation.
+func session_chat(s *session, o order) {
+	p := s.players[o.slot]
+	if p == nil || p.link == nil {
+		return
+	}
+	now := time.Now()
+	window := p.talked[:0]
+	for _, when := range p.talked {
+		if now.Sub(when) < 5*time.Second {
+			window = append(window, when)
+		}
+	}
+	p.talked = window
+	if len(p.talked) >= 3 {
+		return // flooding: dropped without ceremony
+	}
+	words := strings.Map(func(r rune) rune {
+		if r < 32 || r == 127 {
+			return -1
+		}
+		return r
+	}, o.text)
+	words = strings.TrimSpace(words)
+	if words == "" {
+		return
+	}
+	if runes := []rune(words); len(runes) > 200 {
+		words = string(runes[:200])
+	}
+	p.talked = append(p.talked, now)
+	scope, team := "all", ""
+	if o.scope == "team" {
+		if game, valid := s.instance.(sided); valid {
+			if side := game.Team(o.slot); side != "" {
+				scope, team = "team", side
+			}
+		}
+	}
+	event := map[string]any{"kind": "chat", "slot": o.slot, "name": p.Name, "text": words, "scope": scope}
+	s.chats = append(s.chats, spoken{event: event, team: team})
+	if len(s.chats) > 20 {
+		s.chats = s.chats[len(s.chats)-20:]
+	}
+	bytes, err := encode(map[string]any{"kind": "event", "tick": s.tick, "event": event})
+	if err != nil {
+		return
+	}
+	audience, _ := s.instance.(sided)
+	for _, r := range s.players {
+		if r.link == nil {
+			continue
+		}
+		if team != "" && (audience == nil || audience.Team(r.Slot) != team) {
+			continue
+		}
+		r.link.write(bytes, true)
 	}
 }
 
@@ -175,6 +241,17 @@ func session_join(s *session, o order) answer {
 		o.link.write(welcome, true)
 	}
 	session_broadcast(s, map[string]any{"kind": "event", "tick": s.tick, "event": map[string]any{"kind": "join", "slot": slot, "name": o.player.Name}}, true)
+	// Replay the recent chat (#84) so a late joiner sees the conversation —
+	// respecting each line's original audience.
+	audience, _ := s.instance.(sided)
+	for _, line := range s.chats {
+		if line.team != "" && (audience == nil || audience.Team(slot) != line.team) {
+			continue
+		}
+		if bytes, err := encode(map[string]any{"kind": "event", "tick": s.tick, "event": line.event}); err == nil {
+			o.link.write(bytes, true)
+		}
+	}
 	session_mirror(s, "playing")
 	return answer{slot: slot}
 }

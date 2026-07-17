@@ -118,6 +118,20 @@ func connection_read(l link, s *session, slot int) {
 				return
 			default: // inbox full: drop — newer inputs supersede anyway
 			}
+		case "chat":
+			words := text(message, "text")
+			if words == "" {
+				continue
+			}
+			if len(words) > 400 {
+				words = words[:400] // a hard byte cap at the door; the session trims to runes
+			}
+			select {
+			case s.inbox <- order{kind: "chat", slot: slot, text: words, scope: text(message, "scope")}:
+			case <-s.done:
+				return
+			default: // inbox full: chat loses to inputs
+			}
 		case "leave":
 			return
 		}

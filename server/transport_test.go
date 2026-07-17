@@ -285,3 +285,80 @@ func TestStanding(t *testing.T) {
 		t.Fatal("standing session was swept")
 	}
 }
+
+// overheard drains a probe's reliable stream until the deadline, collecting the
+// text of every chat event and discarding everything else.
+func overheard(p *probe, wait time.Duration) []string {
+	deadline := time.Now().Add(wait)
+	texts := []string{}
+	for {
+		p.stream.SetReadDeadline(deadline)
+		header := make([]byte, 4)
+		if _, err := io.ReadFull(p.stream, header); err != nil {
+			break
+		}
+		payload := make([]byte, binary.BigEndian.Uint32(header))
+		if _, err := io.ReadFull(p.stream, payload); err != nil {
+			break
+		}
+		message, err := decode(payload)
+		if err != nil {
+			continue
+		}
+		event, _ := message["event"].(map[string]any)
+		if text(message, "kind") == "event" && text(event, "kind") == "chat" {
+			texts = append(texts, text(event, "text"))
+		}
+	}
+	p.stream.SetReadDeadline(time.Time{})
+	return texts
+}
+
+// TestChat (#84): match chat relays with SERVER-side team scoping, control
+// characters are stripped, the sender receives their own echo, floods are
+// dropped, and a late joiner gets the replayed conversation - but only the
+// lines addressed to their side.
+func TestChat(t *testing.T) {
+	s, err := sessions_create("air", "teams", "chat test", 8, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	a, b, c := dial(t), dial(t), dial(t)
+	defer a.session.CloseWithError(0, "done")
+	defer b.session.CloseWithError(0, "done")
+	defer c.session.CloseWithError(0, "done")
+	for _, join := range []struct {
+		p    *probe
+		name string
+		team string
+	}{{a, "alpha", "red"}, {b, "bravo", "red"}, {c, "charlie", "blue"}} {
+		join.p.send(t, map[string]any{"kind": "join", "session": s.identifier, "name": join.name, "team": join.team, "protocol": protocol})
+		if text(join.p.receive(t), "kind") != "welcome" {
+			t.Fatalf("%s not welcomed", join.name)
+		}
+	}
+	a.send(t, map[string]any{"kind": "chat", "text": " tally\x01 two ", "scope": "all"})
+	a.send(t, map[string]any{"kind": "chat", "text": "push east", "scope": "team"})
+	for n := 1; n <= 5; n++ {
+		a.send(t, map[string]any{"kind": "chat", "text": fmt.Sprintf("flood %d", n), "scope": "team"})
+	}
+	heard := overheard(b, 1200*time.Millisecond)
+	if len(heard) != 3 || heard[0] != "tally two" || heard[1] != "push east" || heard[2] != "flood 1" {
+		t.Fatalf("bravo heard %v, want the sanitized all-call, the team call, and ONE flood line", heard)
+	}
+	if echo := overheard(a, 800*time.Millisecond); len(echo) != 3 {
+		t.Fatalf("alpha's echo carried %d lines, want 3", len(echo))
+	}
+	if heard := overheard(c, 800*time.Millisecond); len(heard) != 1 || heard[0] != "tally two" {
+		t.Fatalf("charlie (blue) heard %v, want only the all-call", heard)
+	}
+	d := dial(t)
+	defer d.session.CloseWithError(0, "done")
+	d.send(t, map[string]any{"kind": "join", "session": s.identifier, "name": "delta", "team": "red", "protocol": protocol})
+	if text(d.receive(t), "kind") != "welcome" {
+		t.Fatal("delta not welcomed")
+	}
+	if replay := overheard(d, 1200*time.Millisecond); len(replay) != 3 {
+		t.Fatalf("delta's replay carried %v, want the full red-visible conversation", replay)
+	}
+}
