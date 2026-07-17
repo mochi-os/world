@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http/httptest"
 	"os"
 	"testing"
@@ -163,10 +164,29 @@ func TestSweep(t *testing.T) {
 	t.Fatal("idle session was not swept")
 }
 
-// TestAir joins a air session and expects the authoritative aircraft
+// air_position reads the recipient's own position from a snapshot's core
+// payload — the first three of the 57 full-precision float64 wire words
+// (flight.State.Encode order: position, velocity, attitude, ...).
+func air_position(message map[string]any) ([]float64, bool) {
+	core, _ := message["core"].([]byte)
+	if len(core) < 24 {
+		return nil, false
+	}
+	position := make([]float64, 3)
+	for i := range position {
+		position[i] = math.Float64frombits(binary.LittleEndian.Uint64(core[i*8:]))
+	}
+	return position, true
+}
+
+// TestAir joins an air session and expects the authoritative aircraft
 // to fly: consecutive snapshots must show the spawn position advancing.
+// The open furball mode flies a lone jet immediately (a joust would hold
+// the first joiner frozen in the waiting room). Receiving snapshots at
+// all doubles as the oversized-datagram guard: SendDatagram drops frames
+// past the MTU silently, so wire growth reads as zero snapshots here.
 func TestAir(t *testing.T) {
-	s, err := sessions_create("air", "joust", "test flight", 4, nil)
+	s, err := sessions_create("air", "furball", "test flight", 4, nil)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -182,7 +202,6 @@ func TestAir(t *testing.T) {
 	if state == nil {
 		t.Fatalf("welcome carries no spawn state: %v", welcome)
 	}
-	slot := int(number(welcome, "slot"))
 	positions := [][]float64{}
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) && len(positions) < 2 {
@@ -196,16 +215,8 @@ func TestAir(t *testing.T) {
 		if err != nil || text(message, "kind") != "snapshot" {
 			continue
 		}
-		players, _ := message["players"].([]any)
-		for _, item := range players {
-			entry, _ := item.(map[string]any)
-			if entry == nil || int(number(entry, "slot")) != slot {
-				continue
-			}
-			list, _ := entry["position"].([]any)
-			if len(list) == 3 {
-				positions = append(positions, []float64{number(map[string]any{"v": list[0]}, "v"), number(map[string]any{"v": list[1]}, "v"), number(map[string]any{"v": list[2]}, "v")})
-			}
+		if position, found := air_position(message); found {
+			positions = append(positions, position)
 		}
 	}
 	if len(positions) < 2 {
@@ -219,7 +230,10 @@ func TestAir(t *testing.T) {
 }
 
 // TestPair joins two players and expects each to appear in the other's
-// snapshots — the headless stand-in for the two-browser test.
+// poses — the headless stand-in for the two-browser test, and the guard
+// this suite keeps against snapshot datagrams outgrowing the QUIC MTU
+// (SendDatagram drops oversized frames silently). Poses ride their own
+// datagram as 34-byte records with the slot in byte 0, self first.
 func TestPair(t *testing.T) {
 	s, err := sessions_create("air", "joust", "pair test", 4, nil)
 	if err != nil {
@@ -229,13 +243,16 @@ func TestPair(t *testing.T) {
 	defer a.session.CloseWithError(0, "done")
 	defer b.session.CloseWithError(0, "done")
 	a.send(t, map[string]any{"kind": "join", "session": s.identifier, "name": "alpha", "protocol": protocol})
-	if text(a.receive(t), "kind") != "welcome" {
+	first := a.receive(t)
+	if text(first, "kind") != "welcome" {
 		t.Fatal("alpha not welcomed")
 	}
 	b.send(t, map[string]any{"kind": "join", "session": s.identifier, "name": "bravo", "protocol": protocol})
-	if text(b.receive(t), "kind") != "welcome" {
+	second := b.receive(t)
+	if text(second, "kind") != "welcome" {
 		t.Fatal("bravo not welcomed")
 	}
+	mine, theirs := int(number(first, "slot")), int(number(second, "slot"))
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		background, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
@@ -245,19 +262,16 @@ func TestPair(t *testing.T) {
 			continue
 		}
 		message, err := decode(payload)
-		if err != nil || text(message, "kind") != "snapshot" {
+		if err != nil || text(message, "kind") != "poses" {
 			continue
 		}
-		names := map[string]bool{}
-		players, _ := message["players"].([]any)
-		for _, item := range players {
-			entry, _ := item.(map[string]any)
-			if entry != nil {
-				names[text(entry, "name")] = true
-			}
+		blob, _ := message["blob"].([]byte)
+		slots := map[int]bool{}
+		for at := 0; at+34 <= len(blob); at += 34 {
+			slots[int(blob[at])] = true
 		}
-		if names["alpha"] && names["bravo"] {
-			return // both aircraft in one snapshot
+		if slots[mine] && slots[theirs] {
+			return // both aircraft in one poses frame
 		}
 	}
 	t.Fatal("the two players never shared a snapshot")
