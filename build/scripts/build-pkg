@@ -1,0 +1,113 @@
+#!/bin/bash
+# Build a macOS .pkg installer for mochi-world from Linux or macOS
+# Usage: build-pkg <binary> <version> <arch> <output.pkg>
+# Requires on Linux: mkbom/ls4mkbom (bomutils), xar
+# Requires on macOS: xcrun (Xcode command line tools), xar
+
+set -e
+
+BINARY="$1"
+VERSION="$2"
+ARCH="$3"
+OUTPUT="$4"
+SCRIPT_DIR="$(dirname "$0")"
+BUILD_DIR="$(mktemp -d)"
+ROOT_DIR="$BUILD_DIR/root"
+SCRIPTS_DIR="$BUILD_DIR/scripts"
+COMP_DIR="$BUILD_DIR/comp"
+PRODUCT_DIR="$BUILD_DIR/product"
+PKG_ID="org.mochi-os.world"
+
+# Map Go arch to macOS hostArchitectures value. Without this attribute the
+# installer assumes x86_64 and demands Rosetta 2 on Apple Silicon — even
+# though our scripts are shell and the binary is native ARM64.
+case "$ARCH" in
+	amd64) HOST_ARCH="x86_64" ;;
+	arm64) HOST_ARCH="arm64" ;;
+	*) echo "Unsupported arch: $ARCH" >&2; exit 1 ;;
+esac
+
+trap "rm -rf $BUILD_DIR" EXIT
+
+# Create payload directory structure.
+# /etc and /var are symlinks to /private/etc and /private/var on macOS, so payload
+# entries must use the /private/... path or the installer fails extraction with
+# "An error occurred while extracting files from the package".
+mkdir -p "$ROOT_DIR/usr/local/sbin"
+mkdir -p "$ROOT_DIR/private/etc/mochi"
+mkdir -p "$ROOT_DIR/Library/LaunchDaemons"
+mkdir -p "$ROOT_DIR/private/var/lib/mochi-world"
+
+cp "$BINARY" "$ROOT_DIR/usr/local/sbin/mochi-world"
+chmod 755 "$ROOT_DIR/usr/local/sbin/mochi-world"
+# Uninstaller: a .pkg has no uninstall hook, so ship `sudo mochi-world-uninstall`.
+cp "$SCRIPT_DIR/../pkg/mochi-world-uninstall" "$ROOT_DIR/usr/local/sbin/mochi-world-uninstall"
+chmod 755 "$ROOT_DIR/usr/local/sbin/mochi-world-uninstall"
+cp "$SCRIPT_DIR/../pkg/world.conf" "$ROOT_DIR/private/etc/mochi/world.conf"
+cp "$SCRIPT_DIR/../pkg/org.mochi-os.world.plist" "$ROOT_DIR/Library/LaunchDaemons/"
+
+# Copy install scripts
+cp -a "$SCRIPT_DIR/../pkg/scripts" "$SCRIPTS_DIR"
+
+# Build the component package
+mkdir -p "$COMP_DIR"
+
+# Build BOM: use Apple's mkbom natively on Darwin, bomutils on Linux
+if [ "$(uname -s)" = "Darwin" ]; then
+	xcrun mkbom "$ROOT_DIR" "$COMP_DIR/Bom"
+else
+	ls4mkbom -u 0 -g 0 "$ROOT_DIR" > "$BUILD_DIR/bom.list"
+	mkbom -i "$BUILD_DIR/bom.list" "$COMP_DIR/Bom"
+fi
+
+# Build Payload and Scripts as gzipped cpio.
+# Use odc (POSIX) format, not newc — macOS BOMCopier (the cpio reader inside
+# installd) rejects GNU cpio's newc output with "cpio read error: bad file format".
+# odc is the format bomutils' canonical example uses and what BOMCopier extracts
+# reliably across macOS versions.
+(cd "$ROOT_DIR" && find . | cpio -o --format odc 2>/dev/null | gzip -c) > "$COMP_DIR/Payload"
+(cd "$SCRIPTS_DIR" && find . | cpio -o --format odc 2>/dev/null | gzip -c) > "$COMP_DIR/Scripts"
+
+# Calculate payload size in KB
+PAYLOAD_SIZE=$(du -sk "$ROOT_DIR" | cut -f1)
+NUM_FILES=$(find "$ROOT_DIR" -type f | wc -l)
+
+# Create PackageInfo
+cat > "$COMP_DIR/PackageInfo" << EOF
+<?xml version="1.0" encoding="utf-8"?>
+<pkg-info format-version="2" identifier="$PKG_ID" version="$VERSION" install-location="/" auth="root" overwrite-permissions="false">
+    <payload installKBytes="$PAYLOAD_SIZE" numberOfFiles="$NUM_FILES"/>
+    <scripts>
+        <preinstall file="preinstall"/>
+        <postinstall file="postinstall"/>
+    </scripts>
+</pkg-info>
+EOF
+
+# Build product archive (required for macOS GUI Installer)
+mkdir -p "$PRODUCT_DIR/$PKG_ID.pkg"
+cp "$COMP_DIR/Bom" "$COMP_DIR/Payload" "$COMP_DIR/Scripts" "$COMP_DIR/PackageInfo" "$PRODUCT_DIR/$PKG_ID.pkg/"
+
+# Create Distribution file
+cat > "$PRODUCT_DIR/Distribution" << EOF
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+    <title>Mochi World</title>
+    <options customize="never" require-scripts="false" hostArchitectures="$HOST_ARCH"/>
+    <choices-outline>
+        <line choice="default">
+            <line choice="$PKG_ID"/>
+        </line>
+    </choices-outline>
+    <choice id="default"/>
+    <choice id="$PKG_ID" visible="false">
+        <pkg-ref id="$PKG_ID"/>
+    </choice>
+    <pkg-ref id="$PKG_ID" version="$VERSION" onConclusion="none">#$PKG_ID.pkg</pkg-ref>
+</installer-gui-script>
+EOF
+
+# Build the .pkg using xar
+(cd "$PRODUCT_DIR" && xar --compression none -cf "$OUTPUT" .)
+
+echo "Built: $OUTPUT ($(du -h "$OUTPUT" | cut -f1))"

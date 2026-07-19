@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
@@ -36,7 +37,19 @@ func transport_start() {
 	address := fmt.Sprintf("%s:%d", ini_string("transport", "listen", ""), ini_int("transport", "port", 4433))
 	mux := http.NewServeMux()
 	server := &webtransport.Server{
-		H3: &http3.Server{Addr: address, TLSConfig: tlsconf, Handler: mux, EnableDatagrams: true},
+		H3: &http3.Server{Addr: address, TLSConfig: tlsconf, Handler: mux, EnableDatagrams: true,
+			// Without an explicit config, quic-go defaults to a 30 s idle
+			// timeout with keepalives OFF — a client that goes quiet (asset
+			// load, backgrounded tab, GC pause) was silently dropped. The
+			// server pings every 15 s so a quiet-but-alive connection never
+			// idles out; a genuinely dead one still reaps in 60 s. Datagrams
+			// must be re-enabled here: providing a config replaces the one
+			// http3 would otherwise build.
+			QUICConfig: &quic.Config{
+				MaxIdleTimeout:  60 * time.Second,
+				KeepAlivePeriod: 15 * time.Second,
+				EnableDatagrams: true,
+			}},
 		// Open server: players connect from any Mochi server's origin (and
 		// from sandboxed iframes with a null origin) — the library's default
 		// same-origin check would refuse them all.

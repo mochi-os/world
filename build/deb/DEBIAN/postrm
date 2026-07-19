@@ -1,0 +1,17 @@
+#!/bin/bash
+
+case "$1" in
+	remove)
+		systemctl daemon-reload >/dev/null 2>&1 || true
+		;;
+
+	purge)
+		systemctl daemon-reload >/dev/null 2>&1 || true
+
+		# Holds only the regenerable ACME certificate cache; safe to remove.
+		# Never touch /var/lib/mochi or /var/cache/mochi - those belong to
+		# mochi-server. The mochi user and group are kept: they are shared
+		# with mochi-server, which may still be installed.
+		rm -rf /var/lib/mochi-world
+		;;
+esac

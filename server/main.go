@@ -27,10 +27,22 @@ import (
 var (
 	build_version = "dev"
 	started       = time.Now()
-	shutdown      = make(chan struct{}) // closed once at exit; session loops watch it
+	shutdown      = make(chan struct{})    // closed once at exit; session loops watch it
+	stopping      = make(chan struct{}, 1) // pushed by the Windows SCM handler to request shutdown
 )
 
 func main() {
+	windows_service_redirect_logs()
+	if windows_service_run() {
+		return
+	}
+	os.Exit(main_serve(nil))
+}
+
+// main_serve runs the server until an OS signal or a service stop request
+// arrives. ready, when non-nil, is called once serving begins (the Windows
+// SCM watches it); the return value is the process exit code.
+func main_serve(ready func()) int {
 	path := flag.String("f", "/etc/mochi/world.conf", "configuration file")
 	flag.Parse()
 	ini_load(*path)
@@ -44,11 +56,18 @@ func main() {
 	certificate_start()
 	go lobby_start()
 	go transport_start()
+	if ready != nil {
+		ready()
+	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
-	<-signals
+	select {
+	case <-signals:
+	case <-stopping:
+	}
 	info("shutting down")
 	close(shutdown)
 	time.Sleep(500 * time.Millisecond) // one beat for session loops to notify players
+	return 0
 }

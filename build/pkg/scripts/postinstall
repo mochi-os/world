@@ -1,0 +1,9 @@
+#!/bin/bash
+
+chown -R _mochi:_mochi /var/lib/mochi-world
+
+# Load the launchd service
+launchctl bootout system/org.mochi-os.world 2>/dev/null
+launchctl bootstrap system /Library/LaunchDaemons/org.mochi-os.world.plist
+
+exit 0

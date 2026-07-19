@@ -1,0 +1,6 @@
+Package: mochi-world
+Version: _VERSION_
+Architecture: amd64
+Maintainer: Mochi developers <developers@mochi-os.org>
+Description: Realtime game server for the Mochi ecosystem
+ This package contains the world server.

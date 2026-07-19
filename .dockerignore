@@ -1,0 +1,24 @@
+.git
+.gitignore
+*.md
+build/deb
+build/rpm
+build/msi
+build/pkg
+build/scripts
+docs
+install
+
+# The image is built from pre-staged binaries (build/docker/bin/), not from
+# source — the Dockerfile only COPYs build/docker/. Keep the Go source, module
+# files, and other packaging trees out of the build context so the context
+# upload stays small.
+server
+game
+games
+wasm
+tools
+go.mod
+go.sum
+Makefile
+Dockerfile

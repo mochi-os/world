@@ -27,8 +27,11 @@ func lobby_start() {
 	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	info("lobby listening on %s", address)
 	var err error
-	if certificate_file != "" {
-		err = server.ListenAndServeTLS(certificate_file, key_file)
+	if certificate_file != "" || acme_manager != nil {
+		// TLS resolves per handshake through certificate_get, so file
+		// renewals and ACME rotations apply without a restart.
+		server.TLSConfig, _ = certificate_tls()
+		err = server.ListenAndServeTLS("", "")
 	} else {
 		err = server.ListenAndServe()
 	}

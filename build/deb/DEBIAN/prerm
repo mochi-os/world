@@ -1,0 +1,12 @@
+#!/bin/bash
+
+case "$1" in
+	remove|deconfigure)
+		systemctl stop mochi-world >/dev/null 2>&1 || true
+		systemctl disable mochi-world >/dev/null 2>&1 || true
+		;;
+
+	upgrade)
+		systemctl stop mochi-world >/dev/null 2>&1 || true
+		;;
+esac

@@ -4,12 +4,20 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// QUIC mandates TLS even on localhost. With [tls] certificate/key set, the
-// operator's certificate serves both the lobby and the transport, and clients
-// validate normally. Without it, an ephemeral self-signed ECDSA P-256
-// certificate is generated: 12 days validity (the WebTransport
-// serverCertificateHashes rules cap acceptable certificates at 14), rotated
-// at day 10, its SHA-256 advertised through the lobby so clients can pin it.
+// QUIC mandates TLS even on localhost. Three modes, in order of precedence:
+//
+//  1. [tls] certificate/key — operator-provided files serve both the lobby and
+//     the transport, and clients validate normally. The pair is reloaded
+//     whenever the certificate file's modification time changes, so an
+//     external renewal (an ACME client rotating the file in place) applies
+//     without a restart.
+//  2. [acme] hosts — built-in Let's Encrypt: certificates are obtained and
+//     renewed automatically for the listed hostnames, cached under
+//     [acme] cache. Validation uses HTTP-01, so port 80 must be reachable.
+//  3. Neither — an ephemeral self-signed ECDSA P-256 certificate is
+//     generated: 12 days validity (the WebTransport serverCertificateHashes
+//     rules cap acceptable certificates at 14), rotated at day 10, its
+//     SHA-256 advertised through the lobby so clients can pin it.
 
 package main
 
@@ -24,14 +32,25 @@ import (
 	"encoding/base64"
 	"math/big"
 	"net"
+	"net/http"
 	"net/url"
+	"os"
+	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/acme/autocert"
 )
 
 var (
 	certificate_file string // [tls] certificate — set when operator-provided
 	key_file         string // [tls] key
+
+	acme_manager *autocert.Manager // non-nil in [acme] mode
+
+	operator      *tls.Certificate // file mode: the loaded pair
+	operator_time time.Time        // certificate file's mtime at load
+	operator_lock sync.RWMutex
 
 	ephemeral         *tls.Certificate
 	ephemeral_hash    string
@@ -43,35 +62,88 @@ func certificate_start() {
 	certificate_file = ini_string("tls", "certificate", "")
 	key_file = ini_string("tls", "key", "")
 	if certificate_file != "" {
+		return // loaded (and reloaded on change) per handshake in certificate_get
+	}
+	if hosts := ini_string("acme", "hosts", ""); hosts != "" {
+		names := strings.Split(hosts, ",")
+		for i := range names {
+			names[i] = strings.TrimSpace(names[i])
+		}
+		acme_manager = &autocert.Manager{
+			Prompt:     autocert.AcceptTOS,
+			HostPolicy: autocert.HostWhitelist(names...),
+			Cache:      autocert.DirCache(ini_string("acme", "cache", "/var/lib/mochi-world")),
+		}
+		// The HTTP-01 responder: ACME validates on port 80 only. A taken port
+		// is a warning, not fatal — cached certificates keep serving, though
+		// renewals will fail until it frees up.
+		go func() {
+			responder := &http.Server{Addr: ":80", Handler: acme_manager.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second}
+			warn("acme responder: %v", responder.ListenAndServe())
+		}()
+		info("certificate: acme, hosts %s", strings.Join(names, " "))
 		return
 	}
 	certificate_generate()
 	go certificate_manager()
 }
 
-// certificate_tls returns the TLS configuration for the QUIC listener.
+// certificate_tls returns the TLS configuration for the QUIC and lobby
+// listeners. Every mode resolves the certificate per handshake through
+// certificate_get, so renewals and rotations never need a restart.
 func certificate_tls() (*tls.Config, error) {
+	return &tls.Config{GetCertificate: certificate_get}, nil
+}
+
+// certificate_get resolves the certificate for one handshake.
+func certificate_get(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
 	if certificate_file != "" {
-		pair, err := tls.LoadX509KeyPair(certificate_file, key_file)
-		if err != nil {
-			return nil, err
-		}
-		return &tls.Config{Certificates: []tls.Certificate{pair}}, nil
+		return certificate_operator()
 	}
-	return &tls.Config{
-		GetCertificate: func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
-			ephemeral_lock.RLock()
-			defer ephemeral_lock.RUnlock()
-			return ephemeral, nil
-		},
-	}, nil
+	if acme_manager != nil {
+		return acme_manager.GetCertificate(hello)
+	}
+	ephemeral_lock.RLock()
+	defer ephemeral_lock.RUnlock()
+	return ephemeral, nil
+}
+
+// certificate_operator returns the [tls] pair, reloading it when the
+// certificate file changes on disk — a stat per handshake is cheap, and an
+// in-place renewal (mochi-server's ACME cache, certbot, ...) then applies
+// without a restart. A pair that fails to parse keeps the previous one.
+func certificate_operator() (*tls.Certificate, error) {
+	var when time.Time
+	if status, err := os.Stat(certificate_file); err == nil {
+		when = status.ModTime()
+	}
+	operator_lock.RLock()
+	current, loaded := operator, operator_time
+	operator_lock.RUnlock()
+	if current != nil && when.Equal(loaded) {
+		return current, nil
+	}
+	pair, err := tls.LoadX509KeyPair(certificate_file, key_file)
+	if err != nil {
+		if current != nil {
+			warn("certificate: reload %s: %v", certificate_file, err)
+			return current, nil
+		}
+		return nil, err
+	}
+	operator_lock.Lock()
+	operator = &pair
+	operator_time = when
+	operator_lock.Unlock()
+	info("certificate: loaded %s", certificate_file)
+	return &pair, nil
 }
 
 // certificate_hash returns the base64 SHA-256 of the active ephemeral
-// certificate for WebTransport pinning, or "" when an operator certificate
-// is in use (normal chain validation applies).
+// certificate for WebTransport pinning, or "" when an operator or ACME
+// certificate is in use (normal chain validation applies).
 func certificate_hash() (string, int64) {
-	if certificate_file != "" {
+	if certificate_file != "" || acme_manager != nil {
 		return "", 0
 	}
 	ephemeral_lock.RLock()

@@ -1,0 +1,8 @@
+#!/bin/bash
+
+chown -R mochi:mochi /var/lib/mochi-world
+systemctl daemon-reload
+# Unlike mochi-server, enable as well as start: a game server must come back
+# by itself after a reboot.
+systemctl enable mochi-world >/dev/null 2>&1 || true
+systemctl start mochi-world

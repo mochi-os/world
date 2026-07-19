@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product Id="*"
+             Name="Mochi World"
+             Language="1033"
+             Version="$(var.Version)"
+             Manufacturer="Mochisoft OÜ"
+             UpgradeCode="A1570E51-2939-496F-9CF1-A673B88FDF60">
+
+        <Package InstallerVersion="200"
+                 Compressed="yes"
+                 InstallScope="perMachine"
+                 Description="Mochi World $(var.Version)"
+                 Comments="Realtime game server for the Mochi ecosystem" />
+
+        <MajorUpgrade DowngradeErrorMessage="A newer version of Mochi World is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <UIRef Id="WixUI_Minimal" />
+
+        <Feature Id="ProductFeature" Title="Mochi World" Level="1">
+            <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="ConfigFile" />
+            <ComponentRef Id="WorldFolderComp" />
+            <ComponentRef Id="MochiDataFolderComp" />
+        </Feature>
+
+        <!-- Directory names deliberately match mochi-server's MSI (Program
+             Files\Mochi\bin, ProgramData\Mochi) so both products share the
+             same on-disk layout; the component GUIDs are all world's own, so
+             the two installers coexist and uninstall independently. -->
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="INSTALLFOLDER" Name="Mochi">
+                    <Directory Id="BinFolder" Name="bin" />
+                </Directory>
+            </Directory>
+
+            <!-- ProgramData: config and the ACME certificate cache, writable
+                 by the LocalSystem account the service runs under. -->
+            <Directory Id="CommonAppDataFolder">
+                <Directory Id="MochiDataFolder" Name="Mochi">
+                    <Directory Id="WorldFolder" Name="world" />
+                </Directory>
+            </Directory>
+        </Directory>
+
+        <DirectoryRef Id="BinFolder">
+            <Component Id="MainExecutable" Guid="F69F2CF9-76F9-4453-95E9-C6FE32DF6330" Win64="yes">
+                <File Id="MochiWorldExe"
+                      Name="mochi-world.exe"
+                      Source="$(var.SourceDir)/mochi-world.exe"
+                      KeyPath="yes" />
+                <!-- Register mochi-world.exe as a Windows service running as
+                     LocalSystem. The Go-side handler in service_windows.go
+                     detects svc.IsWindowsService() and routes to the SCM
+                     control loop. The config lives in ProgramData, so pass it
+                     explicitly (the Unix default path has no meaning here). -->
+                <ServiceInstall Id="WorldServiceInstall"
+                                Name="mochi-world"
+                                DisplayName="Mochi World"
+                                Description="Realtime game server for the Mochi ecosystem"
+                                Type="ownProcess"
+                                Start="auto"
+                                ErrorControl="normal"
+                                Account="LocalSystem"
+                                Arguments="-f &quot;[MochiDataFolder]world.conf&quot;"
+                                Vital="yes" />
+                <ServiceControl Id="WorldServiceControl"
+                                Name="mochi-world"
+                                Start="install"
+                                Stop="both"
+                                Remove="uninstall"
+                                Wait="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="WorldFolder">
+            <Component Id="WorldFolderComp" Guid="C504E23D-BA25-4E59-9D1B-85AE9A3F2235" Win64="yes">
+                <CreateFolder />
+                <RegistryValue Root="HKLM" Key="Software\Mochi" Name="WorldFolder" Type="string" Value="[WorldFolder]" KeyPath="yes" />
+            </Component>
+        </DirectoryRef>
+
+        <DirectoryRef Id="MochiDataFolder">
+            <Component Id="MochiDataFolderComp" Guid="EF76EE88-0717-4488-A038-5D72C610EA46" Win64="yes">
+                <CreateFolder />
+                <RegistryValue Root="HKLM" Key="Software\Mochi" Name="WorldInstalled" Type="integer" Value="1" KeyPath="yes" />
+            </Component>
+            <Component Id="ConfigFile" Guid="2DDF1BED-8537-4498-B3F2-E308D0709BE0" Win64="yes">
+                <File Id="WorldConf"
+                      Name="world.conf"
+                      Source="$(var.SourceDir)/world.conf"
+                      KeyPath="yes" />
+            </Component>
+        </DirectoryRef>
+
+    </Product>
+</Wix>

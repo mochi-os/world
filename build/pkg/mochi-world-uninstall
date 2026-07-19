@@ -1,0 +1,58 @@
+#!/bin/bash
+# Mochi world server uninstaller for macOS.
+# Copyright © 2026 Mochisoft OÜ
+#
+# A .pkg has no uninstall hook, so this script is installed alongside the
+# server and removes everything the installer placed. Unlike mochi-server's
+# uninstaller, the state directory goes too: /var/lib/mochi-world holds only
+# the regenerable ACME certificate cache. The _mochi account is kept - it is
+# shared with mochi-server, which may still be installed.
+
+set -e
+
+if [ "$(id -u)" -ne 0 ]; then
+	echo "mochi-world-uninstall must be run as root: sudo mochi-world-uninstall" >&2
+	exit 1
+fi
+
+label="org.mochi-os.world"
+plist="/Library/LaunchDaemons/${label}.plist"
+
+echo "Stopping the Mochi world server ..."
+launchctl bootout "system/${label}" 2>/dev/null || true
+
+# While the daemon is unsigned, launchd may refuse to load it and the server
+# is instead run directly from a shell; bootout doesn't touch those
+# processes, so stop any server still running from the installed binary. A
+# shell-run server may be suspended (state T, e.g. after Ctrl-Z); a stopped
+# process never acts on SIGTERM, so resume it first.
+pkill -CONT -f /usr/local/sbin/mochi-world 2>/dev/null || true
+pkill -f /usr/local/sbin/mochi-world 2>/dev/null || true
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+	pgrep -f /usr/local/sbin/mochi-world >/dev/null 2>&1 || break
+	sleep 1
+done
+
+# Anything still alive ignored the graceful stop (or was wedged); force it.
+# SIGKILL can't be caught or blocked and reaches even a stopped process.
+pkill -KILL -f /usr/local/sbin/mochi-world 2>/dev/null || true
+
+echo "Removing installed files ..."
+rm -f "$plist"
+rm -f /usr/local/sbin/mochi-world
+
+# Regenerable ACME certificate cache; safe to remove.
+rm -rf /var/lib/mochi-world
+
+# Configuration; regenerated on reinstall. Leave /etc/mochi itself if
+# mochi-server still uses it.
+rm -f /etc/mochi/world.conf
+rmdir /etc/mochi 2>/dev/null || true
+
+# Drop the installer receipt so a later reinstall is clean.
+pkgutil --forget "$label" >/dev/null 2>&1 || true
+
+echo "Mochi world server uninstalled."
+
+# Remove this script last.
+rm -f /usr/local/sbin/mochi-world-uninstall
