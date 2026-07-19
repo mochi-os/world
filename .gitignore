@@ -1,0 +1,2 @@
+# Docker-staged binaries - build products of `make docker-stage`
+build/docker/bin/
