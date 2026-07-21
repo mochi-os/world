@@ -127,6 +127,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		theta := math.Asin(clamp(forward.Y, -1, 1))
+		up := m.State.Attitude.Rotate(Vec3{Y: 1})
+		upright := clamp(up.Y, -1, 1) // gravity's share of the sensed load: the steady-manoeuvre pitch rate is (g/V)·(n − upright) in ANY attitude (upright ≈ 1 wings level, ≈ 1/n in a level turn, −1 inverted)
 		level := math.Cos(gamma)
 		level -= clamp((a-0.15)*5, 0, 0.8) // alpha backstop: the nose falls rather than mushing when too slow
 		// Stick-free = ATTITUDE HOLD: the one coherent neutral-stick concept.
@@ -195,7 +197,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// it had before the input. The command is scaled by the same blend
 		// so a sustained pull still reaches the commanded g exactly.
 		vco := 122.0
-		star := (demand + vco/math.Max(speed, 60)*(demand-level)) - (m.State.Fcs.Normal + vco/gravity*q)
+		// The command-side blend must mirror the steady rate the feedback will
+		// carry: (g/V)·(demand − upright). Anchored to `level` (the q = 0
+		// straight-flight case) it under-compensated every steady TURN, and
+		// the C* fixed point sat (Vco/V)/(1+Vco/V)·level ≈ 0.3-0.45 g below
+		// the ceiling — a full-stick pull parked at 7.2 g, measured, with the
+		// g-trim integral dead because star (its only drive) was already zero.
+		star := (demand + vco/math.Max(speed, 60)*(demand-upright)) - (m.State.Fcs.Normal + vco/gravity*q)
 		rateBound := math.Min(1.0, 150/math.Max(speed, 60)) // ~0.58 rad/s at 260 m/s, opening up low and slow
 		// The g error commands the rate that closes it at a fixed loop
 		// bandwidth: a rad/s of pitch rate yields V/g g's, so the gain must
@@ -211,17 +219,32 @@ func (m *Model) fcs(in Inputs, local Air) {
 			fast = 0.7
 		}
 		f.Integral = clamp(f.Integral+flying*delta*gain*(0.3+fast)*Dt, -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce). ERROR-ADAPTIVE rate (#131): the gentle 0.3 keeps fine tracking calm, but against a large persistent error it triples — at a flat 0.3 the boundary trim needed ~15 s to close the last g and sustained pulls parked at 6.5
-		// Stick feedforward: the real CAS has a direct forward path, so a
-		// slam bites the surface immediately while the g loop trims behind
-		// it — without it the response is bandwidth-limited and reads mushy.
-		rateDemand := clamp(flying*(star*gain+stick*0.25*rateBound+f.Integral)+(1-flying)*hold, -rateBound, rateBound) // the trim integral belongs INSIDE the flying mode: frozen outside the blend it biased the stick-free rate demand, parking the nose Integral/1.2 rad above the held reference (the push-release rebound)
+		// Kinematic feedforward: sustaining n at this speed already needs
+		// q = (g/V)·(n − upright) before any closure. Without it the star
+		// gain path budgeted ~0.25 rad/s while a 7.5 g turn at 240 m/s owes
+		// 0.31 sustained, so the g-trim integral spent five seconds winding
+		// up to afford the rate the turn itself owed — the post-bite 0.1 g/s
+		// crawl that made every full-stick pull arrive after the energy was
+		// gone. The feedforward reads the DEMAND, never the sensed n (fed
+		// from the sensed load an overshoot sustains itself — the boundary
+		// became a ±0.5 g relaxation oscillator, measured), and it REPLACES
+		// the old stick·rateBound surface-bite term: stacked on top of the
+		// full kinematic rate that term parked pulls above the commanded g.
+		steady := (m.State.Fcs.Normal - upright) * gravity / math.Max(speed, 60)
+		excess := q - steady
+		wanted := (demand - upright) * gravity / math.Max(speed, 60)
+		rateDemand := clamp(flying*(wanted+star*gain+f.Integral)+(1-flying)*hold, -rateBound, rateBound) // the trim integral belongs INSIDE the flying mode: frozen outside the blend it biased the stick-free rate demand, parking the nose Integral/1.2 rad above the held reference (the push-release rebound)
 		// Rate anticipation on the EXCESS pitch rate only: q above the steady
 		// turn rate n·g/V is what is still building g. Penalising total q made
 		// the limiter park a full g below the ceiling in a sustained pull.
-		excess := q - m.State.Fcs.Normal*gravity/math.Max(speed, 60)
-		capG := (ceiling-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000)
+		// The carefree caps are rate headroom ABOVE the steady-manoeuvre rate.
+		// Referenced to zero they forced q below the steady turn rate as n
+		// approached the ceiling — solve (ceiling−n)·0.9 = (g/V)(n−upright)
+		// and the pull parks at 7.0-7.2 g — the second half of the
+		// never-pegs-7.5 defect.
+		capG := steady + (ceiling-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000)
 		capA := (m.Airframe.Limit.Alpha - a) * 2.2
-		capFloor := (m.Airframe.Limit.Negative-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000) // mirrored anticipation: without it the negative boundary chatters
+		capFloor := steady + (m.Airframe.Limit.Negative-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000) // mirrored anticipation: without it the negative boundary chatters
 		capB := (-m.Airframe.Limit.Floor - a) * 2.2                                              // negative-alpha protection: at low q̄ the -3g floor is unreachable and an unbounded push winds the wing into deep negative stall (mushy, ballistic pushover)
 		shaped := clamp(rateDemand, math.Max(capFloor, capB), math.Min(capG, capA))
 		// Boundary-recovery demands are proportional to the violation, so a
@@ -242,7 +265,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 		authority := clamp(20000/math.Max(pressure, 1), 0.25, 1)
 		saturated := math.Abs(f.Stabilator.Left) > 0.95*c.Throw.Down*clamp(c.Blowdown/math.Max(pressure, 1), 0, 1)
 		if !saturated {
-			f.Trim = clamp(f.Trim+inner*0.25*authority*Dt, -0.35, 0.35)
+			// The trim integrator is the surface's slow walker along the
+			// alpha-trim curve (~0.7°/α° of stabilator), and at 0.25 it was
+			// the last-g bottleneck: the pull's tail closed at the trim's
+			// ~0.7°/s, not the actuator's 40°/s. Stick-flown it triples;
+			// hands-off keeps the calm rate. (The P path must NOT get the
+			// same treatment — 3× P drove the actuator's rate limit into a
+			// ±0.5 g limit cycle, measured.)
+			f.Trim = clamp(f.Trim+inner*(0.25+0.50*flying)*authority*Dt, -0.35, 0.35)
 		}
 		command := -(inner*0.30*authority + f.Trim)
 		// Overstress accounting for the damage model: exposure beyond the
