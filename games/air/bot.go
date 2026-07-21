@@ -273,6 +273,8 @@ type brain struct {
 	told     int     // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
 	tallied  int     // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
 	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
+	ahead    float64 // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
+	reversed uint64  // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -1000,13 +1002,19 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// into him NOW (the scissors entry), don't keep the old break.
 		flank := math.Copysign(1, me.Velocity.Normalize().Cross(at).Y)
 		if b.skill.library >= 3 {
-			if b.side != 0 && flank != b.side && span < 700 && tick-b.rolling > 240 && tick > b.hold+240 { // (tangle never accumulates while defensive — the defense case returns before that counter)
+			if b.side != 0 && flank != b.side && span < 700 && tick-b.rolling > 240 && tick-b.reversed > 300 { // (tangle never accumulates while defensive — the defense case returns before that counter)
 				// Reverse once per genuine overshoot — a scissors flips sides
 				// every weave, and reversing each flip churns the energy away.
+				// The cooldown is against the LAST REVERSAL, not the live hold:
+				// coupled to b.hold, a spiral committed moments before the
+				// overshoot blocked the reversal until 4 s past the spiral's
+				// end — but the attacker crossing the flight path is exactly
+				// the event that invalidates the spiral's premise.
 				b.mode = "reverse"
 				b.aim = level(at)
 				b.brake = clamp((speed-0.9*pace)/80, 0, 1)
 				b.hold = tick + 90
+				b.reversed = tick
 				b.side = flank
 				return
 			}
@@ -1603,12 +1611,19 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	plane *= clamp(1-math.Abs(s.Omega.X)/3.5, 0.3, 1) // ease the pull under carried roll rate — that coupling departs the jet
 	body := s.Attitude.Unrotate(aim)
 	ahead := math.Acos(clamp(body.X, -1, 1))
-	if ahead < 0.03 {
-		// Settled: soften, but NEVER fade to zero — the old damper parked the
-		// nose in a 3-6° standoff orbit around the aim, permanently outside
-		// the gun gate, and the ace never fired a round.
-		plane *= math.Max(ahead/0.03, 0.35)
-		roll *= math.Max(ahead/0.03, 0.35)
+	closure := (b.ahead - ahead) * 60 // rad/s toward the aim, from last tick
+	b.ahead = ahead
+	// Settled: soften PREDICTIVELY — on where the nose will be in ~0.25 s,
+	// not where it is. The old proportional cone (soften inside 1.7°) was
+	// tuned when the sluggish C* law was itself the rate filter; against the
+	// fixed law the same shaping oscillated the nose ±3° through the pipper
+	// and the ace's gunnery collapsed (193 -> 57 hits across the gate's
+	// seeds). Never fade to zero — a dead damper parked the nose in a 3-6°
+	// standoff orbit around the aim, permanently outside the gun gate.
+	if future := ahead - closure*0.25; future < 0.05 {
+		soften := math.Max(future/0.05, 0.35)
+		plane *= soften
+		roll *= soften
 	}
 	level := clamp(math.Hypot(s.Velocity.X, s.Velocity.Z)/speed, 0, 1) // cos γ, the 1 g trim the law interpolates from
 	ceiling := m.Airframe.Limit.Positive
