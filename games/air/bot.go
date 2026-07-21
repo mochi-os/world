@@ -160,7 +160,10 @@ type tactics struct {
 // a reason is a bot-metagame artifact, not doctrine (#143).
 func standard() tactics {
 	var t tactics
-	t.drag.pace, t.drag.span = 0.68, 900
+	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
+	// hands him the saddle, so the break stays mandatory. Measured at 200 seeds
+	// the tighter threshold improves the section's survival edge over solo.
+	t.drag.pace, t.drag.span = 0.68, 720
 	t.bag.reach, t.bag.bend = 10000, 0.8
 	t.spiral.nose, t.spiral.span, t.spiral.floor, t.spiral.saddle, t.spiral.hold = 0.90, 1400, 2300, 2, 150
 	t.jink.span, t.jink.base, t.jink.spread = 900, 40, 35
@@ -174,6 +177,10 @@ func standard() tactics {
 	t.support.span, t.support.share, t.support.engaged = 6000, 0.75, 2200
 	t.support.behind, t.support.above, t.support.near, t.support.out, t.support.rise, t.support.limit = 1100, 500, 1300, 600, 300, 4
 	t.form.abeam, t.form.blend, t.form.burner = 1500, 1200, 3000
+	// press.closure stays 45: raising it to 54 scored well on the battery
+	// (~10 s and ~4 rounds off a gun kill) but FAILED TestBotSection - pressing
+	// harder individually erased the pair's survival edge over two solos, and
+	// paired with drag.span=720 it still scored below drag.span alone (#145).
 	t.press.span, t.press.hold, t.press.loose, t.press.closure, t.press.gap = 1500, 300, 1.0, 45, 250
 	t.crowd.weight = 1
 	t.rejoin.span, t.rejoin.fight = 4000, 10000
