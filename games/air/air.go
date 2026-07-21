@@ -75,7 +75,12 @@ func (f *Air) Rate() (int, int) { return 60, 20 }
 func (f *Air) Create(session game.Session) (game.Instance, error) {
 	wrap := 250000.0
 	if v, found := session.Parameters["wrap"]; found {
-		if n, valid := v.(float64); valid && n >= 0 {
+		// 0 disables wrapping; anything else must exceed the play area by a
+		// wide margin. A tiny wrap once sent flight.Shortest into ~1e12
+		// normalization iterations on the first Step and hung the session
+		// goroutine forever (Shortest is loop-free now, but a sub-arena wrap
+		// is still geometric nonsense).
+		if n, valid := v.(float64); valid && (n == 0 || n >= 10000) {
 			wrap = n
 		}
 	}
@@ -201,6 +206,8 @@ type craft struct {
 	alive      bool
 	ammunition int     // gun rounds left this life
 	charge     float64 // fractional rounds accumulated at the fire rate
+	missiles   int     // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
+	release    float64 // sim seconds since this craft's last missile left the rail (large when none)
 	ejected    bool    // eject edge consumed this life
 	wait       float64 // seconds until respawn (air mode)
 	flared     float64 // sim seconds since the last flare drop (large when none)
@@ -299,6 +306,8 @@ func (a *craft) arm() {
 	}
 	a.ammunition = rounds
 	a.charge = 0
+	a.missiles = 2 // the AIM-9 pair, the same loadout the bots fly
+	a.release = 1e9
 	a.ejected = false
 }
 
@@ -328,9 +337,9 @@ type wreck struct {
 }
 
 type instance struct {
-	mode        string // furball (open, endless) or joust (1v1, first kill ends it)
-	started     bool   // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
-	merged      bool   // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
+	mode        string  // furball (open, endless) or joust (1v1, first kill ends it)
+	started     bool    // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
+	merged      bool    // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
 	missiles    bool    // rule: missiles allowed
 	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
@@ -341,15 +350,15 @@ type instance struct {
 		ammunition   bool // guns and missiles never deplete — humans and bots alike
 		fuel         bool // the tank never depletes — humans and bots alike
 	}
-	aircraft    map[int]*craft
-	flying      []*missile
-	wrecks      []*wreck
-	launched    uint64
-	events      []map[string]any
-	finished    bool
-	results     map[string]any
-	score       map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
-	warned      map[int]uint64 // last BREAK call per menaced human slot (#139): one warning per victim per few seconds, whoever calls it
+	aircraft map[int]*craft
+	flying   []*missile
+	wrecks   []*wreck
+	launched uint64
+	events   []map[string]any
+	finished bool
+	results  map[string]any
+	score    map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
+	warned   map[int]uint64 // last BREAK call per menaced human slot (#139): one warning per victim per few seconds, whoever calls it
 }
 
 // slots iterates the aircraft in slot order: map order is random per
@@ -578,19 +587,31 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		if a == nil || len(list) == 0 {
 			continue
 		}
+		previous := a.latest // edges span the batch boundary: a held button is one press, not one per sample
 		for _, sample := range list {
 			in := input(sample.Data)
-			if in.Flare && a.alive {
+			// Flare and missile are EDGES with server-side cooldowns, never
+			// levels: as levels, every input sample fired (up to 64/tick), so
+			// a hostile client had unlimited missiles and an amplified
+			// reliable-broadcast flare storm. Bots bypass this path entirely
+			// (their own discipline in bot.go), so their behaviour is untouched.
+			if in.Flare && !previous.Flare && a.alive && a.flared > 0.5 {
 				a.flared = 0
 				i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
 			}
-			if in.Missile && a.alive && i.missiles && i.free() {
-				i.launch(slot, a)
+			if in.Missile && !previous.Missile && a.alive && i.missiles && i.free() && a.missiles > 0 && a.release > 1.0 {
+				if i.launch(slot, a) {
+					if !i.cheat.ammunition {
+						a.missiles--
+					}
+					a.release = 0
+				}
 			}
 			if in.Eject && a.alive && !a.ejected {
 				a.ejected = true
 				i.eject(slot, a)
 			}
+			previous = in
 		}
 		a.latest = input(list[len(list)-1].Data)
 	}
@@ -609,6 +630,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
 		a.flared += dt
+		a.release += dt
 		if !a.alive {
 			if i.mode == "joust" {
 				continue // no respawns — the match is over
@@ -821,11 +843,14 @@ func (i *instance) acquire(slot int, a *craft) int {
 // launch fires a missile at the best target in the seeker cone. The seeker
 // is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
 // than a cold nose head-on.
-func (i *instance) launch(slot int, a *craft) {
+func (i *instance) launch(slot int, a *craft) bool {
+	if len(i.flying) >= 256 {
+		return false // belt and braces above the per-life magazines: no session needs more missiles airborne than a full teams match volleying everything at once
+	}
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best := i.acquire(slot, a)
 	if best < 0 {
-		return
+		return false
 	}
 	i.launched++
 	separation := a.model.State.Velocity.Add(forward.Scale(30)) // off the rail at aircraft speed; the motor does the rest
@@ -841,6 +866,7 @@ func (i *instance) launch(slot int, a *craft) {
 		number:   i.launched,
 	})
 	i.events = append(i.events, map[string]any{"kind": "missile", "slot": slot, "target": best})
+	return true
 }
 
 // pursue advances every missile: pure pursuit toward the target, graded

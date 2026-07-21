@@ -111,18 +111,18 @@ type Strut struct {
 // actuator rates. The law itself (loop shaping, limiter structure) is shared
 // across aircraft; everything a different airframe would change lives here.
 type Control struct {
-	Onspeed  float64                                                     // PA on-speed alpha, rad
-	Blowdown float64                                                     // deflection·dynamic-pressure ceiling, Pa
-	Gearing  struct{ Pitch, Roll, Yaw float64 }                          // Direct-mode stick to surface, rad
-	Slat     struct{ Slope, Offset, Limit float64 }                      // leading-edge schedule: Slope·(alpha−Offset) up to Limit
-	Flap     struct{ Slope, Offset, Limit, Pressure float64 }            // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
-	Flyaway  float64                                                     // PA-mode pitch-attitude capture datum, rad (hands-off catapult flyaway)
-	Droop    struct{ Angle, Pressure float64 }                           // PA trailing-edge droop, rad, washed out by q̄/Pressure
-	Toe      float64                                                     // rudder toe-in with weight on wheels, rad (both trailing edges inboard; canted fins turn it into tail downforce for takeoff rotation)
-	Throw    struct {                                                    // surface limits, rad
-		Down, Up float64                  // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
+	Onspeed  float64                                          // PA on-speed alpha, rad
+	Blowdown float64                                          // deflection·dynamic-pressure ceiling, Pa
+	Gearing  struct{ Pitch, Roll, Yaw float64 }               // Direct-mode stick to surface, rad
+	Slat     struct{ Slope, Offset, Limit float64 }           // leading-edge schedule: Slope·(alpha−Offset) up to Limit
+	Flap     struct{ Slope, Offset, Limit, Pressure float64 } // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
+	Flyaway  float64                                          // PA-mode pitch-attitude capture datum, rad (hands-off catapult flyaway)
+	Droop    struct{ Angle, Pressure float64 }                // PA trailing-edge droop, rad, washed out by q̄/Pressure
+	Toe      float64                                          // rudder toe-in with weight on wheels, rad (both trailing edges inboard; canted fins turn it into tail downforce for takeoff rotation)
+	Throw    struct {                                         // surface limits, rad
+		Down, Up float64                    // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
 		Flaperon struct{ Down, Up float64 } // flaperon/aileron travel (positive = trailing edge down)
 		Rudder   float64
 	}
-	Rate     struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
+	Rate struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
 }

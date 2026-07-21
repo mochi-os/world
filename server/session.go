@@ -41,8 +41,8 @@ type order struct {
 	link   link
 	inputs []game.Input
 	slot   int
-	text   string // chat only
-	scope  string // chat only: "team" or "all"
+	text   string      // chat only
+	scope  string      // chat only: "team" or "all"
 	reply  chan answer // join only
 }
 
@@ -95,10 +95,12 @@ var (
 )
 
 // identifier returns a fresh random session identifier.
-func identifier() string {
+func identifier() (string, error) {
 	bytes := make([]byte, 12)
-	rand.Read(bytes)
-	return hex.EncodeToString(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		return "", err // a zero identifier collides with every other zero identifier
+	}
+	return hex.EncodeToString(bytes), nil
 }
 
 // sessions_create makes a session for the named game, starts its tick loop,
@@ -154,7 +156,15 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	if capacity <= 0 || capacity > most {
 		capacity = most
 	}
-	spec := game.Session{Identifier: identifier(), Game: name, Mode: mode, Label: label, Capacity: capacity, Seed: seed(), Parameters: parameters}
+	token, err := identifier()
+	if err != nil {
+		return nil, err
+	}
+	random, err := seed()
+	if err != nil {
+		return nil, err
+	}
+	spec := game.Session{Identifier: token, Game: name, Mode: mode, Label: label, Capacity: capacity, Seed: random, Parameters: parameters}
 	instance, err := g.Create(spec)
 	if err != nil {
 		return nil, err
@@ -178,14 +188,16 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	return s, nil
 }
 
-func seed() uint64 {
+func seed() (uint64, error) {
 	bytes := make([]byte, 8)
-	rand.Read(bytes)
+	if _, err := rand.Read(bytes); err != nil {
+		return 0, err // a zero seed makes every match predictable
+	}
 	var v uint64
 	for _, b := range bytes {
 		v = v<<8 | uint64(b)
 	}
-	return v
+	return v, nil
 }
 
 func sessions_get(identifier string) *session {

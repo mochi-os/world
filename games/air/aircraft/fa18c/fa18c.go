@@ -36,7 +36,7 @@ func build() *flight.Airframe {
 	// (x roll, y yaw, z pitch); x-y off-diagonal is the roll-yaw product.
 	a.Inertia = flight.Mat3{{22960, 2960, 0}, {2960, 169900, 0}, {0, 0, 151300}}
 	a.Center = flight.Vec3{}
-	a.Tank = flight.Vec3{X: -0.33} // fuel slightly aft, CG walks forward burning. Tunable.
+	a.Tank = flight.Vec3{X: -0.33}           // fuel slightly aft, CG walks forward burning. Tunable.
 	a.Cockpit = flight.Vec3{X: 5.0, Y: 0.55} // seat under the canopy line, forward fuselage
 	a.Limit.Positive = 7.5
 	a.Limit.Negative = -3
@@ -56,13 +56,13 @@ func build() *flight.Airframe {
 	a.Control.Slat.Limit = 25 * math.Pi / 180
 	a.Control.Flap.Slope = 0.5
 	a.Control.Flap.Offset = 0.03
-	a.Control.Flap.Limit = 12 * math.Pi / 180 // AUTO manoeuvring flaps: droop with alpha to ~12°
-	a.Control.Flap.Pressure = 45000 // washout complete ~M0.78 at sea level (#131): the real AUTO schedule keys on Mach, not 350 KCAS — at 25 kPa the wing fought its combat-CL turns camber-less and sustained rates ran 1.5-2 deg/s short
+	a.Control.Flap.Limit = 12 * math.Pi / 180  // AUTO manoeuvring flaps: droop with alpha to ~12°
+	a.Control.Flap.Pressure = 45000            // washout complete ~M0.78 at sea level (#131): the real AUTO schedule keys on Mach, not 350 KCAS — at 25 kPa the wing fought its combat-CL turns camber-less and sustained rates ran 1.5-2 deg/s short
 	a.Control.Droop.Angle = 26 * math.Pi / 180 // PA droop, HELD through the approach band (see the fcs schedule). Calibrated to the on-speed anchor (134 kt at alpha 8.1, envelope_test.go): the camber model lifts more per degree than the real TEF, so the NATOPS 30/45° labels over-lift — this is the angle whose LIFT matches the real approach numbers
-	a.Control.Droop.Pressure = 10000 // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
-	a.Control.Toe = 30 * math.Pi / 180 // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
+	a.Control.Droop.Pressure = 10000           // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
+	a.Control.Toe = 30 * math.Pi / 180         // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
 	a.Control.Throw.Down = 0.42
-	a.Control.Throw.Up = 0.183 // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
+	a.Control.Throw.Up = 0.183                         // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
 	a.Control.Throw.Flaperon.Down = 45 * math.Pi / 180 // aileron/flaperon travel (NATOPS/HARV: 45° trailing-edge down, 25° up; rate 100°/s)
 	a.Control.Throw.Flaperon.Up = 25 * math.Pi / 180
 	a.Control.Throw.Rudder = 30 * math.Pi / 180 // ±30° rudder travel (NATOPS/HARV)

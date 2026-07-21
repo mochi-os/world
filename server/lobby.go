@@ -225,6 +225,7 @@ func clean(words string, limit int) string {
 // lobby_allow rate-limits session creation per client address.
 var (
 	creates      = map[string][]time.Time{}
+	plays        = map[string][]time.Time{} // per-host /play connection limiter (transport.go)
 	creates_lock sync.Mutex
 )
 

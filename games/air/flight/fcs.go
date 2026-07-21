@@ -112,7 +112,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// The real FCS wing-levels on the cat; stick can still command roll.
 		up := m.State.Attitude.Rotate(Vec3{Y: 1})
 		starboard := m.State.Attitude.Rotate(Vec3{Z: 1})
-		bank := math.Atan2(starboard.Y, up.Y) // heading-independent roll: the old atan2(-up.Z, up.Y) is world-frame and reads pitch as PHANTOM BANK on any off-axis heading — on the carrier strip (~30 deg off world X) at the trap runout's -8 deg pitch the leveler chased ~4 deg of fiction at gain 2.5 and ground-looped the rollout (#72 scenario 9)
+		bank := math.Atan2(starboard.Y, up.Y)                                  // heading-independent roll: the old atan2(-up.Z, up.Y) is world-frame and reads pitch as PHANTOM BANK on any off-axis heading — on the carrier strip (~30 deg off world X) at the trap runout's -8 deg pitch the leveler chased ~4 deg of fiction at gain 2.5 and ground-looped the rollout (#72 scenario 9)
 		flapTarget = clamp(lateral+bank*2.5-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
@@ -245,7 +245,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		capG := steady + (ceiling-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000)
 		capA := (m.Airframe.Limit.Alpha - a) * 2.2
 		capFloor := steady + (m.Airframe.Limit.Negative-m.State.Fcs.Normal)*0.9 - excess*(pressure/14000) // mirrored anticipation: without it the negative boundary chatters
-		capB := (-m.Airframe.Limit.Floor - a) * 2.2                                              // negative-alpha protection: at low q̄ the -3g floor is unreachable and an unbounded push winds the wing into deep negative stall (mushy, ballistic pushover)
+		capB := (-m.Airframe.Limit.Floor - a) * 2.2                                                       // negative-alpha protection: at low q̄ the -3g floor is unreachable and an unbounded push winds the wing into deep negative stall (mushy, ballistic pushover)
 		shaped := clamp(rateDemand, math.Max(capFloor, capB), math.Min(capG, capA))
 		// Boundary-recovery demands are proportional to the violation, so a
 		// large external upset (transonic pitch-up, gust) can ask for tens of

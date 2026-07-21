@@ -17,8 +17,8 @@ type Echo struct{}
 
 func New() *Echo { return &Echo{} }
 
-func (e *Echo) Name() string          { return "echo" }
-func (e *Echo) Rate() (int, int)      { return 20, 10 }
+func (e *Echo) Name() string     { return "echo" }
+func (e *Echo) Rate() (int, int) { return 20, 10 }
 func (e *Echo) Create(session game.Session) (game.Instance, error) {
 	return &instance{last: map[int]map[string]any{}}, nil
 }

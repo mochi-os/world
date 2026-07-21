@@ -14,6 +14,10 @@
 // matching every existing boundary of the game).
 package flight
 
+import (
+	"math"
+)
+
 // Version identifies the model's behaviour and state layout. It travels in
 // the multiplayer join payload; hosts on different versions disable
 // prediction rather than mispredict. Bump on ANY behavioural change.
@@ -52,11 +56,12 @@ func Shortest(a float64, b float64, size float64) float64 {
 		return d
 	}
 	half := size / 2
-	for d > half {
-		d -= size
-	}
-	for d < -half {
-		d += size
+	// Loop-free: the iterative normalization ran ~|d|/size iterations, and a
+	// hostile tiny wrap turned the first Step into ~1e12 of them — a permanent
+	// session-goroutine hang. Round gives the identical answer in one step
+	// (for |d| ≤ 1.5·size it is the same single add or subtract).
+	if d > half || d < -half {
+		d -= size * math.Round(d/size)
 	}
 	return d
 }

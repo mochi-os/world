@@ -20,8 +20,8 @@ import (
 	"syscall"
 	"time"
 
-	"world/games/echo"
 	"world/games/air"
+	"world/games/echo"
 )
 
 var (

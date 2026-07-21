@@ -175,7 +175,7 @@ func TestUnhook(t *testing.T) {
 func TestTrap(t *testing.T) {
 	m := aboard()
 	m.State.Position = Vec3{X: -300, Y: 25.5, Z: 0} // low enough to touch down BEFORE the wires and scrape in: the deck-height wire catch no longer snags mid-air crossings (the old 4 m band did, and this pass leaned on it)
-	m.State.Velocity = Vec3{X: 59, Y: -3.4} // 65 -> 59 with deck ground effect (#132): the cushion floated the faster pass into a bounce clean over all the wires; 59 catches the middle wire across the whole 0.30-0.42 throttle range
+	m.State.Velocity = Vec3{X: 59, Y: -3.4}         // 65 -> 59 with deck ground effect (#132): the cushion floated the faster pass into a bounce clean over all the wires; 59 catches the middle wire across the whole 0.30-0.42 throttle range
 	m.State.Attitude = Axis(Vec3{Z: 1}, 0.10)
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	m.State.Engine[0] = EngineState{Spool: 0.7}

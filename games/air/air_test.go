@@ -15,8 +15,8 @@ import (
 	"github.com/fxamacker/cbor/v2"
 
 	"world/game"
-	"world/games/air/flight"
 	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
@@ -812,8 +812,8 @@ func TestTeamsSandwich(t *testing.T) {
 	for tick := uint64(0); tick < 90; tick++ {
 		aloft(ace, base, flight.Vec3{X: 220})
 		aloft(mate, base.Add(flight.Vec3{X: 3800, Z: 600}), flight.Vec3{X: 220})
-		aloft(blue1, base.Add(flight.Vec3{X: 1800, Z: -400}), flight.Vec3{X: 220})                       // nearer, minding its own business
-		aloft(blue2, base.Add(flight.Vec3{X: 2400, Z: 600, Y: 200}), flight.Vec3{X: 240, Y: -10})        // running in on the mate from its six
+		aloft(blue1, base.Add(flight.Vec3{X: 1800, Z: -400}), flight.Vec3{X: 220})                // nearer, minding its own business
+		aloft(blue2, base.Add(flight.Vec3{X: 2400, Z: 600, Y: 200}), flight.Vec3{X: 240, Y: -10}) // running in on the mate from its six
 		i.Step(tick, nil)
 	}
 	if ace.brain.target != blue2.player.Slot {
@@ -1008,7 +1008,7 @@ func TestBotPadlock(t *testing.T) {
 		ace.brain.reborn()
 		for tick := uint64(0); tick < 90; tick++ {
 			aloft(ace, base, flight.Vec3{X: 220})
-			aloft(drones[0], base.Add(flight.Vec3{X: 1200}), flight.Vec3{X: 220})      // dead ahead: the padlocked target
+			aloft(drones[0], base.Add(flight.Vec3{X: 1200}), flight.Vec3{X: 220})          // dead ahead: the padlocked target
 			aloft(drones[1], base.Add(flight.Vec3{X: -600, Z: 2000}), flight.Vec3{X: 240}) // aft of the beam, outside the canopy blind wedge: visible relaxed, unseen under g
 			ace.model.State.Fcs.Normal = load
 			i.Step(tick, nil)
@@ -1085,7 +1085,7 @@ func TestBotZoom(t *testing.T) {
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	zoomed := false
 	for tick := uint64(0); tick < 120; tick++ {
-		aloft(ace, base, flight.Vec3{X: 300})                                    // fast: the energy edge
+		aloft(ace, base, flight.Vec3{X: 300})                                       // fast: the energy edge
 		aloft(blue1, base.Add(flight.Vec3{X: 2500, Y: -300}), flight.Vec3{X: -160}) // head-on, slow and low
 		i.Step(tick, nil)
 		if ace.brain.mode == "zoom" {
@@ -1109,7 +1109,7 @@ func TestBotRope(t *testing.T) {
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	roped := false
 	for tick := uint64(0); tick < 120; tick++ {
-		aloft(ace, base, flight.Vec3{X: 320})                                            // the bank: fast
+		aloft(ace, base, flight.Vec3{X: 320})                                               // the bank: fast
 		aloft(blue1, base.Add(flight.Vec3{X: -500, Z: 1500}), flight.Vec3{X: 200, Z: -100}) // rear quarter outside the blind wedge, slow, nose loosely on
 		i.Step(tick, nil)
 		if ace.brain.mode == "rope" {
@@ -1325,9 +1325,9 @@ func TestBotWounded(t *testing.T) {
 	for tick := uint64(0); tick < 90; tick++ {
 		aloft(ace, base, flight.Vec3{X: 220})
 		aloft(mate, base.Add(flight.Vec3{Z: -9000}), flight.Vec3{X: 220})         // far out of the sandwich geometry
-		aloft(blue1, base.Add(flight.Vec3{X: 2000}), flight.Vec3{X: 220})          // nearer, healthy
+		aloft(blue1, base.Add(flight.Vec3{X: 2000}), flight.Vec3{X: 220})         // nearer, healthy
 		aloft(blue2, base.Add(flight.Vec3{X: 2600, Z: 400}), flight.Vec3{X: 220}) // farther, burning
-		blue2.condition.Burning = true                                             // Advance runs the fuse: keep the fire lit for the rig
+		blue2.condition.Burning = true                                            // Advance runs the fuse: keep the fire lit for the rig
 		blue2.condition.Fuse = 30
 		i.Step(tick, nil)
 	}
@@ -1352,7 +1352,7 @@ func TestTeamsCalls(t *testing.T) {
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	for tick := uint64(0); tick < 600; tick++ {
 		aloft(human, base, flight.Vec3{X: 220})
-		aloft(ace, base.Add(flight.Vec3{X: -3000, Z: 1500}), flight.Vec3{X: 220})   // trailing the fight: the attacker sits ahead of his nose, not in the blind wedge
+		aloft(ace, base.Add(flight.Vec3{X: -3000, Z: 1500}), flight.Vec3{X: 220})  // trailing the fight: the attacker sits ahead of his nose, not in the blind wedge
 		aloft(drone, base.Add(flight.Vec3{X: -1200, Z: 300}), flight.Vec3{X: 240}) // saddled behind the human's right rear quarter, nose on
 		i.Step(tick, nil)
 	}
@@ -1832,9 +1832,14 @@ func TestMissiles(t *testing.T) {
 // model, not a coin fixed for the whole salvo.
 func TestDecoy(t *testing.T) {
 	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	// Stage the salvo DIRECTLY (the bots' launch path): the input path now
+	// enforces the human magazine and launch spacing, and this test's subject
+	// is the decoy model, not input discipline.
 	for n := 0; n < 6; n++ {
 		place(i, 0, 1, 3000)
-		fire(i, 0, map[string]any{"missile": true})
+		if !i.launch(0, i.aircraft[0]) {
+			t.Fatal("launch declined")
+		}
 	}
 	if len(i.flying) != 6 {
 		t.Fatalf("expected 6 missiles, got %d", len(i.flying))
@@ -1907,7 +1912,6 @@ func TestSnapshotSize(t *testing.T) {
 		}
 	}
 }
-
 
 // TestEngagement: a scripted fight — sustained fire degrades systems and the
 // event stream tells the story; the identical script with the identical seed

@@ -236,9 +236,9 @@ func predict(t *track, horizon float64, curved bool) flight.Vec3 {
 type brain struct {
 	skill    skill
 	tactics  tactics // per-brain copy of the doctrine (#143): the battery amends one bot's numbers without touching the roster
-	mode     string // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
-	target   int    // slot, -1 none
-	decided  uint64 // last decision tick
+	mode     string  // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
+	target   int     // slot, -1 none
+	decided  uint64  // last decision tick
 	known    map[int]*track
 	prey     *track  // the target's track at decision time (steer aims/fires against it)
 	distance float64 // to the target at decision time
@@ -254,27 +254,27 @@ type brain struct {
 	jink     uint64     // tick to re-roll the jink direction
 	phase    float64    // current jink roll phase
 	missiles int
-	alert    uint64  // tick an inbound missile was first noticed (react delay runs from here)
+	alert    uint64          // tick an inbound missile was first noticed (react delay runs from here)
 	noticed  map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
 	judged   map[uint64]bool // rounds whose one launch-sighting roll has been taken
-	plan     string  // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
-	planned  uint64  // tick the plan was chosen
-	side     float64 // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
-	rolling  uint64  // rolling-scissors phase start; 0 = not rolling
-	sense    float64 // committed roll direction while the aim is beyond ±140° (atan2 flips sides chaotically there)
-	hold     uint64  // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
-	stuck    int     // consecutive decisions of neutral non-progress (stalemate detector)
-	tangle   int     // consecutive decisions locked in close combat (scissors detector)
-	saddle   int     // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
-	press    uint64  // tick+1 the offensive advantage was first held in range (#144), 0 = none: patience becomes the finish once it has lasted (a tick clock, not a decision count — maneuver holds throttle decisions)
-	solo     bool    // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
-	mate     int     // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
-	spoke    uint64  // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
-	told     int     // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
-	tallied  int     // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
-	rolled   float64 // last roll input: the command is slew-limited so the executor cannot flap the stick
-	ahead    float64 // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
-	reversed uint64  // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
+	plan     string          // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
+	planned  uint64          // tick the plan was chosen
+	side     float64         // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
+	rolling  uint64          // rolling-scissors phase start; 0 = not rolling
+	sense    float64         // committed roll direction while the aim is beyond ±140° (atan2 flips sides chaotically there)
+	hold     uint64          // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
+	stuck    int             // consecutive decisions of neutral non-progress (stalemate detector)
+	tangle   int             // consecutive decisions locked in close combat (scissors detector)
+	saddle   int             // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
+	press    uint64          // tick+1 the offensive advantage was first held in range (#144), 0 = none: patience becomes the finish once it has lasted (a tick clock, not a decision count — maneuver holds throttle decisions)
+	solo     bool            // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
+	mate     int             // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
+	spoke    uint64          // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
+	told     int             // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
+	tallied  int             // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
+	rolled   float64         // last roll input: the command is slew-limited so the executor cannot flap the stick
+	ahead    float64         // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
+	reversed uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -393,9 +393,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			// be stale): decline while the seeker would acquire a teammate,
 			// and the request comes back by itself once the geometry clears.
 			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
-				before := len(i.flying)
-				i.launch(slot, a)
-				if len(i.flying) > before && !i.cheat.ammunition {
+				if i.launch(slot, a) && !i.cheat.ammunition {
 					b.missiles--
 				}
 			}
@@ -1382,7 +1380,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.aim, _ = i.bearing(me.Position, lead)
 		if direction.Dot(nose) > 0.94 && tail > 0.2 {
 			b.mode = "saddle"
-			b.g = math.Min(b.g, 4) // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
+			b.g = math.Min(b.g, 4)                        // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
 			b.throttle = clamp(0.7-closure*0.006, 0.2, 1) // match his speed, sit in the zone
 			b.reheat = 0
 			if closure > 90 && b.skill.library >= 3 {

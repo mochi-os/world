@@ -57,6 +57,13 @@ func transport_start() {
 	}
 	webtransport.ConfigureHTTP3Server(server.H3) // advertises WebTransport in the HTTP/3 SETTINGS
 	mux.HandleFunc("/play", func(w http.ResponseWriter, r *http.Request) {
+		// The data plane gets the same per-host sliding-minute limiter the
+		// lobby endpoints have — session and player caps bound the steady
+		// state, but connection CHURN from one address was unthrottled.
+		if !lobby_permit(plays, r, 30) {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		session, err := server.Upgrade(w, r)
 		if err != nil {
 			debug("transport: upgrade: %v", err)

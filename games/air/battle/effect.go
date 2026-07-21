@@ -18,22 +18,22 @@ import (
 
 // Strike damage per 20 mm HEI-class hit; missile fragments apply severity 2.
 const (
-	structure = 0.5   // element loss per hit: two rounds kill an element
-	litter    = 0.03  // drag area per structure hit, m²
-	turbine   = 0.35  // engine thrust loss per hit
-	seep      = 0.5   // tank leak per hit, kg/s
-	weep      = 0.25  // wet-wing leak per hit, kg/s
-	clutter   = 0.02  // drag area per fuselage hit, m²
-	flaperon  = 0.25  // chance a flapped-element hit jams its flaperon
-	actuator  = 0.30  // chance a stabilator-root hit freezes that stabilator
-	linkage   = 0.25  // chance a fin-root hit restricts the rudder
-	kindle    = 0.30  // chance a hit on an already-damaged engine starts a fire
-	torch     = 0.08  // chance a tank hit lights the fuel
-	detonate  = 0.03  // chance a tank hit simply blows the jet up (#144): HEI in vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty
-	flash     = 0.05  // chance a wet-wing hit lights the fuel
-	mortal    = 0.40  // chance a cockpit hit kills the pilot
-	plumbing  = 0.12  // chance a fuselage hit cuts a hydraulic run
-	wheel     = 0.45  // gear-leg damage per hit: one hit blows the tyre, two fold the leg (#78)
+	structure = 0.5  // element loss per hit: two rounds kill an element
+	litter    = 0.03 // drag area per structure hit, m²
+	turbine   = 0.35 // engine thrust loss per hit
+	seep      = 0.5  // tank leak per hit, kg/s
+	weep      = 0.25 // wet-wing leak per hit, kg/s
+	clutter   = 0.02 // drag area per fuselage hit, m²
+	flaperon  = 0.25 // chance a flapped-element hit jams its flaperon
+	actuator  = 0.30 // chance a stabilator-root hit freezes that stabilator
+	linkage   = 0.25 // chance a fin-root hit restricts the rudder
+	kindle    = 0.30 // chance a hit on an already-damaged engine starts a fire
+	torch     = 0.08 // chance a tank hit lights the fuel
+	detonate  = 0.03 // chance a tank hit simply blows the jet up (#144): HEI in vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty
+	flash     = 0.05 // chance a wet-wing hit lights the fuel
+	mortal    = 0.40 // chance a cockpit hit kills the pilot
+	plumbing  = 0.12 // chance a fuselage hit cuts a hydraulic run
+	wheel     = 0.45 // gear-leg damage per hit: one hit blows the tyre, two fold the leg (#78)
 )
 
 // strike applies one hit to a part. The three hash words identify the hit

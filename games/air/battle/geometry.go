@@ -31,8 +31,8 @@ const (
 // Part is one capsule of hit geometry in the target's body frame.
 type Part struct {
 	Kind    int
-	Index   int     // flat element index (Structure), engine index (Turbine), station index (Fuselage)
-	Surface int     // owning surface (Structure), else -1
+	Index   int // flat element index (Structure), engine index (Turbine), station index (Fuselage)
+	Surface int // owning surface (Structure), else -1
 	A, B    flight.Vec3
 	Radius  float64
 	Root    bool // innermost element of its surface: actuator territory
@@ -74,22 +74,22 @@ func Parts(a *flight.Airframe) []Part {
 			reach = b.Plan / (2 * math.Sqrt(b.Area/math.Pi)) / 2
 		}
 		parts = append(parts, Part{
-			Kind:   Fuselage,
-			Index:  bi,
+			Kind:    Fuselage,
+			Index:   bi,
 			Surface: -1,
-			A:      b.Position.Subtract(flight.Vec3{X: reach}),
-			B:      b.Position.Add(flight.Vec3{X: reach}),
-			Radius: math.Max(math.Sqrt(b.Area/math.Pi), 0.4),
+			A:       b.Position.Subtract(flight.Vec3{X: reach}),
+			B:       b.Position.Add(flight.Vec3{X: reach}),
+			Radius:  math.Max(math.Sqrt(b.Area/math.Pi), 0.4),
 		})
 	}
 	for gi := range a.Engines {
 		parts = append(parts, Part{
-			Kind:   Turbine,
-			Index:  gi,
+			Kind:    Turbine,
+			Index:   gi,
 			Surface: -1,
-			A:      a.Engines[gi].Position.Subtract(flight.Vec3{X: 1.2}),
-			B:      a.Engines[gi].Position.Add(flight.Vec3{X: 1.2}),
-			Radius: 0.45,
+			A:       a.Engines[gi].Position.Subtract(flight.Vec3{X: 1.2}),
+			B:       a.Engines[gi].Position.Add(flight.Vec3{X: 1.2}),
+			Radius:  0.45,
 		})
 	}
 	parts = append(parts, Part{Kind: Cockpit, Index: 0, Surface: -1, A: a.Cockpit, B: a.Cockpit, Radius: 0.7})

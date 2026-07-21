@@ -33,10 +33,6 @@ func (v Vec3) Normalize() Vec3 {
 	return v.Scale(1 / l)
 }
 
-func (v Vec3) Lerp(o Vec3, t float64) Vec3 {
-	return Vec3{v.X + (o.X-v.X)*t, v.Y + (o.Y-v.Y)*t, v.Z + (o.Z-v.Z)*t}
-}
-
 // Quat is a body->world unit quaternion.
 type Quat struct {
 	W, X, Y, Z float64

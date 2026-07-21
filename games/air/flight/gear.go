@@ -141,7 +141,7 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	}
 	if in.Brake && !nose {
 		grip += braking * (1 - harm) // the wounded leg brakes weakly — asymmetric under a blown tyre
-		knee = regular / 10 // held brakes approximate stiction: idle thrust must not creep the parked jet
+		knee = regular / 10          // held brakes approximate stiction: idle thrust must not creep the parked jet
 	}
 	force = force.Add(roll.Scale(-grip * normal * along / math.Max(math.Abs(along), knee)))
 	corner := cornering * (1 - 0.6*harm)

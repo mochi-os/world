@@ -8,7 +8,8 @@
 // exercises the real receive+send I/O the pure-CPU BenchmarkStep100 can't.
 //
 // Run (world1 must be up):
-//   go run ./tools/loadtest -clients 100 -duration 20s
+//
+//	go run ./tools/loadtest -clients 100 -duration 20s
 package main
 
 import (

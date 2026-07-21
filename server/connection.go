@@ -35,17 +35,14 @@ func connection_serve(l link) {
 		connection_refuse(l, "unknown")
 		return
 	}
-	name := text(message, "name")
+	// The same sanitizer the lobby chat runs: control characters stripped and
+	// the cap counted in RUNES — the old byte slice could split a multi-byte
+	// sequence, and newlines rode straight into every broadcast event.
+	name := clean(text(message, "name"), 32)
 	if name == "" {
 		name = "pilot"
 	}
-	if len(name) > 32 {
-		name = name[:32]
-	}
-	team := text(message, "team")
-	if len(team) > 16 {
-		team = team[:16]
-	}
+	team := clean(text(message, "team"), 16)
 	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team}
 	reply := make(chan answer, 1)
 	select {
