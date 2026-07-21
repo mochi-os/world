@@ -24,7 +24,21 @@ func lobby_start() {
 	mux.HandleFunc("/sessions", lobby_sessions)
 	mux.HandleFunc("/chat", lobby_chat)
 	address := fmt.Sprintf("%s:%d", ini_string("lobby", "listen", ""), ini_int("lobby", "port", 4433))
-	server := &http.Server{Addr: address, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// Whole-request deadlines, not just the header deadline: ReadHeaderTimeout
+	// alone left the BODY read unbounded, so a slow-trickle POST (headers in
+	// time, then one body byte every few seconds) parked a socket, goroutine
+	// and decoder indefinitely — the body-size caps on the handlers bound
+	// bytes, never duration, and the per-host limiter only counts COMPLETED
+	// requests, so stalled ones never register. ReadTimeout is the one that
+	// closes it; a legitimate client sends its tiny JSON in milliseconds.
+	server := &http.Server{
+		Addr:              address,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
 	info("lobby listening on %s", address)
 	var err error
 	if certificate_file != "" || acme_manager != nil {
