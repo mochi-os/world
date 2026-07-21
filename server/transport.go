@@ -18,6 +18,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -27,11 +28,10 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-func transport_start() {
+func transport_start(fatal chan<- error) error {
 	tlsconf, err := certificate_tls()
 	if err != nil {
-		warn("transport: tls: %v", err)
-		return
+		return fmt.Errorf("transport tls: %w", err)
 	}
 	tlsconf = http3.ConfigureTLSConfig(tlsconf) // adds the h3 ALPN (the webtransport server listens with the raw config)
 	address := fmt.Sprintf("%s:%d", ini_string("transport", "listen", ""), ini_int("transport", "port", 4433))
@@ -56,6 +56,18 @@ func transport_start() {
 		CheckOrigin: func(*http.Request) bool { return true },
 	}
 	webtransport.ConfigureHTTP3Server(server.H3) // advertises WebTransport in the HTTP/3 SETTINGS
+	// Bind the UDP socket SYNCHRONOUSLY (#175): ListenAndServe hid the bind
+	// behind a goroutine that only warn()ed, so a taken port left the process
+	// alive but deaf. Serve() then blocks in the background, reporting its
+	// terminal error to fatal.
+	udp, err := net.ResolveUDPAddr("udp", address)
+	if err != nil {
+		return fmt.Errorf("transport address %s: %w", address, err)
+	}
+	connection, err := net.ListenUDP("udp", udp)
+	if err != nil {
+		return fmt.Errorf("transport listen %s: %w", address, err)
+	}
 	mux.HandleFunc("/play", func(w http.ResponseWriter, r *http.Request) {
 		// The data plane gets the same per-host sliding-minute limiter the
 		// lobby endpoints have — session and player caps bound the steady
@@ -72,7 +84,8 @@ func transport_start() {
 		go transport_serve(session)
 	})
 	info("transport listening on %s (udp)", address)
-	warn("transport: %v", server.ListenAndServe())
+	go func() { fatal <- fmt.Errorf("transport: %w", server.Serve(connection)) }()
+	return nil
 }
 
 // transport_serve accepts the client's control stream then hands the

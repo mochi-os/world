@@ -567,17 +567,31 @@ func clamp(v float64, low float64, high float64) float64 {
 }
 
 func number(data map[string]any, key string) float64 {
-	switch v := data[key].(type) {
+	var v float64
+	switch n := data[key].(type) {
 	case float64:
-		return v
+		v = n
 	case float32:
-		return float64(v)
+		v = float64(n)
 	case uint64:
-		return float64(v)
+		v = float64(n)
 	case int64:
-		return float64(v)
+		v = float64(n)
+	default:
+		return 0
 	}
-	return 0
+	// Reject non-finite wire numbers centrally (#174): a hostile client can
+	// CBOR-encode NaN or ±Inf, and clamp() (math.Min/Max) passes NaN straight
+	// through into the AUTHORITATIVE flight state — attitude, velocity,
+	// snapshots, sort comparisons — corrupting the whole session from one
+	// datagram. Inf survives a clamped field but not the ungated ones
+	// (sequence, the fuel/bots session parameters), so bar both. Zero is the
+	// safe neutral for every consumer: a clamped control centres, a >0-gated
+	// parameter falls through to its default.
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }
 
 func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {

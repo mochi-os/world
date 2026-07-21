@@ -53,21 +53,40 @@ func main_serve(ready func()) int {
 	games_register(air.New())
 
 	sessions_standing()
-	certificate_start()
-	go lobby_start()
-	go transport_start()
+	if err := certificate_start(); err != nil {
+		warn("startup: %v", err)
+		return 1
+	}
+	// Both listeners bind synchronously and report a terminal serve error to
+	// fatal. A bind failure (taken port, bad address, unreadable cert) is a
+	// non-zero exit so systemd restarts, rather than a live-but-deaf process
+	// (#175). The channel is buffered so a serve goroutine dying during
+	// shutdown never blocks on a main that has already stopped reading.
+	fatal := make(chan error, 2)
+	if err := lobby_start(fatal); err != nil {
+		warn("startup: %v", err)
+		return 1
+	}
+	if err := transport_start(fatal); err != nil {
+		warn("startup: %v", err)
+		return 1
+	}
 	if ready != nil {
 		ready()
 	}
 
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	code := 0
 	select {
 	case <-signals:
 	case <-stopping:
+	case err := <-fatal:
+		warn("listener exited: %v", err) // a required listener died under us
+		code = 1
 	}
 	info("shutting down")
 	close(shutdown)
 	time.Sleep(500 * time.Millisecond) // one beat for session loops to notify players
-	return 0
+	return code
 }

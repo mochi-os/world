@@ -12,6 +12,7 @@
 package main
 
 import (
+	"math"
 	"reflect"
 
 	"github.com/fxamacker/cbor/v2"
@@ -46,17 +47,25 @@ func text(message map[string]any, key string) string {
 // number reads a numeric field from a decoded message (CBOR integers decode
 // as uint64 or int64, JSON-sourced values as float64).
 func number(message map[string]any, key string) float64 {
-	switch v := message[key].(type) {
+	var v float64
+	switch n := message[key].(type) {
 	case uint64:
-		return float64(v)
+		v = float64(n)
 	case int64:
-		return float64(v)
+		v = float64(n)
 	case float64:
-		return v
+		v = n
 	case float32:
-		return float64(v)
+		v = float64(n)
 	case int:
-		return float64(v)
+		v = float64(n)
+	default:
+		return 0
 	}
-	return 0
+	// Reject non-finite wire numbers (#174): a client can CBOR-encode NaN/±Inf,
+	// and NaN propagates through clamp() into the authoritative simulation.
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0
+	}
+	return v
 }

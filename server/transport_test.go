@@ -34,8 +34,13 @@ func TestMain(m *testing.M) {
 	os.Setenv("MOCHI_LIMITS_IDLE", "1")
 	games_register(echo.New())
 	games_register(air.New())
-	certificate_start()
-	go transport_start()
+	if err := certificate_start(); err != nil {
+		panic(err)
+	}
+	fatal := make(chan error, 1)
+	if err := transport_start(fatal); err != nil {
+		panic(err)
+	}
 	time.Sleep(200 * time.Millisecond)
 	os.Exit(m.Run())
 }

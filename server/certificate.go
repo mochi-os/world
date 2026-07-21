@@ -30,6 +30,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -58,11 +59,18 @@ var (
 	ephemeral_lock    sync.RWMutex
 )
 
-func certificate_start() {
+func certificate_start() error {
 	certificate_file = ini_string("tls", "certificate", "")
 	key_file = ini_string("tls", "key", "")
 	if certificate_file != "" {
-		return // loaded (and reloaded on change) per handshake in certificate_get
+		// Validate the operator pair NOW, not on the first handshake (#179):
+		// a missing or unreadable key was selected into TLS mode purely on the
+		// certificate path being set, so the process came up and then failed
+		// every handshake. This eager load also warms the reload cache.
+		if _, err := certificate_operator(); err != nil {
+			return fmt.Errorf("operator certificate: %w", err)
+		}
+		return nil // reloaded on change per handshake in certificate_get
 	}
 	if hosts := ini_string("acme", "hosts", ""); hosts != "" {
 		names := strings.Split(hosts, ",")
@@ -82,10 +90,11 @@ func certificate_start() {
 			warn("acme responder: %v", responder.ListenAndServe())
 		}()
 		info("certificate: acme, hosts %s", strings.Join(names, " "))
-		return
+		return nil
 	}
 	certificate_generate()
 	go certificate_manager()
+	return nil
 }
 
 // certificate_tls returns the TLS configuration for the QUIC and lobby

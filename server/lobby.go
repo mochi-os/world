@@ -18,7 +18,7 @@ import (
 
 // lobby_start serves the public lobby API. World servers are open: there is
 // no authentication, only rate and capacity limits.
-func lobby_start() {
+func lobby_start(fatal chan<- error) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", lobby_status)
 	mux.HandleFunc("/sessions", lobby_sessions)
@@ -39,17 +39,26 @@ func lobby_start() {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	// Bind SYNCHRONOUSLY so a taken port or bad address is a fatal startup
+	// error, not a healthy-looking process that never serves (#175): the
+	// listener was detached in a goroutine that only warn()ed, so systemd
+	// saw a live process and never restarted it. Serve() then blocks in the
+	// background and reports its terminal error to fatal.
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return fmt.Errorf("lobby listen %s: %w", address, err)
+	}
 	info("lobby listening on %s", address)
-	var err error
 	if certificate_file != "" || acme_manager != nil {
 		// TLS resolves per handshake through certificate_get, so file
-		// renewals and ACME rotations apply without a restart.
+		// renewals and ACME rotations apply without a restart. The empty
+		// cert/key args defer to TLSConfig.GetCertificate.
 		server.TLSConfig, _ = certificate_tls()
-		err = server.ListenAndServeTLS("", "")
+		go func() { fatal <- fmt.Errorf("lobby: %w", server.ServeTLS(listener, "", "")) }()
 	} else {
-		err = server.ListenAndServe()
+		go func() { fatal <- fmt.Errorf("lobby: %w", server.Serve(listener)) }()
 	}
-	warn("lobby: %v", err)
+	return nil
 }
 
 // lobby_cors marks every lobby response as callable from any origin — the
