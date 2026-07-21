@@ -46,12 +46,12 @@ func build() *flight.Airframe {
 
 	// Same F/A-18 CAS family as the F: identical schedules and throws.
 	a.Control.Onspeed = 8.1 * math.Pi / 180
-	a.Control.Flyaway = 12 * math.Pi / 180
+	a.Control.Flyaway = 16 * math.Pi / 180 // the catapult longitudinal trim board (#154): 16° nose up to 44,000 lb, 17° to 48,000, 19° above — the game's 34,400 lb launch sits in the 16° row. At 12° the hands-off flyaway spent the surplus on speed instead of climb (12.2° pitch, 539 kt / 712 m at t+25 s; at 16°: 16.1°, 506 kt / 933 m — TestFlyawayProfile). The 12° era was tuned against the post-launch pitch-down reports, since fixed properly in the law (the reference-chase and gear-transit holds in fcs.go)
 	a.Control.Blowdown = 35000
 	a.Control.Gearing.Pitch = 0.42
 	a.Control.Gearing.Roll = 0.35
 	a.Control.Gearing.Yaw = 0.52
-	a.Control.Slat.Slope = 0.9
+	a.Control.Slat.Slope = 1.4 // the real LEF schedule is steep — full deflection by ~23° alpha, not the 31° the old 0.9 gave. The late slats left the mid-band on the post-stall polar: with the wing Vortex below, trimmed CL across 16-22° (TestLift) moves from ~1.24-1.31 to ~1.31-1.38 against the ~1.33 DCS-class reference
 	a.Control.Slat.Offset = 0.05
 	a.Control.Slat.Limit = 25 * math.Pi / 180
 	a.Control.Flap.Slope = 0.5
@@ -94,8 +94,8 @@ func build() *flight.Airframe {
 	for _, side := range []float64{-1, 1} {
 		// Main wing: the C panel is ~80% of the F's area on 84% of the span.
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
-			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.19, // K to the documented classic F-18 polar (#131): at 0.22 the sustained-turn map ran 0.5-0.7 g short of the EM chart across 250-400 kt
-			Vortex: 0.6, Breakdown: 22 * math.Pi / 180, Channel: flight.Differential,
+			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.14, // recalibrated 2026-07-21 with the fixed control law: the #131 value (0.19) was fitted while the C* law parked sustained pulls ~1 g short, so it priced the law's deficit into the drag. At 0.14 the SL sustained map is real-jet-shaped: a flat 17.5/18.0/16.9 deg/s plateau across 350-450 KCAS at 29k lb with the bucket at 400 and the limiter reached only by ~450, and 15k ft holds the 12-14 deg/s band. Residual: the 350 station sits ~0.4 g under the scaled EM anchor (the high-cl drag stack — vortex suction, post-stall blending — not this parabola) so the bucket reads ~40 kt fast
+			Vortex: 1.2, Breakdown: 26 * math.Pi / 180, Channel: flight.Differential, // the wing's share of the LEX vortex system riding over the inboard panel. At 0.6/22° it was worth ~0.05 CL at combat alpha and broke down right where the fights live; with the steeper slat schedule this lifts the trimmed mid-band CL (TestLift, 16-22°) from ~1.24-1.31 to ~1.31-1.38 — the DCS-class reference sits near 1.33 — bringing corner to ~345 KCAS at 29k lb. ~sin², so negligible at approach alpha
 		}, 8, span{1.0, 5.7, side}, chord{4.0, 1.1}, sweep{0.55, -1.75}, twist{0.017, -0.052}, &wing, 0.25, 0.52))
 		// LEX: the C's original strake — the E/F enlarged it by a third.
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{

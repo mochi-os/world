@@ -73,7 +73,8 @@ func TestOnspeedHeavy(t *testing.T) {
 }
 
 // TestFlyawayCapture: hands-off off the catapult, the PA law settles near the
-// 12 deg flyaway deck attitude instead of riding approach alpha into a zoom.
+// 16 deg flyaway deck attitude (the weight board's light row, #154) instead
+// of riding approach alpha into a zoom.
 func TestFlyawayCapture(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 25}, Vec3{X: 1}, 75, 3000)
@@ -87,8 +88,8 @@ func TestFlyawayCapture(t *testing.T) {
 			forward := m.State.Attitude.Rotate(Vec3{X: 1})
 			pitch := math.Asin(clamp(forward.Y, -1, 1)) * 180 / math.Pi
 			t.Logf("hands-off flyaway pitch after 12 s: %.1f°", pitch)
-			if pitch < 8 || pitch > 16 {
-				t.Fatalf("flyaway pitch %.1f°, want ~12°", pitch)
+			if pitch < 12 || pitch > 20 {
+				t.Fatalf("flyaway pitch %.1f°, want ~16°", pitch)
 			}
 		}
 	}
@@ -429,4 +430,96 @@ func TestPull(t *testing.T) {
 		t.Fatalf("not pegged: %.2f g at 4 s", m.Nz())
 	}
 	t.Logf("peak %.2f g at %.1f s; %.2f g at 4 s", peak, when, m.Nz())
+}
+
+// loaded builds a synthetic state at one body alpha and speed in the UA
+// manoeuvring configuration (slats and AUTO flaps at their scheduled angles,
+// stabilator as given), evaluates the aero pass alone, and returns wind-axis
+// lift and drag coefficients plus the pitch moment about the CG. The engine
+// state is empty so thrust cannot contaminate the lift axis.
+func loaded(m *Model, angle float64, speed float64, stabilator float64) (float64, float64, float64) {
+	local := air(1000, m.Environment)
+	pressure := 0.5 * local.Density * speed * speed
+	s := &m.State
+	s.Position = Vec3{Y: 1000}
+	s.Velocity = Vec3{X: speed}
+	s.Attitude = Axis(Vec3{Z: 1}, angle)
+	s.Omega = Vec3{}
+	s.Engine = [4]EngineState{}
+	s.Fuel = 2500
+	s.Fcs = FcsState{}
+	c := &m.Airframe.Control
+	s.Fcs.Slat = clamp(c.Slat.Slope*(angle-c.Slat.Offset), 0, c.Slat.Limit)
+	droop := clamp(c.Flap.Slope*(angle-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
+	s.Fcs.Flaperon.Left, s.Fcs.Flaperon.Right = droop, droop
+	s.Fcs.Stabilator.Left, s.Fcs.Stabilator.Right = stabilator, stabilator
+	m.weigh()
+	m.gust = Vec3{}
+	var forces Forces
+	m.aero(s, &forces, local)
+	area := pressure * m.Airframe.Reference.Area
+	lift := (forces.Force.X*math.Sin(angle) + forces.Force.Y*math.Cos(angle)) / area
+	drag := -(forces.Force.X*math.Cos(angle) - forces.Force.Y*math.Sin(angle)) / area
+	return lift, drag, forces.Moment.Z
+}
+
+// TestLift (AIR_LIFT=1): the whole-airframe lift curve in the manoeuvring
+// configuration, free and TRIMMED — the stabilator bisected to zero pitching
+// moment per point, which is the lift that actually buys turn rate. The
+// corner anchor: 7.5 g at ~330-360 KCAS at mid weight needs usable trimmed
+// CL of about 1.4-1.55 by ~20° alpha, smooth.
+func TestLift(t *testing.T) {
+	if os.Getenv("AIR_LIFT") == "" {
+		t.Skip("measurement probe: set AIR_LIFT=1")
+	}
+	speed := 180.0 // ~350 KCAS at the probe altitude
+	m := energy()
+	t.Logf("lift curve at %.0f m/s: free = stab 0, trimmed = stab bisected to zero moment", speed)
+	for degrees := 0.0; degrees <= 34; degrees += 2 {
+		angle := degrees * math.Pi / 180
+		free, _, _ := loaded(m, angle, speed, 0)
+		low, high := -m.Airframe.Control.Throw.Down, m.Airframe.Control.Throw.Up
+		trimmed, drag, deflection := free, 0.0, 0.0
+		for i := 0; i < 40; i++ {
+			mid := (low + high) / 2
+			lift, d, moment := loaded(m, angle, speed, mid)
+			if moment > 0 {
+				low = mid // nose-up excess: more trailing-edge down
+			} else {
+				high = mid
+			}
+			trimmed, drag, deflection = lift, d, mid
+		}
+		t.Logf("alpha %4.1f°: free CL %5.2f  trimmed CL %5.2f (stab %+5.1f°)  CD %5.3f  L/D %4.1f",
+			degrees, free, trimmed, deflection*180/math.Pi, drag, trimmed/math.Max(drag, 1e-6))
+	}
+}
+
+// TestPush: full forward stick at 400 KCAS — the negative side of the
+// carefree limiter, exercised nowhere else. The push must reach the floor's
+// neighbourhood without diving through it or winding into deep negative
+// stall, and the negative-alpha protection must hold.
+func TestPush(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, 400/1.94384*1.015, 2500)
+	least, alpha := 1.0, 0.0
+	for i := 0; i < 240*4; i++ {
+		m.Step(Inputs{Throttle: 0.6, Pitch: -1})
+		if n := m.Nz(); n < least {
+			least = n
+		}
+		if a := m.Alpha(); a < alpha {
+			alpha = a
+		}
+		if m.Nz() < -3.6 {
+			t.Fatalf("dove through the floor: %.2f g at %.2f s", m.Nz(), float64(i)/240)
+		}
+	}
+	t.Logf("least %.2f g, deepest alpha %.1f°", least, alpha*180/math.Pi)
+	if least > -2.0 {
+		t.Fatalf("push never approached the floor: least %.2f g, want near -3", least)
+	}
+	if alpha < -(m.Airframe.Limit.Floor + 6*math.Pi/180) {
+		t.Fatalf("negative-alpha protection failed: %.1f°", alpha*180/math.Pi)
+	}
 }

@@ -182,7 +182,7 @@ func TestTrap(t *testing.T) {
 	m.State.Engine[1] = EngineState{Spool: 0.7}
 	caught := false
 	for i := 0; i < 240*10; i++ {
-		throttle := 0.42 // 0.45 -> 0.42 with the #131 polar calibration: less drag-due-to-lift at approach CL floats the same scripted pass past the wires
+		throttle := 0.42 // 0.45 -> 0.42 with the #131 polar calibration; the 2026-07-21 drag recalibration (K 0.19 -> 0.14 + the cl>1.1 polar break) nets out at the approach CL, so the scripted pass trims where #131 left it
 		if caught {
 			throttle = 0 // throttle to idle in the wire, as the real procedure has it — the gentler low-energy arrest otherwise lets approach power creep the trapped jet
 		}

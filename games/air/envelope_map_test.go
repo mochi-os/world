@@ -57,8 +57,14 @@ func sustained(speed, altitude float64) (float64, float64) {
 
 // TestEnvelopeMap is the EM regression battery (#131): the sustained-turn
 // envelope calibrated against the published F/A-18C chart shape (~34,000 lb,
-// sea level, max afterburner). Bands are deliberately generous — the gate
-// catches envelope DRIFT, not chart-transcription pedantry.
+// sea level, max afterburner). The gate flies the model at its own clean
+// half-fuel weight (~29,000 lb) against those 34,000 lb bands DELIBERATELY
+// (decided 2026-07-21): the model carries no pylons or stores, so its clean
+// combat weight stands in for the real jet's combat-loaded configuration.
+// Consequence: per pound the model is slightly conservative, and the V-speed
+// survey's minimum-fuel rows post limiter-bound rates (~22 deg/s SL light)
+// that are correct under this mapping. Bands are deliberately generous — the
+// gate catches envelope DRIFT, not chart-transcription pedantry.
 func TestEnvelopeMap(t *testing.T) {
 	if testing.Short() {
 		t.Skip("several simulated minutes of trim hunting")

@@ -9,7 +9,7 @@
 // Conventions: standard atmosphere, calm air. Climbs at MIL (dry) power, the
 // charted convention; sustained turns at full afterburner (fighter EM
 // convention); Vmc at full afterburner on the live engine (worst case).
-// Speeds print as KEAS (what a pilot's gauge approximates) and KTAS.
+// Speeds print as KCAS (the HUD box, via the compressible pitot) and KTAS.
 
 package flight
 
@@ -35,11 +35,8 @@ var vspeedAlts = []struct {
 }
 
 func vsKnots(tas float64) float64 { return tas * 1.943844 }
-func vsEAS(tas, alt float64) float64 {
-	return tas * math.Sqrt(air(alt, Environment{}).Density/air(0, Environment{}).Density)
-}
 func vsBoth(tas, alt float64) string {
-	return fmt.Sprintf("%3.0f KEAS/%3.0f KTAS", vsKnots(vsEAS(tas, alt)), vsKnots(tas))
+	return fmt.Sprintf("%3.0f KCAS/%3.0f KTAS", vsKnots(calibrated(tas, alt, Environment{})), vsKnots(tas))
 }
 
 func vsJet(fuel, alt, speed float64, gear bool) *Model {
@@ -597,11 +594,10 @@ func vsSustained(fuel, alt, speed float64) (float64, float64) {
 // pull delivers as much g as it delivers at any speed. This is the fly-by-wire
 // jet's answer to Va: with envelope protection the classical maneuvering
 // speed's structural meaning is moot (abrupt full deflection is safe at any
-// speed — the point of the carefree FCS). Note the FCS shapes the snap pull:
-// the limiter's trim reaches ~6.4 g in 2.5 s and only asymptotes to ~7.3 over
-// ~10 s of pinned demand (the #131 boundary-trim compromise), so corner is
-// measured against the 2.5 s plateau — the g a player actually gets — and the
-// plateau is reported alongside the speed.
+// speed — the point of the carefree FCS). The 2.5 s snap window is kept from
+// the old law's plateau doctrine, but since the kinematic-feedforward fix the
+// law pegs the limiter within it (~7.5 by 2.5 s at speed), so the window now
+// simply reads the honest limiter; the plateau prints alongside the speed.
 func vsCorner(fuel, alt, stall float64) (float64, float64) {
 	snap := func(v float64) float64 {
 		m := vsJet(fuel, alt, v, false)

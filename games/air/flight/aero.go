@@ -210,6 +210,9 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			}
 			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope)
 			cd += surface.Induced * cl * cl // calibrated drag-due-to-lift the emergent tilt under-prices
+			if over := math.Abs(cl) - 1.1; over > 0 {
+				cd += 0.07 * over * over // the polar break: past cl ~1.1 the real polar departs the parabola (separation growth the parabolic K cannot price). Lets the mid-cl K sit at its EM-plateau fit (0.14, fa18c.go) without freeing the high-cl stations past the chart bands (TestEnvelopeMap 250 kt / 15,000 ft)
+			}
 			// Camber lift: the half of the flap deflection that raises CLmax
 			// rather than spending stall margin; rolls off in deep stall.
 			if shift != 0 {

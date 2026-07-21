@@ -110,8 +110,9 @@ func TestRoll(t *testing.T) {
 		p, _, _ := rates(m.State.Omega)
 		best = math.Max(best, p)
 	}
-	if best < 1.5 {
-		t.Fatalf("roll rate anaemic: %f rad/s", best)
+	t.Logf("peak roll rate %.0f°/s", best*180/math.Pi)
+	if best < 2.3 || best > 4.4 {
+		t.Fatalf("roll rate %.0f°/s outside the NATOPS-class 132-252°/s full-stick band", best*180/math.Pi)
 	}
 	for i := 0; i < 240*2; i++ {
 		m.Step(Inputs{})

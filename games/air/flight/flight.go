@@ -19,7 +19,12 @@ package flight
 // prediction rather than mispredict. Bump on ANY behavioural change.
 // Reset to 1 as the clean public baseline before the first deployment
 // (#106) — it distinguishes deployed generations, not dev iterations.
-const Version = 1
+// 2: the 2026-07-21 recalibration generation — kinematic-feedforward C* law
+// (pegs the 7.5 g limiter), steeper slat schedule and wing vortex share,
+// intake rolloff to M1.6, 16° flyaway datum, and the K 0.14 + polar-break
+// drag fit. A version-1 client predicting against a version-2 server
+// diverges everywhere the model changed, which is everywhere it matters.
+const Version = 2
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
 // choose how many steps to run.

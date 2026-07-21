@@ -79,8 +79,15 @@ func (m *Model) Mach() float64 {
 // with the Rayleigh branch behind the normal shock above Mach 1 (#133; it
 // read as plain EAS before, understating up to ~20 kt fast and high).
 func (m *Model) Cas() float64 {
-	local := air(m.State.Position.Y, m.Environment)
-	mach := m.State.Velocity.Length() / local.Sound
+	return calibrated(m.State.Velocity.Length(), m.State.Position.Y, m.Environment)
+}
+
+// calibrated is the same compressible-pitot conversion for an arbitrary
+// point — the V-speed survey prints it so its numbers land in the HUD's
+// units instead of KEAS.
+func calibrated(tas float64, altitude float64, env Environment) float64 {
+	local := air(altitude, env)
+	mach := tas / local.Sound
 	var impact float64
 	if mach <= 1 {
 		impact = local.Pressure * (math.Pow(1+0.2*mach*mach, 3.5) - 1)

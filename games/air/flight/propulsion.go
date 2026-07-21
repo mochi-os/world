@@ -6,7 +6,7 @@
 
 // Two F414-class turbofans: spool lag (asymmetric — engines accelerate
 // slower than they decelerate), reheat staging gated on core speed,
-// altitude lapse with ram recovery and an intake rolloff past M1.3, and
+// altitude lapse with ram recovery and an intake rolloff past M1.6, and
 // fuel flow that feeds the mass/CG update. Thrust-to-weight stays below
 // one at combat weight: no supercruise, energy is a budget.
 
@@ -23,7 +23,7 @@ const (
 	lapse      = 1.0  // density-ratio exponent: thrust falls with density — the transonic dash is hardest up high
 	ram_dry    = 0.35 // Mach² ram-recovery gain, dry
 	ram_wet    = 0.55 // reheat benefits more from ram
-	rolloff    = 1.3  // Mach where intake losses begin
+	rolloff    = 1.6  // Mach where intake losses begin. Calibrated against the brochure top end (TestTopSpeed): at 1.3 the fixed inlets gave up far too early and the jet terminated at M1.50 at 11 km against the documented M1.7-1.8; ablating the rolloff entirely runs to M2.16, so the intake — not wave drag — owns the ceiling. 1.6 lands M1.76; the deck (M1.02) never feels it
 )
 
 // idle is the flight-idle core fraction: a turbofan at idle still makes a
