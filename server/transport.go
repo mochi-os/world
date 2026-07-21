@@ -111,10 +111,28 @@ func transport_serve(session *webtransport.Session) {
 	connection_serve(l)
 }
 
+// wireStream and wireSession are the transport primitives the wire drives,
+// as interfaces (satisfied by *webtransport.Stream / *webtransport.Session) so
+// a test can inject a stream whose Write blocks — the slow-peer case — and
+// prove teardown still completes within a deadline.
+type wireStream interface {
+	io.Reader
+	Write([]byte) (int, error)
+	SetWriteDeadline(time.Time) error
+	CancelWrite(webtransport.StreamErrorCode)
+	Close() error
+}
+
+type wireSession interface {
+	SendDatagram([]byte) error
+	ReceiveDatagram(context.Context) ([]byte, error)
+	CloseWithError(webtransport.SessionErrorCode, string) error
+}
+
 // wire implements link over a WebTransport session.
 type wire struct {
-	session  *webtransport.Session
-	stream   *webtransport.Stream
+	session  wireSession
+	stream   wireStream
 	inbound  chan []byte
 	outbound chan []byte
 	closed   chan struct{}
@@ -122,6 +140,11 @@ type wire struct {
 	sending  sync.Mutex // serialises stream writes
 	reason   string     // set once by close before closed is closed
 }
+
+// send_deadline bounds a single stream write: a peer that stops reading its
+// stream must not block the writer (and thus the whole session teardown) on
+// QUIC flow control forever. A healthy client acks far inside this.
+const send_deadline = 5 * time.Second
 
 const frame_most = 65536 // largest accepted message
 
@@ -175,6 +198,7 @@ func (l *wire) datagrams() {
 func (l *wire) send(payload []byte) error {
 	l.sending.Lock()
 	defer l.sending.Unlock()
+	l.stream.SetWriteDeadline(time.Now().Add(send_deadline)) // a stalled write fails rather than blocking the writer forever
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(payload)))
 	if _, err := l.stream.Write(header); err != nil {
@@ -188,27 +212,50 @@ func (l *wire) send(payload []byte) error {
 // ever finishes the stream, so every queued frame (welcome, refuse, end)
 // reaches the peer before the FIN.
 func (l *wire) writer() {
+	graceful := false
+	defer func() { l.teardown(graceful) }()
 	for {
 		select {
 		case payload := <-l.outbound:
 			if err := l.send(payload); err != nil {
-				l.close("gone")
-				return
+				return // a failed write means the connection is bad: hard teardown
 			}
 		case <-l.closed:
+			if l.reason == "slow" {
+				return // irrecoverable: do NOT drain (send would re-block on the same flow control)
+			}
+			// Graceful reason: best-effort flush of what is already queued,
+			// each send bounded by its write deadline so a peer that stopped
+			// reading cannot strand us here.
 			for {
 				select {
 				case payload := <-l.outbound:
-					l.send(payload)
+					if err := l.send(payload); err != nil {
+						return
+					}
 				default:
-					l.stream.Close()
-					time.Sleep(200 * time.Millisecond) // let QUIC deliver before teardown
-					l.session.CloseWithError(0, l.reason)
+					graceful = true
 					return
 				}
 			}
 		}
 	}
+}
+
+// teardown ends the transport once the writer exits — always, via the writer's
+// defer, so the session never leaks. A graceful exit (queue flushed for a
+// normal reason) FINs the stream and gives QUIC a beat to deliver it; a hard
+// exit (send error, or a slow/aborted connection) cancels the write side
+// immediately. Either way the session is closed.
+func (l *wire) teardown(graceful bool) {
+	l.close("gone") // set a reason if none yet (send-error path); no-op if already closed
+	if graceful {
+		l.stream.Close()
+		time.Sleep(200 * time.Millisecond) // let QUIC deliver the FIN + last bytes
+	} else {
+		l.stream.CancelWrite(0)
+	}
+	l.session.CloseWithError(0, l.reason)
 }
 
 func (l *wire) read() ([]byte, error) {
@@ -240,6 +287,15 @@ func (l *wire) write(bytes []byte, reliable bool) {
 func (l *wire) close(reason string) {
 	l.once.Do(func() {
 		l.reason = reason
-		close(l.closed) // readers stop; the writer drains the queue, FINs the stream, then tears the session down
+		close(l.closed) // readers stop; the writer flushes/aborts, then tears the session down
+		if reason == "slow" {
+			// The connection is irrecoverably slow (its reliable queue
+			// overflowed). Abort the write side NOW so a writer currently
+			// blocked in send() on QUIC flow control unblocks at once instead
+			// of waiting out the write deadline — the whole point is a prompt
+			// teardown, not another drain against a peer that has stopped
+			// reading.
+			l.stream.CancelWrite(0)
+		}
 	})
 }
