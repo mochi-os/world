@@ -231,7 +231,7 @@ docker-local: docker-stage
 docker: docker-stage
 	@t=$$(date +%s); docker buildx build \
 	    --platform linux/amd64,linux/arm64 \
-	    --sbom=false --provenance=false \
+	    --sbom=true --provenance=true \
 	    --tag $(docker_image):$(version) \
 	    --tag $(docker_image):$(major) \
 	    --tag $(docker_image):latest \

@@ -115,9 +115,9 @@ func session_orders(s *session) {
 				if p := s.players[o.slot]; p != nil {
 					p.seen = time.Now()
 					for _, in := range o.inputs {
-						if in.Sequence > p.sequence || len(p.queue) == 0 {
+						if after(in.Sequence, p.sequence) || len(p.queue) == 0 {
 							p.queue = append(p.queue, in)
-							if in.Sequence > p.sequence {
+							if after(in.Sequence, p.sequence) {
 								p.sequence = in.Sequence
 							}
 						}
@@ -188,6 +188,12 @@ func session_chat(s *session, o order) {
 		r.link.write(bytes, true)
 	}
 }
+
+// after reports whether input sequence a is newer than b under uint32
+// wraparound (serial-number arithmetic, RFC 1982): int32(a-b) > 0 stays
+// correct across the 2^32 rollover a multi-year session would eventually
+// reach, where a plain a > b comparison stops advancing acknowledgements.
+func after(a, b uint32) bool { return int32(a-b) > 0 }
 
 // session_remove drops a player: closes any link, tells the game, deletes the
 // slot, and announces the departure. Shared by the leave order and the idle

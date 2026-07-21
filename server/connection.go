@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"time"
 
 	"world/game"
@@ -81,11 +82,11 @@ func connection_join(l link) (map[string]any, error) {
 	message, err := decode(bytes)
 	if err != nil || text(message, "kind") != "join" {
 		connection_refuse(l, "protocol")
-		return nil, err
+		return nil, errors.New("protocol") // a real error (decode succeeds on a non-join): nil let the caller fall through to a second "unknown session" refusal
 	}
 	if v, found := message["protocol"]; found && int(number(map[string]any{"v": v}, "v")) != protocol {
 		connection_refuse(l, "protocol")
-		return nil, err
+		return nil, errors.New("protocol")
 	}
 	return message, nil
 }

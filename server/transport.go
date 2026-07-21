@@ -225,7 +225,12 @@ func (l *wire) write(bytes []byte, reliable bool) {
 		select {
 		case l.outbound <- bytes:
 		case <-l.closed:
-		default: // writer stalled: drop rather than block the tick loop
+		default:
+			// The reliable queue is full — the client cannot keep up. Silently
+			// dropping a reliable message (welcome, roster, chat, end) would
+			// break the delivery guarantee, so tear the slow connection down
+			// instead; the reader's leave path then removes the player cleanly.
+			l.close("slow")
 		}
 		return
 	}

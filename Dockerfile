@@ -6,6 +6,13 @@
 # privilege-drop code and needs none — port 4433 is unprivileged and the only
 # writable path is the ACME cache volume), and no HEALTHCHECK (world has no
 # mochictl analog and distroless has no shell).
+#
+# TLS in the container: use [tls] with a mounted certificate/key — the standard
+# container pattern. The built-in [acme] mode binds port 80 for HTTP-01, which
+# the nonroot image cannot do (unlike the systemd package, which grants
+# CAP_NET_BIND_SERVICE); running ACME here would need --cap-add=NET_BIND_SERVICE
+# plus a lowered net.ipv4.ip_unprivileged_port_start, or a fronting proxy. Mount
+# certs instead.
 FROM gcr.io/distroless/static-debian12:nonroot
 ARG TARGETARCH
 COPY build/docker/bin/mochi-world-${TARGETARCH} /usr/sbin/mochi-world
