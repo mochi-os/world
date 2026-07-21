@@ -49,19 +49,19 @@ func session_run(s *session, g game.Game) {
 				behind = 250 * time.Millisecond
 			}
 			connected := 0
-			for _, p := range s.players {
-				if p.link == nil {
-					continue
-				}
+			for slot, p := range s.players {
 				// Application-level liveness: QUIC never idles out a ghost
 				// (the browser ACKs our snapshot stream even when the tab is
 				// hidden or the game's script is dead), but a live client
 				// streams inputs every frame. Fifteen silent seconds means
-				// the pilot is gone; closing the link fires the ordinary
-				// leave path from its reader.
-				if !p.seen.IsZero() && time.Since(p.seen) > 15*time.Second {
-					p.link.close("idle")
-					p.link = nil
+				// the pilot is gone. Remove them OUTRIGHT here rather than
+				// nil-ing the link and waiting for the reader's leave: a
+				// timed-out JOIN has no reader (#176), so a nil-link entry
+				// lingered forever, holding its slot and counting against
+				// capacity. delete during range is safe; a later duplicate
+				// leave from a real reader is a no-op (session_remove guards).
+				if p.link == nil || (!p.seen.IsZero() && time.Since(p.seen) > 15*time.Second) {
+					session_remove(s, slot)
 					continue
 				}
 				connected++
@@ -110,16 +110,7 @@ func session_orders(s *session) {
 			case "join":
 				o.reply <- session_join(s, o)
 			case "leave":
-				if p := s.players[o.slot]; p != nil {
-					s.instance.Leave(p.Player)
-					delete(s.players, o.slot)
-					session_broadcast(s, map[string]any{"kind": "event", "tick": s.tick, "event": map[string]any{"kind": "leave", "slot": o.slot, "name": p.Name}}, true)
-					state := ""
-					if len(s.players) == 0 {
-						state = "open" // everyone left: joinable again, not stuck "playing"
-					}
-					session_mirror(s, state)
-				}
+				session_remove(s, o.slot)
 			case "input":
 				if p := s.players[o.slot]; p != nil {
 					p.seen = time.Now()
@@ -198,6 +189,29 @@ func session_chat(s *session, o order) {
 	}
 }
 
+// session_remove drops a player: closes any link, tells the game, deletes the
+// slot, and announces the departure. Shared by the leave order and the idle
+// sweep, and idempotent (a nil slot is a no-op), so the sweep and a reader's
+// deferred leave can both target the same player without double-counting.
+func session_remove(s *session, slot int) {
+	p := s.players[slot]
+	if p == nil {
+		return
+	}
+	if p.link != nil {
+		p.link.close("gone")
+		p.link = nil
+	}
+	s.instance.Leave(p.Player)
+	delete(s.players, slot)
+	session_broadcast(s, map[string]any{"kind": "event", "tick": s.tick, "event": map[string]any{"kind": "leave", "slot": slot, "name": p.Name}}, true)
+	state := ""
+	if len(s.players) == 0 {
+		state = "open" // everyone left: joinable again, not stuck "playing"
+	}
+	session_mirror(s, state)
+}
+
 // session_join admits a player on the lowest free slot and sends their
 // welcome from here — the tick goroutine — so it is queued on their link
 // before any event broadcast that mentions them.
@@ -209,10 +223,30 @@ func session_join(s *session, o order) answer {
 	for s.players[slot] != nil {
 		slot++
 	}
+	// The caller waits only 5 s; a stalled tick can process this join long
+	// after it gave up and closed its link. Committing then leaves a ghost
+	// (#176), so bail before Instance.Join if the caller has already cancelled.
+	if o.cancel != nil {
+		select {
+		case <-o.cancel:
+			return answer{err: errors.New("cancelled")}
+		default:
+		}
+	}
 	o.player.Slot = slot
 	spawn, err := s.instance.Join(o.player)
 	if err != nil {
 		return answer{err: err}
+	}
+	// Re-check after admitting: the caller may have timed out while we were
+	// in Instance.Join. Roll the game-side join back so no ghost persists.
+	if o.cancel != nil {
+		select {
+		case <-o.cancel:
+			s.instance.Leave(o.player)
+			return answer{err: errors.New("cancelled")}
+		default:
+		}
 	}
 	s.players[slot] = &player{Player: o.player, link: o.link, seen: time.Now()}
 	others := []map[string]any{}

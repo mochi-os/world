@@ -45,8 +45,9 @@ func connection_serve(l link) {
 	team := clean(text(message, "team"), 16)
 	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team}
 	reply := make(chan answer, 1)
+	cancel := make(chan struct{})
 	select {
-	case s.inbox <- order{kind: "join", player: joiner, link: l, reply: reply}:
+	case s.inbox <- order{kind: "join", player: joiner, link: l, reply: reply, cancel: cancel}:
 	case <-s.done:
 		connection_refuse(l, "ended")
 		return
@@ -55,6 +56,11 @@ func connection_serve(l link) {
 	select {
 	case a = <-reply:
 	case <-time.After(5 * time.Second):
+		// The tick is stalled: give up, and tell session_join to roll back
+		// rather than admit a player onto this now-abandoned link. Without
+		// this the late join committed a permanent ghost — a nil-link entry
+		// the sweep never deleted, still counted against capacity (#176).
+		close(cancel)
 		connection_refuse(l, "timeout")
 		return
 	}

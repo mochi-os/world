@@ -41,9 +41,10 @@ type order struct {
 	link   link
 	inputs []game.Input
 	slot   int
-	text   string      // chat only
-	scope  string      // chat only: "team" or "all"
-	reply  chan answer // join only
+	text   string        // chat only
+	scope  string        // chat only: "team" or "all"
+	reply  chan answer   // join only
+	cancel chan struct{} // join only: closed when the caller stops waiting, so a stalled tick's late join rolls back instead of committing a ghost
 }
 
 // answer is the tick goroutine's response to a join order (the welcome

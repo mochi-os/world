@@ -18,6 +18,19 @@
 //     generated: 12 days validity (the WebTransport serverCertificateHashes
 //     rules cap acceptable certificates at 14), rotated at day 10, its
 //     SHA-256 advertised through the lobby so clients can pin it.
+//
+// Mode 3 is ENCRYPTED BUT UNAUTHENTICATED, by design and unavoidably: the pin
+// is advertised over the plaintext-HTTP lobby (the lobby must be plaintext —
+// a browser cannot fetch() a self-signed HTTPS endpoint, which is the whole
+// reason WebTransport's serverCertificateHashes exists), and a server with no
+// DNS name or CA certificate cannot be authenticated by a browser at all. On
+// an untrusted network an on-path attacker could rewrite the advertised
+// address+hash and be pinned. This is acceptable for the mode's purpose (LAN /
+// no-DNS / dev): the world threat model already treats servers as untrusted,
+// and a browser served over HTTPS reaches only modes 1-2 anyway — it blocks
+// the plaintext lobby as mixed content — so any public deployment authenticates.
+// Not a code fix: operators exposing a server on an untrusted network use [tls]
+// or [acme] (world.conf documents this).
 
 package main
 
