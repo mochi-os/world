@@ -26,6 +26,15 @@ type Model struct {
 	Direct      bool    // no augmentation: stick drives surfaces (validation)
 	Gravity     float64 // m/s²; New sets standard, tests may zero it
 
+	// FCS law memory (#203) — unencoded, NOT part of the snapshot: which pitch
+	// law is active (with hysteresis) and the trim-laundering countdown across
+	// law changes. A snapshot restore re-derives them on the next step; the
+	// client core is a corrected predictor, so a one-off re-derivation inside
+	// the hysteresis band is harmless.
+	pa      bool
+	lawInit bool
+	launder float64
+
 	// Per-step caches:
 	mass    float64
 	center  Vec3 // combined CG, body, from datum

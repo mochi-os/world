@@ -37,13 +37,37 @@ func (m *Model) fcs(in Inputs, local Air) {
 	var stabTarget, flapTarget, rudderTarget, droopTarget, slatFloor float64
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
 
-	// The trim integral means different things in the two laws (up-and-away:
-	// a pitch-RATE bias; powered approach: a direct stabilator add), so a raw
-	// crossover mis-trims by up to half a radian of stabilator — the gear-cycle
-	// trim jump. While the gear is in transit, decay it to zero: each law
-	// re-learns its own trim during the ~2 s of travel, behind the demand faders.
+	// Law selection with hysteresis (#203). The powered-approach condition was
+	// the raw `gear && speed < 130`, so a gear-down speed crossing (a bolter or
+	// waveoff cleaning up late) flipped laws instantly — and the trim integral
+	// means different things in the two laws (up-and-away: a pitch-RATE bias;
+	// powered approach: a direct stabilator add), so the flip mis-trimmed by up
+	// to half a radian of stabilator: the gear-cycle trim jump, back on the
+	// unpatched speed path. Enter PA below 125 m/s, leave above 135 (no
+	// boundary chatter), and launder the integral across ANY law change — the
+	// old gear-transit-only decay was a special case of this rule.
+	pa := m.pa
+	if !m.lawInit {
+		pa = in.Gear && speed < 130
+		m.pa = pa // initialisation is NOT a law change: leaving m.pa at its zero value made the first step of every fresh model read as a flip and launder the trim for its first two seconds (TestTrap's scripted pass missed the wires)
+		m.lawInit = true
+	} else if pa {
+		if !in.Gear || speed > 135 {
+			pa = false
+		}
+	} else if in.Gear && speed < 125 {
+		pa = true
+	}
+	if pa != m.pa {
+		m.launder = 2 // seconds of decay: each law re-learns its own trim behind the demand faders
+	}
+	m.pa = pa
 	if extension := m.State.Gear.Extension; extension > 0.02 && extension < 0.98 {
-		f.Integral *= 1 - 1.2*Dt // gentle: still fully laundered over the ~6 s of gear travel (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
+		m.launder = math.Max(m.launder, Dt) // gear in transit keeps the laundering alive step by step — expiring WITH the transit, exactly like the old transit-gated decay, and without stacking a second rate on top of a law-flip launder
+	}
+	if m.launder > 0 {
+		m.launder -= Dt
+		f.Integral *= 1 - 1.2*Dt // gentle: fully laundered over a couple of seconds (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
 	}
 
 	if m.Direct {
@@ -52,7 +76,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		flapTarget = lateral * c.Gearing.Roll
 		rudderTarget = -pedal * c.Gearing.Yaw
 		f.Integral = 0
-	} else if in.Gear && speed < 130 {
+	} else if m.pa {
 		// Powered approach: the stick commands alpha about on-speed, and the
 		// trailing edge droops for lift at approach speed. The neutral demand
 		// is capped at the alpha LEVEL FLIGHT needs at this dynamic pressure —
@@ -62,17 +86,17 @@ func (m *Model) fcs(in Inputs, local Air) {
 		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, c.Onspeed)
 		demand := math.Min(c.Onspeed, level) + stick*(9*math.Pi/180)
 		// Flyaway attitude capture: hands-off after a catapult shot the real
-		// FCS settles at ~12° deck attitude rather than riding approach alpha
+		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
 		// into a full-burner zoom. Binds only when pitch exceeds the datum;
 		// the approach (low attitude, low power) never feels it.
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		pitch := math.Asin(clamp(forward.Y, -1, 1))
-		f.Reference = pitch // keep the attitude-hold datum CURRENT: crossing the 130 m/s law boundary otherwise handed the UA hold a stale deck pitch, and it flew the nose back down from the 12° flyaway ("suddenly pitches down" a few seconds after launch)
+		f.Reference = pitch // keep the attitude-hold datum CURRENT: crossing the 130 m/s law boundary otherwise handed the UA hold a stale deck pitch, and it flew the nose back down from the flyaway attitude ("suddenly pitches down" a few seconds after launch)
 		capture := a + (c.Flyaway - pitch)
 		if in.Throttle > 0.85 {
 			// Launch/waveoff power: the flyaway is an ATTRACTION, not just a cap —
 			// with honest droop lift the hands-off climb tops out below the datum
-			// and never used to reach the 12° deck attitude.
+			// and never used to reach the flyaway datum.
 			demand = math.Max(demand, math.Min(capture, c.Onspeed+2*math.Pi/180))
 		}
 		demand = math.Min(demand, math.Max(capture, 0)+stick*(22*math.Pi/180)) // the capture yields to a DELIBERATE pull: at neutral stick it pins the flyaway attitude, but its stick opening (22°) outruns the main demand's (9°), so pulling past ~half stick clears the cap entirely — it no longer fought the climb-out (post-launch "unresponsive then suddenly alive")
@@ -157,7 +181,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			if in.Throttle > 0.85 && m.State.Position.Y < 150 {
 				// Launch/waveoff condition in the CLEAN law too: hands-off at high
 				// power near the water, the datum eases up to the flyaway attitude —
-				// a prompt gear-up (the real technique) no longer abandons the 12°
+				// a prompt gear-up (the real technique) no longer abandons the flyaway
 				// capture half-done.
 				f.Reference = math.Min(math.Max(f.Reference, theta), math.Max(f.Reference, c.Flyaway-0.5*math.Pi/180)) // never yank it above where it is heading
 				f.Reference += clamp(c.Flyaway-f.Reference, 0, 0.07*Dt)
