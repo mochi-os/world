@@ -30,6 +30,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 	b := beta(v)
 	p, q, r := rates(m.State.Omega)
 
+	// The configuration gates below are CALIBRATED airspeed, not TAS: the real
+	// gear/flap regime is CAS, and a TAS gate would move with altitude (gear
+	// down at height entered PA at the wrong dynamic pressure). EAS stands in
+	// for CAS — the compressibility gap is negligible below M0.5 where these
+	// gates live. At sea level it equals TAS, so the calibrated anchors hold.
+	calibrated := math.Sqrt(2 * pressure / 1.225)
+
 	stick := clamp(in.Pitch, -1, 1)
 	lateral := clamp(in.Roll, -1, 1)
 	pedal := clamp(in.Yaw, -1, 1)
@@ -48,14 +55,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 	// old gear-transit-only decay was a special case of this rule.
 	pa := m.pa
 	if !m.lawInit {
-		pa = in.Gear && speed < 130
+		pa = in.Gear && calibrated < 130
 		m.pa = pa // initialisation is NOT a law change: leaving m.pa at its zero value made the first step of every fresh model read as a flip and launder the trim for its first two seconds (TestTrap's scripted pass missed the wires)
 		m.lawInit = true
 	} else if pa {
-		if !in.Gear || speed > 135 {
+		if !in.Gear || calibrated > 135 {
 			pa = false
 		}
-	} else if in.Gear && speed < 125 {
+	} else if in.Gear && calibrated < 125 {
 		pa = true
 	}
 	if pa != m.pa {
@@ -128,6 +135,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// a slightly fast approach) and nothing by 250 kt.
 		schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
 		droopTarget = c.Droop.Angle * schedule
+		if m.State.Gear.Wow {
+			droopTarget *= c.Droop.Half // flaps HALF on deck: the real jet launches (and rolls out) at the takeoff setting; the FULL droop belongs to the airborne approach. The flaperon slew rate carries the change across liftoff and touchdown.
+		}
 		slatFloor = 12 * math.Pi / 180 * schedule // NATOPS flaps HALF droops the LEADING edge too (12°)
 		brakeTarget = 0                           // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		// Wing leveler on deck: as lift builds down the stroke the wheels
@@ -204,7 +214,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// the stick held through gear retraction the command used to STEP —
 		// the jet snapped 23°/s nose-up at gear-up. The ceiling now opens
 		// with the gear (Extension 1→0 over ~2 s), as the real law fader does.
-		if m.State.Gear.Extension > 0.02 && speed < 130 {
+		if m.State.Gear.Extension > 0.02 && calibrated < 130 {
 			demand = math.Min(demand, level+(ceiling-level)*(1-m.State.Gear.Extension))
 		}
 		f.Demand += clamp(demand-f.Demand, -25*Dt, 25*Dt)

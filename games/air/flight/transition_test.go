@@ -94,23 +94,38 @@ func TestLawBoundaryDeceleration(t *testing.T) {
 // wobbled across the line.
 func TestLawHysteresis(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 600}, Vec3{X: 1}, 130, 2000)
+	// Low, where TAS ≈ CAS (the law gates are calibrated airspeed), with the
+	// leveler holding altitude: the alpha law owns no flight path, and a
+	// neutral-stick run dove into the sea and blew through the exit gate.
+	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 130, 2000)
 	m.Step(Inputs{Throttle: 0.55, Gear: true})
 	entered := m.pa // whatever the first step derived at exactly 130
 	flips := 0
 	was := entered
+	var l leveler
+	for i := 0; i < 240*10; i++ { // settle the speed/altitude holds first — the capture transient is not the chatter case
+		m.Step(Inputs{Throttle: clamp(0.5+(130-m.State.Velocity.Length())*0.05, 0.1, 0.9), Pitch: clamp(l.pitch(m, 300), -0.3, 0.3), Gear: true})
+	}
+	was = m.pa
+	flips = 0
+	low, high := 1e9, 0.0
 	for i := 0; i < 240*30; i++ { // half a minute hovering about the old boundary
-		throttle := 0.45
-		if m.State.Velocity.Length() < 130 {
-			throttle = 0.75 // crude speed bang-bang about 130 — exactly the chatter case
+		if v := m.State.Velocity.Length(); v < low {
+			low = v
+		} else if v > high {
+			high = v
 		}
-		m.Step(Inputs{Throttle: throttle, Gear: true})
+		// Proportional speed hold centred exactly on the old 130 boundary — the
+		// chatter case. (Fixed bang-bang throttles could not bracket the level
+		// drag point at sea-level thrust and ran away through the band.)
+		throttle := clamp(0.5+(130-m.State.Velocity.Length())*0.05, 0.1, 0.9)
+		m.Step(Inputs{Throttle: throttle, Pitch: clamp(l.pitch(m, 300), -0.3, 0.3), Gear: true})
 		if m.pa != was {
 			flips++
 			was = m.pa
 		}
 	}
-	t.Logf("hysteresis: started pa=%v, %d flips while hovering about 130 m/s", entered, flips)
+	t.Logf("hysteresis: started pa=%v, %d flips while hovering about 130 m/s (speed ranged %.0f..%.0f, altitude %.0f)", entered, flips, low, high, m.State.Position.Y)
 	if flips > 0 {
 		t.Fatalf("law flipped %d times inside the hysteresis band", flips)
 	}
