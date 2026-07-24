@@ -115,3 +115,126 @@ func TestLawHysteresis(t *testing.T) {
 		t.Fatalf("law flipped %d times inside the hysteresis band", flips)
 	}
 }
+
+// TestGearCycle: gear cycles with the stick displaced — the original
+// gear-cycle trim-jump shape (the integral only feeds the command path while
+// the stick flies the jet). Three seams: down into the PA speed range (law
+// flip + transit), up out of it, and down fast (transit only, no law change).
+func TestGearCycle(t *testing.T) {
+	cases := []struct {
+		name     string
+		speed    float64
+		from, to bool
+	}{
+		{"down into PA", 115, false, true},
+		{"up out of PA", 115, true, false},
+		{"down fast, no law change", 160, false, true},
+	}
+	// The steady cases regression-pin current behaviour; the climb case below
+	// winds the trim up first (the original 23 deg/s gear-up snap's shape).
+	// Note the teeth live in the LAW-FLIP laundering, not the transit top-up:
+	// a gear cycle changes the law, so the flip rule launders it by itself —
+	// disabling only the transit top-up moves these bounds by ~0.4 deg/s.
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+			m.State = Level(m, Vec3{Y: 600}, Vec3{X: 1}, c.speed, 2000)
+			for i := 0; i < 240*8; i++ { // settle with the stick already displaced, so the cycle is the only change
+				m.Step(Inputs{Throttle: 0.6, Pitch: 0.12, Gear: c.from})
+			}
+			worstQ, worstNz := 0.0, 0.0
+			for i := 0; i < 240*10; i++ { // ~6 s of travel plus settling
+				m.Step(Inputs{Throttle: 0.6, Pitch: 0.12, Gear: c.to})
+				_, q, _ := rates(m.State.Omega)
+				if a := math.Abs(q); a > worstQ {
+					worstQ = a
+				}
+				if d := math.Abs(m.State.Fcs.Normal - 1); d > worstNz {
+					worstNz = d
+				}
+			}
+			t.Logf("%s: worst q %.1f deg/s, worst |nz-1| %.2f", c.name, worstQ*180/math.Pi, worstNz)
+			if worstQ > 12*math.Pi/180 {
+				t.Fatalf("pitch-rate excursion %.1f deg/s through the gear cycle (the un-laundered jump snapped 23 deg/s)", worstQ*180/math.Pi)
+			}
+			if worstNz > 1.0 {
+				t.Fatalf("load excursion |nz-1| = %.2f through the gear cycle", worstNz)
+			}
+		})
+	}
+	t.Run("up during a full-power climb", func(t *testing.T) {
+		// The wound-trim case: a full-burner climbing cleanup right after a
+		// low-level departure, stick held — the state the original defect
+		// lived in. The PA integral is loaded when the gear starts up.
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 60}, Vec3{X: 1}, 90, 3000)
+		for i := 0; i < 240*6; i++ { // full-power climb establishing, gear down
+			m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 0.3, Gear: true})
+		}
+		worstQ := 0.0
+		for i := 0; i < 240*8; i++ { // cleanup mid-climb
+			m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 0.3, Gear: false})
+			_, q, _ := rates(m.State.Omega)
+			if a := math.Abs(q); a > worstQ {
+				worstQ = a
+			}
+		}
+		t.Logf("climbing cleanup: worst q %.1f deg/s", worstQ*180/math.Pi)
+		if worstQ > 15*math.Pi/180 {
+			t.Fatalf("pitch-rate excursion %.1f deg/s at the climbing cleanup (the un-laundered jump snapped 23 deg/s)", worstQ*180/math.Pi)
+		}
+	})
+}
+
+// There is deliberately NO fixed-throttle approach-deceleration test: level
+// flight on the back side of the power curve is speed-UNSTABLE, so a fixed
+// throttle cannot walk the jet onto on-speed — from above the bucket, excess
+// thrust accelerates it away to the front-side equilibrium instead (three
+// drafts at 0.20/0.30/0.48 all diverged, 95 m/s -> 278). Capturing on-speed
+// requires active power, which is exactly what TestApproachPowerHold flies.
+
+// TestApproachPowerHold: the client's ATC law (#202) closed on the REAL core.
+// The constants MUST mirror apps/air/web/src/game/atc.ts — this is the gain
+// validation the client's surrogate-model unit tests cannot give, and it
+// catches the two-controller failure mode (the PA stabilator law and the ATC
+// throttle law both steer alpha; a gain mismatch pumps the phugoid).
+func TestApproachPowerHold(t *testing.T) {
+	const onspeed, least, most = 8.1, 0.12, 1.0
+	const gainError, gainRate = 0.16, 0.6
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 1200}, Vec3{X: 1}, 100, 2000)
+	for i := 0; i < 240*8; i++ {
+		m.Step(Inputs{Throttle: 0.55, Gear: true})
+	}
+	throttle, previous := 0.55, math.NaN()
+	captured := -1
+	worstHold := 0.0
+	total := 240 * 150
+	for i := 0; i < total; i++ {
+		body := m.State.Attitude.Unrotate(m.State.Velocity)
+		al := alpha(body) * 180 / math.Pi
+		rate := 0.0
+		if !math.IsNaN(previous) {
+			rate = clamp((al-previous)*240, -10, 10)
+		}
+		previous = al
+		throttle = clamp(throttle+((al-onspeed)*gainError+rate*gainRate)/240, least, most)
+		m.Step(Inputs{Throttle: throttle, Gear: true})
+		if captured < 0 && math.Abs(al-onspeed) < 0.5 {
+			captured = i
+		}
+		if i > total-240*30 { // the final 30 s is the hold window
+			if d := math.Abs(al - onspeed); d > worstHold {
+				worstHold = d
+			}
+		}
+	}
+	if captured < 0 {
+		t.Fatal("ATC never captured on-speed")
+	}
+	t.Logf("ATC: captured on-speed at t+%.0fs, worst hold deviation %.2f° over the final 30 s, final throttle %.2f", float64(captured)/240, worstHold, throttle)
+	if worstHold > 1.0 {
+		t.Fatalf("ATC hold oscillates: %.2f° deviation (controller fight with the PA law)", worstHold)
+	}
+}
