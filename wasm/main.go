@@ -57,15 +57,16 @@ var (
 
 func main() {
 	exports := map[string]any{
-		"version": js.FuncOf(version),
-		"init":    js.FuncOf(initialize),
-		"set":     js.FuncOf(set),
-		"get":     js.FuncOf(get),
-		"frame":   js.FuncOf(frame),
-		"mark":    js.FuncOf(mark),
-		"ack":     js.FuncOf(ack),
-		"level":   js.FuncOf(level),
-		"clear":   js.FuncOf(clear),
+		"version":  js.FuncOf(version),
+		"init":     js.FuncOf(initialize),
+		"set":      js.FuncOf(set),
+		"get":      js.FuncOf(get),
+		"frame":    js.FuncOf(frame),
+		"mark":     js.FuncOf(mark),
+		"ack":      js.FuncOf(ack),
+		"level":    js.FuncOf(level),
+		"approach": js.FuncOf(approach),
+		"clear":    js.FuncOf(clear),
 	}
 	for name, export := range battles() {
 		exports[name] = export
@@ -259,6 +260,22 @@ func level(this js.Value, arguments []js.Value) any {
 	direction := flight.Vec3{X: arguments[3].Float(), Z: arguments[4].Float()}
 	model.State = flight.Level(model, position, direction, arguments[5].Float(), arguments[6].Float())
 	return ""
+}
+
+// approach places the model on a trimmed on-speed descent — the landing
+// spawn (position x y z, horizontal direction x z, glideslope in DEGREES
+// below the horizon, fuel). Returns the throttle that holds the trim, so the
+// host's own lever starts where the core put the engines instead of carrying
+// its own hand-measured constant.
+func approach(this js.Value, arguments []js.Value) any {
+	if model == nil {
+		return 0.0
+	}
+	position := flight.Vec3{X: arguments[0].Float(), Y: arguments[1].Float(), Z: arguments[2].Float()}
+	direction := flight.Vec3{X: arguments[3].Float(), Z: arguments[4].Float()}
+	state, throttle := flight.Approach(model, position, direction, -arguments[5].Float()*math.Pi/180, arguments[6].Float())
+	model.State = state
+	return throttle
 }
 
 // clear acknowledges the contact events the host has read: the touchdown

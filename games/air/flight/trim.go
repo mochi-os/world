@@ -124,6 +124,17 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	dry, _ := m.Thrust(speed, position.Y)
 	spool := clamp(drag*q*m.Airframe.Reference.Area/math.Max(dry, 1), 0.1, 1)
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
+	// KNOWN DEFECT, deliberately left standing: this composes MINUS the alpha
+	// solved for immediately above. Measured at 220 m/s / 4572 m the spawn holds
+	// -2.865° when the solver returned +2.865°, and Evaluate confirms the
+	// POSITIVE value is the one whose lift balances the weight — so every Level
+	// spawn starts about 2·alpha off trim and the FCS flies out a transient this
+	// helper exists to prevent. Correcting it is not a local change: with the
+	// sign fixed, engagements turn markedly more lethal (14-seed section sweep:
+	// total deaths 10 -> 27) and the section advantage TestBotSection pins
+	// disappears (3 v 7 deaths becomes 15 v 12), because the bot doctrine was
+	// calibrated against the mistrimmed spawn. Fix it together with a bot-doctrine
+	// revalidation, not on its own. Approach below uses the correct sign.
 	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), -angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
@@ -138,4 +149,111 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	s.Fcs.Demand = 1
 	s.Gear = GearState{Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	return s
+}
+
+// Approach composes a steady on-speed descent at a position, horizontal
+// direction, and flight-path angle (radians, negative descending), returning
+// the trimmed state and the throttle that holds it — the landing-configuration
+// sibling of Level, and the shared source of approach trim for spawns, client
+// resets, and tests.
+//
+// An AoA-referenced approach fixes ALPHA, not speed: on-speed is a wing
+// condition, so the speed follows from the weight. That is why the answer must
+// come from the core — a hand-carried spawn speed silently goes stale the
+// moment the airframe, the droop schedule, or the PA law moves under it, and
+// the aircraft then spawns off-trim (the carrier landing start balloon).
+//
+// The trim cannot be found by flying it: holding alpha leaves the speed mode
+// neutrally stable, so a powered approach wanders on a long, barely-damped
+// phugoid with no settled path to measure (which is exactly why the real jet
+// carries an approach power compensator). It is solved statically instead.
+func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float64) (State, float64) {
+	m.State.Fuel = fuel
+	m.weigh()
+	alpha := m.Airframe.Control.Onspeed
+
+	// Newton on (speed, stabilator, throttle) with alpha and the flight path
+	// held: the three residuals are the in-plane accelerations and the pitch
+	// moment, as in Glide. Solving for the stabilator matters — it carries the
+	// download that balances the droop's nose-down moment, and a trim computed
+	// without it is wrong in lift AND drag.
+	speed, stabilator, throttle := 70.0, -0.02, 0.2
+	for iteration := 0; iteration < 80; iteration++ {
+		r1, r2, r3 := m.approaching(speed, position.Y, alpha, stabilator, throttle, path)
+		if math.Abs(r1) < 1e-7 && math.Abs(r2) < 1e-7 && math.Abs(r3) < 1e-7 {
+			break
+		}
+		const h = 1e-6
+		a1, a2, a3 := m.approaching(speed+h, position.Y, alpha, stabilator, throttle, path)
+		b1, b2, b3 := m.approaching(speed, position.Y, alpha, stabilator+h, throttle, path)
+		c1, c2, c3 := m.approaching(speed, position.Y, alpha, stabilator, throttle+h, path)
+		jacobian := Mat3{
+			{(a1 - r1) / h, (b1 - r1) / h, (c1 - r1) / h},
+			{(a2 - r2) / h, (b2 - r2) / h, (c2 - r2) / h},
+			{(a3 - r3) / h, (b3 - r3) / h, (c3 - r3) / h},
+		}
+		step := jacobian.Inverse().Apply(Vec3{X: r1, Y: r2, Z: r3})
+		speed = clamp(speed-clamp(step.X, -5, 5), 40, 160) // damped Newton, bounded to sane approach numbers
+		stabilator -= clamp(step.Y, -0.05, 0.05)
+		throttle = clamp(throttle-clamp(step.Z, -0.1, 0.1), 0, 1)
+	}
+
+	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
+	velocity := forward.Scale(speed * math.Cos(path))
+	velocity.Y = speed * math.Sin(path)
+	// Attitude = flight path + on-speed alpha: the PA law's neutral demand
+	// exactly, so there is no capture transient to fly out of.
+	side := forward.Cross(Vec3{Y: 1}).Normalize()
+	attitude := Axis(side, path+alpha).Multiply(Look(forward)).Normalize() // +angle pitches the nose UP; see the note in Level, which still carries the opposite sign
+	droop, slat := m.Approaching(0.5 * air(position.Y, m.Environment).Density * speed * speed)
+
+	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel}
+	achieved := idle + clamp(throttle, 0, 1)*(1-idle) // the lever commands through the idle floor
+	s.Engine[0] = EngineState{Spool: achieved}
+	s.Engine[1] = EngineState{Spool: achieved}
+	s.Fcs.Stabilator = Pair{Left: stabilator, Right: stabilator}
+	s.Fcs.Flaperon = Pair{Left: droop, Right: droop}
+	s.Fcs.Flap = droop
+	s.Fcs.Slat = slat
+	// Hand the PA law its own trim: on-speed with no rate leaves its error term
+	// at zero, so the commanded stabilator IS minus the integrator. Spawning
+	// with a cold integrator makes the law wind up from scratch and the jet
+	// balloons through the first swing of the phugoid.
+	s.Fcs.Integral = clamp(-stabilator, -0.45, 0.45)
+	s.Fcs.Normal = 1
+	s.Fcs.Demand = 1
+	s.Fcs.Reference = path + alpha
+	s.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	return s, throttle
+}
+
+// approaching evaluates the steady-state errors for a trial powered-approach
+// trim at a FIXED angle of attack and flight path: world-frame accelerations
+// (horizontal, vertical) and the pitch moment, scaled for conditioning — the
+// landing-configuration counterpart of residual.
+func (m *Model) approaching(speed, altitude, alpha, stabilator, throttle, path float64) (float64, float64, float64) {
+	s := &m.State
+	s.Position = Vec3{Y: altitude}
+	s.Velocity = Vec3{X: speed * math.Cos(path), Y: speed * math.Sin(path)}
+	s.Attitude = Axis(Vec3{Z: 1}, path+alpha)
+	s.Omega = Vec3{}
+	local := air(altitude, m.Environment)
+	droop, slat := m.Approaching(0.5 * local.Density * speed * speed)
+	// The droop reaches the wing through the FLAPERON actuators (Fcs.Flap is a
+	// readout only) — the same path the FCS drives.
+	s.Fcs = FcsState{
+		Stabilator: Pair{Left: stabilator, Right: stabilator},
+		Flaperon:   Pair{Left: droop, Right: droop},
+		Flap:       droop,
+		Slat:       slat,
+	}
+	s.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	achieved := idle + clamp(throttle, 0, 1)*(1-idle)
+	s.Engine[0] = EngineState{Spool: achieved}
+	s.Engine[1] = EngineState{Spool: achieved}
+	m.weigh()
+	m.gust = Vec3{}
+	total := m.forces(s, Inputs{Gear: true, Throttle: throttle}, local)
+	accel := s.Attitude.Rotate(total.Force).Scale(1 / m.mass).Add(Vec3{Y: -m.Gravity})
+	return accel.X / m.Gravity, accel.Y / m.Gravity, total.Moment.Z / (m.mass * m.Gravity * m.Airframe.Reference.Chord)
 }

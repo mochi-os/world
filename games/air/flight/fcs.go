@@ -90,8 +90,18 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// snapping straight to on-speed alpha at gear-limit speed is a 2.5 g
 		// uncommanded zoom that full forward stick cannot push out of; as the
 		// jet decelerates toward on-speed the cap rises to meet it.
+		// Progressive stick gradient. The alpha command is what the pilot flies
+		// the ball with, and a linear one gives the same 9°-per-unit sensitivity
+		// at the centre as at the stops — fine on a long-throw stick, brutal on
+		// a keyboard, where every tap ramps to full deflection: glideslope
+		// corrections came out as ±9° alpha commands and the approach pitched in
+		// oscillation. Squaring (sign-preserved) keeps the full authority at the
+		// stops for the flare and the waveoff, while a quarter-deflection nudge
+		// asks for a sixteenth of it. This is the real stick's force gradient
+		// too — breakout is soft, the last inch is not.
+		fine := stick * math.Abs(stick)
 		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, c.Onspeed)
-		demand := math.Min(c.Onspeed, level) + stick*(9*math.Pi/180)
+		demand := math.Min(c.Onspeed, level) + fine*(9*math.Pi/180)
 		// Flyaway attitude capture: hands-off after a catapult shot the real
 		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
 		// into a full-burner zoom. Binds only when pitch exceeds the datum;
@@ -106,14 +116,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// and never used to reach the flyaway datum.
 			demand = math.Max(demand, math.Min(capture, c.Onspeed+2*math.Pi/180))
 		}
-		demand = math.Min(demand, math.Max(capture, 0)+stick*(22*math.Pi/180)) // the capture yields to a DELIBERATE pull: at neutral stick it pins the flyaway attitude, but its stick opening (22°) outruns the main demand's (9°), so pulling past ~half stick clears the cap entirely — it no longer fought the climb-out (post-launch "unresponsive then suddenly alive")
+		demand = math.Min(demand, math.Max(capture, 0)+fine*(22*math.Pi/180)) // the capture yields to a DELIBERATE pull: at neutral stick it pins the flyaway attitude, but its stick opening (22°) outruns the main demand's (9°), so pulling past ~half stick clears the cap entirely — it no longer fought the climb-out (post-launch "unresponsive then suddenly alive")
 		if m.State.Gear.Wow {
 			// Ground mode: the alpha law would wind the stabilator full
 			// nose-up during the catapult stroke (deck alpha is far below
 			// approach alpha) and rotate the jet off the shuttle mid-stroke.
 			// Follow the current alpha instead — no error, no windup; the
 			// stick passes through for checks and early rotation stays manual.
-			demand = a + stick*(12*math.Pi/180) // full aft stick rotates ~12° above deck alpha — field takeoffs need real rotation authority
+			demand = a + fine*(12*math.Pi/180) // full aft stick rotates ~12° above deck alpha — field takeoffs need real rotation authority
 			if in.Throttle < 0.3 && m.State.Gear.Wire < 0 {
 				// Rollout derotation: pure alpha-follow is a RATCHET — every
 				// nose-up disturbance becomes the new setpoint, deceleration
@@ -128,18 +138,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 		}
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
-		stabTarget = -(errorTerm*0.34 + f.Integral) - stick*0.10      // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
-		// Hold-then-washout: the real TEF schedule HOLDS the commanded setting
-		// through the approach band and retracts approaching the flap limit —
-		// the old linear fade left only ~2/3 droop at on-speed ("flaps up" on
-		// a slightly fast approach) and nothing by 250 kt.
-		schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
-		droopTarget = c.Droop.Angle * schedule
+		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
+		droopTarget, slatFloor = m.Approaching(pressure)
 		if m.State.Gear.Wow {
 			droopTarget *= c.Droop.Half // flaps HALF on deck: the real jet launches (and rolls out) at the takeoff setting; the FULL droop belongs to the airborne approach. The flaperon slew rate carries the change across liftoff and touchdown.
 		}
-		slatFloor = 12 * math.Pi / 180 * schedule // NATOPS flaps HALF droops the LEADING edge too (12°)
-		brakeTarget = 0                           // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
+		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		// Wing leveler on deck: as lift builds down the stroke the wheels
 		// unload and the crosswind's rolling moment grows — with no roll
 		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
@@ -388,4 +392,20 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	throw := m.Airframe.Control.Throw.Rudder
 	weight := 1 - 0.75*math.Abs(pedal)
 	return clamp(-pedal*throw*0.85+(damped*1.2-b*3.4-interconnect)*weight, -throw, throw)
+}
+
+// Approaching reports the trailing-edge droop and the leading-edge slat floor
+// the powered-approach law commands at a dynamic pressure — the landing
+// configuration, airborne (the deck's flaps-HALF factor is applied by the law
+// itself). Shared with the Approach trim helper so a spawn can never disagree
+// with the FCS about the configuration it is spawning into.
+//
+// Hold-then-washout: the real TEF schedule HOLDS the commanded setting through
+// the approach band and retracts approaching the flap limit — a linear fade
+// left only ~2/3 droop at on-speed ("flaps up" on a slightly fast approach)
+// and nothing by 250 kt.
+func (m *Model) Approaching(pressure float64) (droop float64, slat float64) {
+	c := &m.Airframe.Control
+	schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
+	return c.Droop.Angle * schedule, 12 * math.Pi / 180 * schedule               // NATOPS droops the LEADING edge with the flaps (12°)
 }
