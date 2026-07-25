@@ -182,7 +182,17 @@ func standard() tactics {
 	// harder individually erased the pair's survival edge over two solos, and
 	// paired with drag.span=720 it still scored below drag.span alone (#145).
 	t.press.span, t.press.hold, t.press.loose, t.press.closure, t.press.gap = 1500, 300, 1.0, 45, 250
-	t.crowd.weight = 1
+	// crowd.weight 1 -> 2 (2026-07-25, the trimmed-spawn recalibration): fixing
+	// the inverted Level spawn attitude let gunnery connect (~3x the hit
+	// events), and in that world a pair doubling up on one contact leaves free
+	// bandits shooting at twice the old rate. Doubling the dogpile penalty
+	// spreads the section across a target-rich picture instead. Measured:
+	// veterans-v-pilots at 40 seeds goes 16 deaths/net +3 (weight 1) to 13/+6,
+	// and the equal-tier A/B recovers its survival edge at every sweep tried
+	// (11v15 / 27v28 / 52v55 red deaths at 12/24/48 seeds). Weight 3
+	// over-rotates - the pair scatters and both edges invert (24 seeds:
+	// net -24/28 deaths against solo's -17/25).
+	t.crowd.weight = 2
 	t.rejoin.span, t.rejoin.fight = 4000, 10000
 	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
 	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180

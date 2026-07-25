@@ -53,14 +53,21 @@ func TestElementLossRolls(t *testing.T) {
 		for i := (first + last) / 2; i < last; i++ {
 			m.State.Damage.Element[i] = 1 // outboard half gone
 		}
-		for i := 0; i < 24; i++ { // 0.1 s: the initial response, before the roll couples
+		// One second: long enough for roll inertia to answer the lost lift. The
+		// old 0.1 s window read a spawn transient, not the damage — Level used
+		// to compose MINUS the trimmed alpha, so every run began with a violent
+		// pitch recovery that coupled straight into roll (0.48 rad/s in 0.1 s,
+		// against 0.02 from the wing loss itself). With a genuinely trimmed
+		// spawn the roll builds honestly instead: 0.09 at 0.5 s, 0.44 at 1 s,
+		// 39° of bank by 2 s.
+		for i := 0; i < 240; i++ {
 			m.Step(flight.Inputs{Throttle: 0.5})
 		}
 		return m.State.Omega.X
 	}
 	left, right := rate(-1), rate(1)
 	if math.Abs(left) < 0.2 {
-		t.Fatalf("wing loss produced no meaningful roll: %.3f rad/s after 0.1 s", left)
+		t.Fatalf("wing loss produced no meaningful roll: %.3f rad/s after 1 s", left)
 	}
 	if math.Abs(left+right) > 0.02 {
 		t.Fatalf("wing loss must be mirror-symmetric: left-damaged %.3f, right-damaged %.3f", left, right)
@@ -187,20 +194,26 @@ func stalls(t *testing.T, wound func(*flight.Model)) float64 {
 	m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 145, fa18c.Airframe.Mass.Fuel*0.5)
 	wound(m)
 	altitude := m.State.Position.Y
+	// The slowest speed at which the jet still ARRESTS its descent. Watching for
+	// a fixed height loss instead cannot separate the stall from the entry: at
+	// idle the jet gives up ~60 m before the pitch controller catches it, then
+	// holds altitude for another 15 s, and any "lost N metres" rule fires during
+	// that dip. Speed only ever decays here, so the last moment the sink reaches
+	// zero is the last moment the wing could still carry the aeroplane.
+	held := m.State.Velocity.Length()
 	stick := 0.0
 	for i := 0; i < 240*180; i++ {
 		s := &m.State
 		stick = clamped(stick+clamped(((altitude-s.Position.Y)*0.002-s.Velocity.Y*0.02-stick*4)*0.002, -0.004, 0.004), -0.5, 1)
 		m.Step(flight.Inputs{Throttle: 0, Pitch: stick})
-		if s.Velocity.Length() > 130 {
-			continue // arm on decayed speed, not elapsed time: the trim-to-governor handoff sags a few metres at entry and must not read as the stall
+		if s.Velocity.Y >= 0 {
+			held = s.Velocity.Length()
 		}
-		if altitude-s.Position.Y > 8 && s.Velocity.Y < -1.5 {
-			return s.Velocity.Length()
+		if altitude-s.Position.Y > 400 {
+			return held // departed for good; nothing later is level flight
 		}
 	}
-	t.Fatal("the idle decel never reached sink onset")
-	return 0
+	return held
 }
 
 func clamped(v float64, low float64, high float64) float64 {

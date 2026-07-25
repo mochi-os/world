@@ -124,28 +124,14 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	dry, _ := m.Thrust(speed, position.Y)
 	spool := clamp(drag*q*m.Airframe.Reference.Area/math.Max(dry, 1), 0.1, 1)
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
-	// KNOWN DEFECT, deliberately left standing (investigated 2026-07-24): this
-	// composes MINUS the alpha solved for immediately above — Axis(side, +angle)
-	// pitches the nose UP, and the negation gives every Level spawn the wrong
-	// attitude. Measured consequences: the spawn opens with a -1.4 g bunt and a
-	// 78 m sag, and because the up-and-away law barely damps the speed/height
-	// mode, the excited phugoid is still swinging ±5 m/s two minutes later —
-	// every air spawn, multiplayer join, and respawn porpoises for most of a
-	// life. That porpoising turns out to shield bots from GUNS specifically
-	// (a target oscillating vertically through the bullet time of flight):
-	// A/B over 12 section seeds, gun hits go 9 -> 29 with the sign corrected
-	// while missile launches and decoy rates stay flat, and total deaths rise
-	// 18 -> 31. The doctrine tests were calibrated in the porpoising world:
-	// TestBotSection survives the correction (40 seeds: section 16 deaths v
-	// solo 25, net +3 v 0), but TestBotSectionEqual's OFFENSIVE claim inverts
-	// (24 seeds: section net -20 v solo -14; its old-sign pass margin was two
-	// kills) — disciplined positioning costs more net kills when guns actually
-	// connect. Fixing the sign therefore means retuning the section doctrine's
-	// engage/rejoin trade-off (or re-scoping that assertion), and re-datuming
-	// TestElementLossRolls and TestWingLossStalls, which currently measure this
-	// spawn transient rather than the damage they claim to (repairs validated
-	// 2026-07-24, in the session record). Approach below uses the correct sign.
-	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), -angle).Multiply(Look(forward)).Normalize()
+	// Axis(side, +angle) pitches the nose UP by angle. The sign here was
+	// inverted for a long time (every spawn opened at MINUS the trimmed alpha:
+	// a -1.4 g bunt and a phugoid the UA law barely damps), and because the
+	// porpoising shielded bots from gunfire, fixing it changed combat balance —
+	// the damage tests and the section doctrine were recalibrated for the
+	// trimmed world when it was corrected (2026-07-25; the investigation record
+	// is in the git history of this comment).
+	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
 		Velocity: forward.Scale(speed),

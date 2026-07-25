@@ -30,6 +30,22 @@ func TestLevel(t *testing.T) {
 	if nz := m.State.Fcs.Normal; math.Abs(nz-1) > 0.3 {
 		t.Fatalf("load factor %.2f three seconds after spawn", nz)
 	}
+	// The composed attitude must CARRY the solved alpha. The tolerances above
+	// are loose enough to pass while the spawn sat at minus the trimmed alpha
+	// (the inverted-sign bug, fixed 2026-07-25): a -1.4 g bunt at every spawn
+	// and a phugoid that shielded bots from gunfire for whole matches.
+	spawn := Level(New(Fighter, Environment{Wrap: 250000}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)
+	if held := alpha(spawn.Attitude.Unrotate(spawn.Velocity)); held < 0 {
+		t.Fatalf("spawn alpha %.3f° is negative — the trim attitude is inverted", held*180/math.Pi)
+	}
+	for _, direction := range []Vec3{{X: 1}, {Z: 1}, {X: 0.6, Z: 0.8}} {
+		s := Level(New(Fighter, Environment{Wrap: 250000}, World{}), Vec3{Y: 4572}, direction, 220, 3000)
+		forward := s.Attitude.Rotate(Vec3{X: 1})
+		pitch := math.Asin(clamp(forward.Y, -1, 1))
+		if math.Abs(pitch-alpha(s.Attitude.Unrotate(s.Velocity))) > 1e-6 {
+			t.Errorf("heading %.1f,%.1f: pitch %.3f° does not equal alpha in level flight", direction.X, direction.Z, pitch*180/math.Pi)
+		}
+	}
 }
 
 // TestApproach: the approach spawn helper produces a trimmed on-speed descent
