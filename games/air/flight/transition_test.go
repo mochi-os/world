@@ -253,3 +253,41 @@ func TestApproachPowerHold(t *testing.T) {
 		t.Fatalf("ATC hold oscillates: %.2f° deviation (controller fight with the PA law)", worstHold)
 	}
 }
+
+// TestPatternHold: gear down FASTER than on-speed — the downwind leg — must be
+// flyable hands-off: the PA law's neutral demand is the level-flight alpha of
+// the current configuration, not on-speed. The old bare-wing cap never engaged
+// below ~190 kt, so neutral stick commanded full on-speed alpha at any pattern
+// speed and gear-down flight was a standing climb order no trim could remove.
+func TestPatternHold(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 110, 2500)
+	climbed, worst := 0.0, 0.0
+	for i := 0; i < 240*70; i++ {
+		// Speed hold to isolate the pitch law, ceilinged at 0.8: a pattern pilot
+		// carries pattern power — crossing 0.85 raises the waveoff attraction by
+		// design, and an 85 m/s CLEAN spawn (near-stall, alpha 12.7°) drove the
+		// hold through that gate and measured the waveoff, not the pattern.
+		throttle := clamp(0.5+(110-m.State.Velocity.Length())*0.05, 0.1, 0.8)
+		m.Step(Inputs{Throttle: throttle, Gear: true})
+		if i > 240*60 { // past gear extension, the law-change laundering, and the droop's configuration balloon — real-jet behaviour whose energy tail decays for most of a minute at pattern power
+			if vy := m.State.Velocity.Y; vy > climbed {
+				climbed = vy
+			}
+			v := m.State.Attitude.Unrotate(m.State.Velocity)
+			if a := alpha(v) * 180 / math.Pi; a > worst {
+				worst = a
+			}
+		}
+	}
+	if worst > 5 {
+		t.Errorf("neutral stick at 110 m/s gear-down settled at %.1f° alpha — the law is commanding on-speed, not level flight", worst)
+	}
+	if climbed > 3 {
+		// Measured residual 2.6 m/s: the cap's linear CL model (zero-alpha 0.53,
+		// slope 6/rad) carries ~0.3° of bias at pattern alpha — a gentle power
+		// trim, the same order the real jet leaves the pilot. The old bare-wing
+		// cap left 5.7° of excess alpha and an unbounded climb.
+		t.Errorf("the pattern leg is still climbing %.1f m/s half a minute after configuring — gear down is a standing climb order", climbed)
+	}
+}

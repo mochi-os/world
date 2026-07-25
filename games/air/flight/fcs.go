@@ -86,10 +86,19 @@ func (m *Model) fcs(in Inputs, local Air) {
 	} else if m.pa {
 		// Powered approach: the stick commands alpha about on-speed, and the
 		// trailing edge droops for lift at approach speed. The neutral demand
-		// is capped at the alpha LEVEL FLIGHT needs at this dynamic pressure —
-		// snapping straight to on-speed alpha at gear-limit speed is a 2.5 g
-		// uncommanded zoom that full forward stick cannot push out of; as the
-		// jet decelerates toward on-speed the cap rises to meet it.
+		// is capped at the alpha LEVEL FLIGHT needs at this dynamic pressure IN
+		// THE CURRENT CONFIGURATION — snapping straight to on-speed alpha at
+		// gear-limit speed is a 2.5 g uncommanded zoom that full forward stick
+		// cannot push out of; as the jet decelerates toward on-speed the cap
+		// falls to meet it, converging on on-speed alpha exactly at on-speed
+		// (both sides then say the same CL). The cap must count the droop's own
+		// lift: the old bare-wing form (CLneed/5, no zero-alpha term) put level
+		// alpha at 11°+ across the whole pattern band, so the cap never engaged
+		// below ~190 kt and neutral stick commanded FULL on-speed alpha at any
+		// gear-down speed — above on-speed that is a standing climb order, and
+		// there is no trimming out what the law itself demands ("keeps wanting
+		// to climb with gear down": unmasked once the integral clamp let the law
+		// actually reach 8.1° and the droop stopped fading at on-speed).
 		// Progressive stick gradient. The alpha command is what the pilot flies
 		// the ball with, and a linear one gives the same 9°-per-unit sensitivity
 		// at the centre as at the stops — fine on a long-throw stick, brutal on
@@ -100,7 +109,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// asks for a sixteenth of it. This is the real stick's force gradient
 		// too — breakout is soft, the last inch is not.
 		fine := stick * math.Abs(stick)
-		level := clamp(m.mass*gravity/math.Max(pressure*m.Airframe.Reference.Area*5.0, 1), 0, c.Onspeed)
+		droopTarget, slatFloor = m.Approaching(pressure)
+		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
+		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
+		level := clamp((need-c.Droop.Lift*schedule)/4.5, 0, c.Onspeed) // 4.5/rad: the TRIMMED lift slope (stabilator download included) fit through the on-speed anchor — see Droop.Lift
 		demand := math.Min(c.Onspeed, level) + fine*(9*math.Pi/180)
 		// Flyaway attitude capture: hands-off after a catapult shot the real
 		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
@@ -139,7 +151,6 @@ func (m *Model) fcs(in Inputs, local Air) {
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
 		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
-		droopTarget, slatFloor = m.Approaching(pressure)
 		if m.State.Gear.Wow {
 			droopTarget *= c.Droop.Half // flaps HALF on deck: the real jet launches (and rolls out) at the takeoff setting; the FULL droop belongs to the airborne approach. The flaperon slew rate carries the change across liftoff and touchdown.
 		}

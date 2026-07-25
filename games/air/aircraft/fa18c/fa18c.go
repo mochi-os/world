@@ -61,6 +61,7 @@ func build() *flight.Airframe {
 	a.Control.Droop.Angle = 26 * math.Pi / 180 // PA droop, HELD through the approach band (see the fcs schedule). Calibrated to the on-speed anchor (134 kt at alpha 8.1, envelope_test.go): the camber model lifts more per degree than the real TEF, so the NATOPS 30/45° labels over-lift — this is the angle whose LIFT matches the real approach numbers
 	a.Control.Droop.Pressure = 10000           // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
 	a.Control.Droop.Half = 2.0 / 3.0           // flaps HALF (the takeoff configuration): NATOPS TEF 30° vs FULL 45° — on deck the jet launches at HALF, and the airborne approach flies the calibrated FULL droop
+	a.Control.Droop.Lift = 0.48                // the TRIMMED landing configuration's zero-alpha CL — solved with the stabilator carrying the droop's pitching moment (the untrimmed camber measures 0.53, but the tail download pays for the trim). With the law's 4.5/rad trimmed slope, the level-flight cap passes just above the on-speed anchor (8.18° at on-speed CL 1.122, margin so capture is never blocked) and within ~0.25° of the solved trim across the pattern band (5.11 v 5.35 at 80 m/s, 3.91 v 3.80 at 85, 3.07 v 2.90 at 110 through the washout)
 	a.Control.Toe = 30 * math.Pi / 180         // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
 	a.Control.Throw.Down = 0.42
 	a.Control.Throw.Up = 0.183                         // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)

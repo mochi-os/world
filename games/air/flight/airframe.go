@@ -117,7 +117,7 @@ type Control struct {
 	Slat     struct{ Slope, Offset, Limit float64 }           // leading-edge schedule: Slope·(alpha−Offset) up to Limit
 	Flap     struct{ Slope, Offset, Limit, Pressure float64 } // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
 	Flyaway  float64                                          // PA-mode pitch-attitude capture datum, rad (hands-off catapult flyaway)
-	Droop    struct{ Angle, Pressure, Half float64 }          // PA trailing-edge droop, rad, washed out by q̄/Pressure; Half = the takeoff (flaps HALF) fraction of the landing (FULL) droop
+	Droop    struct{ Angle, Pressure, Half, Lift float64 }    // PA trailing-edge droop, rad, washed out by q̄/Pressure; Half = the takeoff (flaps HALF) fraction of the landing (FULL) droop; Lift = the full landing configuration's zero-alpha lift coefficient (droop + slats), for the PA law's level-flight cap
 	Toe      float64                                          // rudder toe-in with weight on wheels, rad (both trailing edges inboard; canted fins turn it into tail downforce for takeoff rotation)
 	Throw    struct {                                         // surface limits, rad
 		Down, Up float64                    // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
