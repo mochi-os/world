@@ -57,11 +57,19 @@ func (b *Bandit) Place(words []float64) {
 	b.craft.alive = true
 }
 
-// Spawn places the bandit fresh: nose on the velocity, engines spooled,
+// Spawn places the bandit fresh: trimmed on the velocity, engines spooled,
 // clean airframe — the client's joust merge entry and every respawn.
 func (b *Bandit) Spawn(position, velocity flight.Vec3) {
+	// Level, not a hand-rolled literal. The literal flew nose-on-velocity —
+	// zero alpha — so every bandit spawned a few degrees off trim and rode the
+	// barely-damped phugoid: the same porpoise the Level sign fix removed from
+	// server spawns, and the same accidental gun-target armour, aimed at the
+	// single player. The literal's zero-value gear field was also live-looking
+	// (catapult 0, stroke 0, wire 0), inert only because this arena carries no
+	// carrier. The merge-entry power stays deliberately high: excess thrust on
+	// a trimmed attitude just accelerates, it does not porpoise.
 	s := &b.craft.model.State
-	*s = flight.State{Position: position, Velocity: velocity, Attitude: flight.Look(velocity.Normalize()), Fuel: fuel}
+	*s = flight.Level(b.craft.model, position, velocity, velocity.Length(), fuel)
 	s.Engine[0] = flight.EngineState{Spool: 0.9}
 	s.Engine[1] = flight.EngineState{Spool: 0.9}
 	b.craft.arm()
