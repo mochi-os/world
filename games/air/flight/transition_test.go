@@ -291,3 +291,38 @@ func TestPatternHold(t *testing.T) {
 		t.Errorf("the pattern leg is still climbing %.1f m/s half a minute after configuring — gear down is a standing climb order", climbed)
 	}
 }
+
+// TestBallDatum: the approach alpha datum must not move with speed. Near
+// on-speed, need moves as 1/v², and when the level-flight cap engaged there a
+// fat power correction walked the neutral alpha from 8.4° to 5.3° and back —
+// the jet visibly re-trimmed itself with every power input ("does not trim to
+// maintain attitude", the landing start without ATC). Within the approach band
+// the law is AoA-referenced: the datum stays at on-speed and power flies the
+// path. The alpha ripple that remains is the alpha loop tracking the phugoid
+// the surge excites, centred on the datum — not the datum walking.
+func TestBallDatum(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	s, throttle := Approach(m, Vec3{Y: 400}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
+	m.State = s
+	onspeed := m.Airframe.Control.Onspeed * 180 / math.Pi
+	low, sum, samples := 99.0, 0.0, 0
+	for i := 0; i < 240*40; i++ {
+		in := throttle
+		if i > 240*8 && i < 240*16 {
+			in = throttle + 0.25 // the fat correction: ~12 kt fast at its peak
+		}
+		m.Step(Inputs{Throttle: in, Gear: true})
+		if i > 240*5 {
+			a := alpha(m.State.Attitude.Unrotate(m.State.Velocity)) * 180 / math.Pi
+			low = math.Min(low, a)
+			sum += a
+			samples++
+		}
+	}
+	if low < onspeed-1.2 {
+		t.Errorf("the fast excursion dropped alpha to %.2f° — the datum is walking with speed again (want it pinned near %.2f)", low, onspeed)
+	}
+	if mean := sum / float64(samples); math.Abs(mean-onspeed) > 0.3 {
+		t.Errorf("mean alpha %.2f° across the excursion — the approach is not %.2f-referenced", mean, onspeed)
+	}
+}

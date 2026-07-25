@@ -112,8 +112,21 @@ func (m *Model) fcs(in Inputs, local Air) {
 		droopTarget, slatFloor = m.Approaching(pressure)
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
-		level := clamp((need-c.Droop.Lift*schedule)/4.5, 0, c.Onspeed) // 4.5/rad: the TRIMMED lift slope (stabilator download included) fit through the on-speed anchor — see Droop.Lift
-		demand := math.Min(c.Onspeed, level) + fine*(9*math.Pi/180)
+		grade := clamp((need-c.Droop.Lift*schedule)/4.5, 0, c.Onspeed) // 4.5/rad: the TRIMMED lift slope (stabilator download included) fit through the on-speed anchor — see Droop.Lift
+		// The cap serves the ARRIVE-DIRTY regime, not the ball. Near on-speed,
+		// need moves as 1/v², so a hard min() walked the neutral alpha datum
+		// ~0.4° per m/s of speed — one fat power correction ran the datum from
+		// 8.4° to 5.3° and back ("does not trim to maintain attitude", the
+		// landing start without ATC). A real Hornet resolves the two regimes
+		// with the pitch trim switch; without one, the law blends by speed:
+		// within ~15 kt of on-speed it is AoA-referenced — the datum pinned at
+		// on-speed while power flies the path, the Navy pattern regime — and
+		// beyond that it auto-trims toward configuration level flight (the
+		// climb the cap was built to remove). The blend spans ~160–190 kt.
+		anchor := c.Droop.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
+		blend := clamp((0.80*anchor-need)/(0.18*anchor), 0, 1)
+		level := c.Onspeed - blend*math.Max(c.Onspeed-grade, 0)
+		demand := level + fine*(9*math.Pi/180)
 		// Flyaway attitude capture: hands-off after a catapult shot the real
 		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
 		// into a full-burner zoom. Binds only when pitch exceeds the datum;
