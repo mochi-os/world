@@ -30,6 +30,21 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		return // parked in calm air
 	}
 
+	// Undercarriage drag: doors, struts and wheels are flat plate the polar
+	// model cannot see — without this term the gear had NO aerodynamic effect
+	// at all (dropping it at 350 kt moved nothing, caught by a pilot in the
+	// Case I pattern). ΔCD 0.02 on the reference area matches the published
+	// increment for the class and gives the honest dirty-up deceleration cue
+	// and approach power change. Applied at the CG: the real extension trim
+	// change is small and the FCS trims it away regardless. The HOOK is left
+	// out deliberately — a couple of drag counts, below this model's
+	// resolution. Scaled by Extension so the transit ramps it in.
+	if s.Gear.Extension > 0.01 {
+		speed := v.Length()
+		plate := 0.5 * local.Density * speed * speed * a.Reference.Area * 0.02 * s.Gear.Extension
+		total.Force = total.Force.Add(v.Normalize().Scale(-plate))
+	}
+
 	// LEX state first: the coupling applies to BOTH passes, so the downwash
 	// follows the lift the energised wing actually makes.
 	lex := loading(alpha(v))

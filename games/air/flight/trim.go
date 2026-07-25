@@ -54,6 +54,7 @@ func (m *Model) residual(speed, altitude, theta, stabilator, path float64) (floa
 	s.Attitude = Axis(Vec3{Z: 1}, theta)
 	s.Omega = Vec3{}
 	s.Fcs.Stabilator = Pair{Left: stabilator, Right: stabilator}
+	s.Gear.Extension = 0 // bare airframe: clean, same rule as Evaluate
 	m.weigh()
 	m.gust = Vec3{}
 	local := air(altitude, m.Environment)
@@ -72,6 +73,7 @@ func (m *Model) Evaluate(speed float64, angle float64, altitude float64) (float6
 	s.Attitude = Axis(Vec3{Z: 1}, angle)
 	s.Omega = Vec3{}
 	s.Fcs = FcsState{}
+	s.Gear.Extension = 0 // the static analysis is the CLEAN aircraft (a fresh model carries the deck default, gear down, which silently added the undercarriage plate to every Evaluate consumer — Level's power solve included); the configured analysis composes its own state in approaching
 	m.weigh()
 	m.gust = Vec3{}
 	local := air(altitude, m.Environment)

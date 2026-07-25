@@ -22,6 +22,7 @@ func polar(m *Model, speed float64, at float64, stabilator float64) (cl float64,
 	s.Attitude = Axis(Vec3{Z: 1}, at)
 	s.Omega = Vec3{}
 	s.Fcs = FcsState{Stabilator: Pair{Left: stabilator, Right: stabilator}}
+	s.Gear.Extension = 0 // the probe measures the CLEAN aircraft: a fresh model carries the deck default (gear down), which silently added the undercarriage plate once the gear gained real drag
 	m.weigh()
 	m.gust = Vec3{}
 	local := air(2000, m.Environment)

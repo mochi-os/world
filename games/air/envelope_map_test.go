@@ -17,7 +17,8 @@ func sustained(speed, altitude float64) (float64, float64) {
 		m.State.Position = flight.Vec3{Y: altitude}
 		m.State.Velocity = flight.Vec3{X: speed}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
-		m.State.Fuel = 2450 // ~half internal: the EM reference weight
+		m.State.Gear.Extension = 0 // the EM reference configuration is CLEAN: a fresh model carries the deck default (gear down), which retracted through the settle window — harmless while the gear had no drag, but once it gained real drag the slowed entry pinned the alpha limiter below the commanded n and the bisect read the shortfall as sustained
+		m.State.Fuel = 2450        // ~half internal: the EM reference weight
 		m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
 		m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
 		stick := clamp((n-1)/6.5, 0.1, 1)
@@ -71,7 +72,7 @@ func TestEnvelopeMap(t *testing.T) {
 	}
 	type point struct{ kt, ft, gLow, gHigh, rateLow float64 }
 	for _, at := range []point{
-		{250, 1500, 3.5, 4.3, 15.0},  // low speed: the radius fight regime
+		{250, 1500, 4.2, 5.0, 15.0},  // low speed: the radius fight regime. Re-banded 2026-07-25 with the clean-probe fix: the deck-default gear retracting through the settle window kept the #203 transit-laundering bleeding the g-trim, and the old band was calibrated to that depressed reading (4.12); the honest clean measure is 4.52, matching the published Ps=0 contour (~4.5-5 g at 250 kt low)
 		{350, 1500, 5.3, 6.1, 16.5},  // the corner-speed sustained benchmark (~18 deg/s real)
 		{450, 1500, 7.0, 7.5, 17.0},  // past the knee: the limiter IS the sustained bound
 		{550, 1500, 7.0, 7.5, 14.0},  // high speed: limiter-bound, rate falling geometrically
