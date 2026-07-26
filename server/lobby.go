@@ -22,6 +22,7 @@ func lobby_start(fatal chan<- error) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/status", lobby_status)
 	mux.HandleFunc("/sessions", lobby_sessions)
+	mux.HandleFunc("/withdraw", lobby_withdraw)
 	mux.HandleFunc("/chat", lobby_chat)
 	address := fmt.Sprintf("%s:%d", ini_string("lobby", "listen", ""), ini_int("lobby", "port", 4433))
 	// Whole-request deadlines, not just the header deadline: ReadHeaderTimeout
@@ -111,6 +112,9 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// The match-list poll doubles as the offer heartbeat (#77): a player
+		// browsing this server keeps their own offer alive by being here.
+		sessions_touch(clean(r.URL.Query().Get("pilot"), 64))
 		lobby_respond(w, http.StatusOK, map[string]any{"sessions": sessions_list(r.URL.Query().Get("game"))})
 	case http.MethodPost:
 		if !lobby_allow(r) {
@@ -122,6 +126,7 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 			Mode       string         `json:"mode"`
 			Label      string         `json:"label"`
 			Name       string         `json:"name"`
+			Pilot      string         `json:"pilot"` // the creator's stable token: one live offer per pilot (#77)
 			Capacity   int            `json:"capacity"`
 			Parameters map[string]any `json:"parameters"`
 		}
@@ -132,11 +137,17 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		if len(request.Label) > 64 {
 			request.Label = request.Label[:64]
 		}
+		// One offer at a time: a new match replaces whatever this pilot was
+		// already offering, so the list can never fill with a single player's
+		// abandoned matches.
+		pilot := clean(request.Pilot, 64)
+		sessions_withdraw(pilot)
 		s, err := sessions_create(request.Game, request.Mode, request.Label, request.Capacity, request.Parameters)
 		if err != nil {
 			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		sessions_own(s, pilot)
 		if name := clean(request.Name, 32); name != "" {
 			chat_made(name, s.spec.Label) // the lobby's system line: who just made what (#84)
 		}
@@ -151,6 +162,27 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 	default:
 		lobby_respond(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
 	}
+}
+
+// lobby_withdraw retires the caller's own offer: leaving the server page, or
+// joining somebody else's match. The heartbeat timeout is only the backstop
+// for a closed tab — a deliberate departure should be immediate.
+func lobby_withdraw(w http.ResponseWriter, r *http.Request) {
+	if lobby_cors(w, r) {
+		return
+	}
+	if r.Method != http.MethodPost {
+		lobby_respond(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
+		return
+	}
+	var request struct {
+		Pilot string `json:"pilot"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&request); err != nil {
+		lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "request"})
+		return
+	}
+	lobby_respond(w, http.StatusOK, map[string]any{"withdrawn": sessions_withdraw(clean(request.Pilot, 64))})
 }
 
 // The server-wide lobby chat (#84): one ring of recent lines for players

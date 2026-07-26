@@ -84,6 +84,19 @@ type session struct {
 
 	permanent bool // a standing match: exempt from the idle sweep, recreated at startup
 
+	// Offer ownership (#77). A player may hold ONE live offer at a time: an
+	// open match nobody has joined yet, kept alive by its owner's presence on
+	// the server page. owner is the pilot token the creator sent (stable
+	// across reconnects, unlike an address); offered is its last heartbeat —
+	// the page's own match-list poll — and withdrawn is set by the lobby
+	// goroutine for the tick loop to act on, since only the tick goroutine may
+	// close a session. joined latches once anyone actually connects: from then
+	// on it is a match like any other and the offer rules stop applying.
+	owner     string
+	offered   time.Time
+	joined    bool
+	withdrawn bool
+
 	// registry-owned counters mirrored for the lobby (updated under sessions_lock):
 	connected int
 	names     []map[string]any
@@ -189,6 +202,71 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	return s, nil
 }
 
+// OFFER_GRACE is how long an unjoined offer outlives its owner's last
+// heartbeat. The server page polls the match list every few seconds, so this
+// covers a closed tab, a lost connection, or simply walking away; leaving the
+// page deliberately withdraws at once through sessions_withdraw.
+const OFFER_GRACE = 25 * time.Second
+
+// sessions_own records the creator and starts the offer clock.
+func sessions_own(s *session, owner string) {
+	if owner == "" {
+		return
+	}
+	sessions_lock.Lock()
+	s.owner = owner
+	s.offered = time.Now()
+	sessions_lock.Unlock()
+}
+
+// sessions_withdraw flags every live offer held by this pilot. Creating a new
+// match calls it first — one offer at a time, and the new one replaces the
+// old — as does leaving the server page or joining somebody else's match.
+func sessions_withdraw(owner string) int {
+	if owner == "" {
+		return 0
+	}
+	count := 0
+	sessions_lock.Lock()
+	for _, s := range sessions {
+		if s.owner == owner && !s.joined && !s.permanent && !s.withdrawn {
+			s.withdrawn = true
+			count++
+		}
+	}
+	sessions_lock.Unlock()
+	return count
+}
+
+// sessions_touch refreshes the offer clock for this pilot's own offers: the
+// match-list poll IS the heartbeat, so a player browsing the server page keeps
+// their offer alive without a second request.
+func sessions_touch(owner string) {
+	if owner == "" {
+		return
+	}
+	now := time.Now()
+	sessions_lock.Lock()
+	for _, s := range sessions {
+		if s.owner == owner && !s.joined {
+			s.offered = now
+		}
+	}
+	sessions_lock.Unlock()
+}
+
+// sessions_stale flags offers whose owner has stopped heartbeating.
+func sessions_stale() {
+	now := time.Now()
+	sessions_lock.Lock()
+	for _, s := range sessions {
+		if s.owner != "" && !s.joined && !s.permanent && !s.withdrawn && !s.offered.IsZero() && now.Sub(s.offered) > OFFER_GRACE {
+			s.withdrawn = true
+		}
+	}
+	sessions_lock.Unlock()
+}
+
 func seed() (uint64, error) {
 	bytes := make([]byte, 8)
 	if _, err := rand.Read(bytes); err != nil {
@@ -217,6 +295,8 @@ func sessions_list(name string) []map[string]any {
 			continue
 		}
 		list = append(list, map[string]any{
+			"owner":     s.owner,
+			"offer":     s.owner != "" && !s.joined,
 			"session":   s.identifier,
 			"game":      s.spec.Game,
 			"mode":      s.spec.Mode,
@@ -262,6 +342,9 @@ func session_mirror(s *session, state string) {
 	sessions_lock.Lock()
 	s.names = names
 	s.connected = connected
+	if connected > 0 {
+		s.joined = true // somebody flew it: this is a match now, not an offer
+	}
 	if state != "" {
 		s.state = state
 	}

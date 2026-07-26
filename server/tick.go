@@ -89,6 +89,16 @@ func session_run(s *session, g game.Game) {
 					return
 				}
 			}
+			// Withdrawn offers close here: only this goroutine may end a
+			// session, so the lobby handler flags and the tick loop acts.
+			sessions_stale()
+			sessions_lock.RLock()
+			gone := s.withdrawn
+			sessions_lock.RUnlock()
+			if gone {
+				session_close(s, "withdrawn")
+				return
+			}
 			if connected > 0 {
 				s.empty = time.Time{}
 			} else if s.empty.IsZero() {

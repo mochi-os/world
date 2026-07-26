@@ -70,9 +70,9 @@ func TestSlowWriterTeardown(t *testing.T) {
 	done := make(chan struct{})
 	go func() { l.writer(); close(done) }()
 
-	l.outbound <- []byte("x")          // one payload: the writer picks it up and blocks in Write
-	time.Sleep(50 * time.Millisecond)  // let it reach the (blocked) send
-	l.close("slow")                    // classify the connection slow — must abort, not drain
+	l.outbound <- []byte("x")         // one payload: the writer picks it up and blocks in Write
+	time.Sleep(50 * time.Millisecond) // let it reach the (blocked) send
+	l.close("slow")                   // classify the connection slow — must abort, not drain
 
 	select {
 	case <-done:

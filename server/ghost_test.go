@@ -14,12 +14,15 @@ import (
 
 type fakeInstance struct{ joined, left int }
 
-func (f *fakeInstance) Join(game.Player) (map[string]any, error) { f.joined++; return map[string]any{}, nil }
-func (f *fakeInstance) Leave(game.Player)                        { f.left++ }
-func (f *fakeInstance) Step(uint64, map[int][]game.Input)        {}
-func (f *fakeInstance) Snapshot(uint64) map[string]any           { return nil }
-func (f *fakeInstance) Events() []map[string]any                 { return nil }
-func (f *fakeInstance) Finished() (bool, map[string]any)         { return false, nil }
+func (f *fakeInstance) Join(game.Player) (map[string]any, error) {
+	f.joined++
+	return map[string]any{}, nil
+}
+func (f *fakeInstance) Leave(game.Player)                 { f.left++ }
+func (f *fakeInstance) Step(uint64, map[int][]game.Input) {}
+func (f *fakeInstance) Snapshot(uint64) map[string]any    { return nil }
+func (f *fakeInstance) Events() []map[string]any          { return nil }
+func (f *fakeInstance) Finished() (bool, map[string]any)  { return false, nil }
 
 // joinCancels closes the order's cancel channel from inside Join, to hit the
 // post-Join rollback window deterministically.
