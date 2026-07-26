@@ -30,19 +30,39 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		return // parked in calm air
 	}
 
-	// Undercarriage drag: doors, struts and wheels are flat plate the polar
-	// model cannot see — without this term the gear had NO aerodynamic effect
-	// at all (dropping it at 350 kt moved nothing, caught by a pilot in the
-	// Case I pattern). ΔCD 0.02 on the reference area matches the published
-	// increment for the class and gives the honest dirty-up deceleration cue
-	// and approach power change. Applied at the CG: the real extension trim
-	// change is small and the FCS trims it away regardless. The HOOK is left
-	// out deliberately — a couple of drag counts, below this model's
-	// resolution. Scaled by Extension so the transit ramps it in.
-	if s.Gear.Extension > 0.01 {
+	// Flat plates: configuration drag the element polars cannot see, each an
+	// area in m² (the same convention as Damage.Drag) applied against the
+	// local flow, with the moment of its position. The gear had NO aerodynamic
+	// effect at all before these (dropping it at 350 kt moved nothing — caught
+	// by a pilot in the Case I pattern); the rest follow the same honesty:
+	// the refuelling probe (~5 s stroke; the real ~300 KCAS limit stays
+	// procedural), the arrestor hook (a couple of drag counts — reversed from
+	// "below resolution" once the plate helper made it free), attached wingtip
+	// stores (mass lives in weigh), and a dead engine windmilling/seized —
+	// whose off-centre plate yaws the nose toward the failure, as it should.
+	{
 		speed := v.Length()
-		plate := 0.5 * local.Density * speed * speed * a.Reference.Area * 0.02 * s.Gear.Extension
-		total.Force = total.Force.Add(v.Normalize().Scale(-plate))
+		dynamic := 0.5 * local.Density * speed * speed
+		direction := v.Normalize()
+		plate := func(area float64, at Vec3) {
+			if area <= 1e-6 {
+				return
+			}
+			force := direction.Scale(-dynamic * area)
+			total.Force = total.Force.Add(force)
+			total.Moment = total.Moment.Add(at.Subtract(m.center).Cross(force))
+		}
+		plate(0.02*a.Reference.Area*s.Gear.Extension, m.center) // undercarriage: ΔCD 0.02 on the reference area, the published class increment; CG-applied (the extension trim change is small and the FCS trims it regardless)
+		plate(0.05*m.probe, m.center)                           // refuelling probe
+		plate(0.01*m.arrestor, m.center)                        // arrestor hook
+		for i := range a.Stores {
+			if m.stores&(1<<uint(i)) != 0 {
+				plate(a.Stores[i].Area, a.Stores[i].Position)
+			}
+		}
+		for i := 0; i < len(a.Engines) && i < len(s.Damage.Engine); i++ {
+			plate(0.15*s.Damage.Engine[i], a.Engines[i].Position) // windmilling/seized core: drag grows as the engine dies
+		}
 	}
 
 	// LEX state first: the coupling applies to BOTH passes, so the downwash

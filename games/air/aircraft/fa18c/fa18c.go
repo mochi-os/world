@@ -76,6 +76,10 @@ func build() *flight.Airframe {
 	a.Wave.Hump = 0.030 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
 	a.Wave.Body = 0.10
 
+	a.Stores = []flight.Store{ // wingtip AIM-9Ms on the LAU-7 rails (the rails themselves live in the empty weight): 86 kg and ~0.05 m² of carriage drag each, at the measured rail position the crash probes already use
+		{Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -6.26}, Mass: 86, Area: 0.05},
+		{Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 6.26}, Mass: 86, Area: 0.05},
+	}
 	a.Engines = make([]flight.Engine, 2)
 	for i := range a.Engines {
 		side := float64(i)*2 - 1

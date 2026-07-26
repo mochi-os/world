@@ -17,8 +17,9 @@ func sustained(speed, altitude float64) (float64, float64) {
 		m.State.Position = flight.Vec3{Y: altitude}
 		m.State.Velocity = flight.Vec3{X: speed}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
-		m.State.Gear.Extension = 0 // the EM reference configuration is CLEAN: a fresh model carries the deck default (gear down), which retracted through the settle window — harmless while the gear had no drag, but once it gained real drag the slowed entry pinned the alpha limiter below the commanded n and the bisect read the shortfall as sustained
-		m.State.Fuel = 2450        // ~half internal: the EM reference weight
+		m.State.Gear.Extension = 0
+		m.Stores(0)         // the EM reference is the CALIBRATION configuration — clean, no stores: the drag polar and the published-anchor bands were fit at ~29k lb before external stores carried mass or drag at all // the EM reference configuration is CLEAN: a fresh model carries the deck default (gear down), which retracted through the settle window — harmless while the gear had no drag, but once it gained real drag the slowed entry pinned the alpha limiter below the commanded n and the bisect read the shortfall as sustained
+		m.State.Fuel = 2450 // ~half internal: the EM reference weight
 		m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
 		m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
 		stick := clamp((n-1)/6.5, 0.1, 1)

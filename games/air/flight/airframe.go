@@ -14,6 +14,7 @@ type Airframe struct {
 	Surfaces  []Surface
 	Body      []Station
 	Engines   []Engine                      // 0..4; State carries four slots regardless
+	Stores    []Store                       // external stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks them)
 	Mass      struct{ Empty, Fuel float64 } // kg; Fuel = internal capacity
 	Control   Control                       // control-law data the shared law flies with
 	Wave      struct{ Hump, Body float64 }  // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
@@ -87,6 +88,15 @@ type Station struct {
 	Area     float64 // frontal, m²
 	Plan     float64 // planform, m²
 	Drag     float64 // Cd on frontal area
+}
+
+// Store is one external-store position: a mass and a flat-plate drag area
+// carried while attached. Wingtip missiles today; pylons and tanks would land
+// here with honest mass, CG, and drag from day one.
+type Store struct {
+	Position Vec3
+	Mass     float64 // kg while attached
+	Area     float64 // m² flat plate while attached
 }
 
 // Engine is one powerplant.

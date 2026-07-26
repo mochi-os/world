@@ -405,6 +405,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
 				if i.launch(slot, a) && !i.cheat.ammunition {
 					b.missiles--
+					a.model.Stores(armed(b.missiles))
 				}
 			}
 		}

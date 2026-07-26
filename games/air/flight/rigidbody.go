@@ -35,6 +35,15 @@ type Model struct {
 	lawInit bool
 	launder float64
 
+	// Deployable and store memory — unencoded for the same reason: the probe
+	// and hook extension slews re-derive within seconds of a snapshot restore,
+	// and the store mask is re-asserted by its owner (the client syncs it every
+	// frame, the server sets it at every launch). Drag this small makes the
+	// predictor's one-off divergence invisible.
+	probe    float64 // refuelling probe extension 0..1 (~5 s hydraulic stroke)
+	arrestor float64 // arrestor hook extension 0..1 (~2 s swing); named for the carrier hook() method
+	stores   uint32  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
+
 	// Per-step caches:
 	mass    float64
 	center  Vec3 // combined CG, body, from datum
@@ -56,6 +65,7 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity}
 	m.State.Attitude = Quat{W: 1}
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	m.stores = ^uint32(0) // every station armed; extra bits beyond the airframe's stations are ignored
 	m.State.Fuel = airframe.Mass.Fuel
 	m.lift = make([]float64, len(airframe.Surfaces))
 	m.base = make([]int, len(airframe.Surfaces))
@@ -75,7 +85,23 @@ func (m *Model) SetWorld(w World) { m.World = w }
 
 // Step advances the simulation exactly Dt. Pure given (State, in,
 // Environment, World): no I/O, clock, randomness, or allocation.
+// Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]):
+// firing a missile clears its bit, dropping the station's mass and drag.
+func (m *Model) Stores(mask uint32) { m.stores = mask }
+
 func (m *Model) Step(in Inputs) {
+	// Deployable slews: the probe's ~5 s hydraulic stroke and the hook's ~2 s
+	// swing, feeding the flat-plate drag in aero.
+	if in.Probe {
+		m.probe = math.Min(1, m.probe+Dt/5)
+	} else {
+		m.probe = math.Max(0, m.probe-Dt/5)
+	}
+	if in.Hook {
+		m.arrestor = math.Min(1, m.arrestor+Dt/2)
+	} else {
+		m.arrestor = math.Max(0, m.arrestor-Dt/2)
+	}
 	m.weigh()
 	local := air(m.State.Position.Y, m.Environment)
 	m.gust = wind(m.State.Position, m.State.Time, m.Environment, m.World.Carrier)
@@ -95,12 +121,26 @@ func (m *Model) weigh() {
 	fuel := m.State.Fuel
 	empty := math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
 	m.mass = empty + fuel
-	m.center = a.Center.Scale(empty).Add(a.Tank.Scale(fuel)).Scale(1 / m.mass).Add(m.State.Damage.Shift)
-	// Parallel-axis: empty tensor is about the empty CG; move both masses to
+	moment := a.Center.Scale(empty).Add(a.Tank.Scale(fuel))
+	for i := range a.Stores {
+		if m.stores&(1<<uint(i)) == 0 {
+			continue // fired away: the station's mass left with the missile
+		}
+		store := &a.Stores[i]
+		m.mass += store.Mass
+		moment = moment.Add(store.Position.Scale(store.Mass))
+	}
+	m.center = moment.Scale(1 / m.mass).Add(m.State.Damage.Shift)
+	// Parallel-axis: empty tensor is about the empty CG; move every mass to
 	// the combined CG. The empty tensor is deliberately NOT reduced with
 	// Loss — a conservative, documented approximation.
 	tensor := a.Inertia.Add(parallel(a.Center.Subtract(m.center), empty))
 	tensor = tensor.Add(parallel(a.Tank.Subtract(m.center), fuel))
+	for i := range a.Stores {
+		if m.stores&(1<<uint(i)) != 0 {
+			tensor = tensor.Add(parallel(a.Stores[i].Position.Subtract(m.center), a.Stores[i].Mass))
+		}
+	}
 	m.inertia = tensor
 	m.inverse = tensor.Inverse()
 }

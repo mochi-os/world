@@ -551,6 +551,7 @@ func input(data map[string]any) flight.Inputs {
 		Reheat:     clamp(number(data, "reheat"), 0, 1),
 		Brake:      flag("brake"),
 		Gear:       flag("gear"),
+		Probe:      flag("probe"),
 		Hook:       flag("hook"),
 		Launch:     flag("launch"),
 		Override:   flag("override"),
@@ -617,6 +618,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				if i.launch(slot, a) {
 					if !i.cheat.ammunition {
 						a.missiles--
+						a.model.Stores(armed(a.missiles))
 					}
 					a.release = 0
 				}
@@ -691,6 +693,15 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	i.guns(dt, tick)
 	i.pursue(dt, tick)
 	i.drift(dt)
+}
+
+// armed maps a remaining-missile count to the store bitmask (wingtips first).
+func armed(count int) uint32 {
+	mask := uint32(0)
+	for i := 0; i < count && i < 32; i++ {
+		mask |= 1 << uint(i)
+	}
+	return mask
 }
 
 // credit names the killer: the last player to damage this aircraft within

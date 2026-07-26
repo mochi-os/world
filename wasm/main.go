@@ -65,6 +65,7 @@ func main() {
 		"mark":     js.FuncOf(mark),
 		"ack":      js.FuncOf(ack),
 		"level":    js.FuncOf(level),
+		"stores":   js.FuncOf(stores),
 		"approach": js.FuncOf(approach),
 		"clear":    js.FuncOf(clear),
 	}
@@ -175,6 +176,7 @@ func controls() (flight.Inputs, int) {
 		Hook:       flags&8 != 0,
 		Launch:     flags&16 != 0,
 		Override:   flags&32 != 0,
+		Probe:      flags&64 != 0,
 		Sequence:   uint32(input[6]),
 	}
 	steps := int(input[7])
@@ -276,6 +278,16 @@ func approach(this js.Value, arguments []js.Value) any {
 	state, throttle := flight.Approach(model, position, direction, -arguments[5].Float()*math.Pi/180, arguments[6].Float())
 	model.State = state
 	return throttle
+}
+
+// stores sets the attached external-store bitmask: the client clears a bit as
+// each wingtip missile departs, dropping its mass and carriage drag.
+func stores(this js.Value, arguments []js.Value) any {
+	if model == nil {
+		return "uninitialised"
+	}
+	model.Stores(uint32(arguments[0].Int()))
+	return ""
 }
 
 // clear acknowledges the contact events the host has read: the touchdown

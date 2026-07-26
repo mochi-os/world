@@ -19,6 +19,7 @@ type Inputs struct {
 	Brake      bool    // wheel brakes, held, both mains
 	Gear       bool    // commanded position, true = down
 	Hook       bool    // true = deployed
+	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
 	Override   bool    // paddle switch: raises the g ceiling, records overstress
 	Eject      bool    // ejection handle: flight ignores it; the host judges
