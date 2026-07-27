@@ -5,71 +5,144 @@ import (
 	"testing"
 )
 
-// Delayed pure-gain pilot closing a pitch-attitude tracking loop — the classic
-// PIO probe, and the acceptance test for the low-speed guns-tracking
-// oscillation (first reported after a 220-kt gun solution wallowed in pitch).
-// Baseline at gain 1.2: 200-250 kt rings at 8-12 crossings with ~700 % peak
-// overshoot while 350 kt holds 2 crossings at ~90 % — the inner rate loop has
-// only ~40 % surface power below the 20 kPa authority reference and its phase
-// lag closes the loop through the pilot's delay. NOTE a bare authority-cap
-// raise makes it WORSE (bigger low-q deflections hit the actuator rate limit;
-// measured): the fix needs shaped low-q rate damping, tuned against this probe
-// AND the bot battery, since the bots fly the same law.
-func pioProbe(t *testing.T, kt float64, gain float64) (overshoots int, ratio float64) {
+// PIO battery: a delayed pure-gain pilot closes a pitch-attitude tracking loop
+// — the classic handling-qualities probe, and the acceptance harness for the
+// low-speed guns-tracking oscillation (first reported after a 220-kt gun
+// solution wallowed in pitch). Baseline defect: the inner rate loop carries
+// only ~40 % surface power below its 20 kPa authority reference, and the phase
+// lag closes through the pilot's delay. A bare authority-cap raise makes it
+// WORSE (bigger low-q deflections drive the actuator rate limit; measured):
+// any fix needs shaped low-q rate damping, tuned against this battery AND the
+// bot battery, since the bots fly the same law. A plain q-scheduled
+// excess-rate damping term was measured to fix the tracking (220 kt onset
+// 0.77 -> 1.05, the whole 220-400 kt curve over 1.0) but broke the idle-decel
+// sink arrest (TestWingLossStalls) at every strength tried - the same q band
+// needs damping for tracking and full g-build rate for the arrest. The real
+// fix is a WASHOUT on the damping (pass steady g-builds, damp oscillation,
+// as the yaw damper already does), which needs a new Fcs state word and the
+// serialized-layout care that entails.
+
+type pioResult struct {
+	crossings int     // target re-crossings after first capture
+	overshoot float64 // largest excursion past the target / step size
+	sustained bool    // oscillation amplitude in the last 5 s ≥ half the first 5 s
+}
+
+// pioRun flies the tracking task: trim level, then track a step of stepDeg.
+// gear selects the PA configuration (approach tracking at approach speeds).
+func pioRun(kt, gain, stepDeg float64, gear bool) pioResult {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kt/1.94384, 3000)
+	fuel := 3000.0
+	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kt/1.94384, fuel)
 	const dt = 1.0 / 240
-	const tau = 0.30
+	const tau = 0.30 // human effective delay
 	lag := make([]float64, int(tau/dt))
 	target := 0.0
 	var history []float64
-	for i := 0; i < 240*20; i++ {
+	throttle := 0.8
+	if gear {
+		throttle = 0.62
+	}
+	for i := 0; i < 240*22; i++ {
 		if i == 240*2 {
-			target = 6 * math.Pi / 180 // the pull: pipper 6° up
+			target = stepDeg * math.Pi / 180
 		}
 		body := m.State.Attitude.Rotate(Vec3{X: 1})
 		pitch := math.Asin(clamp(body.Y, -1, 1))
-		err := target - pitch
-		lag = append(lag, err)
+		lag = append(lag, target-pitch)
 		delayed := lag[0]
 		lag = lag[1:]
-		stick := clamp(gain*delayed*57.3/10, -1, 1) // gain in stick-per-10°-error terms
-		m.Step(Inputs{Throttle: 0.8, Pitch: stick})
+		stick := clamp(gain*delayed*57.3/10, -1, 1) // gain = stick per 10° of error
+		m.Step(Inputs{Throttle: throttle, Pitch: stick, Gear: gear})
 		if i >= 240*2 {
 			history = append(history, pitch*57.3)
 		}
 	}
-	// count crossings of the target after first reaching it, and the ratio of
-	// the largest excursion beyond it to the commanded step
-	targetDeg := 6.0
-	reached := false
-	last := 0.0
-	peak := 0.0
+	res := pioResult{}
+	reached, last, n := false, 0.0, len(history)
 	for _, p := range history {
-		if !reached && p >= targetDeg {
+		if !reached && p >= stepDeg {
 			reached = true
 		}
 		if reached {
-			d := p - targetDeg
-			if d > peak {
-				peak = d
+			d := p - stepDeg
+			if d > res.overshoot*stepDeg {
+				res.overshoot = d / stepDeg
 			}
-			if last != 0 && math.Signbit(d) != math.Signbit(last) && math.Abs(d) > 0.3 {
-				overshoots++
+			if last != 0 && math.Signbit(d) != math.Signbit(last) && math.Abs(d) > 0.05*stepDeg {
+				res.crossings++
 			}
-			if math.Abs(d) > 0.3 {
+			if math.Abs(d) > 0.05*stepDeg {
 				last = d
 			}
 		}
 	}
-	return overshoots, peak / targetDeg
+	amp := func(a, b int) float64 {
+		lo, hi := 1e9, -1e9
+		for _, p := range history[a:b] {
+			lo = math.Min(lo, p)
+			hi = math.Max(hi, p)
+		}
+		return hi - lo
+	}
+	if n > 240*10 {
+		res.sustained = amp(n-240*5, n) >= 0.5*amp(0, 240*5) && res.crossings >= 4
+	}
+	return res
 }
 
-func TestPIOTracking(t *testing.T) {
-	for _, kt := range []float64{200, 220, 250, 300, 350} {
-		for _, gain := range []float64{0.6, 1.2} {
-			o, r := pioProbe(t, kt, gain)
-			t.Logf("%3.0f kt gain %.1f: crossings %2d, peak overshoot %4.0f%%", kt, gain, o, r*100)
+// onsetGain binary-searches the lowest pilot gain that rings (≥4 crossings) —
+// the handling-qualities margin at each speed. Higher is better; a real pilot
+// tracking a gun solution works around gain ~1.
+func onsetGain(kt, stepDeg float64, gear bool) float64 {
+	lo, hi := 0.2, 3.0
+	if pioRun(kt, hi, stepDeg, gear).crossings < 4 {
+		return hi // never rings within tested aggression
+	}
+	for i := 0; i < 8; i++ {
+		mid := (lo + hi) / 2
+		if pioRun(kt, mid, stepDeg, gear).crossings >= 4 {
+			hi = mid
+		} else {
+			lo = mid
 		}
+	}
+	return hi
+}
+
+// TestPIOTracking maps the envelope: onset gain by speed and step size, both
+// laws. Asserts only the KNOWN-GOOD region so the defect cannot spread while
+// it awaits its fix; the low-speed UA deficiency is logged as the baseline the
+// fix must move.
+func TestPIOTracking(t *testing.T) {
+	t.Log("UA law, 6° step — PIO onset gain by speed (higher = better):")
+	for _, kt := range []float64{180, 200, 220, 250, 280, 300, 350, 400} {
+		g := onsetGain(kt, 6, false)
+		r := pioRun(kt, 1.0, 6, false)
+		t.Logf("  %3.0f kt: onset %.2f | at gain 1.0: crossings %2d overshoot %3.0f%% sustained %v",
+			kt, g, r.crossings, r.overshoot*100, r.sustained)
+	}
+	t.Log("UA law amplitude dependence at 220 kt (rate-limit PIO rings LARGE steps):")
+	for _, step := range []float64{2, 6, 12} {
+		g := onsetGain(220, step, false)
+		t.Logf("  %2.0f° step: onset gain %.2f", step, g)
+	}
+	t.Log("PA law (gear down), 4° step — approach tracking:")
+	for _, kt := range []float64{130, 140, 150} {
+		g := onsetGain(kt, 4, true)
+		r := pioRun(kt, 1.0, 4, true)
+		t.Logf("  %3.0f kt: onset %.2f | at gain 1.0: crossings %2d overshoot %3.0f%% sustained %v",
+			kt, g, r.crossings, r.overshoot*100, r.sustained)
+	}
+	// Guaranteed floor at the CURRENT law: no sustained ring at working pilot
+	// gain from 280 kt up, and the approach law calm at on-speed. The 180-250 kt
+	// deficiency is the open defect this battery exists to measure.
+	for _, kt := range []float64{280, 300, 350, 400} {
+		if r := pioRun(kt, 1.0, 6, false); r.sustained {
+			t.Errorf("%.0f kt UA tracking rings at gain 1.0 — the guns-tracking PIO is back", kt)
+		}
+	}
+	if r := pioRun(140, 0.8, 4, true); r.sustained {
+		t.Errorf("PA approach tracking rings at gain 0.8 — approach regression")
 	}
 }
