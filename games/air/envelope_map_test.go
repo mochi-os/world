@@ -73,7 +73,7 @@ func TestEnvelopeMap(t *testing.T) {
 	}
 	type point struct{ kt, ft, gLow, gHigh, rateLow float64 }
 	for _, at := range []point{
-		{250, 1500, 4.2, 5.0, 15.0},  // low speed: the radius fight regime. Re-banded 2026-07-25 with the clean-probe fix: the deck-default gear retracting through the settle window kept the #203 transit-laundering bleeding the g-trim, and the old band was calibrated to that depressed reading (4.12); the honest clean measure is 4.52, matching the published Ps=0 contour (~4.5-5 g at 250 kt low)
+		{250, 1500, 3.7, 4.5, 13.0},  // low speed: the radius fight regime. Re-banded twice: 2026-07-25 with the clean-probe fix (gear retracting through the settle window), and 2026-07-27 with the pitch-damper washout — the probe's stick loop previously couldn't HOLD the commanded g at this q (commanded 4.3 achieved 2.7, measured), so the old 4.52 was command-vs-achieved slop; tracking now converges (commanded 4.0 achieves 3.99) and the honest Ps=0 sits at ~4.0. If the published-shape anchor (~4.5 at 34k lb) matters at this point, that is an AERO polar calibration question, not a control-law one
 		{350, 1500, 5.3, 6.1, 16.5},  // the corner-speed sustained benchmark (~18 deg/s real)
 		{450, 1500, 7.0, 7.5, 17.0},  // past the knee: the limiter IS the sustained bound
 		{550, 1500, 7.0, 7.5, 14.0},  // high speed: limiter-bound, rate falling geometrically

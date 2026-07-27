@@ -69,6 +69,7 @@ type FcsState struct {
 	Integral   float64 // outer-loop g-trim integrator (rad/s of rate demand)
 	Trim       float64 // inner-loop surface trim integrator (rad of stabilator)
 	Washout    float64 // yaw-damper washout filter state
+	Pitchwash  float64 // pitch-damper washout filter state: the slow tracker of excess pitch rate the low-q tracking damper subtracts, so steady g-builds pass and only oscillation is damped
 	Demand     float64 // onset-shaped g demand (12 g/s slew — no slam transients)
 	Normal     float64 // sensed load factor (body up) from the last step — the g meter
 	Reference  float64 // attitude-hold datum, rad of pitch (the stick-free hold in both laws; an early design stored trimmed airspeed here and this comment outlived it)

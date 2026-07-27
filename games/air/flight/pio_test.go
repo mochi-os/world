@@ -13,14 +13,13 @@ import (
 // lag closes through the pilot's delay. A bare authority-cap raise makes it
 // WORSE (bigger low-q deflections drive the actuator rate limit; measured):
 // any fix needs shaped low-q rate damping, tuned against this battery AND the
-// bot battery, since the bots fly the same law. A plain q-scheduled
-// excess-rate damping term was measured to fix the tracking (220 kt onset
-// 0.77 -> 1.05, the whole 220-400 kt curve over 1.0) but broke the idle-decel
-// sink arrest (TestWingLossStalls) at every strength tried - the same q band
-// needs damping for tracking and full g-build rate for the arrest. The real
-// fix is a WASHOUT on the damping (pass steady g-builds, damp oscillation,
-// as the yaw damper already does), which needs a new Fcs state word and the
-// serialized-layout care that entails.
+// bot battery, since the bots fly the same law. FIXED with the washed-out
+// low-q excess-rate damper in fcs.go (Fcs.Pitchwash): plain damping cleared
+// the tracking band but broke the idle-decel sink arrest - the same q band
+// needs damping for tracking and free g-build for the arrest - and the
+// washout is the discriminator: steady content is forgotten in ~0.8 s, so
+// arrests pass while oscillation is damped whole. Post-fix: 220 kt onset
+// 0.77 -> 1.03 and the whole 220-400 kt curve clears working pilot gain.
 
 type pioResult struct {
 	crossings int     // target re-crossings after first capture
@@ -134,10 +133,11 @@ func TestPIOTracking(t *testing.T) {
 		t.Logf("  %3.0f kt: onset %.2f | at gain 1.0: crossings %2d overshoot %3.0f%% sustained %v",
 			kt, g, r.crossings, r.overshoot*100, r.sustained)
 	}
-	// Guaranteed floor at the CURRENT law: no sustained ring at working pilot
-	// gain from 280 kt up, and the approach law calm at on-speed. The 180-250 kt
-	// deficiency is the open defect this battery exists to measure.
-	for _, kt := range []float64{280, 300, 350, 400} {
+	// Guaranteed floor: no sustained ring at working pilot gain from 220 kt up,
+	// and the approach law calm at on-speed. 180-200 kt stays marginal by
+	// design - rateBound deliberately opens there for slow-fight nose
+	// authority, and damping it away would trade that agility.
+	for _, kt := range []float64{220, 250, 280, 300, 350, 400} {
 		if r := pioRun(kt, 1.0, 6, false); r.sustained {
 			t.Errorf("%.0f kt UA tracking rings at gain 1.0 — the guns-tracking PIO is back", kt)
 		}

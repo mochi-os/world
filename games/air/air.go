@@ -420,6 +420,9 @@ func state_payload(s *flight.State) map[string]any {
 		if i == 57+flight.Elements+flight.Channels { // Loss, kg
 			v /= 8000
 		}
+		if i == 57+flight.Elements+flight.Channels+4 { // Pitchwash, signed rad/s: map ±1.5 onto the unit interval
+			v = v/3 + 0.5
+		}
 		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
 	}
 	return map[string]any{

@@ -315,6 +315,20 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// upset instead of damping it.
 		envelope := math.Min(3*rateBound, 1.2)
 		shaped = clamp(shaped, -envelope, envelope)
+		// Low-q tracking damper, WASHED OUT (the guns-tracking PIO; the battery in
+		// pio_test.go is its acceptance test). Below the 20 kPa authority reference
+		// the weak stabilator lags the rate demand and the loop rings through a
+		// tracking pilot's ~0.3 s delay - onset gain 0.6-0.9 across 180-250 kt
+		// against 1.3+ at 350, small steps ringing too (linear phase lag, not the
+		// actuator limit; a plain gain raise feeds the limit and measures worse).
+		// Damping the excess rate directly fixed the tracking but broke the
+		// idle-decel sink arrest at every strength: an arrest is a quasi-steady
+		// g-build in the same q band. The washout is the discriminator the yaw
+		// damper already uses - the filter forgets steady content in ~0.8 s, so
+		// arrests and sustained pulls pass while oscillation is damped whole.
+		washed := excess - m.State.Fcs.Pitchwash
+		m.State.Fcs.Pitchwash += (excess - m.State.Fcs.Pitchwash) * Dt / 0.8
+		shaped -= washed * 0.75 * clamp((20000-pressure)/14000, 0, 1)
 		// Back-calculation anti-windup: pull the g-trim integral toward what
 		// the limits actually allow. (A blanket decay here oscillates at a
 		// sustained boundary: bind → bleed → g sags → unbind → rebuild.)

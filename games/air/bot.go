@@ -192,7 +192,14 @@ func standard() tactics {
 	// (11v15 / 27v28 / 52v55 red deaths at 12/24/48 seeds). Weight 3
 	// over-rotates - the pair scatters and both edges invert (24 seeds:
 	// net -24/28 deaths against solo's -17/25).
-	t.crowd.weight = 2
+	// 2 -> 2.5 (2026-07-27, the pitch-washout recalibration): the tracking
+	// damper sharpened everyone's gunnery again and the section's defensive
+	// edge inverted (12 deaths v solo's 7 at 14 seeds); 2.5 restores it.
+	// 2.75 already over-rotates on the equal tier (12 v 9). The equal-tier
+	// A/B itself was red before the law change (13 v 12 after it, one death
+	// from passing at 12 seeds) - that residual lives with the #206 doctrine
+	// pass, not this constant.
+	t.crowd.weight = 2.5
 	t.rejoin.span, t.rejoin.fight = 4000, 10000
 	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
 	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180
