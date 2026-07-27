@@ -119,6 +119,15 @@ func (b *Bandit) Step() (fire bool, flare bool) {
 // State exposes the bandit's flight state for the client to render.
 func (b *Bandit) State() *flight.State { return &b.craft.model.State }
 
+// Mode is the doctrine state the brain last chose (#212 flight recorder, and
+// the #206 human-fight diagnostic). Empty for a drone with no brain.
+func (b *Bandit) Mode() string {
+	if b.craft == nil || b.craft.brain == nil {
+		return ""
+	}
+	return b.craft.brain.mode
+}
+
 // Wound mirrors the client's damage authority into the harness: the wasm
 // battle hulk owns the bandit's damage and fires, and copying them here is
 // what lets the brain fly wounded (#130) — and the flight model fly the

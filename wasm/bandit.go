@@ -36,6 +36,7 @@ func bandits() map[string]any {
 		"bandit_mirror": js.FuncOf(banditMirror),
 		"bandit_menace": js.FuncOf(banditMenace),
 		"bandit_step":   js.FuncOf(banditStep),
+		"bandit_mode":   js.FuncOf(banditMode),
 	}
 }
 
@@ -119,4 +120,13 @@ func banditStep(this js.Value, arguments []js.Value) any {
 		flags |= 2
 	}
 	return flags
+}
+
+// banditMode reports the brain's current doctrine state — the flight
+// recorder's developer-only channel (#212). Empty when no brain is flying.
+func banditMode(this js.Value, arguments []js.Value) any {
+	if bandit == nil {
+		return ""
+	}
+	return bandit.Mode()
 }
