@@ -28,17 +28,37 @@ type skill struct {
 	discipline float64 // missile-launch patience, 0..1
 	react      float64 // reaction delay to an inbound missile, s
 	open       float64 // gun opening range, m
+	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
+	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a rookie flies
 // 5-6° off the optimal line and cannot hold smooth g (see the wobble in
 // decide) — that, not the maneuver library, is most of what a ladder feels like.
+// commit and floor invert what cadence accidentally encoded (#206). A human
+// beat the ace from a couple of turns in, and the recording showed why: under
+// pressure the ace re-decided every 1.6 s, alternating break-turn with
+// energy-rebuild — two goals that each need seconds to pay off — so it
+// achieved neither and never generated separation. Deciding FAST is a skill
+// (noticing, tracking, shooting: that is cadence, unchanged). Abandoning a
+// manoeuvre fast is the opposite of one, so commitment now RISES with tier,
+// and the better pilots refuse to be slow at all. A rookie still flails and
+// gets slow — that is the rookie's flaw, and it should stay authentic.
 var skills = map[string]skill{
-	"rookie":  {delay: 1.0, cadence: 30, wander: 0.10, pull: 5.5, library: 1, discipline: 0.2, react: 2.0, open: 900},
-	"pilot":   {delay: 0.6, cadence: 20, wander: 0.045, pull: 6.5, library: 2, discipline: 0.5, react: 1.2, open: 700},
-	"veteran": {delay: 0.35, cadence: 12, wander: 0.018, pull: 7.5, library: 3, discipline: 0.8, react: 0.7, open: 600},
-	"ace":     {delay: 0.15, cadence: 8, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 550},
+	"rookie":  {delay: 1.0, cadence: 30, wander: 0.10, pull: 5.5, library: 1, discipline: 0.2, react: 2.0, open: 900, commit: 1.0, floor: 0},
+	"pilot":   {delay: 0.6, cadence: 20, wander: 0.045, pull: 6.5, library: 2, discipline: 0.5, react: 1.2, open: 700, commit: 2.0, floor: 93},
+	"veteran": {delay: 0.35, cadence: 12, wander: 0.018, pull: 7.5, library: 3, discipline: 0.8, react: 0.7, open: 600, commit: 3.0, floor: 129},
+	"ace":     {delay: 0.15, cadence: 8, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 550, commit: 4.0, floor: 154},
 }
+
+// commitment is the manoeuvre set that must be flown through rather than
+// re-decided: each of these needs seconds to pay off, and abandoning one
+// halfway is worse than never starting it.
+var commitment = map[string]bool{"defense": true, "rebuild": true, "reverse": true, "drag": true,
+	"spiral": true, "rolling": true, "scissors": true, "zoom": true, "rope": true, "extend": true}
+
+// settle commits the manoeuvre just chosen for this pilot's commitment time.
+func (b *brain) settle(tick uint64) { b.settled = tick + uint64(b.skill.commit*60) }
 
 // tactics is the shared tactical doctrine: the hand-picked constants the
 // maneuver decisions gate on, extracted (#143) so the tuning battery can fly
@@ -292,6 +312,8 @@ type brain struct {
 	rolled   float64         // last roll input: the command is slew-limited so the executor cannot flap the stick
 	ahead    float64         // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
 	reversed uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
+	settled  uint64          // tick the current committed manoeuvre may be replaced (#206): commitment is a SKILL, and it rises with tier
+	starving bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -812,6 +834,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// corner — a stalled zoom otherwise floats for tens of seconds.
 	if speed < 0.55*pace {
 		b.mode = "rebuild"
+		b.settle(tick)
 		b.press = 0
 		b.prey = nil
 		flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
@@ -962,9 +985,59 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 
+	// Commitment gate (#206). A manoeuvre that keeps being replaced accomplishes
+	// nothing: the recorded human fight showed the ace alternating defense and
+	// rebuild every ~1.6 s in the endgame, generating no separation while a
+	// keyboard pilot sat on its six for two minutes. Once a manoeuvre from the
+	// committed set is running it owns the next skill.commit seconds — returning
+	// here keeps the command set already chosen, which steer() keeps flying. The
+	// exceptions are what a real pilot genuinely abandons a plan for: a new
+	// threat behind, or an inbound missile.
+	if tick < b.settled && commitment[b.mode] && menace < 0 {
+		if _, urgent := menacing[b.target]; !urgent {
+			return
+		}
+	}
+
+	// Energy floor (#206). Below it, recovering energy outranks the fight — a
+	// committed unload-and-accelerate, not the two-second gesture the trace
+	// showed. Hysteresis (recovery at 1.3x the floor) stops it flickering back
+	// into the fight the moment it gains a knot. A rookie has no floor: getting
+	// slow and dying is exactly the rookie's flaw, and it stays authentic.
+	threatRange := 1e9
+	if menace >= 0 {
+		if foe, found := b.known[menace]; found {
+			_, threatRange = i.bearing(me.Position, foe.position)
+		}
+	}
+	if b.skill.floor > 0 && threatRange > 1200 && b.plan != "" { // ...and never before the merge plan is chosen: energy management belongs inside the fight // a slow jet with the attacker still outside gun range unloads and accelerates: that is the energy defence. Inside 1200 m it keeps fighting - unloading in front of a gun is how you die tidily
+		if speed < b.skill.floor {
+			b.starving = true
+		} else if speed > b.skill.floor*1.3 {
+			b.starving = false
+		}
+		if b.starving {
+			b.mode = "rebuild"
+			b.settle(tick)
+			b.press = 0
+			b.shoot = false
+			b.throttle, b.reheat = 1, 1
+			nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+			nose.Y = -0.15 // unload and accelerate; the descent is the cheapest energy there is
+			if me.Position.Y < 900 {
+				nose.Y = 0.05 // ...but never dive into the sea
+			}
+			b.aim = nose.Normalize()
+			b.g = 1
+			b.settle(tick)
+			return
+		}
+	}
+
 	switch {
 	case menace >= 0 && (b.target != menace || tail < 0.35): // he's the problem: fight him
 		b.mode = "defense"
+		b.settle(tick)
 		b.press = 0
 		foe := b.known[menace]
 		at, span := i.bearing(me.Position, foe.position)
@@ -1004,6 +1077,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			on := foe.velocity.Normalize().Dot(at.Scale(-1))
 			if mine > foes+b.tactics.rope.edge && on < b.tactics.rope.nose {
 				b.mode = "rope"
+				b.settle(tick)
 				away := at.Scale(-1)
 				b.aim = flight.Vec3{X: away.X * 0.5, Y: 0.9, Z: away.Z * 0.5}.Normalize()
 				b.g = math.Min(b.g, 4)
@@ -1027,6 +1101,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				// end — but the attacker crossing the flight path is exactly
 				// the event that invalidates the spiral's premise.
 				b.mode = "reverse"
+				b.settle(tick)
 				b.aim = level(at)
 				b.brake = clamp((speed-0.9*pace)/80, 0, 1)
 				b.hold = tick + 90
@@ -1049,6 +1124,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 			out := up.Scale(math.Cos(phase)).Add(me.Attitude.Rotate(flight.Vec3{Z: 1}).Scale(math.Sin(phase)))
 			b.mode = "rolling"
+			b.settle(tick)
 			b.aim = at.Scale(0.55).Add(out.Scale(0.85)).Normalize()
 			b.g = math.Min(b.g, 4.5)
 			b.throttle, b.reheat, b.brake = 0.5, 0, clamp((speed-0.8*pace)/60, 0, 1)
@@ -1064,6 +1140,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// break stays mandatory however slow it is.
 		if b.skill.library >= 2 && speed < b.tactics.drag.pace*pace && span > b.tactics.drag.span {
 			b.mode = "drag"
+			b.settle(tick)
 			away := at.Scale(-1)
 			// Drag-AND-BAG (teams): the extension bends toward the nearest
 			// living teammate — the pursuer gets dragged across a friendly
@@ -1096,7 +1173,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 		switch {
 		case b.skill.library >= 4 && span < 700 && foe.velocity.Length() > speed+60:
-			b.mode = "scissors" // he's overshooting hot: brakes out, reverse into him
+			b.mode = "scissors"
+			b.settle(tick) // he's overshooting hot: brakes out, reverse into him
 			b.brake = 1
 			b.aim = at
 		case b.skill.library >= 3 && span < b.tactics.jink.span && (pointed || b.skill.library < 4):
@@ -1118,6 +1196,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// for the rate his level pursuit cannot match without overshooting,
 			// and the guard flattens it before the floor.
 			b.mode = "spiral"
+			b.settle(tick)
 			b.aim = flight.Vec3{X: at.X, Y: -0.5, Z: at.Z}.Normalize()
 			b.throttle, b.reheat = 0.8, 0
 			b.hold = tick + b.tactics.spiral.hold
@@ -1272,6 +1351,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// conversion needs no code: the hold expires with him below and
 			// slower, and the dive onto him is ordinary offense.
 			b.mode = "zoom"
+			b.settle(tick)
 			b.aim = direction.Add(flight.Vec3{Y: 1}).Normalize()
 			b.hold = tick + b.tactics.zoom.hold
 		case b.skill.library >= 3 && b.plan == "one" && tick-b.planned < 720:
@@ -1378,6 +1458,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// rebuild, come back with the advantage.
 	if b.skill.library >= 4 && b.mode == "neutral" && theirs-mine > 800 && distance > 1500 {
 		b.mode = "extend"
+		b.settle(tick)
 		b.aim = level(direction.Scale(-1))
 		b.throttle, b.reheat = 1, 1
 		b.shoot = false
