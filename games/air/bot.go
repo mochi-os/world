@@ -740,7 +740,12 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// pilot actually flies the doctrine at each lapse is his lookout
 	// discipline, so an ace keeps near-continuous coverage and a rookie
 	// almost never thinks of it.
-	if !threatened && a.flared > flare_window {
+	// ...and only when a missile could actually be flying: flares decoy seekers,
+	// so in a guns-only match this insurance buys nothing, gives the jet's
+	// position away, and burns the magazine. Note the gate reads as INVERTED
+	// flavour without this - the roll below is discipline-gated, so it was the
+	// ACE that flared pointlessly and the rookie that never did (#211).
+	if i.missiles && !threatened && a.flared > flare_window {
 		blind := uint64(b.skill.delay*60) * 2
 		for s, t := range b.known {
 			direction, distance := i.bearing(me.Position, t.position)
