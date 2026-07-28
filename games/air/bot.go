@@ -761,7 +761,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// alone still pops them, having not worked out that nothing up there
 			// homes on heat; everyone better saves the stores and their position
 			// (#211).
-			chance := b.skill.discipline
+			// A DUTY CYCLE, not permanent cover. The roll fires once per 0.8 s
+			// coverage window, so an ace at discipline 1.0 kept a fresh flare
+			// up continuously and was effectively missile-proof — a human
+			// emptied a magazine of 9Ms into one and it soaked every shot.
+			// Real coverage is periodic: this leaves roughly two thirds of the
+			// windows uncovered for the best pilot, and the ladder still
+			// orders (ace 0.35 .. rookie 0.07). Stores are finite too, so
+			// permanent cover was never affordable in the first place.
+			chance := b.skill.discipline * 0.35
 			if !i.missiles {
 				chance = 0
 				if b.skill.discipline < 0.5 {
