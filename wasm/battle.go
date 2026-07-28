@@ -164,14 +164,20 @@ func burst(this js.Value, arguments []js.Value) any {
 	if model != nil {
 		wrap = model.Environment.Wrap
 	}
-	hits, raised := battle.Burst(shooter, position, attitude, velocity, body, int(arsenal[17]), wrap,
+	hits, raised, impacts := battle.Burst(shooter, position, attitude, velocity, body, int(arsenal[17]), wrap,
 		model.Environment.Seed, uint64(arsenal[18]), uint64(arsenal[19]))
 	if hits > 0 {
 		body.Condition.Damager = int(arsenal[18])
 		body.Condition.Damaged = 0
 	}
-	out := [2]float64{float64(hits), events(raised)}
-	send(out[:], arguments[1])
+	// [hits, events, impact count, then x|y|z per impact in the TARGET's body
+	// frame — the client rotates them onto the airframe it is drawing (#217).
+	out := make([]float64, 3+3*len(impacts))
+	out[0], out[1], out[2] = float64(hits), events(raised), float64(len(impacts))
+	for n, point := range impacts {
+		out[3+3*n], out[4+3*n], out[5+3*n] = point.X, point.Y, point.Z
+	}
+	send(out, arguments[1])
 	return hits
 }
 

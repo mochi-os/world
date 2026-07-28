@@ -7,6 +7,7 @@
 package battle
 
 import (
+	"math"
 	"testing"
 
 	"world/games/air/aircraft/fa18c"
@@ -56,8 +57,8 @@ func TestTraceElement(t *testing.T) {
 func TestBurstDeterminism(t *testing.T) {
 	first, m1 := target()
 	second, m2 := target()
-	h1, _ := Burst(astern(m1), m1.State.Position, m1.State.Attitude, m1.State.Velocity, first, 50, 0, 7, 3, 999)
-	h2, _ := Burst(astern(m2), m2.State.Position, m2.State.Attitude, m2.State.Velocity, second, 50, 0, 7, 3, 999)
+	h1, _, _ := Burst(astern(m1), m1.State.Position, m1.State.Attitude, m1.State.Velocity, first, 50, 0, 7, 3, 999)
+	h2, _, _ := Burst(astern(m2), m2.State.Position, m2.State.Attitude, m2.State.Velocity, second, 50, 0, 7, 3, 999)
 	if h1 != h2 {
 		t.Fatalf("determinism broken: %d vs %d hits", h1, h2)
 	}
@@ -78,7 +79,7 @@ func TestBurstLethality(t *testing.T) {
 		if tick%3 == 0 {
 			rounds = 1
 		}
-		hits, _ := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, rounds, 0, 7, 3, tick)
+		hits, _, _ := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, rounds, 0, 7, 3, tick)
 		total += hits
 	}
 	if total < 10 {
@@ -261,7 +262,7 @@ func TestBurstDeflection(t *testing.T) {
 		}
 		bore := aim.Subtract(muzzle).Normalize()
 		pose := Pose{Position: muzzle, Forward: bore, Up: flight.Vec3{Y: 1}, Right: bore.Cross(flight.Vec3{Y: 1})}
-		hits, _ := Burst(pose, m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
+		hits, _, _ := Burst(pose, m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
 		return hits
 	}
 	if direct := shoot(false); direct > 2 {
@@ -270,4 +271,46 @@ func TestBurstDeflection(t *testing.T) {
 	if led := shoot(true); led < 20 {
 		t.Fatalf("the led burst landed only %d/100 — the lead solution does not match the gunnery", led)
 	}
+}
+
+// TestBurstImpactsLandOnTheAirframe: the strike points a burst reports must sit
+// on the target's structure, not at its centre — they are what puts a gun flash
+// where the round actually hit (#217). Body-frame points, so "on the airframe"
+// means within a part's capsule radius of that part's axis.
+func TestBurstImpactsLandOnTheAirframe(t *testing.T) {
+	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 7}, flight.World{Sea: 0})
+	m.State.Position = flight.Vec3{Y: 3000}
+	m.State.Velocity = flight.Vec3{X: 200}
+	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
+	hits, _, impacts := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
+	if hits == 0 {
+		t.Fatal("no hits to place")
+	}
+	if len(impacts) == 0 {
+		t.Fatal("hits reported no impact points")
+	}
+	if len(impacts) > ImpactPoints {
+		t.Fatalf("burst reported %d impacts, over the %d cap", len(impacts), ImpactPoints)
+	}
+	for n, point := range impacts {
+		best := math.MaxFloat64
+		for pi := range body.Parts {
+			part := &body.Parts[pi]
+			axis := part.B.Subtract(part.A)
+			length := axis.Length()
+			along := 0.0
+			if length > 1e-9 {
+				along = math.Max(0, math.Min(1, point.Subtract(part.A).Dot(axis)/(length*length)))
+			}
+			if gap := point.Subtract(part.A.Add(axis.Scale(along))).Length() - part.Radius; gap < best {
+				best = gap
+			}
+		}
+		// A tolerance, not zero: the capsule test is analytic but the point is
+		// reconstructed from the ray parameter in float64.
+		if best > 0.05 {
+			t.Errorf("impact %d sits %.3f m off the nearest structure — a flash there would hang in mid air", n, best)
+		}
+	}
+	t.Logf("%d hits reported %d impact points, all on structure", hits, len(impacts))
 }

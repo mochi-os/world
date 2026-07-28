@@ -44,7 +44,10 @@ type Pose struct {
 // and pipper-on-target only kills when the pipper computes the same lead.
 // (The judgment is a straight ray in the target-relative frame with the mean
 // gravity kick folded in — exact enough over gun ranges.)
-func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, rounds int, wrap float64, seed uint64, slot uint64, tick uint64) (int, []Event) {
+// ImpactPoints caps how many per-round strike positions one burst reports.
+const ImpactPoints = 8
+
+func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, rounds int, wrap float64, seed uint64, slot uint64, tick uint64) (int, []Event, []flight.Vec3) {
 	// Target-relative muzzle, wrap-aware, rotated into the target's body frame.
 	relative := flight.Vec3{
 		X: flight.Shortest(position.X, shooter.Position.X, wrap),
@@ -60,6 +63,7 @@ func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity fl
 	kick := flight.Vec3{Y: -0.5 * 9.8 * time}
 	hits := 0
 	var events []Event
+	var impacts []flight.Vec3
 	for r := 0; r < rounds; r++ {
 		round := uint64(r)
 		// Gaussian dispersion via Box-Muller on the deterministic hash.
@@ -70,11 +74,18 @@ func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity fl
 			Add(shooter.Up.Scale(radius * math.Sin(angle)))
 		direction := bore.Scale(Muzzle).Add(shooter.Velocity).Subtract(velocity).Add(kick)
 		direction = attitude.Unrotate(direction).Normalize()
-		chain := pierce(body.Parts, origin, direction, reach)
+		chain, along := pierce(body.Parts, origin, direction, reach)
 		if len(chain) == 0 {
 			continue
 		}
 		hits++
+		// Where this round actually struck, in the target's body frame. The
+		// caller turns it into a flash on the skin; capped because a long burst
+		// would otherwise spray hundreds of points for a visual that reads the
+		// same from a handful (#217).
+		if len(impacts) < ImpactPoints {
+			impacts = append(impacts, origin.Add(direction.Scale(along[0])))
+		}
 		// Penetration: SAPHEI keeps killing behind the first thing it meets —
 		// severity decays per part, and the round word is spread by depth so
 		// the chain's rolls stay independent.
@@ -90,5 +101,5 @@ func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity fl
 	if hits > 0 {
 		events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: hits})
 	}
-	return hits, events
+	return hits, events, impacts
 }

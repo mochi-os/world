@@ -810,7 +810,7 @@ func (i *instance) guns(dt float64, tick uint64) {
 			if i.cheat.invulnerable && !b.bot {
 				continue // the burst passes through a human under the cheat; bots still bleed
 			}
-			hits, events := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, b.model.State.Velocity, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick)
+			hits, events, _ := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, b.model.State.Velocity, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick) // impacts are a client-side effect today; the multiplayer wire carries no strike positions yet (#217)
 			if hits == 0 {
 				continue
 			}

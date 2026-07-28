@@ -107,7 +107,10 @@ func Parts(a *flight.Airframe) []Part {
 // parked in already-dead engines while the fuel and cockpit sat untouched
 // behind them, and the stern kill only ever came from the one fire the
 // victim's own fire drill could put out).
-func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) []int {
+// pierce returns the parts a ray meets, nearest first, and how far along the
+// ray each was met — the distances are what put a hit flash on the airframe
+// rather than at its centre (#217).
+func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) ([]int, []float64) {
 	type met struct {
 		part  int
 		along float64
@@ -120,10 +123,12 @@ func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float
 	}
 	sort.Slice(found, func(x, y int) bool { return found[x].along < found[y].along })
 	order := make([]int, len(found))
+	along := make([]float64, len(found))
 	for n, f := range found {
 		order[n] = f.part
+		along[n] = f.along
 	}
-	return order
+	return order, along
 }
 
 // trace finds the first part a ray hits: origin and direction in the
