@@ -18,7 +18,7 @@ import (
 // (zero alpha), which handed the single player's gun target the same
 // porpoise armour the Level sign fix removed everywhere else.
 func TestBanditSpawnTrimmed(t *testing.T) {
-	b := NewBandit("veteran", 1, 250000, "", false)
+	b := NewBandit("veteran", 1, 250000, "", false, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	s := &b.craft.model.State
 	v := s.Attitude.Unrotate(s.Velocity)

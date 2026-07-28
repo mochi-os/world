@@ -740,12 +740,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// pilot actually flies the doctrine at each lapse is his lookout
 	// discipline, so an ace keeps near-continuous coverage and a rookie
 	// almost never thinks of it.
-	// ...and only when a missile could actually be flying: flares decoy seekers,
-	// so in a guns-only match this insurance buys nothing, gives the jet's
-	// position away, and burns the magazine. Note the gate reads as INVERTED
-	// flavour without this - the roll below is discipline-gated, so it was the
-	// ACE that flared pointlessly and the rookie that never did (#211).
-	if i.missiles && !threatened && a.flared > flare_window {
+	if !threatened && a.flared > flare_window {
 		blind := uint64(b.skill.delay*60) * 2
 		for s, t := range b.known {
 			direction, distance := i.bearing(me.Position, t.position)
@@ -759,7 +754,21 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if tick-t.when < blind {
 				continue // still fresh eyes on him (a high six is visible over the shoulder)
 			}
-			if battle.Roll(i.environment.Seed, uint64(slot), uint64(s), tick/uint64(flare_window*60), 52) < b.skill.discipline {
+			// With missiles up, coverage is a DISCIPLINE: the ace keeps a fresh
+			// flare out against the shot he cannot see, the rookie rarely thinks
+			// of it. In a guns-only fight the same insurance buys nothing — and
+			// knowing that is itself a skill, so the ladder inverts. The rookie
+			// alone still pops them, having not worked out that nothing up there
+			// homes on heat; everyone better saves the stores and their position
+			// (#211).
+			chance := b.skill.discipline
+			if !i.missiles {
+				chance = 0
+				if b.skill.discipline < 0.5 {
+					chance = 0.6 - b.skill.discipline // the rookie's mistake, and his alone
+				}
+			}
+			if battle.Roll(i.environment.Seed, uint64(slot), uint64(s), tick/uint64(flare_window*60), 52) < chance {
 				b.drop = true
 			}
 			break

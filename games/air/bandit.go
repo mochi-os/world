@@ -27,9 +27,12 @@ type Bandit struct {
 }
 
 // NewBandit builds the harness. Unknown levels fly as veteran. The bandit
-// carries no missiles (the client's joust is a guns fight today); the
-// visibility model still applies — sky and night must match the mission.
-func NewBandit(level string, seed uint64, wrap float64, sky string, night bool) *Bandit {
+// fires no missiles of its own (the client's joust is a guns fight today), but
+// `missiles` says whether the PLAYER can, which is what the bandit's defensive
+// doctrine reacts to: pre-emptive flaring is insurance against a shot it cannot
+// see coming, and buys nothing in a guns fight (#211). The visibility model
+// still applies — sky and night must match the mission.
+func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool) *Bandit {
 	environment := flight.Environment{Seed: seed, Wrap: wrap}
 	mirror := &craft{player: game.Player{Name: "player", Slot: 0}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9}
@@ -43,7 +46,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool) 
 		bot: true, brain: thought}
 	fighter.arm()
 	return &Bandit{
-		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night,
+		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night, missiles: missiles,
 			aircraft: map[int]*craft{0: mirror, 1: fighter}},
 		craft: fighter,
 	}

@@ -41,19 +41,20 @@ func bandits() map[string]any {
 }
 
 // banditInitialize builds the harness from a JSON payload: level, seed, wrap,
-// sky (cloud preset), night. Returns an error string, or "" on success.
+// sky (cloud preset), night, missiles. Returns an error string, or "" on success.
 func banditInitialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
-		Level string
-		Seed  uint64
-		Wrap  float64
-		Sky   string
-		Night bool
+		Level    string
+		Seed     uint64
+		Wrap     float64
+		Sky      string
+		Night    bool
+		Missiles bool
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night)
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles)
 	return ""
 }
 
