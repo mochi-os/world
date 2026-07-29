@@ -32,6 +32,21 @@ type Bandit struct {
 // doctrine reacts to: pre-emptive flaring is insurance against a shot it cannot
 // see coming, and buys nothing in a guns fight (#211). The visibility model
 // still applies — sky and night must match the mission.
+// The bots' world is SEA LEVEL ONLY, deliberately (2026-07-29). flight.World
+// carries Fields (island height, coast outline, paved strips) and a Carrier,
+// and none of it is populated here: every bot flies against a flat sea.
+//
+// That is accurate on the maps we ship. Midway's island tops out at 3.5 m, the
+// runway at ~5 m and the tallest mast at ~12 m, while the brain's own recovery
+// floor works in 400-900 m margins - so modelling the relief would move nothing
+// it can measure. What the flat model costs is avoidance of VERTICAL clutter
+// (masts, the carrier superstructure), and that is covered on the consequence
+// side instead: the client tests the bandit against the same terrain, buildings,
+// masts and deck the player is tested against, so a bot that hits one dies.
+//
+// Revisit when a map with real relief lands. The tell is a bot holding a level
+// break straight into rising ground - the floor will read its height above the
+// SEA and be perfectly happy.
 func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool) *Bandit {
 	environment := flight.Environment{Seed: seed, Wrap: wrap}
 	mirror := &craft{player: game.Player{Name: "player", Slot: 0}, kind: "fa18c",

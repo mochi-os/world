@@ -60,6 +60,13 @@ var commitment = map[string]bool{"defense": true, "rebuild": true, "reverse": tr
 // settle commits the manoeuvre just chosen for this pilot's commitment time.
 func (b *brain) settle(tick uint64) { b.settled = tick + uint64(b.skill.commit*60) }
 
+// elapsed reports whether `since` ticks have passed since an event stamped at
+// `when`. Zero means it never happened: these stamps are anti-churn debounces,
+// and a bot is born with nothing to debounce. Read as plain arithmetic, birth
+// counted as "reversed at tick 0" and left a several-second dead zone at spawn
+// in which no overshoot could be answered at all.
+func elapsed(tick, when, since uint64) bool { return when == 0 || tick-when > since }
+
 // tactics is the shared tactical doctrine: the hand-picked constants the
 // maneuver decisions gate on, extracted (#143) so the tuning battery can fly
 // same-brain-one-number-different arms. Each brain carries a copy — a harness
@@ -288,6 +295,8 @@ type brain struct {
 	loose    bool       // one-shot missile request, consumed by think()
 	drop     bool       // one-shot flare request
 	offset   [2]float64 // this period's aim wander components
+	aimed    float64    // last tick's pointing error, sin of the angle off the aim
+	closing  float64    // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
 	jink     uint64     // tick to re-roll the jink direction
 	phase    float64    // current jink roll phase
 	missiles int
@@ -329,6 +338,7 @@ func mind(level string) *brain {
 func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
 	b.saddle, b.press = 0, 0
+	b.aimed, b.closing = 0, 0
 	b.told, b.tallied = -1, -1
 	b.prey = nil
 	b.known = map[int]*track{}
@@ -912,8 +922,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			want := him.Velocity.Length() + clamp((span-150)*0.05, -40, 80)
 			b.throttle = clamp(0.55+(want-speed)*0.01, 0.25, 1)
 			b.reheat = 0
-			if span > b.tactics.form.burner {
-				b.reheat = 1 // rejoin: cut the corner in burner
+			// Rejoin in burner beyond the far gate — or any time the throttle
+			// is already pegged and still short of the speed the rejoin needs.
+			// The distance gate alone left a dead band just inside it: off
+			// station at 2.5-3 km, full dry thrust, a few m/s slower than the
+			// lead, drifting further back every minute and never reaching the
+			// threshold that would have lit the burner.
+			if span > b.tactics.form.burner || (span > b.tactics.form.abeam && b.throttle >= 1 && speed < want-10) {
+				b.reheat = 1
 			}
 			i.guard(b, me, pace)
 			return
@@ -1112,9 +1128,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// The reversal cue (tier 3+): the attacker's lateral side FLIPPING
 		// while he's close means he crossed my flight path — reverse the turn
 		// into him NOW (the scissors entry), don't keep the old break.
-		flank := math.Copysign(1, me.Velocity.Normalize().Cross(at).Y)
+		// Which side he sits on across MY WINGS. Measured against world vertical
+		// this went unreliable exactly when it matters: in a defensive break the
+		// jet is banked past 90°, where "left of my velocity in the horizontal
+		// plane" stops corresponding to "left across my flight path", and the
+		// cue both missed real overshoots and fired on the bank alone.
+		flank := math.Copysign(1, at.Dot(me.Attitude.Rotate(flight.Vec3{Z: 1})))
 		if b.skill.library >= 3 {
-			if b.side != 0 && flank != b.side && span < 700 && tick-b.rolling > 240 && tick-b.reversed > 300 { // (tangle never accumulates while defensive — the defense case returns before that counter)
+			if b.side != 0 && flank != b.side && span < 700 && elapsed(tick, b.rolling, 240) && elapsed(tick, b.reversed, 300) { // (tangle never accumulates while defensive — the defense case returns before that counter)
 				// Reverse once per genuine overshoot — a scissors flips sides
 				// every weave, and reversing each flip churns the energy away.
 				// The cooldown is against the LAST REVERSAL, not the live hold:
@@ -1699,15 +1720,64 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat, brake float64, fire bool, tick uint64) flight.Inputs {
 	s := &m.State
 	speed := math.Max(s.Velocity.Length(), 1)
-	// Roll error in the VELOCITY frame: current lift vector vs the pull
-	// direction the aim demands, both perpendicular to the flight path. The
-	// body-frame solution wobbled with every nose bobble and never settled.
+	// Roll error in the VELOCITY frame: current lift vector vs the one the aim
+	// demands, both perpendicular to the flight path. The body-frame solution
+	// wobbled with every nose bobble and never settled.
+	//
+	// The demand is a LIFT vector, not the pointing error: gravity support
+	// (skyward, in that same plane) plus the turning component the error calls
+	// for, so bank falls out of the ratio between the two. Steering on the
+	// error direction alone made bank bang-bang — on a level run-in the
+	// correction is purely horizontal, so a 1° heading error demanded a lift
+	// vector 90° from vertical, hence full roll stick, and nothing in the law
+	// said stop at any particular bank. Measured: the ace rolled through
+	// ±180° with a ~3.5 s period for the whole run-in to the merge.
 	vhat := s.Velocity.Normalize()
-	perp := aim.Subtract(vhat.Scale(aim.Dot(vhat)))
-	if perp.Length() < 0.05 {
-		perp = flight.Vec3{Y: 1}.Subtract(vhat.Scale(vhat.Y)) // aligned: pull toward up
+	skyward := flight.Vec3{Y: 1}.Subtract(vhat.Scale(vhat.Y))
+	if skyward.Length() < 0.05 { // straight up or down: no horizon to reference, so any perpendicular serves
+		skyward = s.Attitude.Rotate(flight.Vec3{Y: 1})
+		skyward = skyward.Subtract(vhat.Scale(skyward.Dot(vhat)))
 	}
-	perp = perp.Normalize()
+	perp := skyward.Normalize()
+	// `want` is the doctrine's CEILING, not its demand: the turn is sized by
+	// the pointing error, and reaches the ceiling only once the error is big
+	// enough to need all of it — a dozen-odd degrees. Pinning the pull at the
+	// skill's structural g regardless of whether any turn was needed made the
+	// ace haul 7 g down a straight-line intercept, which threw its own nose
+	// off the line — and the roll law then answered that self-inflicted error
+	// with full bank. Both halves of the limit cycle came from this one line.
+	// Size it the way the geometry does: the turn rate that nulls the error in
+	// `settling` seconds is off/settling, and g = v·ω/9.81. So the demand is
+	// speed-aware (a fast jet needs more g for the same correction) and
+	// saturates at doctrine's ceiling once the error is big enough to want
+	// everything the airframe has — which is every real turning fight.
+	const settling = 0.7 // seconds to null a pointing error
+	turn := 0.0
+	lateral := aim.Subtract(vhat.Scale(aim.Dot(vhat)))
+	off := lateral.Length()                  // sin of the pointing error
+	adrift := math.Atan2(off, aim.Dot(vhat)) // the error ITSELF, 0..pi
+	toward := perp                           // which way to pull; skyward until the aim says otherwise
+	if off > 1e-3 {
+		toward = lateral.Scale(1 / off)
+	}
+	// Anticipate: size the turn on where the error will be in a third of a
+	// second, not where it is. Proportional-only, the nose arrives at the aim
+	// still carrying turn rate and sails past — which no single time constant
+	// fixes, because tight enough to hold a gun track hunted around a
+	// formation station and loose enough to sit on the station lagged the
+	// track. The rate is clamped and smoothed because `aim` steps at the
+	// decision cadence, not every tick, and a step would read as huge rate.
+	rate := clamp((adrift-b.aimed)*60, -6, 6)
+	b.aimed = adrift
+	b.closing += (rate - b.closing) * 0.2
+	if adrift > 1e-4 {
+		// math.Max(want, 1): a PUSH still banks off the same 1 g reference —
+		// scaling by a negative g demand would point the demand away from the
+		// target and roll the wrong way.
+		predicted := math.Max(adrift+b.closing*0.35, 0)
+		turn = clamp(speed*predicted/(9.81*settling), 0, math.Max(want, 1))
+		perp = perp.Add(toward.Scale(turn)).Normalize()
+	}
 	up := s.Attitude.Rotate(flight.Vec3{Y: 1})
 	lift := up.Subtract(vhat.Scale(up.Dot(vhat))).Normalize()
 	roll := math.Atan2(lift.Cross(perp).Dot(vhat), lift.Dot(perp)) // + = roll right (verify by trace: sign errors are the house specialty)
@@ -1747,12 +1817,19 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	level := clamp(math.Hypot(s.Velocity.X, s.Velocity.Z)/speed, 0, 1) // cos γ, the 1 g trim the law interpolates from
 	ceiling := m.Airframe.Limit.Positive
 	floor := -want // scale symmetric: forward stick interpolates level→Limit.Negative in the law
-	pitch := clamp((want*plane-level)/math.Max(ceiling-level, 0.5), -1, 1)
+	// The load the demanded lift vector actually represents: gravity support
+	// and the turn, at right angles. Aligned and settled it falls to `level` —
+	// stick centred, wings level, no self-inflicted nose excursion to chase.
+	pitch := clamp((math.Hypot(level, turn)*plane-level)/math.Max(ceiling-level, 0.5), -1, 1)
 	if want < 0.5 {
 		pitch = clamp((want-level)/3.5, -1, 0) // pushes bypass the lift-plane gate: recovery, not pursuit
 	}
 	_ = floor
-	b.rolled += clamp(clamp(roll*1.4, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
+	// Roll rate feeds back, so the jet ARRIVES at the demanded bank instead of
+	// accelerating through it: a pure error term reached the target at full
+	// roll rate every time and flew straight past, and past 140° the sense
+	// lock above then committed it to carrying on round.
+	b.rolled += clamp(clamp(roll*1.4-s.Omega.X*0.35, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
 	return flight.Inputs{
 		Pitch:      pitch,
 		Roll:       b.rolled,

@@ -694,7 +694,14 @@ func TestBotSection(t *testing.T) {
 		t.Skip("several simulated minutes")
 	}
 	t.Parallel()
-	_, sectionDeaths, _, soloDeaths, _ := section(t, 14,
+	// 14 -> 40 seeds (2026-07-28). The survival edge this asserts strictly is
+	// a 2-5 death margin, and at 14 seeds the run-to-run spread is the same
+	// size as the effect: a steering change that measured BETTER at 40 seeds
+	// (section 10 v solo 8 reversed to a clean pass) failed here at 14 purely
+	// on sample size. Its sibling TestBotSectionEqual was recalibrated for the
+	// same reason; this one needed the seeds rather than a band, because the
+	// defensive claim against WEAKER opposition should hold strictly.
+	_, sectionDeaths, _, soloDeaths, _ := section(t, 40,
 		map[string]any{"veteran": 2.0}, map[string]any{"pilot": 4.0})
 	if sectionDeaths >= soloDeaths {
 		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
@@ -1626,7 +1633,7 @@ func TestBotSpiral(t *testing.T) {
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
-	b := NewBandit("ace", 9, 250000, "", false, false)   // guns-only, like the client joust
+	b := NewBandit("ace", 9, 250000, "", false, false) // guns-only, like the client joust
 	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}
