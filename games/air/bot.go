@@ -113,6 +113,7 @@ type tactics struct {
 		closure float64 // lead-turn range as a multiple of closure (seconds of arrival)
 		floor   float64 // but never later than this range, m
 		angle   float64 // the cut across his side, radians
+		hold    uint64  // ticks the committed turn is flown through the pass
 	}
 	missile struct {
 		tail   float64 // disciplined shooters demand at least this aspect
@@ -197,7 +198,7 @@ func standard() tactics {
 	t.high.closure, t.high.span, t.high.tail, t.high.hold = 90, 1200, 0.85, 120
 	t.low.near, t.low.far, t.low.tail, t.low.rise = -30, -140, 0.85, 0.2
 	t.plan.deficit = 400
-	t.lead.closure, t.lead.floor, t.lead.angle = 2.0, 600, 1.3
+	t.lead.closure, t.lead.floor, t.lead.angle, t.lead.hold = 2.0, 600, 1.3, 100
 	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0.06
 	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
 	t.sandwich.span, t.sandwich.nose, t.sandwich.weight, t.sandwich.reach = 2200, 0.92, 0.3, 10000
@@ -295,6 +296,8 @@ type brain struct {
 	loose    bool       // one-shot missile request, consumed by think()
 	drop     bool       // one-shot flare request
 	offset   [2]float64 // this period's aim wander components
+	turning  float64    // committed lead-turn direction, +1/-1; 0 = not in a pass
+	turned   uint64     // tick the lead turn was committed
 	aimed    float64    // last tick's pointing error, sin of the angle off the aim
 	closing  float64    // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
 	jink     uint64     // tick to re-roll the jink direction
@@ -339,6 +342,7 @@ func (b *brain) reborn() {
 	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
 	b.saddle, b.press = 0, 0
 	b.aimed, b.closing = 0, 0
+	b.turning, b.turned = 0, 0
 	b.told, b.tallied = -1, -1
 	b.prey = nil
 	b.known = map[int]*track{}
@@ -1072,6 +1076,24 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 
+	// Carry the committed lead turn THROUGH the pass. Without this the turn
+	// ends the instant closure goes negative, the mode leaves neutral, and the
+	// pursuit law starts chasing a bandit who is now behind the wing - so the
+	// jet snapped from a clean pull into a scramble at exactly the moment the
+	// player is trying to read which way it went. A real pilot commits to the
+	// lead turn and looks afterwards. A live missile still overrides.
+	if b.turning != 0 {
+		if tick-b.turned < b.tactics.lead.hold && menace < 0 {
+			b.aim = b.commit(me, b.turning)
+			b.shoot = false // nothing to shoot at across a merge; the gun comes back when the turn does
+			i.guard(b, me, pace)
+			return
+		}
+		if tick-b.turned >= b.tactics.lead.hold {
+			b.turning = 0
+		}
+	}
+
 	switch {
 	case menace >= 0 && (b.target != menace || tail < 0.35): // he's the problem: fight him
 		b.mode = "defense"
@@ -1387,16 +1409,22 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot = distance < b.skill.open && (tail > -0.7 || b.skill.discipline < 0.6)
 		b.throttle, b.reheat = 1, 1
 		switch {
-		case b.skill.library >= 4 && mine-theirs > b.tactics.zoom.edge && me.Position.Y < b.tactics.zoom.roof:
-			// The ZOOM merge (#144 vertical literacy): on an energy edge, take
-			// the fight upstairs — and COMMIT, because an unheld zoom was a
-			// one-decision twitch that the next cadence flattened. The
-			// conversion needs no code: the hold expires with him below and
-			// slower, and the dive onto him is ordinary offense.
-			b.mode = "zoom"
-			b.settle(tick)
-			b.aim = direction.Add(flight.Vec3{Y: 1}).Normalize()
-			b.hold = tick + b.tactics.zoom.hold
+		// The ZOOM MERGE (#144 vertical literacy) was REMOVED here, 2026-07-29,
+		// on measurement. It selected on an energy edge and then spent that edge
+		// climbing, so it cancelled itself halfway: the ace rode a zoom to within
+		// 1.7 s of the merge, lost the condition, dropped to an ordinary lead turn
+		// and rolled again for offense — three roll events in three seconds, and a
+		// player could not tell which way it was turning. Neither latching on the
+		// hold (entered ~3.7 s out, the 2 s hold lapses first) nor hysteresis on
+		// the entry (flies the zoom whole, still two reversals) fixed that.
+		//
+		// Removing it measured better on BOTH axes at once: merge reversals 2.0 ->
+		// 0.0, drone kills 2/6 -> 4/6, time-to-kill 173 s -> 134 s. That agrees
+		// with #219, which found the whole tier-4 library to be a net negative
+		// (library 3 gives the ace the best positional advantage of the sweep).
+		// TestBotZoom went with it. The zoom tactics constants stay for now; #215
+		// owns whether vertical literacy returns in a form that does not cancel
+		// itself.
 		case b.skill.library >= 3 && b.plan == "one" && tick-b.planned < 720:
 			// Flying the one-circle plan: tight, lift vector ON him — the
 			// radius fight converts at the second pass, not by rate. Tight
@@ -1428,8 +1456,18 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				}
 				b.planned = tick
 			}
-			sin, cos := math.Sin(turn*b.tactics.lead.angle), math.Cos(turn*b.tactics.lead.angle)
-			b.aim = flight.Vec3{X: direction.X*cos - direction.Z*sin, Y: 0.05, Z: direction.X*sin + direction.Z*cos}.Normalize()
+			// Commit the turn, and fly it off MY OWN nose rather than off the
+			// bearing to him. Rotating `direction` re-derives the aim from a
+			// bearing that sweeps through 180 degrees as he goes past, and the
+			// passing side flips with it, so the jet rolled madly through every
+			// merge - measured at a 130 deg/s p90 in the two seconds around the
+			// pass, which is exactly where a pilot has to read which way the
+			// bandit is turning. Referenced to my own flight path it is a
+			// steady committed pull, which is what a lead turn IS.
+			if b.turning == 0 {
+				b.turning, b.turned = turn, tick
+			}
+			b.aim = b.commit(me, b.turning)
 			b.throttle, b.reheat = 0.7, 0 // corner the pull, don't rocket past it
 			if b.plan == "one" {
 				b.throttle = 0.75 // the radius fight is tighter, not powerless — half throttle at a merge just donates the energy
@@ -1637,6 +1675,20 @@ func (i *instance) guard(b *brain, me *flight.State, pace float64) {
 	}
 }
 
+// commit builds the lead-turn aim: my own flight path rotated by the cut angle
+// in the committed direction. Independent of where he is, so it does not spin
+// when he passes.
+func (b *brain) commit(me *flight.State, turn float64) flight.Vec3 {
+	flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}
+	if flat.Length() < 1 {
+		flat = me.Attitude.Rotate(flight.Vec3{X: 1})
+		flat = flight.Vec3{X: flat.X, Z: flat.Z}
+	}
+	flat = flat.Normalize()
+	sin, cos := math.Sin(turn*b.tactics.lead.angle), math.Cos(turn*b.tactics.lead.angle)
+	return flight.Vec3{X: flat.X*cos - flat.Z*sin, Y: 0.05, Z: flat.X*sin + flat.Z*cos}.Normalize()
+}
+
 // level flattens a direction toward the horizon — break turns live in the
 // horizontal plane unless doctrine says otherwise.
 func level(direction flight.Vec3) flight.Vec3 {
@@ -1829,7 +1881,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// accelerating through it: a pure error term reached the target at full
 	// roll rate every time and flew straight past, and past 140° the sense
 	// lock above then committed it to carrying on round.
-	b.rolled += clamp(clamp(roll*1.4-s.Omega.X*0.35, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
+	b.rolled += clamp(clamp(roll*1.4-s.Omega.X*0.45, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
 	return flight.Inputs{
 		Pitch:      pitch,
 		Roll:       b.rolled,

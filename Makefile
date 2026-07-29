@@ -40,8 +40,16 @@ $(bin):
 run1: all
 	$(bin)/mochi-world -f /etc/mochi/world1.conf
 
+# -timeout 30m: the air package's doctrine sweeps run several simulated
+# MINUTES per seed and the whole package now takes ~16 wall-clock minutes, past
+# Go's 600 s default. `make test-quick` is the fast gate; this is the full one.
 test:
-	go test ./...
+	go test -timeout 30m ./...
+
+# The -short gate: every long sweep skips itself, so this is seconds rather
+# than a quarter of an hour. Use it while iterating.
+test-quick:
+	go test -short ./...
 
 # Run the simulation-core tests on the browser target: the golden-trace
 # comparison under wasm IS the native-versus-wasm divergence bound. The
