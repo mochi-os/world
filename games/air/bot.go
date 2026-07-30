@@ -29,6 +29,7 @@ type skill struct {
 	discipline float64 // missile-launch patience, 0..1
 	react      float64 // reaction delay to an inbound missile, s
 	open       float64 // gun opening range, m
+	trigger    float64 // snapshot looseness: how far off a perfect solution this pilot still shoots, as an angle factor on range (#215 — DECOUPLED from wander: aim precision and willingness to fire were one number, so the most accurate tier had the tightest gate and shot least, and lethality ran BACKWARDS up the ladder)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
 }
@@ -45,11 +46,33 @@ type skill struct {
 // manoeuvre fast is the opposite of one, so commitment now RISES with tier,
 // and the better pilots refuse to be slow at all. A rookie still flails and
 // gets slow — that is the rookie's flaw, and it should stay authentic.
+//
+// Retuned 2026-07-30 (#215), measured against TestDroneKill (12 seeds, can the
+// tier finish a compliant target) with the firing gate decoupled from aim:
+//   - trigger is the new axis; wander no longer forbids the shot it aims.
+//   - ace cadence 8 -> 12: re-deciding every 0.13 s suppressed conversion (4/12
+//     kills; at 12 it matches the veteran's 7 with a faster kill). Deliberate
+//     decisions beat twitchy ones — the same lesson as the commitment floor.
+//   - ace open 550 -> 600: the shortest engagement range on the ladder belonged
+//     to the tier meant to convert most.
+//   - pilot wander 0.045 -> 0.035, open 700 -> 600: the old pilot killed NOTHING
+//     (0/12) — it fired from ranges its own aim noise could not serve. 4/12 now.
+//   - pull UN-inverted: the rookie now commands the limiter (5.5 -> 7.5) like a
+//     real novice — the joystick baseline showed a self-described novice at
+//     full aft stick 43% of a fight, never unloading. What tiers is what
+//     always did: the low tiers' pull WOBBLES and never eases when slow, so
+//     the rookie yanks itself into the mush (the aero cap bounds it) while the
+//     high tiers hold corner. Skill is energy discipline, not stick authority.
+//   - library 4 KEPT for the ace although dropping it measured 8/12: tier 4 is
+//     the rolling scissors, the sun, the bag and the rope — anti-fighter tools a
+//     drone cannot exercise — and deleting doctrine to win one seed of a drone
+//     metric is tuning the instrument. The ladder reads 1/4/7/7 by kills, the
+//     ace faster by time-to-kill.
 var skills = map[string]skill{
-	"rookie":  {delay: 1.0, cadence: 30, wander: 0.10, pull: 5.5, library: 1, discipline: 0.2, react: 2.0, open: 900, commit: 1.0, floor: 0},
-	"pilot":   {delay: 0.6, cadence: 20, wander: 0.045, pull: 6.5, library: 2, discipline: 0.5, react: 1.2, open: 700, commit: 2.0, floor: 93},
-	"veteran": {delay: 0.35, cadence: 12, wander: 0.018, pull: 7.5, library: 3, discipline: 0.8, react: 0.7, open: 600, commit: 3.0, floor: 129},
-	"ace":     {delay: 0.15, cadence: 8, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 550, commit: 4.0, floor: 154},
+	"rookie":  {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.10, commit: 1.0, floor: 0},
+	"pilot":   {delay: 0.6, cadence: 20, wander: 0.035, pull: 7.0, library: 2, discipline: 0.5, react: 1.2, open: 600, trigger: 0.055, commit: 2.0, floor: 93},
+	"veteran": {delay: 0.35, cadence: 12, wander: 0.018, pull: 7.5, library: 3, discipline: 0.8, react: 0.7, open: 600, trigger: 0.035, commit: 3.0, floor: 129},
+	"ace":     {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.020, commit: 4.0, floor: 154},
 }
 
 // commitment is the manoeuvre set that must be flown through rather than
@@ -1781,7 +1804,14 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	direction := spot.Subtract(s.Position).Normalize()
 	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
 	miss := math.Acos(clamp(nose.Dot(direction), -1, 1)) * math.Max(b.distance, 50)
-	tolerance := 22 + b.skill.wander*b.distance*1.5 // snapshot tolerance: the burst is a stream, not a bullet; sloppier noses spray more and hit less
+	// The gate is TRIGGER, not wander (#215): willingness to take the shot is
+	// its own skill axis. When aim noise set the gate, the ace's precision
+	// tightened its own trigger until it fired for 1.2% of a fight and killed
+	// less than the veteran — the burst is a stream, and a good pilot walks a
+	// close stream on; only a rookie hoses at any angle (trigger 0.10 keeps
+	// that authentic). Wander still ruins the rookie's AIM; it no longer
+	// forbids the ace's shot.
+	tolerance := 22 + b.skill.trigger*b.distance*1.5
 	if b.pressing(tick) {
 		tolerance *= b.tactics.press.loose // finishing: accept the deflection shot the patient tracker declines (#144)
 	}

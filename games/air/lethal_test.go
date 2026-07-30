@@ -5,64 +5,38 @@ import (
 	"math"
 	"testing"
 
+	"sort"
+
 	"world/game"
 	"world/games/air/flight"
 )
 
-// TestDroneKill (#219, the measurement harness #215 will retune against): can a
-// bot finish a COMPLIANT target? Every other metric measures the bots' DEFENCE,
-// and the scripted harness cannot answer this because its attacker never stops
-// attacking — the bot is never handed an easy kill to see whether it takes one.
-// A drone weaves gently and never fights back.
+// TestDroneKill (#219/#215): can each tier finish a COMPLIANT target? Every
+// other metric measures the bots' DEFENCE, and the scripted harness cannot
+// answer this because its attacker never stops attacking — the bot is never
+// handed an easy kill to see whether it takes one. A drone weaves gently and
+// never fights back.
 //
-// It LOGS rather than asserts, deliberately. The property worth gating is that
-// lethality ladders (ace >= veteran), and that is currently FALSE: measured
-// 2026-07-29, veteran kills 5/6 while the ace manages 2/6 and takes half again
-// as long doing it. That inversion is the open defect tracked in #215, so
-// asserting it here would just paint the tree red for a fault we already know
-// about. Turn it into a gate as part of that retune, not before.
-//
-// The ablation runs each ace-only parameter back to its veteran value, one at a
-// time, then in combination. No SINGLE parameter recovers it; veteran wander +
-// open + library together restore 4/6 at 105 s. Note especially that positional
-// advantage does NOT predict kills — library 3 gives the ace its best advantage
-// of all (19.8%) and nearly its worst kill rate.
+// The GATE (#215's exit criterion, armed 2026-07-30): lethality must LADDER —
+// kills non-decreasing up the tiers. Pre-retune it inverted (veteran 5/6, ace
+// 2/6, trigger time FALLING as tier rose) because the firing gate was made of
+// aim precision; the retune decoupled the trigger, slowed the ace's decision
+// cadence, and gave the pilot ranges its own aim can serve. Deterministic sim,
+// so the counts are exact, not statistical. (The one-parameter ablations that
+// drove the retune live in #219's and #215's notes.)
 func TestDroneKill(t *testing.T) {
 	if testing.Short() {
 		t.Skip("several simulated minutes per tier")
 	}
 	const seconds = 180
-	// Ablation: give the ace each of the veteran's values in turn, one at a
-	// time, to find which of the ace-only parameters costs it the kill. The
-	// roster parser only accepts the five known level names, so each variant is
-	// installed over "ace" for its run and restored after.
-	vet, base := skills["veteran"], skills["ace"]
-	defer func() { skills["ace"] = base }()
-	type variant struct {
-		name string
-		make func(skill) skill
-	}
-	runs := []variant{
-		{"veteran", func(s skill) skill { return vet }},
-		{"ace", func(s skill) skill { return s }},
-		{"ace+vetOpen", func(s skill) skill { s.open = vet.open; return s }},
-		{"ace+vetFloor", func(s skill) skill { s.floor = vet.floor; return s }},
-		{"ace+vetCommit", func(s skill) skill { s.commit = vet.commit; return s }},
-		{"ace+vetWander", func(s skill) skill { s.wander = vet.wander; return s }},
-		{"ace+vetDiscipline", func(s skill) skill { s.discipline = vet.discipline; return s }},
-		{"ace+vetLibrary", func(s skill) skill { s.library = vet.library; return s }},
-		{"ace+vetShot", func(s skill) skill { s.wander, s.open = vet.wander, vet.open; return s }},
-		{"ace+vetShot+Lib", func(s skill) skill { s.wander, s.open, s.library = vet.wander, vet.open, vet.library; return s }},
-	}
-	for _, run := range runs {
-		level := "ace"
-		skills["ace"] = run.make(base)
+	ladder := map[string]int{}
+	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
 		kills, tries := 0, 0
 		var times []float64
 		advantage, firing, shots := 0, 0, 0
 		total := 0
 		modes := map[string]int{}
-		for seed := 1; seed <= 6; seed++ {
+		for seed := 1; seed <= 12; seed++ {
 			g := New()
 			made, _ := g.Create(game.Session{Identifier: fmt.Sprintf("d%s%d", level, seed), Game: "air",
 				Mode: "furball", Capacity: 8, Seed: uint64(seed),
@@ -122,13 +96,29 @@ func TestDroneKill(t *testing.T) {
 		if len(times) > 0 {
 			mean /= float64(len(times))
 		}
-		top, best := "", 0
+		type share struct {
+			mode  string
+			count int
+		}
+		shares := []share{}
 		for m, c := range modes {
-			if c > best {
-				top, best = m, c
+			shares = append(shares, share{m, c})
+		}
+		sort.Slice(shares, func(a, b int) bool { return shares[a].count > shares[b].count })
+		top := ""
+		for i, sh := range shares {
+			if i >= 4 {
+				break
 			}
+			top += fmt.Sprintf("%s %.0f%% ", sh.mode, 100*float64(sh.count)/float64(total))
 		}
 		fmt.Printf("%-18s kills %d/%d   mean time-to-kill %5.1fs   advantage %4.1f%%   trigger %4.1f%%   commonest mode %s\n",
-			run.name, kills, tries, mean, 100*float64(advantage)/float64(total), 100*float64(firing)/float64(total), top)
+			level, kills, tries, mean, 100*float64(advantage)/float64(total), 100*float64(firing)/float64(total), top)
+		ladder[level] = kills
+	}
+	for _, pair := range [][2]string{{"rookie", "pilot"}, {"pilot", "veteran"}, {"veteran", "ace"}} {
+		if ladder[pair[1]] < ladder[pair[0]] {
+			t.Errorf("lethality inverts: %s kills %d, %s kills %d — the better pilot converts less", pair[0], ladder[pair[0]], pair[1], ladder[pair[1]])
+		}
 	}
 }
