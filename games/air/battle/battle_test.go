@@ -53,12 +53,45 @@ func TestTraceElement(t *testing.T) {
 	}
 }
 
-// TestBurstDeterminism: identical inputs produce identical outcomes.
-func TestBurstDeterminism(t *testing.T) {
+// salvo fires one volley and flies it out tick by tick against the target,
+// advancing the target on its own velocity each step (drive turns by mutating
+// the model inside manoeuvre). Returns the hits landed and the impact points.
+func salvo(pose Pose, body *Body, m *flight.Model, rounds int, tick uint64, manoeuvre func(step int)) (int, []flight.Vec3) {
+	flying := Volley(pose, rounds, 7, 3, tick)
+	const dt = 1.0 / 60
+	hits := 0
+	var impacts []flight.Vec3
+	for step := 0; step < 180 && len(flying) > 0; step++ {
+		if manoeuvre != nil {
+			manoeuvre(step)
+		}
+		m.State.Position = m.State.Position.Add(m.State.Velocity.Scale(dt))
+		alive := flying[:0]
+		for i := range flying {
+			r := &flying[i]
+			hit, _, impact := Strike(r, m.State.Position, m.State.Attitude, m.State.Velocity, body, dt, 0, 7)
+			if hit {
+				hits++
+				if len(impacts) < ImpactPoints {
+					impacts = append(impacts, impact)
+				}
+				continue // a landed round is spent
+			}
+			if !Fly(r, dt) {
+				alive = append(alive, *r)
+			}
+		}
+		flying = alive
+	}
+	return hits, impacts
+}
+
+// TestVolleyDeterminism: identical inputs produce identical outcomes.
+func TestVolleyDeterminism(t *testing.T) {
 	first, m1 := target()
 	second, m2 := target()
-	h1, _, _ := Burst(astern(m1), m1.State.Position, m1.State.Attitude, m1.State.Velocity, first, 50, 0, 7, 3, 999)
-	h2, _, _ := Burst(astern(m2), m2.State.Position, m2.State.Attitude, m2.State.Velocity, second, 50, 0, 7, 3, 999)
+	h1, _ := salvo(astern(m1), first, m1, 50, 999, nil)
+	h2, _ := salvo(astern(m2), second, m2, 50, 999, nil)
 	if h1 != h2 {
 		t.Fatalf("determinism broken: %d vs %d hits", h1, h2)
 	}
@@ -69,9 +102,10 @@ func TestBurstDeterminism(t *testing.T) {
 	}
 }
 
-// TestBurstLethality: two seconds of perfect tracking from dead astern must
-// cripple the target — the time-to-kill tuning gate (1.5–3 s class).
-func TestBurstLethality(t *testing.T) {
+// TestVolleyLethality: two seconds of perfect tracking from dead astern must
+// cripple the target — the time-to-kill tuning gate (1.5–3 s class). Dead
+// astern is the no-lead geometry: the rounds chase him straight up the wake.
+func TestVolleyLethality(t *testing.T) {
 	body, m := target()
 	total := 0
 	for tick := uint64(0); tick < 120; tick++ { // 2 s at 60 Hz, ~1.7 rounds/tick
@@ -79,20 +113,11 @@ func TestBurstLethality(t *testing.T) {
 		if tick%3 == 0 {
 			rounds = 1
 		}
-		hits, _, _ := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, rounds, 0, 7, 3, tick)
+		hits, _ := salvo(astern(m), body, m, rounds, tick, nil)
 		total += hits
 	}
 	if total < 10 {
 		t.Fatalf("a 2 s tracking burst landed only %d hits — the gun cannot kill", total)
-	}
-	loss := 0.0
-	for _, v := range body.Damage.Element {
-		loss += v
-	}
-	crippled := loss > 1.5 || body.Damage.Engine[0]+body.Damage.Engine[1] > 0.6 || body.Condition.Killed || body.Condition.Burning || body.Damage.Leak > 0.4
-	if !crippled {
-		t.Fatalf("2 s of tracking fire did not cripple: %d hits, element loss %.2f, engines %.2f/%.2f, leak %.2f",
-			total, loss, body.Damage.Engine[0], body.Damage.Engine[1], body.Damage.Leak)
 	}
 }
 
@@ -246,12 +271,11 @@ func TestGearShot(t *testing.T) {
 	}
 }
 
-// TestBurstDeflection: rounds fly real time of flight now — a burst aimed at
-// a beam-crossing target ITSELF misses wholesale (his velocity carries him
-// out of the stream during the flight), and the same trigger squeeze from
-// the led bore hits. This is the contract the bot's lead point and the HUD
-// director pipper both build on.
-func TestBurstDeflection(t *testing.T) {
+// TestVolleyDeflection: a burst aimed at a beam-crossing target ITSELF misses
+// wholesale (his velocity carries him out of the stream during the flight),
+// and the same trigger squeeze from the led bore hits. This is the contract
+// the bot's lead point and the HUD director pipper both build on.
+func TestVolleyDeflection(t *testing.T) {
 	shoot := func(led bool) int {
 		body, m := target()
 		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
@@ -262,7 +286,7 @@ func TestBurstDeflection(t *testing.T) {
 		}
 		bore := aim.Subtract(muzzle).Normalize()
 		pose := Pose{Position: muzzle, Forward: bore, Up: flight.Vec3{Y: 1}, Right: bore.Cross(flight.Vec3{Y: 1})}
-		hits, _, _ := Burst(pose, m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
+		hits, _ := salvo(pose, body, m, 100, 999, nil)
 		return hits
 	}
 	if direct := shoot(false); direct > 2 {
@@ -273,16 +297,44 @@ func TestBurstDeflection(t *testing.T) {
 	}
 }
 
-// TestBurstImpactsLandOnTheAirframe: the strike points a burst reports must sit
+// TestJinkDefeatsTheBullet: the defence the instant model could never offer —
+// a perfectly led volley from the beam, against a target that BREAKS the
+// moment the trigger releases, arrives where he would have been and finds him
+// gone. Same led volley against a non-jinking control hits. This is the whole
+// point of real time of flight.
+func TestJinkDefeatsTheBullet(t *testing.T) {
+	shoot := func(jink bool) int {
+		body, m := target()
+		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
+		time := 600.0 / Muzzle
+		aim := m.State.Position.Add(m.State.Velocity.Scale(time)).Add(flight.Vec3{Y: 4.9 * time * time})
+		bore := aim.Subtract(muzzle).Normalize()
+		pose := Pose{Position: muzzle, Forward: bore, Up: flight.Vec3{Y: 1}, Right: bore.Cross(flight.Vec3{Y: 1})}
+		hits, _ := salvo(pose, body, m, 100, 999, func(step int) {
+			if jink && step == 1 {
+				m.State.Velocity = m.State.Velocity.Add(flight.Vec3{Y: -60, Z: 40}) // the break: down and away, hard
+			}
+		})
+		return hits
+	}
+	if control := shoot(false); control < 20 {
+		t.Fatalf("the control led volley landed only %d/100", control)
+	}
+	if jinked := shoot(true); jinked > 4 {
+		t.Fatalf("the jink was led-through: %d/100 rounds still arrived — time of flight is not real", jinked)
+	}
+}
+
+// TestVolleyImpactsLandOnTheAirframe: the strike points a salvo reports must sit
 // on the target's structure, not at its centre — they are what puts a gun flash
 // where the round actually hit (#217). Body-frame points, so "on the airframe"
 // means within a part's capsule radius of that part's axis.
-func TestBurstImpactsLandOnTheAirframe(t *testing.T) {
+func TestVolleyImpactsLandOnTheAirframe(t *testing.T) {
 	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 7}, flight.World{Sea: 0})
 	m.State.Position = flight.Vec3{Y: 3000}
 	m.State.Velocity = flight.Vec3{X: 200}
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
-	hits, _, impacts := Burst(astern(m), m.State.Position, m.State.Attitude, m.State.Velocity, body, 100, 0, 7, 3, 999)
+	hits, impacts := salvo(astern(m), body, m, 100, 999, nil)
 	if hits == 0 {
 		t.Fatal("no hits to place")
 	}

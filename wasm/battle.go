@@ -61,13 +61,15 @@ var (
 	fleet     [hulks]hulk
 	condition battle.Condition // the ownship's fires and pilot
 	arsenal   []float64        // battle buffer scratch
+	airborne  []battle.Round   // gun rounds in flight, both shooters' (#real-TOF)
 )
 
 func battles() map[string]any {
 	arsenal = make([]float64, 64)
 	return map[string]any{
 		"hulk":     js.FuncOf(rig),
-		"burst":    js.FuncOf(burst),
+		"volley":   js.FuncOf(volley),
+		"fly":      js.FuncOf(fly),
 		"blast":    js.FuncOf(blast),
 		"progress": js.FuncOf(progress),
 	}
@@ -143,42 +145,96 @@ func parts() []battle.Part {
 	return geometry
 }
 
-func burst(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], arsenal[:26])
-	body, position, attitude := aim(arsenal)
-	if body == nil {
-		return 0
-	}
+// volley spawns one burst of REAL rounds: [0 shooter identity (0 ownship, 1
+// bandit), 1-3 muzzle position, 4-6 forward, 7-9 up, 10-12 right, 13-15
+// shooter velocity, 16 rounds, 17 tick]. The rounds join the shared airborne
+// set; fly() resolves them.
+func volley(this js.Value, arguments []js.Value) any {
+	receive(arguments[0], arsenal[:18])
 	shooter := battle.Pose{
 		Position: flight.Vec3{X: arsenal[1], Y: arsenal[2], Z: arsenal[3]},
 		Forward:  flight.Vec3{X: arsenal[4], Y: arsenal[5], Z: arsenal[6]},
 		Up:       flight.Vec3{X: arsenal[7], Y: arsenal[8], Z: arsenal[9]},
-		Velocity: flight.Vec3{X: arsenal[20], Y: arsenal[21], Z: arsenal[22]},
+		Right:    flight.Vec3{X: arsenal[10], Y: arsenal[11], Z: arsenal[12]},
+		Velocity: flight.Vec3{X: arsenal[13], Y: arsenal[14], Z: arsenal[15]},
 	}
-	shooter.Right = shooter.Forward.Cross(shooter.Up)
-	velocity := flight.Vec3{X: arsenal[23], Y: arsenal[24], Z: arsenal[25]}
-	if int(arsenal[0]) < 0 && model != nil {
-		velocity = model.State.Velocity // the ownship as the target: its motion comes from its own model
+	seed := uint64(0)
+	if model != nil {
+		seed = model.Environment.Seed
 	}
+	airborne = append(airborne, battle.Volley(shooter, int(arsenal[16]), seed, uint64(arsenal[0]), uint64(arsenal[17]))...)
+	return len(airborne)
+}
+
+// fly advances every airborne round one step and resolves arrivals: ownship
+// rounds (identity 0) against the bandit hulk, bandit rounds (identity 1)
+// against the ownship model. Input: [0 dt, 1 invulnerable (rounds pass
+// through the ownship), 2 bandit present, 3-5 bandit position, 6-9 bandit
+// attitude, 10-12 bandit velocity]. Output: [0 hits on the bandit, 1 hits on
+// the ownship, 2 impact count, then x|y|z per impact in the BANDIT's body
+// frame] — ownship damage itself flows through the model and progress() as
+// always.
+func fly(this js.Value, arguments []js.Value) any {
+	receive(arguments[0], arsenal[:13])
+	dt := arsenal[0]
+	if dt <= 0 || len(airborne) == 0 {
+		send([]float64{0, 0, 0}, arguments[1])
+		return 0
+	}
+	invulnerable := arsenal[1] > 0.5
+	present := arsenal[2] > 0.5 && fleet[0].used
+	position := flight.Vec3{X: arsenal[3], Y: arsenal[4], Z: arsenal[5]}
+	attitude := flight.Quat{W: arsenal[6], X: arsenal[7], Y: arsenal[8], Z: arsenal[9]}
+	velocity := flight.Vec3{X: arsenal[10], Y: arsenal[11], Z: arsenal[12]}
 	wrap := 0.0
+	seed := uint64(0)
 	if model != nil {
 		wrap = model.Environment.Wrap
+		seed = model.Environment.Seed
 	}
-	hits, raised, impacts := battle.Burst(shooter, position, attitude, velocity, body, int(arsenal[17]), wrap,
-		model.Environment.Seed, uint64(arsenal[18]), uint64(arsenal[19]))
-	if hits > 0 {
-		body.Condition.Damager = int(arsenal[18])
-		body.Condition.Damaged = 0
+	banditHits, ownHits := 0, 0
+	var impacts []flight.Vec3
+	alive := airborne[:0]
+	for r := range airborne {
+		round := &airborne[r]
+		landed := false
+		if round.Shooter == 0 && present {
+			hit, _, impact := battle.Strike(round, position, attitude, velocity, &fleet[0].body, dt, wrap, seed)
+			if hit {
+				banditHits++
+				if len(impacts) < battle.ImpactPoints {
+					impacts = append(impacts, impact)
+				}
+				fleet[0].condition.Damager = 0
+				fleet[0].condition.Damaged = 0
+				landed = true
+			}
+		}
+		if !landed && round.Shooter != 0 && model != nil && !invulnerable {
+			body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
+			hit, _, _ := battle.Strike(round, model.State.Position, model.State.Attitude, model.State.Velocity, &body, dt, wrap, seed)
+			if hit {
+				ownHits++
+				condition.Damager = 1
+				condition.Damaged = 0
+				landed = true
+			}
+		}
+		if landed {
+			continue
+		}
+		if !battle.Fly(round, dt) {
+			alive = append(alive, *round)
+		}
 	}
-	// [hits, events, impact count, then x|y|z per impact in the TARGET's body
-	// frame — the client rotates them onto the airframe it is drawing (#217).
+	airborne = alive
 	out := make([]float64, 3+3*len(impacts))
-	out[0], out[1], out[2] = float64(hits), events(raised), float64(len(impacts))
+	out[0], out[1], out[2] = float64(banditHits), float64(ownHits), float64(len(impacts))
 	for n, point := range impacts {
 		out[3+3*n], out[4+3*n], out[5+3*n] = point.X, point.Y, point.Z
 	}
 	send(out, arguments[1])
-	return hits
+	return banditHits + ownHits
 }
 
 func blast(this js.Value, arguments []js.Value) any {
@@ -213,6 +269,7 @@ func blast(this js.Value, arguments []js.Value) any {
 func progress(this js.Value, arguments []js.Value) any {
 	receive(arguments[0], arsenal[:3])
 	if arsenal[2] != 0 { // mission reset: everything pristine
+		airborne = airborne[:0]
 		condition = battle.Condition{Damager: -1}
 		for i := range fleet {
 			if fleet[i].used {

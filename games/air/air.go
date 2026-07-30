@@ -367,6 +367,7 @@ type instance struct {
 	}
 	aircraft map[int]*craft
 	flying   []*missile
+	rounds   []battle.Round // gun rounds in flight: spawned by guns(), flown and resolved by fly() (#real-TOF)
 	wrecks   []*wreck
 	launched uint64
 	events   []map[string]any
@@ -709,6 +710,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	}
 	i.merge()
 	i.guns(dt, tick)
+	i.fly(dt, tick)
 	i.pursue(dt, tick)
 	i.drift(dt)
 }
@@ -817,29 +819,66 @@ func (i *instance) guns(dt float64, tick uint64) {
 			Right:    state.Attitude.Rotate(flight.Vec3{Z: 1}),
 			Velocity: state.Velocity,
 		}
-		for _, other := range i.slots() {
-			b := i.aircraft[other]
-			if other == slot || !b.alive {
+		// Rounds fly REAL time of flight now: the volley enters the world and
+		// fly() resolves each round against wherever its victims actually are
+		// when it reaches them — so a break after the trigger is a defence,
+		// which the instant model could never offer.
+		i.rounds = append(i.rounds, battle.Volley(shooter, burst, i.environment.Seed, uint64(slot), tick)...)
+	}
+}
+
+// fly advances every gun round one tick and resolves arrivals: each round is
+// tested against each living aircraft's CURRENT pose over this tick's step,
+// so the target's manoeuvring since the trigger genuinely moves it out of (or
+// into) the stream. A landed round is spent; a spent round vanishes. The
+// per-craft test is broad-phase gated — a round's step is ~20 m and an
+// airframe ~20 m, so 80 m of slack collects every possible contact.
+func (i *instance) fly(dt float64, tick uint64) {
+	if len(i.rounds) == 0 {
+		return
+	}
+	alive := i.rounds[:0]
+	for r := range i.rounds {
+		round := &i.rounds[r]
+		landed := false
+		for _, slot := range i.slots() {
+			a := i.aircraft[slot]
+			if a == nil || !a.alive || a.model == nil || slot == round.Shooter {
 				continue
 			}
-			if i.cheat.invulnerable && !b.bot {
-				continue // the burst passes through a human under the cheat; bots still bleed
+			if i.cheat.invulnerable && !a.bot {
+				continue // rounds pass through a human under the cheat; bots still bleed
 			}
-			hits, events, _ := battle.Burst(shooter, b.model.State.Position, b.model.State.Attitude, b.model.State.Velocity, &b.body, burst, i.environment.Wrap, i.environment.Seed, uint64(slot), tick) // impacts are a client-side effect today; the multiplayer wire carries no strike positions yet (#217)
-			if hits == 0 {
+			state := &a.model.State
+			if math.Abs(round.Position.Y-state.Position.Y) > 80 ||
+				math.Abs(flight.Shortest(state.Position.X, round.Position.X, i.environment.Wrap)) > 80 ||
+				math.Abs(flight.Shortest(state.Position.Z, round.Position.Z, i.environment.Wrap)) > 80 {
 				continue
 			}
-			b.condition.Damager = slot
-			b.condition.Damaged = 0
+			hit, events, _ := battle.Strike(round, state.Position, state.Attitude, state.Velocity, &a.body, dt, i.environment.Wrap, i.environment.Seed)
+			if !hit {
+				continue
+			}
+			a.condition.Damager = round.Shooter
+			a.condition.Damaged = 0
 			for _, event := range events {
 				if event.Kind == "hit" {
-					i.events = append(i.events, map[string]any{"kind": "hit", "slot": other, "by": slot, "count": event.Count})
+					i.events = append(i.events, map[string]any{"kind": "hit", "slot": slot, "by": round.Shooter, "count": event.Count})
 					continue
 				}
-				i.raise(other, event)
+				i.raise(slot, event)
 			}
+			landed = true
+			break // the round is spent in whoever it met first
+		}
+		if landed {
+			continue
+		}
+		if !battle.Fly(round, dt) {
+			alive = append(alive, *round)
 		}
 	}
+	i.rounds = alive
 }
 
 // bearing returns the unit minimum-image direction and distance from a to b.

@@ -34,72 +34,91 @@ type Pose struct {
 	Velocity flight.Vec3 // the shooter's velocity rides on every round
 }
 
-// Burst fires rounds from the shooter at a target body posed at position
-// with attitude, moving at velocity, and applies every hit. Wrap is the
-// toroidal world size. Returns the hit count and the events raised.
-//
-// Rounds fly real time of flight: each one inherits the shooter's velocity,
-// the target's velocity carries it away across the flight, and gravity pulls
-// the round (not the lift-borne target) — so the correct bore is the LED one,
-// and pipper-on-target only kills when the pipper computes the same lead.
-// (The judgment is a straight ray in the target-relative frame with the mean
-// gravity kick folded in — exact enough over gun ranges.)
-// ImpactPoints caps how many per-round strike positions one burst reports.
+// ImpactPoints caps how many per-round strike positions one report carries.
 const ImpactPoints = 8
 
-func Burst(shooter Pose, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, rounds int, wrap float64, seed uint64, slot uint64, tick uint64) (int, []Event, []flight.Vec3) {
-	// Target-relative muzzle, wrap-aware, rotated into the target's body frame.
-	relative := flight.Vec3{
-		X: flight.Shortest(position.X, shooter.Position.X, wrap),
-		Y: shooter.Position.Y - position.Y,
-		Z: flight.Shortest(position.Z, shooter.Position.Z, wrap),
-	}
-	origin := attitude.Unrotate(relative)
-	// One flight-time solution per burst: the bore round's target-relative
-	// velocity closes the range; gravity's mean kick over that flight bends
-	// every round's relative path the same way.
-	flat := shooter.Forward.Scale(Muzzle).Add(shooter.Velocity).Subtract(velocity)
-	time := relative.Length() / math.Max(flat.Length(), 1)
-	kick := flight.Vec3{Y: -0.5 * 9.8 * time}
-	hits := 0
-	var events []Event
-	var impacts []flight.Vec3
+// Round is one 20 mm round in flight: real position, real velocity, no
+// knowledge of any target. Rounds RESOLVE ON ARRIVAL against wherever the
+// target actually is by then — the old Burst judged the whole flight in the
+// target-relative frame at the trigger, which auto-led every shooter and made
+// manoeuvre-during-flight (the real last-ditch guns defence) impossible.
+type Round struct {
+	Position flight.Vec3
+	Velocity flight.Vec3
+	Shooter  int    // slot identity, for kill credit
+	Born     uint64 // tick fired: keys the damage rolls
+	Index    uint64 // position within its volley: keys the damage rolls
+	Age      float64
+}
+
+// Life is how long a round stays dangerous, seconds. 2 s at ~1,100 m/s
+// closing speeds spans the old 1,500 m reach with margin for lofted shots.
+const Life = 2.0
+
+// Volley spawns one burst's rounds from the shooter with the same
+// deterministic Gaussian dispersion the instant model rolled.
+func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []Round {
+	born := make([]Round, 0, rounds)
 	for r := 0; r < rounds; r++ {
 		round := uint64(r)
-		// Gaussian dispersion via Box-Muller on the deterministic hash.
 		radius := dispersion * math.Sqrt(-2*math.Log(math.Max(roll(seed, slot, tick, round, 20), 1e-12)))
 		angle := 2 * math.Pi * roll(seed, slot, tick, round, 21)
 		bore := shooter.Forward.
 			Add(shooter.Right.Scale(radius * math.Cos(angle))).
 			Add(shooter.Up.Scale(radius * math.Sin(angle)))
-		direction := bore.Scale(Muzzle).Add(shooter.Velocity).Subtract(velocity).Add(kick)
-		direction = attitude.Unrotate(direction).Normalize()
-		chain, along := pierce(body.Parts, origin, direction, reach)
-		if len(chain) == 0 {
-			continue
-		}
-		hits++
-		// Where this round actually struck, in the target's body frame. The
-		// caller turns it into a flash on the skin; capped because a long burst
-		// would otherwise spray hundreds of points for a visual that reads the
-		// same from a handful (#217).
-		if len(impacts) < ImpactPoints {
-			impacts = append(impacts, origin.Add(direction.Scale(along[0])))
-		}
-		// Penetration: SAPHEI keeps killing behind the first thing it meets —
-		// severity decays per part, and the round word is spread by depth so
-		// the chain's rolls stay independent.
-		severity := 1.0
-		for depth, part := range chain {
-			if depth >= through || severity < spent {
-				break
-			}
-			events = append(events, strike(body, &body.Parts[part], severity, seed, slot, tick, round*uint64(through)+uint64(depth))...)
-			severity *= penetration
-		}
+		born = append(born, Round{
+			Position: shooter.Position,
+			Velocity: bore.Scale(Muzzle).Add(shooter.Velocity),
+			Shooter:  int(slot),
+			Born:     tick,
+			Index:    round,
+		})
 	}
-	if hits > 0 {
-		events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: hits})
+	return born
+}
+
+// Fly advances a round one step of dt: ballistic, gravity only (20 mm drag
+// over these ranges is a second-order correction the fire control never
+// modelled either). Returns true once the round is spent.
+func Fly(r *Round, dt float64) bool {
+	r.Velocity.Y -= 9.8 * dt
+	r.Position = r.Position.Add(r.Velocity.Scale(dt))
+	r.Age += dt
+	return r.Age > Life || r.Position.Y < 0
+}
+
+// Strike tests one round's NEXT step of dt against a body posed at position
+// with attitude, moving at velocity — the segment is judged in the target's
+// frame at THIS tick, which is what makes a jink after the trigger a real
+// defence. On a hit the damage cascade applies exactly as the instant model's
+// did, and the round is spent. The impact point is in the target's body frame.
+func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, wrap float64, seed uint64) (bool, []Event, flight.Vec3) {
+	relative := flight.Vec3{
+		X: flight.Shortest(position.X, r.Position.X, wrap),
+		Y: r.Position.Y - position.Y,
+		Z: flight.Shortest(position.Z, r.Position.Z, wrap),
 	}
-	return hits, events, impacts
+	origin := attitude.Unrotate(relative)
+	step := r.Velocity.Subtract(velocity).Scale(dt)
+	span := step.Length()
+	if span < 1e-9 {
+		return false, nil, flight.Vec3{}
+	}
+	direction := attitude.Unrotate(step.Scale(1 / span))
+	chain, along := pierce(body.Parts, origin, direction, span)
+	if len(chain) == 0 {
+		return false, nil, flight.Vec3{}
+	}
+	impact := origin.Add(direction.Scale(along[0]))
+	var events []Event
+	severity := 1.0
+	for depth, part := range chain {
+		if depth >= through || severity < spent {
+			break
+		}
+		events = append(events, strike(body, &body.Parts[part], severity, seed, uint64(r.Shooter), r.Born, r.Index*uint64(through)+uint64(depth))...)
+		severity *= penetration
+	}
+	events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: 1})
+	return true, events, impact
 }

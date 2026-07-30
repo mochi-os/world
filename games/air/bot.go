@@ -1636,8 +1636,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// Inside gun range the aim is the LEAD POINT: rounds fly real time of
 	// flight now, so the bore belongs where the target WILL be — his velocity
 	// carries him across the flight, my own velocity rides on every round,
-	// and gravity pulls the round the whole way. This mirrors battle.Burst's
-	// solution exactly (a bot that aims at the man himself misses every
+	// and gravity pulls the round the whole way. This mirrors the gunnery's
+	// real flight exactly (a bot that aims at the man himself misses every
 	// crosser, which is precisely the deflection game). In the control zone,
 	// SADDLE: kill the closure and hold the track.
 	if b.shoot && b.prey != nil && distance < b.skill.open*1.4 {
@@ -1843,7 +1843,19 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 		return false
 	}
 	age := float64(tick-b.prey.when) / 60
-	spot := predict(b.prey, age, b.skill.library >= 3)
+	// The gate judges the LED solution (#real-TOF): rounds fly real time of
+	// flight, so a hit is decided by whether the bore matches where he will
+	// be at arrival — the same point the steering already flies. Gating on
+	// his current position made the trigger measure the wrong thing: it held
+	// fire on correct lead in deflection and blessed a no-lead bore that the
+	// gunnery then flew straight behind him.
+	current := predict(b.prey, age, b.skill.library >= 3)
+	los := current.Subtract(s.Position).Normalize()
+	closure := s.Velocity.Subtract(b.prey.velocity).Dot(los)
+	transit := b.distance / math.Max(battle.Muzzle+closure, 200)
+	spot := predict(b.prey, age+transit, b.skill.library >= 3).
+		Subtract(s.Velocity.Scale(transit)).
+		Add(flight.Vec3{Y: 4.9 * transit * transit})
 	direction := spot.Subtract(s.Position).Normalize()
 	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
 	miss := math.Acos(clamp(nose.Dot(direction), -1, 1)) * math.Max(b.distance, 50)
