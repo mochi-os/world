@@ -13,6 +13,7 @@ package air
 
 import (
 	"math"
+	"sort"
 
 	"world/games/air/battle"
 	"world/games/air/flight"
@@ -59,6 +60,22 @@ var commitment = map[string]bool{"defense": true, "rebuild": true, "reverse": tr
 
 // settle commits the manoeuvre just chosen for this pilot's commitment time.
 func (b *brain) settle(tick uint64) { b.settled = tick + uint64(b.skill.commit*60) }
+
+// surveyed returns the known contact slots in ascending order. Every decision
+// loop walks b.known through this, never by ranging the map: Go randomises map
+// order per range, so a min-pick with a strict < broke ties by whichever
+// contact happened to come first — and the symmetric spawn ring makes exact
+// ties real. Two identical runs of the section sweep disagreed on who died
+// (#225), which meant every band in the doctrine battery was fitted against
+// noise the size of its own effect.
+func (b *brain) surveyed() []int {
+	order := make([]int, 0, len(b.known))
+	for s := range b.known {
+		order = append(order, s)
+	}
+	sort.Ints(order)
+	return order
+}
 
 // elapsed reports whether `since` ticks have passed since an event stamped at
 // `when`. Zero means it never happened: these stamps are anti-churn debounces,
@@ -537,7 +554,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 	}
-	for s, t := range b.known { // forget the dead, the departed, and the long-lost
+	for _, s := range b.surveyed() { // forget the dead, the departed, and the long-lost
+		t := b.known[s]
 		if c := i.aircraft[s]; c == nil || !c.alive || tick-t.when > 15*60 {
 			delete(b.known, s)
 			if b.target == s {
@@ -566,7 +584,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	menacing := map[int]int{} // attacker slot -> the teammate he is running on
 	danger, closest := -1, math.MaxFloat64
 	if a.team != "" && !b.solo {
-		for s, t := range b.known {
+		for _, s := range b.surveyed() {
+			t := b.known[s]
 			for _, other := range i.slots() {
 				mate := i.aircraft[other]
 				if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
@@ -605,7 +624,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 	best, cost := -1, math.MaxFloat64
-	for s, t := range b.known {
+	for _, s := range b.surveyed() {
+		t := b.known[s]
 		_, distance := i.bearing(me.Position, t.position)
 		weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
 		if _, found := menacing[s]; found && distance < b.tactics.sandwich.reach {
@@ -756,7 +776,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// almost never thinks of it.
 	if !threatened && a.flared > flare_window {
 		blind := uint64(b.skill.delay*60) * 2
-		for s, t := range b.known {
+		for _, s := range b.surveyed() {
+			t := b.known[s]
 			direction, distance := i.bearing(me.Position, t.position)
 			if distance > 3000 {
 				continue
@@ -809,8 +830,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.prey = nil
 		b.shoot, b.loose = false, false
 		away, gap := level(me.Velocity.Normalize()), math.MaxFloat64
-		for _, t := range b.known {
-			if d, span := i.bearing(me.Position, t.position); span < gap {
+		for _, s := range b.surveyed() {
+			if d, span := i.bearing(me.Position, b.known[s].position); span < gap {
 				away, gap = d.Scale(-1), span
 			}
 		}
@@ -961,7 +982,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	// Defensive check: a known contact behind my 3/9 inside 2 km, nose on me.
 	menace, gap := -1, 2000.0
-	for s, t := range b.known {
+	for _, s := range b.surveyed() {
+		t := b.known[s]
 		to, span := i.bearing(t.position, me.Position)
 		if span < gap && me.Attitude.Unrotate(to.Scale(-1)).X < -0.2 && t.velocity.Normalize().Dot(to) > 0.6 {
 			menace, gap = s, span
