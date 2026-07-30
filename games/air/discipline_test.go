@@ -60,8 +60,8 @@ func TestMissileDiscipline(t *testing.T) {
 			}
 			i.events = i.events[:0]
 		}
-		if launched > 2 {
-			t.Fatalf("alternate=%v: %d missiles from one life's magazine of 2", alternate, launched)
+		if launched > 4 { // one life's magazine (4 since the LAU-127 loadout, 2026-07-30) — the property is that spam gets the magazine and nothing more
+			t.Fatalf("alternate=%v: %d missiles from one life's magazine of 4", alternate, launched)
 		}
 		if len(i.flying) > 256 {
 			t.Fatalf("flying set unbounded: %d", len(i.flying))

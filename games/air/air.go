@@ -321,7 +321,7 @@ func (a *craft) arm() {
 	}
 	a.ammunition = rounds
 	a.charge = 0
-	a.missiles = 2 // the AIM-9 pair, the same loadout the bots fly
+	a.missiles = 4 // wingtips plus one LAU-127 dual-rail pair — the human magazine, matching single player. Bots deliberately keep their own two-round b.missiles discipline: the doctrine battery is calibrated against it, and their loadout is #215/#226 business
 	a.release = 1e9
 	a.ejected = false
 }
