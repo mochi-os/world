@@ -579,7 +579,28 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 	for _, s := range b.surveyed() { // forget the dead, the departed, and the long-lost
 		t := b.known[s]
-		if c := i.aircraft[s]; c == nil || !c.alive || tick-t.when > 15*60 {
+		// 45 s of track memory, up from 15 (2026-07-30): a duelling ace forgot
+		// its ONLY opponent while rebuilding nose-away and fell to a blind
+		// cruise weave at 1.4 km — a pilot who just fought someone does not
+		// forget they exist because they spent fifteen seconds in the blind
+		// cone. A stale track means flying to where he WAS, which is searching;
+		// cruise is giving up. The cloud escape still works — the escapee turns
+		// inside the layer, so the remembered point is wrong on purpose.
+		// Track memory is 15 s in company and 45 s for the LAST man in a duel
+		// (2026-07-30): a duelling ace forgot its only opponent while
+		// rebuilding nose-away and fell to a blind cruise weave at 1.4 km — a
+		// pilot who just fought someone does not forget they exist because of
+		// fifteen seconds in the blind cone. But long memory for EVERY contact
+		// sent section bots chasing stale ghosts away from their pair (six
+		// extra deaths across 40 seeds), so the extension is duel-scoped: the
+		// current target, with nobody else on the board. The cloud escape
+		// still works — the escapee turns inside the layer, so the remembered
+		// point is wrong on purpose.
+		memory := uint64(15 * 60)
+		if s == b.target && len(b.known) == 1 {
+			memory = 45 * 60
+		}
+		if c := i.aircraft[s]; c == nil || !c.alive || tick-t.when > memory {
 			delete(b.known, s)
 			if b.target == s {
 				b.target = -1
@@ -1097,7 +1118,29 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			_, threatRange = i.bearing(me.Position, foe.position)
 		}
 	}
-	if b.skill.floor > 0 && threatRange > 1200 && b.plan != "" { // ...and never before the merge plan is chosen: energy management belongs inside the fight // a slow jet with the attacker still outside gun range unloads and accelerates: that is the energy defence. Inside 1200 m it keeps fighting - unloading in front of a gun is how you die tidily
+	// ...and the floor also yields to a close PREY, not just a close threat. It
+	// only checked the range to whoever was attacking ME, so against a target
+	// that was not shooting back there was no menace, and the ace starved out
+	// of a PRESS 380 m behind a compliant target — the player handed it a free
+	// kill and watched it unload away (2026-07-30 recording). Rebuilding is FOR
+	// the fight; abandoning gun parameters to rebuild is throwing away the
+	// fight it was rebuilding for. A slow gun kill in the saddle is still a
+	// kill — the aero cap keeps the nose honest at low speed.
+	// The yield is for the SADDLE, not for any nearby enemy: gated on being
+	// behind him (tail geometry), because "someone is close" also describes a
+	// grinding scissors, where refusing to rebuild is how both jets stall into
+	// the sea — measured as six extra section deaths across 40 seeds when the
+	// yield keyed on range alone.
+	saddled := false
+	if b.target >= 0 {
+		if quarry, found := b.known[b.target]; found {
+			direction, span := i.bearing(me.Position, quarry.position)
+			if span < 900 && quarry.velocity.Length() > 1 && direction.Dot(quarry.velocity.Normalize()) > 0.35 {
+				saddled = true
+			}
+		}
+	}
+	if b.skill.floor > 0 && threatRange > 1200 && !saddled && b.plan != "" { // ...and never before the merge plan is chosen: energy management belongs inside the fight // a slow jet with the attacker still outside gun range unloads and accelerates: that is the energy defence. Inside 1200 m it keeps fighting - unloading in front of a gun is how you die tidily
 		if speed < b.skill.floor {
 			b.starving = true
 		} else if speed > b.skill.floor*1.3 {
