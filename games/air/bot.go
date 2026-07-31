@@ -336,6 +336,10 @@ type brain struct {
 	loose    bool       // one-shot missile request, consumed by think()
 	drop     bool       // one-shot flare request
 	offset   [2]float64 // this period's aim wander components
+	bursting uint64     // consecutive ticks of trigger: the burst governor (#206)
+	magazine int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
+	quiet    uint64     // tick the mandatory pause ends
+	safed    string     // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
 	turning  float64    // committed lead-turn direction, +1/-1; 0 = not in a pass
 	turned   uint64     // tick the lead turn was committed
 	aimed    float64    // last tick's pointing error, sin of the angle off the aim
@@ -444,6 +448,10 @@ func corner(m *flight.Model) float64 {
 // tick, and hand the one-shot weapon requests to the instance.
 func (i *instance) think(slot int, a *craft, tick uint64) {
 	b := a.brain
+	b.magazine = a.ammunition
+	if i.cheat.ammunition {
+		b.magazine = rounds
+	}
 	if b.decided == 0 || tick-b.decided >= b.skill.cadence {
 		b.decided = tick
 		i.decide(slot, a, tick)
@@ -706,6 +714,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	pace := corner(a.model)
 	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
 	b.g, b.throttle, b.reheat, b.brake, b.shoot = b.skill.pull, 0.85, 0, 0, false
+	b.safed = "preamble"
 
 	// Wounded flying (#130, deferred from #78): the brain reads its own jet.
 	// Shed structure caps the commanded g — the pilot can see pieces of the
@@ -873,6 +882,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.press = 0
 		b.prey = nil
 		b.shoot, b.loose = false, false
+		b.safed = "evade"
 		away, gap := level(me.Velocity.Normalize()), math.MaxFloat64
 		for _, s := range b.surveyed() {
 			if d, span := i.bearing(me.Position, b.known[s].position); span < gap {
@@ -926,6 +936,16 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					Subtract(me.Velocity.Scale(time)).
 					Add(flight.Vec3{Y: 4.9 * time * time})
 				b.aim, _ = i.bearing(me.Position, lead)
+				// The gun is LIVE for the whole held track (#206): the decide
+				// preamble defaults shoot to false, and this early return kept
+				// that default — so one cadence into every saddle or press,
+				// the bot flew its perfectly-led tracking aim with a DEAD
+				// TRIGGER for the rest of the hold. The offence instrument
+				// measured the majority of every tier's real firing windows
+				// dying exactly here: gate open, mode saddle, gun safed by
+				// the preamble. The led solution gate still decides each
+				// round; this only stops the doctrine disarming its own shot.
+				b.shoot = true
 			}
 		}
 		return
@@ -1045,6 +1065,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if toward, span := i.bearing(me.Position, mate.model.State.Position); span > b.tactics.rejoin.span {
 				b.mode = "rejoin"
 				b.press = 0
+				b.safed = "rejoin"
 				b.shoot = false
 				b.aim = flight.Vec3{X: toward.X, Y: clamp(toward.Y, -0.1, 0.15), Z: toward.Z}.Normalize()
 				b.g = 3
@@ -1079,6 +1100,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if engaged && distance < b.tactics.support.span {
 			b.mode = "support"
 			b.press = 0
+			b.safed = "support"
 			b.shoot = false
 			perch := spot.Subtract(chase.Scale(b.tactics.support.behind)).Add(flight.Vec3{Y: b.tactics.support.above})
 			if distance < b.tactics.support.near {
@@ -1150,6 +1172,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.mode = "rebuild"
 			b.settle(tick)
 			b.press = 0
+			b.safed = "rebuild"
 			b.shoot = false
 			b.throttle, b.reheat = 1, 1
 			nose := me.Attitude.Rotate(flight.Vec3{X: 1})
@@ -1173,7 +1196,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	if b.turning != 0 {
 		if tick-b.turned < b.tactics.lead.hold && menace < 0 {
 			b.aim = b.commit(me, b.turning)
-			b.shoot = false // nothing to shoot at across a merge; the gun comes back when the turn does
+			// The gun stays LIVE through the pass (#206): the committed turn
+			// sweeps the boresight through the crossing solution, and that
+			// sweep IS the snapshot — the offence instrument measured nearly
+			// every firing solution a defending target ever offers landing
+			// inside this hold, with the trigger wired shut ("nothing to
+			// shoot at across a merge" was instant-gunnery reasoning; real
+			// time of flight makes the crossing shot honest, and the led
+			// solution gate decides whether the rounds are worth it).
+			b.shoot = true
 			i.guard(b, me, pace)
 			return
 		}
@@ -1306,6 +1337,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 			b.aim = flight.Vec3{X: away.X, Y: -0.08, Z: away.Z}.Normalize()
 			b.throttle, b.reheat = 1, 1
+			b.safed = "drag"
 			b.shoot = false
 			b.hold = tick + 120
 			i.guard(b, me, pace)
@@ -1495,6 +1527,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// it and fight the turn instead — training doctrine, and it keeps the
 		// merge a fight rather than a coin toss.
 		b.shoot = distance < b.skill.open && (tail > -0.7 || b.skill.discipline < 0.6)
+		if !b.shoot {
+			b.safed = "face-decline"
+		}
 		b.throttle, b.reheat = 1, 1
 		switch {
 		// The ZOOM MERGE (#144 vertical literacy) was REMOVED here, 2026-07-29,
@@ -1596,6 +1631,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.press = 0
 		b.aim = level(direction.Scale(-1))
 		b.throttle, b.reheat = 1, 1
+		b.safed = "extend"
 		b.shoot = false
 		b.hold = tick + 600 // ten committed seconds of extension
 		b.tangle = 0
@@ -1630,6 +1666,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.settle(tick)
 		b.aim = level(direction.Scale(-1))
 		b.throttle, b.reheat = 1, 1
+		b.safed = "bookkeeping"
 		b.shoot = false
 	}
 
@@ -1716,6 +1753,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.aim = level(me.Velocity.Normalize())
 			b.throttle, b.reheat = 0.5, 0
 			b.shoot, b.loose = false, false
+			b.safed = "hold-missile"
 		} else if a.model.State.Fuel < 1361 {
 			b.reheat = 0
 		}
@@ -1816,7 +1854,12 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 		if speed < 80 {
 			want = -2 // stalled: pulling deepens it; push hard through and fly out
 		}
-		b.fireHold()
+		// fire=false for THIS tick only: the old fireHold() here flipped the
+		// persistent doctrine flag, so one brush with the recovery margin —
+		// routine in a hard descending pass, exactly where crossing shots
+		// live — silenced the gun until a future decide happened to re-arm
+		// it. The offence instrument found the majority of every tier's
+		// gate-open moments spent in "saddle" with the gun safed by this.
 		return b.compose(m, aim, want, 1, 1, 0, false, tick)
 	}
 
@@ -1825,14 +1868,27 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	rise := side.Cross(aim).Normalize()
 	aim = aim.Add(side.Scale(b.offset[0])).Add(rise.Scale(b.offset[1])).Normalize()
 
+	// The burst governor (#206): the magazine is 578 rounds and the fight is
+	// minutes long, so fire is a deliberate SQUEEZE — up to ~0.75 s, then a
+	// mandatory half-second pause. When the gun-live fix landed without this,
+	// every tier hosed its ammunition at marginal windows and went Winchester
+	// before the kill geometry arrived: the drone ladder read 0/4/4/1.
 	fire := false
-	if b.shoot && b.prey != nil {
+	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 {
 		fire = b.solution(m, tick)
+	}
+	if fire {
+		b.bursting++
+		if b.bursting > 45 {
+			b.bursting = 0
+			b.quiet = tick + 30
+			fire = false
+		}
+	} else {
+		b.bursting = 0
 	}
 	return b.compose(m, aim, want, b.throttle, b.reheat, b.brake, fire, tick)
 }
-
-func (b *brain) fireHold() { b.shoot = false }
 
 // solution decides the trigger: the nose within tolerance of the target's
 // CURRENT position (extrapolated from the possibly-stale track) — the gun is
@@ -1867,6 +1923,14 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	// that authentic). Wander still ruins the rookie's AIM; it no longer
 	// forbids the ace's shot.
 	tolerance := 22 + b.skill.trigger*b.distance*1.5
+	if b.bursting == 0 {
+		// OPEN fire only on a solid solution; keep firing while it merely
+		// holds — the entry hysteresis of a deliberate squeeze, not a hose.
+		// Conservation tightens the entry as the magazine drains: the last
+		// hundred rounds only leave on near-perfect solutions.
+		remaining := clamp(float64(b.magazine)/float64(rounds), 0, 1)
+		tolerance *= 0.4 + 0.25*remaining
+	}
 	if b.pressing(tick) {
 		tolerance *= b.tactics.press.loose // finishing: accept the deflection shot the patient tracker declines (#144)
 	}
