@@ -74,6 +74,9 @@ func TestOffence(t *testing.T) {
 	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
 		sk := skills[level]
 		exist, gate, fired, firedExist, total := 0, 0, 0, 0, 0
+		aspect := [3]float64{} // mean angle off the DEFENDER's tail, per third of the fight: the "is he getting on my six" trace
+		counts := [3]int{}
+		thirds := [3]map[string]int{{}, {}, {}} // dominant modes per third
 		kills, closest := 0, 1e9
 		why := map[string]int{} // mode|shoot during gate-open unfired ticks
 		for seed := uint64(1); seed <= 6; seed++ {
@@ -110,6 +113,20 @@ func TestOffence(t *testing.T) {
 				}
 				total++
 				s := &i.aircraft[bot].model.State
+				{ // attacker aspect: the bot's bearing off the defender's six (0 = parked there)
+					toward := s.Position.Subtract(me.Position)
+					if r := toward.Length(); r > 1 {
+						tail := me.Velocity.Normalize().Scale(-1)
+						off := math.Acos(clamp(toward.Scale(1/r).Dot(tail), -1, 1)) * 57.3
+						third := int(tick * 3 / (60 * 120))
+						if third > 2 {
+							third = 2
+						}
+						aspect[third] += off
+						counts[third]++
+						thirds[third][i.aircraft[bot].brain.mode]++
+					}
+				}
 				toward := me.Position.Subtract(s.Position)
 				d := toward.Length()
 				if d < closest {
@@ -160,5 +177,20 @@ func TestOffence(t *testing.T) {
 		fmt.Printf("%-8s human-shot exists %5.2f%%   own gate open %5.2f%%   trigger down %5.2f%%   fired-during-shot %d/%d   closest %4.0f m   kills %d/6\n",
 			level, pct(exist), pct(gate), pct(fired), firedExist, exist, closest, kills)
 		fmt.Printf("         gate-open UNFIRED by mode|gun: %v\n", unfired)
+		for k := range aspect {
+			if counts[k] > 0 {
+				aspect[k] /= float64(counts[k])
+			}
+		}
+		fmt.Printf("         angle off the defender's tail by fight third: %3.0f -> %3.0f -> %3.0f deg\n", aspect[0], aspect[1], aspect[2])
+		for k := range thirds {
+			top, best := "", 0
+			for m, c := range thirds[k] {
+				if c > best {
+					top, best = m, c
+				}
+			}
+			fmt.Printf("         third %d dominant mode: %s %d%%\n", k+1, top, 100*best/max(counts[k], 1))
+		}
 	}
 }

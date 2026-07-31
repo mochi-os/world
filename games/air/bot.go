@@ -305,6 +305,68 @@ type track struct {
 	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
 }
 
+// orbit is the opponent's estimated turning circle — the object BFM is flown
+// against. Estimated from two spaced track samples: the velocity swing gives
+// turn rate and plane, |v|/omega the radius, and the centre sits perpendicular
+// to his velocity in the turn plane. A near-straight target reports invalid
+// and callers fall back to flight-path lag.
+type orbit struct {
+	centre flight.Vec3
+	radius float64
+	normal flight.Vec3 // unit angular-velocity direction: travel runs along normal x radial
+	omega  float64     // rad/s
+	valid  bool
+}
+
+// circle estimates the orbit from two samples of the same track.
+func circle(p1, v1 flight.Vec3, t1 uint64, p2, v2 flight.Vec3, t2 uint64) orbit {
+	dt := float64(t2-t1) / 60
+	if dt < 0.15 || dt > 2.5 {
+		return orbit{}
+	}
+	speed := v2.Length()
+	if speed < 40 {
+		return orbit{}
+	}
+	u1, u2 := v1.Normalize(), v2.Normalize()
+	swing := math.Acos(clamp(u1.Dot(u2), -1, 1))
+	omega := swing / dt
+	if omega < 0.06 { // under ~3.5 deg/s: straight enough that lag beats geometry
+		return orbit{}
+	}
+	normal := u1.Cross(u2)
+	if normal.Length() < 1e-6 {
+		return orbit{}
+	}
+	normal = normal.Normalize()
+	radius := speed / omega
+	inward := normal.Cross(u2).Scale(-1) // centripetal: toward the centre
+	return orbit{
+		centre: p2.Add(inward.Scale(radius)),
+		radius: radius,
+		normal: normal,
+		omega:  omega,
+		valid:  true,
+	}
+}
+
+// behind returns the point ON the orbit a given arc behind the target's
+// current position, pulled slightly inside the circle — the lag control point
+// an attacker flies to, which MOVES with the target's turn (that motion is
+// what makes flying at it a closed-loop pursuit of geometry, not of the jet).
+func (o orbit) behind(target flight.Vec3, arc float64) flight.Vec3 {
+	radial := target.Subtract(o.centre)
+	planar := radial.Subtract(o.normal.Scale(radial.Dot(o.normal)))
+	if planar.Length() < 1 {
+		return target
+	}
+	u := planar.Normalize()
+	w := o.normal.Cross(u) // travel direction at the target's station
+	// Rotate the radial BACKWARD along travel by arc, and stand 10% inside.
+	back := u.Scale(math.Cos(arc)).Subtract(w.Scale(math.Sin(arc)))
+	return o.centre.Add(back.Scale(o.radius * 0.9))
+}
+
 // predict projects a track horizon seconds past its refresh. The curved form
 // (tier 3+) bends the prediction along the observed turn — the difference
 // between gunning a runner and gunning a fighter in a 6 g break.
@@ -338,14 +400,18 @@ type brain struct {
 	offset   [2]float64 // this period's aim wander components
 	bursting uint64     // consecutive ticks of trigger: the burst governor (#206)
 	magazine int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
-	quiet    uint64     // tick the mandatory pause ends
-	safed    string     // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
-	turning  float64    // committed lead-turn direction, +1/-1; 0 = not in a pass
-	turned   uint64     // tick the lead turn was committed
-	aimed    float64    // last tick's pointing error, sin of the angle off the aim
-	closing  float64    // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
-	jink     uint64     // tick to re-roll the jink direction
-	phase    float64    // current jink roll phase
+	sampled  uint64     // tick of the stored orbit sample
+	sampleP  flight.Vec3
+	sampleV  flight.Vec3
+	ring     orbit   // the prey's estimated turning circle (#206 planner)
+	quiet    uint64  // tick the mandatory pause ends
+	safed    string  // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
+	turning  float64 // committed lead-turn direction, +1/-1; 0 = not in a pass
+	turned   uint64  // tick the lead turn was committed
+	aimed    float64 // last tick's pointing error, sin of the angle off the aim
+	closing  float64 // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
+	jink     uint64  // tick to re-roll the jink direction
+	phase    float64 // current jink roll phase
 	missiles int
 	alert    uint64          // tick an inbound missile was first noticed (react delay runs from here)
 	noticed  map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
@@ -1030,6 +1096,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	prey := b.known[b.target]
 	b.prey = prey
+	// Refresh the orbit estimate whenever the track has a NEW observation: two
+	// spaced samples give the circle BFM is flown against (#206 planner).
+	if prey.when != b.sampled {
+		if b.sampled != 0 {
+			b.ring = circle(b.sampleP, b.sampleV, b.sampled, prey.position, prey.velocity, prey.when)
+		}
+		b.sampled, b.sampleP, b.sampleV = prey.when, prey.position, prey.velocity
+	}
 	age := float64(tick-prey.when) / 60
 	horizon := 0.0
 	if b.skill.library >= 2 {
@@ -1517,8 +1591,34 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// (dead-astern, big opening) it just lags the chase into the dirt;
 			// and never against one climbing away above.
 			b.aim = direction.Subtract(flight.Vec3{Y: 0.35}).Add(chase.Scale(-0.2)).Normalize()
+		case b.skill.library >= 2 && a.team == "" && distance > 500 && tail < 0.85 && closure > -40:
+			// (teamless doctrine only for now: a stalking wingman chases
+			// geometry away from his pair — both section sweeps regressed past
+			// their slack when the stalk flew in teams, and gating on b.solo
+			// instead poisoned the A/B by giving only the solo arm a planner.
+			// Section-aware planning is the plan-spine work, measured on its
+			// own terms.)
+			// THE STALK (#206 planner): fly to a control point ON HIS CIRCLE —
+			// half a radian of arc behind him, standing slightly inside — not
+			// at the jet itself. Pointing at a turning target is a matched-
+			// radius tail chase whose angles never improve (measured: no tier
+			// bent the angle-off-tail trace downward, ever); the control point
+			// moves with his turn, so flying at it lags the circle, builds
+			// closure across the chord, and arrives BEHIND him. Straight
+			// targets keep the classic flight-path lag.
+			b.mode = "stalk"
+			if b.ring.valid {
+				point := b.ring.behind(predict(prey, age, b.skill.library >= 3), 0.5)
+				b.aim, _ = i.bearing(me.Position, point)
+				b.throttle, b.reheat = 1, boost(speed, pace, -20)
+				if closure > 140 {
+					b.brake = clamp((closure-140)/120, 0, 1) // arriving too hot overshoots the control zone the stalk is buying
+				}
+			} else {
+				b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // classic lag on a straight runner
+			}
 		case b.skill.library >= 2 && distance > 700 && tail < 0.85 && closure > -40:
-			b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // lag: hold the control zone on a CROSSING target — lagging a runner points behind him forever
+			b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // teams keep the classic crossing lag the stalk replaced for lone fighters — removing it cost the section six deaths
 		}
 	case tail < -0.35: // neutral: converging head-on
 		b.mode = "neutral"
