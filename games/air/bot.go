@@ -1295,6 +1295,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		foe := b.known[menace]
 		at, span := i.bearing(me.Position, foe.position)
 		b.throttle, b.reheat = 1, boost(speed, pace, -80)
+		if a.team == "" && span < 700 && !elapsed(tick, b.reversed, 300) {
+			// The scissors is a STATE, not an instant (lone doctrine): while
+			// the weave is live — reversed within 5 s, attacker inside 700 m —
+			// the break between reversals stays slow too. Letting defense
+			// shove the throttle back to corner between reversals re-armed the
+			// attacker's tracking with the very speed the trap had just spent.
+			b.throttle, b.reheat = 0.25, 0
+		}
 		// A defensive fight is still a guns duel: the break and the scissors
 		// cross his nose through yours — take the snapshot when it appears.
 		b.shoot = true
@@ -1354,7 +1362,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// cue both missed real overshoots and fired on the bank alone.
 		flank := math.Copysign(1, at.Dot(me.Attitude.Rotate(flight.Vec3{Z: 1})))
 		if b.skill.library >= 3 {
-			if b.side != 0 && flank != b.side && span < 700 && elapsed(tick, b.rolling, 240) && elapsed(tick, b.reversed, weave) { // lone fighters weave at the scissors rhythm (2.5 s); wingmen keep the old 5 s — cycling reversals with a second attacker around cost the section eight deaths // (tangle never accumulates while defensive — the defense case returns before that counter)
+			closing := foe.velocity.Subtract(me.Velocity).Dot(at.Scale(-1))                                                                                           // his speed along the line toward me
+			if b.side != 0 && flank != b.side && span < 700 && (closing > -30 || a.team != "") && elapsed(tick, b.rolling, 240) && elapsed(tick, b.reversed, weave) { // the crossing must CARRY CLOSURE to be an overshoot for a LONE fighter — reversing under an attacker already lagging and slow hands him the turn; teams keep the pure geometric cue their sweeps were calibrated with (the qualifier cost the section six deaths). The cue is geometric either way: his side flipping across my wings IS the flight-path crossing; the interval is only an anti-churn floor // lone fighters weave at the scissors rhythm (2.5 s); wingmen keep the old 5 s — cycling reversals with a second attacker around cost the section eight deaths // (tangle never accumulates while defensive — the defense case returns before that counter)
 				// Reverse once per genuine overshoot — a scissors flips sides
 				// every weave, and reversing each flip churns the energy away.
 				// The cooldown is against the LAST REVERSAL, not the live hold:
