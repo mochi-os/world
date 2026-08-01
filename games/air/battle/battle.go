@@ -67,16 +67,23 @@ func Advance(body *Body, model *flight.Model, throttle float64, rate float64, se
 		if condition.Fire[i] <= 0 {
 			continue
 		}
+		// A burning engine is a DEAD engine (2026-08-01): the fire drill
+		// extinguishes by shutdown — fuel off — and nothing relights a fire-
+		// damaged turbine in flight. Before this, an extinguished fire handed
+		// most of the engine back, so a bandit could soak fire after fire and
+		// keep fighting; now the first fire costs the engine for the flight,
+		// the second makes a glider, and what the drill saves is the AIRFRAME:
+		// an unfought fire still burns through to the fuel.
+		damage.Engine[i] = 1
 		if throttle > 0.1 {
 			condition.Fire[i] += 0.05 * step
 		} else {
 			condition.Fire[i] -= 0.08 * step
 		}
 		if condition.Fire[i] <= 0 {
-			condition.Fire[i] = 0 // extinguished
+			condition.Fire[i] = 0 // extinguished — the engine stays dead
 			continue
 		}
-		damage.Engine[i] = math.Min(1, damage.Engine[i]+0.04*step)
 		if condition.Fire[i] >= 1 {
 			condition.Fire[i] = 1
 			// Burn-through: a fully developed engine fire reaches the fuel.
