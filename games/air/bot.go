@@ -1340,6 +1340,10 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				return
 			}
 		}
+		weave := uint64(300)
+		if a.team == "" {
+			weave = 150
+		}
 		// The reversal cue (tier 3+): the attacker's lateral side FLIPPING
 		// while he's close means he crossed my flight path — reverse the turn
 		// into him NOW (the scissors entry), don't keep the old break.
@@ -1350,7 +1354,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// cue both missed real overshoots and fired on the bank alone.
 		flank := math.Copysign(1, at.Dot(me.Attitude.Rotate(flight.Vec3{Z: 1})))
 		if b.skill.library >= 3 {
-			if b.side != 0 && flank != b.side && span < 700 && elapsed(tick, b.rolling, 240) && elapsed(tick, b.reversed, 300) { // (tangle never accumulates while defensive — the defense case returns before that counter)
+			if b.side != 0 && flank != b.side && span < 700 && elapsed(tick, b.rolling, 240) && elapsed(tick, b.reversed, weave) { // lone fighters weave at the scissors rhythm (2.5 s); wingmen keep the old 5 s — cycling reversals with a second attacker around cost the section eight deaths // (tangle never accumulates while defensive — the defense case returns before that counter)
 				// Reverse once per genuine overshoot — a scissors flips sides
 				// every weave, and reversing each flip churns the energy away.
 				// The cooldown is against the LAST REVERSAL, not the live hold:
@@ -1361,7 +1365,20 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				b.mode = "reverse"
 				b.settle(tick)
 				b.aim = level(at)
-				b.brake = clamp((speed-0.9*pace)/80, 0, 1)
+				// The reversal is an OVERSHOOT TRAP (2026-08-01): chop the
+				// throttle and board out. It used to brake toward 0.9 corner
+				// with the throttle up — a 300 kt reversal in wide arcs that a
+				// human tracked with ease. A scissors converts by getting
+				// SLOWER than the attacker until his flight path carries him
+				// past; speed is the thing being spent, on purpose. The floor
+				// never blocked this (it only arms past 1200 m) — the branch's
+				// own energy targets did.
+				b.throttle, b.reheat = 0.1, 0
+				b.brake = 1
+				if a.team != "" { // the trap is LONE doctrine: slow with a second attacker around is how wingmen die — teams keep the fast reversal
+					b.throttle, b.reheat = 1, 0
+					b.brake = clamp((speed-0.9*pace)/80, 0, 1)
+				}
 				b.hold = tick + 90
 				b.reversed = tick
 				b.side = flank

@@ -121,6 +121,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 	for _, level := range levels {
 		modes := map[string]int{}
 		tracked, shots, closest, escaped := 0, 0, 1e9, 0
+		converted := 0 // ticks the BOT held the attacker's rear quarter: the counter-offensive that has never existed
 		total, switches, slow := 0, 0, 0
 		energyGap, speedSum := 0.0, 0.0
 		for seed := uint64(1); seed <= 6; seed++ {
@@ -168,6 +169,15 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 				if r < 900 && off < 45 { // in the bandit's rear quarter, guns range
 					tracked++
 				}
+				{ // and the mirror: the bot behind the ATTACKER
+					toward := foe.Position.Subtract(me.Position)
+					if rr := toward.Length(); rr > 1 && rr < 900 {
+						tail := me.Velocity.Normalize().Scale(-1)
+						if math.Acos(clamp(toward.Scale(1/rr).Dot(tail), -1, 1))*57.3 < 45 {
+							converted++
+						}
+					}
+				}
 				if r > 4000 {
 					escaped++
 				}
@@ -193,8 +203,9 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		}
 		sort.Slice(list, func(a, b int) bool { return list[a].ticks > list[b].ticks })
 		fmt.Printf("\n=== %s under a crude tail-chase (6 seeds, 60 s each) ===\n", level)
-		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | killed %d/6\n",
-			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest, shots)
+		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | killed %d/6 | CONVERTED to the attacker's rear quarter %.1f%%\n",
+			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest, shots,
+			100*float64(converted)/math.Max(1, float64(total)))
 		fmt.Printf("  mode switches: %.1f/s | bandit mean speed %.0f kt, below 250 kt for %.0f%% | energy gap %+.0f m (his minus mine)\n",
 			float64(switches)/math.Max(1, float64(total)/60), speedSum/math.Max(1, float64(total))*1.944,
 			100*float64(slow)/math.Max(1, float64(total)), energyGap/math.Max(1, float64(total)))
