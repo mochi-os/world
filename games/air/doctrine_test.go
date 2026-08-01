@@ -114,9 +114,7 @@ func geometry(attacker, bandit *flight.State) (rangeM, angleOff, myEnergy, hisEn
 // claim the report makes concrete — that the top skill offers no threat and no
 // escape.
 func TestDoctrineUnderHumanPressure(t *testing.T) {
-	if testing.Short() {
-		t.Skip("simulated minutes")
-	}
+	heavy(t)
 	levels := []string{"veteran", "ace"}
 	for _, level := range levels {
 		modes := map[string]int{}

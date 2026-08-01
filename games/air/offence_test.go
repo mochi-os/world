@@ -68,9 +68,7 @@ func evade(me, foe *flight.State, tick uint64) map[string]any {
 // gate (its tolerance at its trigger). Diagnostic: it prints, and its assert
 // is only that the harness itself worked.
 func TestOffence(t *testing.T) {
-	if testing.Short() {
-		t.Skip("simulated minutes")
-	}
+	heavy(t)
 	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
 		sk := skills[level]
 		exist, gate, fired, firedExist, total := 0, 0, 0, 0, 0

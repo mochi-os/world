@@ -19,6 +19,21 @@ import (
 	"world/games/air/flight"
 )
 
+// doctrine gates the multi-minute bot-behaviour sweeps: they run several
+// simulated minutes per seed and dominate the air package's ~18 min runtime,
+// so they are OPT-IN rather than opt-out. A plain `go test ./...` — a core or
+// security change touching the world server, CI on an unrelated package —
+// skips them instead of paying for sweeps it never asked for. Run them with
+// `make test-doctrine`, or `AIR_DOCTRINE=1 go test -run TestBotSection ./games/air/`.
+// (TestBattery and TestLethality keep their own AIR_BATTERY / AIR_LETHALITY
+// knobs; the flight-envelope tests stay on testing.Short.)
+func heavy(t *testing.T) {
+	t.Helper()
+	if os.Getenv("AIR_DOCTRINE") == "" {
+		t.Skip("bot doctrine sweep: set AIR_DOCTRINE=1 (or run `make test-doctrine`)")
+	}
+}
+
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
 	t.Helper()
 	g := New()
@@ -300,9 +315,7 @@ func BenchmarkStep100(b *testing.B) {
 // first open-loop version spiralled every bot into the sea. Twenty bots,
 // two simulated minutes: nobody dies, nobody sinks low.
 func TestBotsEndure(t *testing.T) {
-	if testing.Short() {
-		t.Skip("two simulated minutes")
-	}
+	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "endure", Game: "air", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
 	if err != nil {
@@ -366,9 +379,7 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 // reasonable share decide at all. Slot 99 is the ace (levels fill from slot
 // 99 down in map order).
 func TestBotDuel(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes")
-	}
+	heavy(t)
 	aces, rookies := 0, 0
 	for seed := uint64(1); seed <= 12; seed++ {
 		winner, _, when := duel(t, seed, 60*240)
@@ -392,9 +403,7 @@ func TestBotDuel(t *testing.T) {
 // TestBotLadder: the product-truth skill measure — in a mixed brawl with
 // respawns, aces out-kill rookies decisively over many engagements.
 func TestBotLadder(t *testing.T) {
-	if testing.Short() {
-		t.Skip("six simulated minutes")
-	}
+	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 100, Seed: 11,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "rookie": 3.0}}})
@@ -433,9 +442,7 @@ func TestBotDeterminism(t *testing.T) {
 
 // TestBotsFight: a six-ace air produces kills and nobody flies into the sea.
 func TestBotsFight(t *testing.T) {
-	if testing.Short() {
-		t.Skip("three simulated minutes")
-	}
+	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 100, Seed: 5,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 6.0}}})
@@ -542,9 +549,7 @@ func gunnery(t *testing.T, level string, seed uint64) (int, int) {
 // the ace lands real gunfire and decisively out-shoots the rookie. This is
 // the measured input to lethality, free of missile-decoy dice.
 func TestBotGunnery(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes")
-	}
+	heavy(t)
 	aceHits, aceRounds, rookieHits, rookieRounds := 0, 0, 0, 0
 	for seed := uint64(1); seed <= 8; seed++ {
 		h, r := gunnery(t, "ace", seed)
@@ -690,9 +695,7 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 // TestBotSectionEqual, where the enemy is good enough that teamwork must
 // pay both ways.
 func TestBotSection(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes")
-	}
+	heavy(t)
 	t.Parallel()
 	// 14 -> 40 seeds (2026-07-28). The survival edge this asserts strictly is
 	// a 2-5 death margin, and at 14 seeds the run-to-run spread is the same
@@ -732,9 +735,7 @@ func TestBotSection(t *testing.T) {
 // the pair dies apart read as a net deficit far beyond one kill per dozen
 // matches (the pre-recalibration doctrine failed it at 24 seeds: -20 v -14).
 func TestBotSectionEqual(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes")
-	}
+	heavy(t)
 	t.Parallel()
 	sectionNet, sectionDeaths, soloNet, soloDeaths, sweep := section(t, 40,
 		map[string]any{"veteran": 2.0}, map[string]any{"veteran": 4.0})
@@ -2098,9 +2099,7 @@ func TestRespawnPristine(t *testing.T) {
 // (no one-burst deletions), always within thirty (guns stay lethal). Catches
 // balance regressions from aero or battle edits.
 func TestLethalityBand(t *testing.T) {
-	if testing.Short() {
-		t.Skip("five seeded duels")
-	}
+	heavy(t)
 	for _, seed := range []uint64{2, 5, 9, 11, 17} {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "band", Game: "air", Mode: "furball", Capacity: 16, Seed: seed})

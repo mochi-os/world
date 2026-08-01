@@ -21,9 +21,7 @@ import (
 // damage model's most absorbent aspect (the chains spend themselves in the
 // engines), and this is the instrument that says by how much. Diagnostic.
 func TestSoak(t *testing.T) {
-	if testing.Short() {
-		t.Skip("simulated minutes")
-	}
+	heavy(t)
 	for seed := uint64(1); seed <= 6; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "soak", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,

@@ -25,9 +25,7 @@ import (
 // so the counts are exact, not statistical. (The one-parameter ablations that
 // drove the retune live in #219's and #215's notes.)
 func TestDroneKill(t *testing.T) {
-	if testing.Short() {
-		t.Skip("several simulated minutes per tier")
-	}
+	heavy(t)
 	const seconds = 180
 	ladder := map[string]int{}
 	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {

@@ -43,11 +43,21 @@ run1: all
 # -timeout 30m: the air package's doctrine sweeps run several simulated
 # MINUTES per seed and the whole package now takes ~16 wall-clock minutes, past
 # Go's 600 s default. `make test-quick` is the fast gate; this is the full one.
+# The default suite. The multi-minute BOT DOCTRINE sweeps are opt-in
+# (AIR_DOCTRINE), so a plain run skips ~18 min of behaviour sweeps a server or
+# security change never asked for; the flight golden-trace and everything else
+# still run. TestBattery / TestLethality remain behind their own env knobs.
 test:
-	go test -timeout 30m ./...
+	go test ./...
 
-# The -short gate: every long sweep skips itself, so this is seconds rather
-# than a quarter of an hour. Use it while iterating.
+# The bot doctrine sweeps: several simulated minutes per seed (~18 min total).
+# Run this after any change to bot.go or the doctrine tests.
+test-doctrine:
+	AIR_DOCTRINE=1 go test -timeout 40m ./games/air/
+
+# The -short gate: skips the flight-envelope sweeps too, for seconds not a
+# minute. Doctrine sweeps are already opt-in, so `test` and this differ only in
+# the envelope tests. Use while iterating on unrelated code.
 test-quick:
 	go test -short ./...
 

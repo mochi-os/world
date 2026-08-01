@@ -23,9 +23,7 @@ import (
 // contact the range happened to visit first, and the symmetric spawn ring
 // makes exact ties genuinely common.
 func TestDeterminism(t *testing.T) {
-	if testing.Short() {
-		t.Skip("two full fights per session, ~2 minutes")
-	}
+	heavy(t)
 	sessions := []game.Session{}
 	for seed := 1; seed <= 3; seed++ {
 		sessions = append(sessions,
