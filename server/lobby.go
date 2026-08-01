@@ -113,9 +113,11 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
 		// The match-list poll doubles as the offer heartbeat (#77): a player
-		// browsing this server keeps their own offer alive by being here.
-		sessions_touch(clean(r.URL.Query().Get("pilot"), 64))
-		lobby_respond(w, http.StatusOK, map[string]any{"sessions": sessions_list(r.URL.Query().Get("game"))})
+		// browsing this server keeps their own offer alive by being here. The
+		// same token tells the listing which offer is the caller's own.
+		pilot := clean(r.URL.Query().Get("pilot"), 64)
+		sessions_touch(pilot)
+		lobby_respond(w, http.StatusOK, map[string]any{"sessions": sessions_list(r.URL.Query().Get("game"), pilot)})
 	case http.MethodPost:
 		if !lobby_allow(r) {
 			lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})

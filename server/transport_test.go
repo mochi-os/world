@@ -286,7 +286,7 @@ func TestPair(t *testing.T) {
 // survive the idle sweep that ends ordinary empty sessions.
 func TestStanding(t *testing.T) {
 	sessions_standing() // default: one standing session per game except echo
-	list := sessions_list("air")
+	list := sessions_list("air", "")
 	var standing string
 	for _, entry := range list {
 		if entry["permanent"] == true {
@@ -446,5 +446,87 @@ func TestLobbyChat(t *testing.T) {
 	lobby_sessions(w, r)
 	if w.Code != 200 {
 		t.Fatalf("match creation refused (%d) after chat flood: the budgets are shared", w.Code)
+	}
+}
+
+// TestOfferPrivacy pins that the pilot token stays private. It is the whole
+// credential /withdraw and the heartbeat accept, and the lobby answers every
+// origin, so a match list carrying it would let any reader — a web page
+// included — retire anybody's offer. The listing reports only whether an offer
+// belongs to the CALLER, matched against the token they already hold.
+func TestOfferPrivacy(t *testing.T) {
+	const alpha, bravo = "alpha-pilot-token", "bravo-pilot-token"
+
+	made, _ := json.Marshal(map[string]any{"game": "air", "mode": "furball", "label": "alpha's offer", "pilot": alpha})
+	r := httptest.NewRequest("POST", "/sessions", bytes.NewReader(made))
+	r.RemoteAddr = "192.0.2.10:1"
+	w := httptest.NewRecorder()
+	lobby_sessions(w, r)
+	if w.Code != 200 {
+		t.Fatalf("match creation refused: %d", w.Code)
+	}
+	var created map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("create reply: %v", err)
+	}
+	identifier := text(created, "session")
+	if identifier == "" {
+		t.Fatal("create returned no session identifier")
+	}
+
+	list := func(pilot string) []map[string]any {
+		r := httptest.NewRequest("GET", "/sessions?game=air&pilot="+pilot, nil)
+		w := httptest.NewRecorder()
+		lobby_sessions(w, r)
+		var reply map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&reply); err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		entries, _ := reply["sessions"].([]any)
+		found := []map[string]any{}
+		for _, e := range entries {
+			if entry, ok := e.(map[string]any); ok {
+				found = append(found, entry)
+			}
+		}
+		if len(found) == 0 {
+			t.Fatal("the match list came back empty: every assertion below would pass vacuously")
+		}
+		return found
+	}
+
+	mine := func(pilot string) bool {
+		for _, entry := range list(pilot) {
+			if text(entry, "session") == identifier {
+				flag, _ := entry["mine"].(bool)
+				return flag
+			}
+		}
+		t.Fatalf("session %s is missing from the match list", identifier)
+		return false
+	}
+
+	// The creator sees their own offer flagged. This is the positive control:
+	// it proves the assertions below reach a real, matching session.
+	if !mine(alpha) {
+		t.Error("the creator's own offer is not flagged mine")
+	}
+	if mine(bravo) {
+		t.Error("another pilot's offer is flagged mine")
+	}
+	if mine("") {
+		t.Error("an anonymous poll flags an offer as mine")
+	}
+
+	// The token itself never rides the listing, under any key.
+	for _, entry := range list(alpha) {
+		if _, present := entry["owner"]; present {
+			t.Error("the match list still carries an owner field")
+		}
+		for key, value := range entry {
+			if word, ok := value.(string); ok && word == alpha {
+				t.Errorf("the pilot token is published as %q", key)
+			}
+		}
 	}
 }

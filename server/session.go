@@ -286,7 +286,11 @@ func sessions_get(identifier string) *session {
 }
 
 // sessions_list summarises sessions for the lobby, optionally filtered by game.
-func sessions_list(name string) []map[string]any {
+// pilot is the CALLER's own token, matched here and never published: the token
+// is the capability /withdraw and the heartbeat accept, so a listing that
+// carried it would let any reader retire anybody's offer. The client only ever
+// needs to know which offer is its own, which is what mine answers.
+func sessions_list(name string, pilot string) []map[string]any {
 	sessions_lock.RLock()
 	defer sessions_lock.RUnlock()
 	list := []map[string]any{}
@@ -295,7 +299,7 @@ func sessions_list(name string) []map[string]any {
 			continue
 		}
 		list = append(list, map[string]any{
-			"owner":     s.owner,
+			"mine":      pilot != "" && s.owner == pilot,
 			"offer":     s.owner != "" && !s.joined,
 			"session":   s.identifier,
 			"game":      s.spec.Game,
