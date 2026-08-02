@@ -177,6 +177,10 @@ func lobby_withdraw(w http.ResponseWriter, r *http.Request) {
 		lobby_respond(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
 		return
 	}
+	if !lobby_retire(r) {
+		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
+		return
+	}
 	var request struct {
 		Pilot string `json:"pilot"`
 	}
@@ -296,6 +300,17 @@ var says = map[string][]time.Time{}
 
 func lobby_voice(r *http.Request) bool {
 	return lobby_permit(says, r, ini_int("limits", "chats", 20))
+}
+
+// lobby_retire rate-limits offer withdrawal per client address. Withdrawing is
+// unauthenticated by design — the pilot token is the whole credential — so the
+// endpoint needs a budget of its own like every other write here. Leaving the
+// page or joining a match withdraws once, so nothing legitimate comes near the
+// default; exceeding it merely leaves an offer to lapse on the grace timer.
+var retires = map[string][]time.Time{}
+
+func lobby_retire(r *http.Request) bool {
+	return lobby_permit(retires, r, ini_int("limits", "withdraws", 30))
 }
 
 // lobby_permit is the shared per-host sliding-minute limiter.

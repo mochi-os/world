@@ -241,8 +241,26 @@ func sessions_withdraw(owner string) int {
 // sessions_touch refreshes the offer clock for this pilot's own offers: the
 // match-list poll IS the heartbeat, so a player browsing the server page keeps
 // their offer alive without a second request.
+//
+// A token holding no offer costs only the read lock. The poll is
+// unauthenticated and its token unvalidated, so taking the write lock on the
+// way in would let any caller contend with the tick goroutines, which need it
+// for every mirror update. The match list itself is deliberately not rate
+// limited: players cluster behind one address far more than attackers do.
 func sessions_touch(owner string) {
 	if owner == "" {
+		return
+	}
+	sessions_lock.RLock()
+	held := false
+	for _, s := range sessions {
+		if s.owner == owner && !s.joined {
+			held = true
+			break
+		}
+	}
+	sessions_lock.RUnlock()
+	if !held {
 		return
 	}
 	now := time.Now()

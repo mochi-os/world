@@ -449,6 +449,83 @@ func TestLobbyChat(t *testing.T) {
 	}
 }
 
+// TestHeartbeat pins the offer clock the match-list poll drives: a pilot's own
+// poll refreshes their offer and nobody else's. A token holding no offer takes
+// the cheap read-only path, and must still leave every clock alone.
+func TestHeartbeat(t *testing.T) {
+	stale := time.Now().Add(-2 * OFFER_GRACE)
+	s := &session{identifier: "heartbeat-test", owner: "alpha-heartbeat", offered: stale}
+	sessions_lock.Lock()
+	sessions[s.identifier] = s
+	sessions_lock.Unlock()
+	defer func() {
+		sessions_lock.Lock()
+		delete(sessions, s.identifier)
+		sessions_lock.Unlock()
+	}()
+
+	offered := func() time.Time {
+		sessions_lock.RLock()
+		defer sessions_lock.RUnlock()
+		return s.offered
+	}
+
+	sessions_touch("bravo-heartbeat")
+	if !offered().Equal(stale) {
+		t.Error("another pilot's poll refreshed this offer")
+	}
+
+	sessions_touch("alpha-heartbeat")
+	if !offered().After(stale) {
+		t.Error("the owner's own poll did not refresh their offer")
+	}
+
+	// A joined match is no longer an offer, so its clock stops moving.
+	sessions_lock.Lock()
+	s.joined = true
+	s.offered = stale
+	sessions_lock.Unlock()
+	sessions_touch("alpha-heartbeat")
+	if !offered().Equal(stale) {
+		t.Error("a joined match still tracks the offer heartbeat")
+	}
+}
+
+// TestWithdrawBudget pins the withdrawal allowance. Withdrawing is
+// unauthenticated like every other lobby write, so it carries its own per
+// address budget — and spending it must leave match creation untouched.
+func TestWithdrawBudget(t *testing.T) {
+	withdraw := func() int {
+		body, _ := json.Marshal(map[string]any{"pilot": "budget-pilot"})
+		r := httptest.NewRequest("POST", "/withdraw", bytes.NewReader(body))
+		r.RemoteAddr = "192.0.2.11:1"
+		w := httptest.NewRecorder()
+		lobby_withdraw(w, r)
+		return w.Code
+	}
+	if code := withdraw(); code != 200 {
+		t.Fatalf("first withdrawal refused: %d", code)
+	}
+	refused := 0
+	for n := 0; n < 40; n++ {
+		if withdraw() == 429 {
+			refused++
+		}
+	}
+	if refused == 0 {
+		t.Fatal("no refusals across 41 withdrawals: the limiter is not engaged")
+	}
+
+	made, _ := json.Marshal(map[string]any{"game": "air", "mode": "furball", "label": "after the withdrawals"})
+	r := httptest.NewRequest("POST", "/sessions", bytes.NewReader(made))
+	r.RemoteAddr = "192.0.2.11:1"
+	w := httptest.NewRecorder()
+	lobby_sessions(w, r)
+	if w.Code != 200 {
+		t.Fatalf("match creation refused (%d) after the withdrawal flood: the budgets are shared", w.Code)
+	}
+}
+
 // TestOfferPrivacy pins that the pilot token stays private. It is the whole
 // credential /withdraw and the heartbeat accept, and the lobby answers every
 // origin, so a match list carrying it would let any reader — a web page

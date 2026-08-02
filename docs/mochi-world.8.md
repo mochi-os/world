@@ -118,6 +118,9 @@ hash, which the lobby advertises.
 **chats**
 :   Lobby chat messages allowed per client address per minute. Default *20*.
 
+**withdraws**
+:   Offer withdrawals allowed per client address per minute. Default *30*.
+
 # FILES
 
 */etc/mochi/world.conf*
