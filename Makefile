@@ -50,6 +50,42 @@ run1: all
 test:
 	go test ./...
 
+# Vulnerability scanning. Mirrors core's targets and the jobs in
+# .github/workflows/security.yml, so a finding accepted locally is accepted in
+# CI and vice versa. World runs the same public listeners as any other server
+# and had neither gate until its dependencies had drifted several releases
+# behind core's.
+
+# Reachability-aware: builds the call graph, so a failure is real exposure
+# rather than a version comparison.
+vulnerability-scan:
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	$$(go env GOPATH)/bin/govulncheck ./...
+
+# No build and no reachability analysis, but it sees every module in the graph
+# and catches advisories the Go vulnerability database has not picked up.
+dependency-scan:
+	docker run --rm -v $(CURDIR):/src:ro \
+	    -v $(HOME)/.cache/trivy:/root/.cache/trivy \
+	    -v $(CURDIR)/.trivyignore:/.trivyignore:ro \
+	    aquasec/trivy:latest fs \
+	    --scanners vuln --severity HIGH,CRITICAL \
+	    --exit-code 1 --no-progress --timeout 10m \
+	    --ignorefile /.trivyignore /src
+
+# Trivy against the locally-built image. A manual pre-release check,
+# deliberately not wired into make release for the same reason as core's.
+docker-scan: docker-local
+	docker run --rm \
+	    -v /var/run/docker.sock:/var/run/docker.sock \
+	    -v $(HOME)/.cache/trivy:/root/.cache/trivy \
+	    -v $(CURDIR)/.trivyignore:/.trivyignore:ro \
+	    aquasec/trivy:latest image \
+	    --severity HIGH,CRITICAL --exit-code 1 --no-progress \
+	    --timeout 15m \
+	    --ignorefile /.trivyignore \
+	    $(docker_image):dev
+
 # The bot doctrine sweeps: several simulated minutes per seed (~18 min total).
 # Run this after any change to bot.go or the doctrine tests.
 test-doctrine:

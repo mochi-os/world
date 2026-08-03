@@ -1,0 +1,12 @@
+# Trivy ignore list for the mochi-world Docker image.
+#
+# Add a CVE id (one per line) to suppress findings that are accepted —
+# typically because the fix is upstream-blocked and we're waiting on a
+# distribution to ship it. Each entry should carry a comment explaining
+# why and a date to re-evaluate.
+#
+# Empty on purpose. The image is distroless/static-debian12, which carries no
+# libc, no shell and no package manager, so it has none of the base-image
+# findings core's cc-debian12 image accumulates — core's glibc suppression has
+# no analogue here. Anything that does appear is ours and should be fixed
+# rather than listed.
