@@ -72,9 +72,17 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 			}
 		}
 	case Turbine:
-		already := damage.Engine[part.Index] >= turbine
 		damage.Engine[part.Index] = math.Min(1, damage.Engine[part.Index]+turbine*severity)
-		if already && body.Condition.Fire[part.Index%2] <= 0 && chance(kindle, 5) {
+		// Any turbine hit can kindle, severity-scaled (2026-08-03): the old
+		// gate required stacking one engine past 0.35 damage before a fire
+		// could even roll, and under real time of flight a tracking fight's
+		// hits scatter across the airframe — the pilot emptied all 578 rounds
+		// into an ace without ever making it limp, because at most one fire
+		// took hold all fight. A 20 mm HEI into a RUNNING turbine liberates
+		// blades and lights the hot section on the first hit it reaches; with
+		// a fire now costing the engine permanently, this is the lever that
+		// turns sustained gunnery into attrition rather than a lottery.
+		if body.Condition.Fire[part.Index%2] <= 0 && chance(kindle, 5) {
 			body.Condition.Fire[part.Index%2] = 0.05
 			events = append(events, Event{Kind: "fire", Engine: part.Index, Surface: -1})
 		}
