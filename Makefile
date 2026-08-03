@@ -73,6 +73,22 @@ dependency-scan:
 	    --exit-code 1 --no-progress --timeout 10m \
 	    --ignorefile /.trivyignore /src
 
+# Report whether the base image tag has moved past the digest the Dockerfile
+# pins. Pinning trades a silent-change risk for a silent-staleness one, so this
+# exists to make the second one a single command rather than a registry lookup
+# nobody remembers to do. Run it when cutting a release; if it differs, bump the
+# digest in the Dockerfile deliberately and let the container scan judge the
+# result.
+base-digest:
+	@ref=$$(sed -n 's/^FROM \([^ ]*\).*/\1/p' Dockerfile | head -1); \
+	image=$${ref%%@*}; pinned=$${ref#*@}; repo=$${image%%:*}; tag=$${image##*:}; \
+	path=$${repo#gcr.io/}; \
+	current=$$(curl -sI -H "Accept: application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json" \
+	    "https://gcr.io/v2/$$path/manifests/$$tag" | tr -d '\r' | awk 'tolower($$1)=="docker-content-digest:"{print $$2}'); \
+	if [ -z "$$current" ]; then echo "base-digest: could not reach the registry"; exit 1; fi; \
+	if [ "$$pinned" = "$$current" ]; then echo "base-digest: $$image is current ($$current)"; \
+	else echo "base-digest: $$image has MOVED"; echo "  pinned:  $$pinned"; echo "  current: $$current"; fi
+
 # Trivy against the locally-built image. A manual pre-release check,
 # deliberately not wired into make release for the same reason as core's.
 docker-scan: docker-local

@@ -13,7 +13,12 @@
 # CAP_NET_BIND_SERVICE); running ACME here would need --cap-add=NET_BIND_SERVICE
 # plus a lowered net.ipv4.ip_unprivileged_port_start, or a fronting proxy. Mount
 # certs instead.
-FROM gcr.io/distroless/static-debian12:nonroot
+# Pinned by digest, not by tag, so the same commit always builds the same image
+# and a moved upstream tag cannot propagate silently. Manifest LIST digest: a
+# per-architecture one would build amd64 and fail arm64. Bump deliberately at
+# release; `make base-digest` reports whether the tag has moved, and the
+# scheduled Trivy container scan is what makes a stale pin visible.
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea962d9bd1186b2f6b3a061191539b905b82ec395de78cbfae51f20e35
 ARG TARGETARCH
 COPY build/docker/bin/mochi-world-${TARGETARCH} /usr/sbin/mochi-world
 COPY build/docker/world.conf                    /etc/mochi/world.conf
