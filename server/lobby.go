@@ -16,6 +16,25 @@ import (
 	"time"
 )
 
+// Whole-request deadlines for every public HTTP listener this server runs — the
+// lobby and the ACME responder. ReadHeaderTimeout alone leaves the BODY read
+// unbounded, so a slow-trickle POST (headers in time, then one byte every few
+// seconds) parks a socket, goroutine and decoder indefinitely: the body-size
+// caps on the handlers bound bytes, never duration, and the per-host limiter
+// only counts COMPLETED requests, so stalled ones never register. ReadTimeout
+// is the one that closes it; a legitimate client sends its tiny request in
+// milliseconds.
+//
+// Shared rather than written out per listener because they did drift — the
+// responder carried only the header deadline while the lobby had all four, and
+// nothing made the difference visible at either site.
+const (
+	TIMEOUT_HEADER = 10 * time.Second
+	TIMEOUT_READ   = 15 * time.Second
+	TIMEOUT_WRITE  = 15 * time.Second
+	TIMEOUT_IDLE   = 60 * time.Second
+)
+
 // lobby_start serves the public lobby API. World servers are open: there is
 // no authentication, only rate and capacity limits.
 func lobby_start(fatal chan<- error) error {
@@ -25,20 +44,13 @@ func lobby_start(fatal chan<- error) error {
 	mux.HandleFunc("/withdraw", lobby_withdraw)
 	mux.HandleFunc("/chat", lobby_chat)
 	address := fmt.Sprintf("%s:%d", ini_string("lobby", "listen", ""), ini_int("lobby", "port", 4433))
-	// Whole-request deadlines, not just the header deadline: ReadHeaderTimeout
-	// alone left the BODY read unbounded, so a slow-trickle POST (headers in
-	// time, then one body byte every few seconds) parked a socket, goroutine
-	// and decoder indefinitely — the body-size caps on the handlers bound
-	// bytes, never duration, and the per-host limiter only counts COMPLETED
-	// requests, so stalled ones never register. ReadTimeout is the one that
-	// closes it; a legitimate client sends its tiny JSON in milliseconds.
 	server := &http.Server{
 		Addr:              address,
 		Handler:           mux,
-		ReadHeaderTimeout: 10 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
+		ReadHeaderTimeout: TIMEOUT_HEADER,
+		ReadTimeout:       TIMEOUT_READ,
+		WriteTimeout:      TIMEOUT_WRITE,
+		IdleTimeout:       TIMEOUT_IDLE,
 	}
 	// Bind SYNCHRONOUSLY so a taken port or bad address is a fatal startup
 	// error, not a healthy-looking process that never serves (#175): the

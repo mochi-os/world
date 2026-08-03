@@ -99,8 +99,7 @@ func certificate_start() error {
 		// is a warning, not fatal — cached certificates keep serving, though
 		// renewals will fail until it frees up.
 		go func() {
-			responder := &http.Server{Addr: ":80", Handler: acme_manager.HTTPHandler(nil), ReadHeaderTimeout: 10 * time.Second}
-			warn("acme responder: %v", responder.ListenAndServe())
+			warn("acme responder: %v", certificate_responder(acme_manager.HTTPHandler(nil)).ListenAndServe())
 		}()
 		info("certificate: acme, hosts %s", strings.Join(names, " "))
 		return nil
@@ -108,6 +107,24 @@ func certificate_start() error {
 	certificate_generate()
 	go certificate_manager()
 	return nil
+}
+
+// certificate_responder builds the HTTP-01 validation listener. It carries the
+// same deadlines as the lobby: both are public, and this one answers strangers
+// on port 80 with no rate limiter in front of it at all.
+//
+// Split out from certificate_start so its configuration can be asserted. The
+// server is otherwise constructed inside a goroutine and bound to a privileged
+// port, which leaves nothing for a test to reach.
+func certificate_responder(handler http.Handler) *http.Server {
+	return &http.Server{
+		Addr:              ":80",
+		Handler:           handler,
+		ReadHeaderTimeout: TIMEOUT_HEADER,
+		ReadTimeout:       TIMEOUT_READ,
+		WriteTimeout:      TIMEOUT_WRITE,
+		IdleTimeout:       TIMEOUT_IDLE,
+	}
 }
 
 // certificate_tls returns the TLS configuration for the QUIC and lobby

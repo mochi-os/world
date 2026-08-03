@@ -99,3 +99,42 @@ func TestCertificateReload(t *testing.T) {
 		t.Fatalf("serial %d after rotation, want 2", serial)
 	}
 }
+
+// TestResponderDeadlines pins the request deadlines on the ACME responder.
+//
+// The responder answers strangers on port 80 with no rate limiter in front of
+// it, and for a long time carried only ReadHeaderTimeout while the lobby beside
+// it carried all four. ReadHeaderTimeout alone leaves the body read unbounded,
+// which is what lets a slow-trickle request park a socket and goroutine
+// indefinitely.
+//
+// This asserts configuration, not behaviour: the deadlines firing was proven
+// against a real slow-body client when the lobby got them, and both listeners
+// now read the same constants. What this catches is a listener losing one.
+func TestResponderDeadlines(t *testing.T) {
+	responder := certificate_responder(nil)
+
+	deadlines := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"ReadHeaderTimeout", responder.ReadHeaderTimeout, TIMEOUT_HEADER},
+		{"ReadTimeout", responder.ReadTimeout, TIMEOUT_READ},
+		{"WriteTimeout", responder.WriteTimeout, TIMEOUT_WRITE},
+		{"IdleTimeout", responder.IdleTimeout, TIMEOUT_IDLE},
+	}
+	for _, deadline := range deadlines {
+		if deadline.got == 0 {
+			t.Errorf("%s is unset: the responder is a public listener and every deadline it drops is one a slow client can hold open", deadline.name)
+			continue
+		}
+		if deadline.got != deadline.want {
+			t.Errorf("%s = %v, want %v (the lobby's value; both listeners share these constants)", deadline.name, deadline.got, deadline.want)
+		}
+	}
+
+	if responder.Addr != ":80" {
+		t.Errorf("Addr = %q, want :80 — ACME HTTP-01 validates on port 80 only", responder.Addr)
+	}
+}
