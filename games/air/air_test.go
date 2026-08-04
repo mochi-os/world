@@ -1939,6 +1939,20 @@ func TestDecoy(t *testing.T) {
 	}
 }
 
+// TestSnapshotFullNearSet: the sticky near set admits ranks 0..near-1 and
+// retains members out to depart, so with 21..24 other aircraft it can hold
+// EVERY one of them and leave no far tail to rotate through. The rotation
+// window must survive that.
+func TestSnapshotFullNearSet(t *testing.T) {
+	for count := near + 2; count <= depart+1; count++ { // 22..25 aircraft: the window where the tail can empty
+		i := build(t, "furball", nil, count)
+		for tick := uint64(1); tick <= 240; tick++ {
+			i.Step(tick, nil)
+			i.Snapshot(tick)
+		}
+	}
+}
+
 // TestSnapshotSize: the per-recipient snapshot datagram must stay under the
 // QUIC datagram MTU — the 106-word core once burst it and snapshots vanished
 // silently (SendDatagram discards oversized frames). Guard it forever.

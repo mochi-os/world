@@ -1325,7 +1325,10 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 					far = append(far, slot)
 				}
 			}
-			cycle := (len(far) + roving - 1) / roving
+			cycle := 1
+			if len(far) > 0 { // the sticky set can hold every other aircraft, leaving nothing to rotate
+				cycle = (len(far) + roving - 1) / roving
+			}
 			at := int(tick/3%uint64(cycle)) * roving // snapshots fire every 3 ticks (60/20): advance one window per snapshot, no skipped stretches
 			stop := at + roving
 			if stop > len(far) {
