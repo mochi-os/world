@@ -85,6 +85,19 @@ func (m *Model) fcs(in Inputs, local Air) {
 		f.Integral *= 1 - 1.2*Dt // gentle: fully laundered over a couple of seconds (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
 	}
 
+	// The trim hat's roll half: a standing differential-flaperon bias walked
+	// at a fixed rate while held, for asymmetry the roll law would otherwise
+	// fight forever. The reset is the whole hat: both datums to zero and the
+	// attitude hold re-datumed to here (idempotent, so a held key is safe).
+	if in.Lean != 0 {
+		f.Bank = clamp(f.Bank+clamp(in.Lean, -1, 1)*0.02*Dt, -0.06, 0.06)
+	}
+	if in.Reset {
+		f.Datum, f.Bank = 0, 0
+		forward := m.State.Attitude.Rotate(Vec3{X: 1})
+		f.Reference = math.Asin(clamp(forward.Y, -1, 1))
+	}
+
 	if m.Direct {
 		// Geared surfaces, no augmentation — the bare-airframe validation path.
 		stabTarget = -stick * c.Gearing.Pitch
@@ -201,7 +214,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if m.State.Gear.Wow || m.State.Gear.Catapult >= 0 {
 			leveler = bank * 2.5 // the wing leveler belongs to the DECK alone (its own comment always said so): airborne it fought every bank the pilot held at gain 2.5, so entering PA in the turn to final snapped the jet toward wings-level at 1.5 rad/s — the uncommanded roll the pilot reported at ~250 KCAS, which is exactly the PA entry speed with the gear down
 		}
-		flapTarget = clamp(lateral+leveler-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
+		flapTarget = clamp(lateral+leveler-m.State.Omega.X*1.2, -1, 1)*0.30 + f.Bank // +bank: right roll gives bank<0 and needs a left (negative) command; the roll-trim datum rides outside the clamp so full stick retains full authority
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
 		// Up and away: C* command with the carefree limiter. The symmetric
@@ -437,8 +450,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 		droopTarget = clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
 		// Roll-rate command, tempered at low speed and high alpha.
 		limit := 3.8 * clamp(speed/200, 0.35, 1) * clamp(1-0.9*a/m.Airframe.Limit.Alpha, 0.08, 1)
-		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1) // sideslip strips roll authority: no spin fuel
-		flapTarget = (lateral*limit - p) * 0.22
+		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1)  // sideslip strips roll authority: no spin fuel
+		flapTarget = (lateral*limit-p)*0.22 + f.Bank // the roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	}
 

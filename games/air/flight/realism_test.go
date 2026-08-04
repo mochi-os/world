@@ -274,3 +274,37 @@ func TestRelease(t *testing.T) {
 		}
 	}
 }
+
+// TestLean: the trim hat's roll half. A held lean walks in a standing bank
+// the untrimmed twin never develops; the trim reset takes it — and the PA
+// alpha datum — back out.
+func TestLean(t *testing.T) {
+	banked := func(lean bool) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.4)
+		in := Inputs{Throttle: 0.7}
+		for tick := 0; tick < 240*6; tick++ {
+			in.Lean = 0
+			if lean && tick >= 240*2 && tick < 240*5 {
+				in.Lean = 1
+			}
+			m.Step(in)
+		}
+		up := m.State.Attitude.Rotate(Vec3{Y: 1})
+		right := m.State.Attitude.Rotate(Vec3{Z: 1})
+		return math.Atan2(right.Y, up.Y) * 180 / math.Pi
+	}
+	level, leaned := banked(false), banked(true)
+	if math.Abs(leaned-level) < 3 {
+		t.Fatalf("three seconds of roll trim moved the bank only %.1f° over the untrimmed twin", math.Abs(leaned-level))
+	}
+
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.4)
+	m.State.Fcs.Datum = 0.03
+	m.State.Fcs.Bank = 0.04
+	m.Step(Inputs{Throttle: 0.7, Reset: true})
+	if m.State.Fcs.Datum != 0 || m.State.Fcs.Bank != 0 {
+		t.Fatalf("trim reset left datum %.3f bank %.3f", m.State.Fcs.Datum, m.State.Fcs.Bank)
+	}
+}

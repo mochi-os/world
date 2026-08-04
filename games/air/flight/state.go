@@ -22,7 +22,9 @@ type Inputs struct {
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
 	Override   bool    // paddle switch: raises the g ceiling, records overstress
-	Trim       float64 // -1..1 held trim rate, +1 = nose-up: UA nudges the attitude datum, PA biases the alpha datum
+	Trim       float64 // -1..1 held pitch-trim rate, +1 = nose-up: UA nudges the attitude datum, PA biases the alpha datum
+	Lean       float64 // -1..1 held roll-trim rate, +1 = right wing down: walks the differential-flaperon datum
+	Reset      bool    // one-shot trim reset: zero the alpha and roll datums, re-datum the attitude hold
 	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
@@ -77,6 +79,7 @@ type FcsState struct {
 	Normal     float64 // sensed load factor (body up) from the last step — the g meter
 	Reference  float64 // attitude-hold datum, rad of pitch (the stick-free hold in both laws; an early design stored trimmed airspeed here and this comment outlived it)
 	Datum      float64 // PA trim bias, rad of alpha about the law's own datum — the pitch trim switch in the landing configuration
+	Bank       float64 // roll-trim datum: a standing differential-flaperon command (stick fraction), the roll half of the trim hat
 }
 
 // GearState is the undercarriage, catapult, and arrestor condition, plus
