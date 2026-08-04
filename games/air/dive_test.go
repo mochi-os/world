@@ -25,7 +25,7 @@ import (
 // threat geometry that had the brain calling for a zoom while the nose was
 // 77° down, which is not yet isolated — see the dive note on #215.
 func TestDiveRecovery(t *testing.T) {
-	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		for _, dive := range []float64{45, 60, 77, 85} {
 			b := NewBandit(level, 5, 250000, "", false, false)
 			const speed = 260.0

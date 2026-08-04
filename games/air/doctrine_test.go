@@ -115,7 +115,7 @@ func geometry(attacker, bandit *flight.State) (rangeM, angleOff, myEnergy, hisEn
 // escape.
 func TestDoctrineUnderHumanPressure(t *testing.T) {
 	heavy(t)
-	levels := []string{"veteran", "ace"}
+	levels := []string{"ace", "superhuman"}
 	for _, level := range levels {
 		modes := map[string]int{}
 		tracked, shots, closest, escaped := 0, 0, 1e9, 0

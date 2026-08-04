@@ -134,7 +134,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		i.tank = clamp(pounds/2.2046, 500, 4900) // the UI speaks pounds like the IFEI; the sim burns kilograms
 	}
 	// Practice bots: the parameter is a per-level count map {"drone": n,
-	// "rookie": n, ...} — the match creator chooses how many of each. A bare
+	// "novice": n, ...} — the match creator chooses how many of each. A bare
 	// number still means drones (test-harness convenience). Bots fill slots
 	// from 99 downward, grouped by level, named for the kill feed. Open mode
 	// only — a joust is strictly the pair.
@@ -146,7 +146,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		}
 		wanted := []order{}
 		gather := func(levels map[string]any, team string) {
-			for _, level := range []string{"drone", "rookie", "pilot", "veteran", "ace"} {
+			for _, level := range []string{"drone", "novice", "pilot", "ace", "superhuman"} {
 				if n := int(number(levels, level)); n > 0 {
 					wanted = append(wanted, order{level, n, team})
 				}

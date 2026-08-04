@@ -274,4 +274,3 @@ func TestRelease(t *testing.T) {
 		}
 	}
 }
-

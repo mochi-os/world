@@ -26,7 +26,7 @@ type Bandit struct {
 	tick  uint64
 }
 
-// NewBandit builds the harness. Unknown levels fly as veteran. The bandit
+// NewBandit builds the harness. Unknown levels fly as ace. The bandit
 // fires no missiles of its own (the client's joust is a guns fight today), but
 // `missiles` says whether the PLAYER can, which is what the bandit's defensive
 // doctrine reacts to: pre-emptive flaring is insurance against a shot it cannot
@@ -54,7 +54,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 	mirror.arm()
 	thought := mind(level)
 	if thought == nil {
-		thought = mind("veteran")
+		thought = mind("ace")
 	}
 	fighter := &craft{player: game.Player{Name: "bandit", Slot: 1}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9,

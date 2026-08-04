@@ -30,14 +30,14 @@ func TestDeterminism(t *testing.T) {
 			// The free-for-all: many contacts, so the b.known loops carry ties.
 			game.Session{Identifier: fmt.Sprintf("det%d", seed), Game: "air", Mode: "furball",
 				Capacity: 16, Seed: uint64(seed),
-				Parameters: map[string]any{"bots": map[string]any{"ace": 2.0, "veteran": 2.0, "pilot": 2.0}}},
+				Parameters: map[string]any{"bots": map[string]any{"superhuman": 2.0, "ace": 2.0, "pilot": 2.0}}},
 			// The section geometry, exactly as the sweep that caught #225 runs
 			// it: teams, missiles up (seekers, flares), a paired side against a
 			// doubled one. This is the arm that actually diverged.
 			game.Session{Identifier: fmt.Sprintf("sec%d", seed), Game: "air", Mode: "teams",
 				Capacity: 16, Seed: uint64(seed),
 				Parameters: map[string]any{"missiles": true, "bots": map[string]any{
-					"red": map[string]any{"veteran": 2.0}, "blue": map[string]any{"veteran": 4.0}}}})
+					"red": map[string]any{"ace": 2.0}, "blue": map[string]any{"ace": 4.0}}}})
 	}
 	for _, session := range sessions {
 		g1, g2 := New(), New()

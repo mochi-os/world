@@ -13,15 +13,15 @@ type Airframe struct {
 	Reference struct{ Area, Span, Chord float64 }
 	Surfaces  []Surface
 	Body      []Station
-	Engines   []Engine                      // 0..4; State carries four slots regardless
-	Stores    []Store                       // external stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks them)
-	Mass      struct{ Empty, Fuel float64 } // kg; Fuel = internal capacity
-	Control   Control                       // control-law data the shared law flies with
-	Wave      struct{ Hump, Body float64 }  // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
-	Inertia   Mat3                          // empty aircraft, about empty CG (frames.go axis mapping)
-	Center    Vec3                          // empty CG, body, from datum
-	Tank      Vec3                          // fuel CG, body
-	Cockpit   Vec3                          // pilot seat, body (battle: the pilot-kill target)
+	Engines   []Engine                                                                // 0..4; State carries four slots regardless
+	Stores    []Store                                                                 // external stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks them)
+	Mass      struct{ Empty, Fuel float64 }                                           // kg; Fuel = internal capacity
+	Control   Control                                                                 // control-law data the shared law flies with
+	Wave      struct{ Hump, Body float64 }                                            // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
+	Inertia   Mat3                                                                    // empty aircraft, about empty CG (frames.go axis mapping)
+	Center    Vec3                                                                    // empty CG, body, from datum
+	Tank      Vec3                                                                    // fuel CG, body
+	Cockpit   Vec3                                                                    // pilot seat, body (battle: the pilot-kill target)
 	Limit     struct{ Positive, Negative, Override, Alpha, Floor, Reference float64 } // Reference: gross mass (kg) the symmetric-g placard is written at; 0 = no weight scheduling
 	Gear      struct{ Nose, Left, Right Strut }
 	Hook      struct {

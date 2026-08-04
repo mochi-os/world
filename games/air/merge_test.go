@@ -19,7 +19,7 @@ import (
 // turn. Causes were a lead turn referenced to the bearing (which sweeps 180
 // degrees as he passes), under-damped roll, and a self-cancelling zoom merge.
 func TestMergeRoll(t *testing.T) {
-	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		total, worst := 0.0, 0.0
 		for seed := 1; seed <= 5; seed++ {
 			b := NewBandit(level, uint64(seed), 250000, "", false, false)
@@ -71,7 +71,7 @@ func TestMergeRoll(t *testing.T) {
 		}
 		mean := total / 5
 		fmt.Printf("%-8s merge reversals: mean %.1f  worst %.0f\n", level, mean, worst)
-		// Gated for veteran and ace only, BY DECISION (2026-07-29): rookie
+		// Gated for the top tiers only, BY DECISION (2026-07-29): novice
 		// (measured 1.8 reversals) and pilot (3.0) dither at the merge, and
 		// that is authentic — a novice genuinely cannot pick a plan at the
 		// pass, and the doctrine keeps lower-tier flaws real rather than
@@ -79,7 +79,7 @@ func TestMergeRoll(t *testing.T) {
 		// pilot flies a committed, readable lead turn; it is not a promise
 		// that every tier is easy to read. The lower tiers are still printed
 		// so a regression in either direction stays visible.
-		if mean > 1 && (level == "veteran" || level == "ace") {
+		if mean > 1 && (level == "ace" || level == "superhuman") {
 			t.Errorf("%s reverses its roll %.1f times per merge on average: a player cannot read which way it is turning", level, mean)
 		}
 	}

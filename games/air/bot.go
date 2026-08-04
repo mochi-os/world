@@ -32,9 +32,10 @@ type skill struct {
 	trigger    float64 // snapshot looseness: how far off a perfect solution this pilot still shoots, as an angle factor on range (#215 — DECOUPLED from wander: aim precision and willingness to fire were one number, so the most accurate tier had the tightest gate and shot least, and lethality ran BACKWARDS up the ladder)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
+	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
 }
 
-// wander is the whole-flying imprecision, not just gunnery: a rookie flies
+// wander is the whole-flying imprecision, not just gunnery: a novice flies
 // 5-6° off the optimal line and cannot hold smooth g (see the wobble in
 // decide) — that, not the maneuver library, is most of what a ladder feels like.
 // commit and floor invert what cadence accidentally encoded (#206). A human
@@ -44,8 +45,8 @@ type skill struct {
 // achieved neither and never generated separation. Deciding FAST is a skill
 // (noticing, tracking, shooting: that is cadence, unchanged). Abandoning a
 // manoeuvre fast is the opposite of one, so commitment now RISES with tier,
-// and the better pilots refuse to be slow at all. A rookie still flails and
-// gets slow — that is the rookie's flaw, and it should stay authentic.
+// and the better pilots refuse to be slow at all. A novice still flails and
+// gets slow — that is the novice's flaw, and it should stay authentic.
 //
 // Retuned 2026-07-30 (#215), measured against TestDroneKill (12 seeds, can the
 // tier finish a compliant target) with the firing gate decoupled from aim:
@@ -68,11 +69,21 @@ type skill struct {
 //     drone cannot exercise — and deleting doctrine to win one seed of a drone
 //     metric is tuning the instrument. The ladder reads 1/4/7/7 by kills, the
 //     ace faster by time-to-kill.
+//
+// The ladder (2026-08-04 restructure): novice / pilot / ace / superhuman.
+// Novice carries the old rookie tuning verbatim; pilot moved about a third of
+// the way toward the removed veteran (sharper eyes, quicker decisions, a
+// tighter trigger, better energy sense) while keeping the tier-2 repertoire —
+// a good line pilot, not an instructor; ace is unchanged; superhuman is the
+// machine: every flight-model limit, zero human factors — its row's delay,
+// wander, and react are genuinely zero, and the machine flag switches off the
+// perception, discipline, and trigger-cadence humanities the code applies
+// beyond this table.
 var skills = map[string]skill{
-	"rookie":  {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.10, commit: 1.0, floor: 0},
-	"pilot":   {delay: 0.6, cadence: 20, wander: 0.035, pull: 7.0, library: 2, discipline: 0.5, react: 1.2, open: 600, trigger: 0.055, commit: 2.0, floor: 93},
-	"veteran": {delay: 0.35, cadence: 12, wander: 0.018, pull: 7.5, library: 3, discipline: 0.8, react: 0.7, open: 600, trigger: 0.035, commit: 3.0, floor: 129},
-	"ace":     {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.020, commit: 4.0, floor: 154},
+	"novice":     {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.10, commit: 1.0, floor: 0},
+	"pilot":      {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.048, commit: 2.3, floor: 105},
+	"ace":        {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.020, commit: 4.0, floor: 154},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 700, trigger: 0.008, commit: 4.0, floor: 154, machine: true}, // commit stays ace-grade: strategy re-judged at 1.6 s like the ace — the machine edge is reflex and precision, and a half-second commit just flipped between near-tied lines and finished none of them
 }
 
 // commitment is the manoeuvre set that must be flown through rather than
@@ -267,7 +278,7 @@ func standard() tactics {
 	// A/B itself was red before the law change (13 v 12 after it, one death
 	// from passing at 12 seeds) - that residual lives with the #206 doctrine
 	// pass, not this constant.
-	t.crowd.weight = 2.5
+	t.crowd.weight = 2.75 // 2.5 -> 2.75 (2026-08-04, the tier restructure): the mid-tier sweeps now fly the NUDGED pilot, whose tighter wander sharpened everyone's gunnery again — the same direction as both earlier steps; at 2.5 the equal-tier section lost its edge (deaths 50 v 47)
 	t.rejoin.span, t.rejoin.fight = 4000, 10000
 	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
 	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180
@@ -438,6 +449,7 @@ type brain struct {
 	starving bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
 	play     string          // the duel arbiter's committed manoeuvre (duel.go)
 	until    uint64          // tick that manoeuvre is re-judged
+	picked   uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -475,6 +487,9 @@ func (b *brain) pressing(tick uint64) bool {
 func (i *instance) visible(me, other *craft, tick uint64) bool {
 	s, o := &me.model.State, &other.model.State
 	direction, distance := i.bearing(s.Position, o.Position)
+	if me.brain != nil && me.brain.skill.machine {
+		return distance <= 12000 // the machine: full sphere, night, sun, and cloud alike — eyes are a human factor; only sensor reach remains
+	}
 	reach := 12000.0
 	if i.night {
 		reach = 6000
@@ -602,7 +617,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// unseen until the g comes off. Discipline raises the strain a pilot
 		// keeps the scan under. This is where the unseen saddles that finish
 		// real fights come from: bots that never lose sight never blunder.
-		if seen && other != b.target {
+		if seen && other != b.target && !b.skill.machine {
 			if load := math.Abs(a.model.State.Fcs.Normal); load > 4+3*b.skill.discipline {
 				if direction, _ := i.bearing(me.Position, c.model.State.Position); me.Attitude.Unrotate(direction).X < 0.3 {
 					seen = false // padlocked through the break: off-nose contacts drop out of the scan (rounds landing and tracers below still announce themselves)
@@ -622,7 +637,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if seen {
 			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity}
 			if t, found := b.known[other]; found {
-				if gap := float64(tick-t.when) / 60; gap > 0.05 && gap < 1.5 {
+				least := 0.05
+				if b.skill.machine {
+					least = 0 // perfect perception includes the acceleration a human infers from spaced looks
+				}
+				if gap := float64(tick-t.when) / 60; gap > least && gap < 1.5 {
 					fresh.swing = fresh.velocity.Subtract(t.velocity).Scale(1 / gap)
 					if fresh.swing.Length() > 80 {
 						fresh.swing = fresh.swing.Normalize().Scale(80) // cap at ~8 g: track noise is not a maneuver
@@ -826,7 +845,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				b.judged[m.number] = true
 				body := me.Attitude.Unrotate(direction)
 				sight := 0.6 + 0.4*b.skill.discipline
-				if body.X < -0.35 && body.Y < 0.25 {
+				if body.X < -0.35 && body.Y < 0.25 && !b.skill.machine {
 					sight = 0.7 * b.skill.discipline
 				}
 				if battle.Roll(i.environment.Seed, uint64(slot), m.number, 51) < sight {
@@ -852,7 +871,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.judged[m.number] = true
 			body := me.Attitude.Unrotate(direction)
 			sight := 0.6 + 0.4*b.skill.discipline
-			if body.X < -0.35 && body.Y < 0.25 {
+			if body.X < -0.35 && body.Y < 0.25 && !b.skill.machine {
 				sight = 0.7 * b.skill.discipline // launched from the blind wedge: only lookout discipline catches the flash
 			}
 			if battle.Roll(i.environment.Seed, uint64(slot), m.number, 51) < sight {
@@ -927,6 +946,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// orders (ace 0.35 .. rookie 0.07). Stores are finite too, so
 			// permanent cover was never affordable in the first place.
 			chance := b.skill.discipline * 0.35
+			if b.skill.machine {
+				chance = 1 // doctrine without lapses: every uncovered window gets its flare
+			}
 			if !i.missiles {
 				chance = 0
 				if b.skill.discipline < 0.5 {
@@ -2032,14 +2054,14 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 {
 		fire = b.solution(m, tick)
 	}
-	if fire {
+	if fire && !b.skill.machine { // the squeeze-and-pause is trigger discipline, a humanity: the machine holds fire to the solution and the magazine alone
 		b.bursting++
 		if b.bursting > 45 {
 			b.bursting = 0
 			b.quiet = tick + 30
 			fire = false
 		}
-	} else {
+	} else if !fire {
 		b.bursting = 0
 	}
 	return b.compose(m, aim, want, b.throttle, b.reheat, b.brake, fire, tick)

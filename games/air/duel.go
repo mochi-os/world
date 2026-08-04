@@ -127,7 +127,7 @@ type play struct {
 }
 
 // plays is the candidate library, in fixed order (map iteration would
-// re-litigate #225). Tiers: a rookie owns pursuit, the breaks, and running
+// re-litigate #225). Tiers: a novice owns pursuit, the breaks, and running
 // away; the circle work, the vertical, and the reversal arrive with skill.
 var plays = []play{
 	{"press", 1, func(m *moment) order {
@@ -251,7 +251,8 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64) float64 {
 	closing := s.Velocity.Subtract(hisV).Dot(lhat)
 	score := offence - 1.3*threat + energy - r/12000 +
 		0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
-		0.15*point // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
+		0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
+		0.5*clamp((closing-70)/150, 0, 1)*clamp((900-r)/600, 0, 1) // the blown pass, priced: arriving hot inside the merge cannot be stopped by any law (stopping distance alone exceeds the range), and without this the incumbent full-burner play tied the disciplined one and zero-noise argmax never escaped it — the machine overshot every pass it flew
 	if s.Position.Y < 400 {
 		score -= 2
 	}
@@ -279,7 +280,10 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		m.derive()
 		o := chosen.law(&m)
 		shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
-		sim.Step(shadow.steer(sim, tick+uint64(k)))
+		in := shadow.steer(sim, tick+uint64(k))
+		for sub := 0; sub < 4; sub++ {
+			sim.Step(in) // the flight core steps at 240 Hz: four substeps per 60 Hz rollout tick, exactly like the live path. One Step per tick ran the WHOLE rehearsal at quarter time — the phantom moved four times faster than the jet, every candidate scored against that fiction, and the rollouts barely discriminated (the press-versus-extend trace that exposed it flew identical paths)
+		}
 		if sim.State.Position.Y < 120 {
 			return -100 // flew it into the sea: veto, whatever else it bought
 		}
@@ -314,12 +318,13 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	// Re-judge when the committed line expires — or the picture breaks it: an
 	// attacker arriving close behind invalidates any offensive line now.
 	offensive := b.play == "press" || b.play == "lag" || b.play == "low" || b.play == "high" || b.play == "climb"
-	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700) {
+	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) {
 		sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
-		// The horizon must outlive the manoeuvres it judges: a corner-speed
-		// reversal is ~8 s of turn, and a shorter look scores every candidate
-		// an identical zero from behind — the choice then belongs to the noise.
-		horizon := 60 * (4 + b.skill.library)
+		// The horizon must outlive the manoeuvres it judges — in REAL seconds,
+		// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
+		// for the top tiers, enough for a reversal's payoff to show through the
+		// point-progress term without quadrupling the rehearsal budget.
+		horizon := 60*2 + 30*b.skill.library
 		best, top, n := b.play, math.Inf(-1), 0
 		for _, p := range plays {
 			if p.tier > b.skill.library {
@@ -330,7 +335,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 			}
 			score := i.rehearse(a, b, sim, p, prey, tick, horizon)
 			// Selection noise is the skill's wander: the ace nearly argmaxes,
-			// the rookie sometimes picks the second-best line and flies it well.
+			// the novice sometimes picks the second-best line and flies it well.
 			score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
 			if p.name == b.play {
 				score += 0.02 // ties keep the committed line: churn is its own cost (a larger incumbency rode broken lines past the moment press should take over — measured 6/6 kills falling to 3/6 on the conversion referendum)
@@ -341,7 +346,8 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 			n++
 		}
 		b.play = best
-		b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s for the ace
+		b.picked = tick
+		b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s at the top — the machine included, whose edge is reflex and precision, not strategy churn
 	}
 
 	// Fly the committed law against the LIVE geometry — commitment holds the

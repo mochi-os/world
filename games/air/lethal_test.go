@@ -28,7 +28,7 @@ func TestDroneKill(t *testing.T) {
 	heavy(t)
 	const seconds = 180
 	ladder := map[string]int{}
-	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		kills, tries := 0, 0
 		var times []float64
 		advantage, firing, shots := 0, 0, 0
@@ -121,7 +121,7 @@ func TestDroneKill(t *testing.T) {
 	// 40 percent trigger loosening (identical to the digit), so it is
 	// geometry, not the gate. The inversion this guards was 1/3/7/2-class:
 	// still trips.
-	for _, pair := range [][2]string{{"rookie", "pilot"}, {"pilot", "veteran"}, {"veteran", "ace"}} {
+	for _, pair := range [][2]string{{"novice", "pilot"}, {"pilot", "ace"}, {"ace", "superhuman"}} {
 		if ladder[pair[1]] < ladder[pair[0]]-1 {
 			t.Errorf("lethality inverts: %s kills %d, %s kills %d — the better pilot converts less", pair[0], ladder[pair[0]], pair[1], ladder[pair[1]])
 		}

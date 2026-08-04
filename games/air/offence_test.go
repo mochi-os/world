@@ -83,7 +83,7 @@ func offer(me *flight.State) map[string]any {
 func TestConvert(t *testing.T) {
 	heavy(t)
 	ladder := map[string]int{}
-	for _, level := range []string{"veteran", "ace"} {
+	for _, level := range []string{"ace", "superhuman"} {
 		converted, total := 0.0, 0.0
 		killed, fired := 0, 0
 		for seed := uint64(1); seed <= 12; seed++ {
@@ -164,12 +164,13 @@ func TestConvert(t *testing.T) {
 		// fitted to noise), so the CONVERSION percentage above is the primary
 		// #206 gate, and the kills are gated on the ladder's shape plus an
 		// ace floor with real slack — the drone ladder's own convention.
-		if level == "ace" && killed < 4 {
-			t.Errorf("ace killed the straight-and-level offerer in %d/12 seeds (floor 4) — the free kill goes untaken", killed)
+		floor := map[string]int{"ace": 4, "superhuman": 11}[level]
+		if killed < floor {
+			t.Errorf("%s killed the straight-and-level offerer in %d/12 seeds (floor %d) — the free kill goes untaken", level, killed, floor)
 		}
 	}
-	if ladder["ace"] < ladder["veteran"]-1 {
-		t.Errorf("conversion lethality inverts: veteran %d kills, ace %d", ladder["veteran"], ladder["ace"])
+	if ladder["superhuman"] < ladder["ace"]-1 {
+		t.Errorf("conversion lethality inverts: ace %d kills, superhuman %d", ladder["ace"], ladder["superhuman"])
 	}
 }
 
@@ -182,7 +183,7 @@ func TestConvert(t *testing.T) {
 // is only that the harness itself worked.
 func TestOffence(t *testing.T) {
 	heavy(t)
-	for _, level := range []string{"rookie", "pilot", "veteran", "ace"} {
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		sk := skills[level]
 		exist, gate, fired, firedExist, total := 0, 0, 0, 0, 0
 		aspect := [3]float64{} // mean angle off the DEFENDER's tail, per third of the fight: the "is he getting on my six" trace

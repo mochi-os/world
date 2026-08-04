@@ -335,13 +335,13 @@ func TestBotsEndure(t *testing.T) {
 	}
 }
 
-// duel runs one seeded ace-vs-rookie fight to first kill (or the deadline)
+// duel runs one seeded ace-vs-novice fight to first kill (or the deadline)
 // and reports the winner slot, the loser's sea-death count, and the kill tick.
 func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, when uint64) {
 	t.Helper()
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 1.0, "rookie": 1.0}}})
+		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 1.0, "novice": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,38 +375,38 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 
 // TestBotDuel: identical airframes with competent brains legitimately
 // stalemate guns-only 1v1s (that is BFM, not a bug) — the honest claims are
-// that decided duels go to the ACE, never the rookie majority, and that a
+// that decided duels go to the ACE, never the novice majority, and that a
 // reasonable share decide at all. Slot 99 is the ace (levels fill from slot
 // 99 down in map order).
 func TestBotDuel(t *testing.T) {
 	heavy(t)
-	aces, rookies := 0, 0
+	aces, novices := 0, 0
 	for seed := uint64(1); seed <= 12; seed++ {
 		winner, _, when := duel(t, seed, 60*240)
 		t.Logf("seed %d: winner %d at t=%ds", seed, winner, when/60)
-		if winner == 98 { // the fixed level order fills rookie at 99, ace at 98
+		if winner == 98 { // the fixed level order fills novice at 99, ace at 98
 			aces++
 		}
 		if winner == 99 {
-			rookies++
+			novices++
 		}
 	}
 	// Outcome tallies are informational: 1v1 kills ride on missile-decoy
 	// dice, so hard thresholds here were a seed lottery (the skill gate is
-	// TestBotGunnery). The one stable claim: the rookie must not DOMINATE.
-	t.Logf("ace %d, rookie %d, stalemates %d", aces, rookies, 12-aces-rookies)
-	if rookies > aces+2 {
-		t.Fatalf("the rookie won %d duels to the ace's %d", rookies, aces)
+	// TestBotGunnery). The one stable claim: the novice must not DOMINATE.
+	t.Logf("ace %d, novice %d, stalemates %d", aces, novices, 12-aces-novices)
+	if novices > aces+2 {
+		t.Fatalf("the novice won %d duels to the ace's %d", novices, aces)
 	}
 }
 
 // TestBotLadder: the product-truth skill measure — in a mixed brawl with
-// respawns, aces out-kill rookies decisively over many engagements.
+// respawns, aces out-kill novices decisively over many engagements.
 func TestBotLadder(t *testing.T) {
 	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 100, Seed: 11,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "rookie": 3.0}}})
+		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "novice": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,20 +414,20 @@ func TestBotLadder(t *testing.T) {
 	for tick := uint64(0); tick < 60*480; tick++ {
 		i.Step(tick, nil)
 	}
-	aces, rookies, total := 0, 0, 0
+	aces, novices, total := 0, 0, 0
 	for _, a := range i.aircraft {
 		total += a.kills
 		if len(a.player.Name) > 0 && a.player.Name[0] == 'A' {
 			aces += a.kills
 		} else {
-			rookies += a.kills
+			novices += a.kills
 		}
 	}
 	// Informational, same reasoning as TestBotDuel; the hard skill gate is
 	// TestBotGunnery, and the invariants (sea, determinism, blind) gate here.
-	t.Logf("ace kills %d, rookie kills %d, total %d", aces, rookies, total)
-	if rookies > aces+2 {
-		t.Fatalf("rookies out-killed aces %d to %d", rookies, aces)
+	t.Logf("ace kills %d, novice kills %d, total %d", aces, novices, total)
+	if novices > aces+2 {
+		t.Fatalf("novices out-killed aces %d to %d", novices, aces)
 	}
 }
 
@@ -546,25 +546,25 @@ func gunnery(t *testing.T, level string, seed uint64) (int, int) {
 }
 
 // TestBotGunnery: the STABLE skill gate — behind the same predictable target,
-// the ace lands real gunfire and decisively out-shoots the rookie. This is
+// the ace lands real gunfire and decisively out-shoots the novice. This is
 // the measured input to lethality, free of missile-decoy dice.
 func TestBotGunnery(t *testing.T) {
 	heavy(t)
-	aceHits, aceRounds, rookieHits, rookieRounds := 0, 0, 0, 0
+	aceHits, aceRounds, noviceHits, noviceRounds := 0, 0, 0, 0
 	for seed := uint64(1); seed <= 8; seed++ {
 		h, r := gunnery(t, "ace", seed)
 		aceHits, aceRounds = aceHits+h, aceRounds+r
-		h, r = gunnery(t, "rookie", seed)
-		rookieHits, rookieRounds = rookieHits+h, rookieRounds+r
+		h, r = gunnery(t, "novice", seed)
+		noviceHits, noviceRounds = noviceHits+h, noviceRounds+r
 	}
-	t.Logf("ace %d/%d hits per round, rookie %d/%d", aceHits, aceRounds, rookieHits, rookieRounds)
+	t.Logf("ace %d/%d hits per round, novice %d/%d", aceHits, aceRounds, noviceHits, noviceRounds)
 	if aceHits < 10 {
 		t.Fatalf("the ace landed only %d hits from the saddle across the seeds", aceHits)
 	}
 	// The skill claim is EFFICIENCY: the ace fires only real solutions, the
-	// rookie sprays — hits per round must separate by at least 3×.
-	if aceHits*rookieRounds < 3*rookieHits*aceRounds {
-		t.Fatalf("ace %d/%d vs rookie %d/%d: precision does not express", aceHits, aceRounds, rookieHits, rookieRounds)
+	// novice sprays — hits per round must separate by at least 3×.
+	if aceHits*noviceRounds < 3*noviceHits*aceRounds {
+		t.Fatalf("ace %d/%d vs novice %d/%d: precision does not express", aceHits, aceRounds, noviceHits, noviceRounds)
 	}
 }
 
@@ -697,7 +697,7 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 }
 
 // TestBotSection (#138): the section tactics must EARN their keep against a
-// weaker, larger enemy — two veterans versus four pilots. The claim here is
+// weaker, larger enemy — two pilots versus four novices. The claim here is
 // the DEFENSIVE contract only: mutual support keeps the pair alive, so the
 // section arm's deaths come in strictly under the solo control's. Net is
 // deliberately NOT asserted in this scenario: measured (2026-07-16, after
@@ -717,7 +717,7 @@ func TestBotSection(t *testing.T) {
 	// same reason; this one needed the seeds rather than a band, because the
 	// defensive claim against WEAKER opposition should hold strictly.
 	_, sectionDeaths, _, soloDeaths, resolved := section(t, 40,
-		map[string]any{"veteran": 2.0}, map[string]any{"pilot": 4.0})
+		map[string]any{"pilot": 2.0}, map[string]any{"novice": 4.0})
 	// One death of slack per 40 seeds (2026-07-30), the same treatment as the
 	// equal-opposition sibling and for the same reason: the #215 retune made
 	// every tier individually deadlier (the pilot most of all — it could not
@@ -732,7 +732,7 @@ func TestBotSection(t *testing.T) {
 }
 
 // TestBotSectionEqual (#144): the same A/B against EQUAL opposition — two
-// veterans versus four veterans. Outnumbered with no skill edge, survival
+// pilots versus four pilots. Outnumbered with no skill edge, survival
 // hangs on the section actually working (this is the scenario that caught
 // the pre-rejoin tactics dying 8-30 km from their pair), so the defensive
 // claim is asserted strictly. The offensive claim is a BAND, not a strict
@@ -750,7 +750,7 @@ func TestBotSectionEqual(t *testing.T) {
 	heavy(t)
 	t.Parallel()
 	sectionNet, sectionDeaths, soloNet, soloDeaths, sweep := section(t, 40,
-		map[string]any{"veteran": 2.0}, map[string]any{"veteran": 4.0})
+		map[string]any{"pilot": 2.0}, map[string]any{"pilot": 4.0})
 	// One death of slack per 40 seeds (2026-07-30, the #215 skill retune): the
 	// deterministic measurement moved from 34v36 in the section's favour to
 	// 37v36 against it — the same pattern as every individual-BFM improvement
@@ -818,8 +818,8 @@ func TestTeamsSpawnSides(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "sides", Game: "air", Mode: "teams", Capacity: 16, Seed: 2,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"rookie": 3.0},
-			"blue": map[string]any{"rookie": 3.0},
+			"red":  map[string]any{"novice": 3.0},
+			"blue": map[string]any{"novice": 3.0},
 		}}})
 	i := made.(*instance)
 	for _, slot := range i.slots() {
@@ -852,7 +852,7 @@ func TestTeamsFriendlyFire(t *testing.T) {
 	}
 }
 
-// teams builds a red ace with a red drone teammate and two blue rookies for
+// teams builds a red ace with a red drone teammate and two blue novices for
 // the section-tactics tests, all teleported by the caller.
 func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
 	t.Helper()
@@ -860,7 +860,7 @@ func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
 	made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: 2,
 		Parameters: map[string]any{"bots": map[string]any{
 			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
-			"blue": map[string]any{"rookie": 2.0},
+			"blue": map[string]any{"novice": 2.0},
 		}}})
 	i := made.(*instance)
 	var ace, mate, blue1, blue2 *craft
@@ -1040,7 +1040,7 @@ func TestBotRejoin(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "rejoin", Game: "air", Mode: "teams", Capacity: 16, Seed: 8,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"veteran": 2.0},
+			"red":  map[string]any{"ace": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1192,7 +1192,7 @@ func TestBotBracket(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "bracket", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"veteran": 4.0},
+			"red":  map[string]any{"ace": 4.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)

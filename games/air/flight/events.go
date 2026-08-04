@@ -17,7 +17,6 @@ import (
 	"math"
 )
 
-
 func (m *Model) events(in Inputs) {
 	s := &m.State
 	// Gear travels in ~5 s.
