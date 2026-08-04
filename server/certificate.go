@@ -99,7 +99,17 @@ func certificate_start() error {
 		// is a warning, not fatal — cached certificates keep serving, though
 		// renewals will fail until it frees up.
 		go func() {
-			warn("acme responder: %v", certificate_responder(acme_manager.HTTPHandler(nil)).ListenAndServe())
+			// Bound here rather than through ListenAndServe so the accepted
+			// connections can be capped. This one answers strangers on port 80
+			// with no rate limiter in front of it, so it is the listener that
+			// least tolerates an unbounded connection count.
+			listener, err := net.Listen("tcp", ":80")
+			if err != nil {
+				warn("acme responder: %v", err)
+				return
+			}
+			warn("acme responder: %v", certificate_responder(acme_manager.HTTPHandler(nil)).
+				Serve(listener_limit(listener, CONNECTIONS_MAXIMUM)))
 		}()
 		info("certificate: acme, hosts %s", strings.Join(names, " "))
 		return nil

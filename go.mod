@@ -19,6 +19,7 @@ require (
 	github.com/quic-go/quic-go v0.60.0
 	github.com/quic-go/webtransport-go v0.11.0
 	golang.org/x/crypto v0.53.0
+	golang.org/x/net v0.56.0
 	golang.org/x/sys v0.46.0
 	gopkg.in/ini.v1 v1.67.3
 )
@@ -27,6 +28,5 @@ require (
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
-	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/text v0.39.0 // indirect
 )

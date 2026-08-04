@@ -14,6 +14,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/net/netutil"
 )
 
 // Whole-request deadlines for every public HTTP listener this server runs — the
@@ -34,6 +36,25 @@ const (
 	TIMEOUT_WRITE  = 15 * time.Second
 	TIMEOUT_IDLE   = 60 * time.Second
 )
+
+// CONNECTIONS_MAXIMUM caps how many connections either public listener holds
+// open at once. The deadlines above bound how long a single connection can
+// occupy a goroutine; they do not bound how many connections there are, so a
+// client opening sockets faster than they expire still exhausts the process.
+// Shared by both listeners for the same reason the deadlines are: the two
+// drifted once already, and nothing made the difference visible at either site.
+const CONNECTIONS_MAXIMUM = 512
+
+// listener_limit caps accepted connections. Excess connections wait in the
+// kernel's accept queue rather than being refused, so a burst is delayed
+// rather than dropped, and the cap is released as connections close.
+//
+// The maximum is a parameter rather than read from the constant so the
+// behaviour can be asserted at a testable size; both callers pass
+// CONNECTIONS_MAXIMUM.
+func listener_limit(listener net.Listener, maximum int) net.Listener {
+	return netutil.LimitListener(listener, maximum)
+}
 
 // lobby_start serves the public lobby API. World servers are open: there is
 // no authentication, only rate and capacity limits.
@@ -61,6 +82,7 @@ func lobby_start(fatal chan<- error) error {
 	if err != nil {
 		return fmt.Errorf("lobby listen %s: %w", address, err)
 	}
+	listener = listener_limit(listener, CONNECTIONS_MAXIMUM)
 	info("lobby listening on %s", address)
 	if certificate_file != "" || acme_manager != nil {
 		// TLS resolves per handshake through certificate_get, so file

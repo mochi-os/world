@@ -15,6 +15,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -136,5 +137,70 @@ func TestResponderDeadlines(t *testing.T) {
 
 	if responder.Addr != ":80" {
 		t.Errorf("Addr = %q, want :80 — ACME HTTP-01 validates on port 80 only", responder.Addr)
+	}
+}
+
+// The deadlines bound how long ONE connection can hold a goroutine; they say
+// nothing about how many connections exist. Both public listeners were
+// therefore still reachable by socket exhaustion after the deadline work, which
+// is what listener_limit closes.
+//
+// This asserts behaviour rather than configuration: a wrapper that returned its
+// argument unchanged would satisfy any structural check, so the test holds the
+// cap and proves the next connection waits for it.
+func TestListenerLimit(t *testing.T) {
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	limited := listener_limit(raw, 1)
+	defer limited.Close()
+
+	accepted := make(chan net.Conn, 2)
+	go func() {
+		for {
+			connection, err := limited.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- connection
+		}
+	}()
+
+	// Dialling always succeeds — the kernel completes the handshake into the
+	// accept queue regardless of the cap. What the cap governs is whether
+	// Accept hands the connection to the server, so that is what is measured.
+	first, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatalf("dial first: %v", err)
+	}
+	defer first.Close()
+
+	var held net.Conn
+	select {
+	case held = <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first connection was never accepted, so the cap is not the thing being measured")
+	}
+
+	second, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatalf("dial second: %v", err)
+	}
+	defer second.Close()
+
+	select {
+	case <-accepted:
+		t.Fatal("a second connection was accepted while the cap of 1 was already held: the listener is not limited")
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	// Releasing the held slot must free the waiting connection, otherwise the
+	// cap is a permanent ceiling rather than a concurrency limit.
+	held.Close()
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the second connection was not accepted after the first closed: the cap never releases")
 	}
 }
