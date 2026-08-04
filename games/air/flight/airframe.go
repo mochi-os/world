@@ -22,7 +22,7 @@ type Airframe struct {
 	Center    Vec3                          // empty CG, body, from datum
 	Tank      Vec3                          // fuel CG, body
 	Cockpit   Vec3                          // pilot seat, body (battle: the pilot-kill target)
-	Limit     struct{ Positive, Negative, Override, Alpha, Floor float64 }
+	Limit     struct{ Positive, Negative, Override, Alpha, Floor, Reference float64 } // Reference: gross mass (kg) the symmetric-g placard is written at; 0 = no weight scheduling
 	Gear      struct{ Nose, Left, Right Strut }
 	Hook      struct {
 		Position Vec3

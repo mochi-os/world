@@ -89,7 +89,7 @@ func pursue(me, foe *flight.State) map[string]any {
 	} else if speed < 170 {
 		reheat = 1
 	}
-	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "guns": true}
+	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "fire": true}
 }
 
 // geometry reports the attacker's position in the bandit's world: range, the

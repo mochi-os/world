@@ -36,6 +36,18 @@ func (m *Model) spool(in Inputs) {
 	if m.State.Fuel <= 0 {
 		throttle = 0 // flameout: dry tanks wind the cores down and kill reheat
 	}
+	// The zero/negative-g feed limit (NATOPS: ten-second business): the oil
+	// and fuel-boost pickups uncover while unloaded, and past the limit the
+	// cores roll back to idle until positive g re-covers them. The rollback
+	// and the slow relight are the teeth — no permanent damage is invented.
+	if m.State.Fcs.Normal < 0.15 {
+		m.starved += Dt
+	} else if m.State.Fcs.Normal > 0.5 {
+		m.starved = math.Max(0, m.starved-2*Dt)
+	}
+	if m.starved > 10 {
+		throttle = math.Min(throttle, idle+0.05)
+	}
 	for i := range m.State.Engine {
 		e := &m.State.Engine[i]
 		if i >= len(m.Airframe.Engines) {

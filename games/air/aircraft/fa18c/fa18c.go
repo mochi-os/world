@@ -41,6 +41,7 @@ func build() *flight.Airframe {
 	a.Limit.Positive = 7.5
 	a.Limit.Negative = -3
 	a.Limit.Override = 10
+	a.Limit.Reference = 14700 // kg — NATOPS writes the 7.5 g placard at 32,357 lb; heavier, Nz schedules down as Reference/mass
 	a.Limit.Alpha = 40 * math.Pi / 180
 	a.Limit.Floor = 10 * math.Pi / 180 // negative-alpha protection bound
 

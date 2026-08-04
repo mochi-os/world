@@ -59,7 +59,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 		m.pa = pa // initialisation is NOT a law change: leaving m.pa at its zero value made the first step of every fresh model read as a flip and launder the trim for its first two seconds (TestTrap's scripted pass missed the wires)
 		m.lawInit = true
 	} else if pa {
-		if !in.Gear || calibrated > 135 {
+		// The virtual flap switch (NATOPS): the FLAPS own the configuration,
+		// not the gear handle. HALF was selected with the gear; AUTO is
+		// selected passing 180 KCAS clean (92.6 m/s CAS) — so raising the gear
+		// on the climb-out keeps the takeoff flap and its lift, and the law
+		// change arrives where the droop has already faded with q. Stripping
+		// the whole configuration at the gear handle sagged the flight path
+		// and pegged the HUD velocity vector on its 10° cage. 135 m/s stays
+		// as the flap overspeed protection, gear position regardless.
+		if (!in.Gear && calibrated > 92.6) || calibrated > 135 {
 			pa = false
 		}
 	} else if in.Gear && calibrated < 125 {
@@ -109,7 +117,24 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// asks for a sixteenth of it. This is the real stick's force gradient
 		// too — breakout is soft, the last inch is not.
 		fine := stick * math.Abs(stick)
+		// The pitch trim switch, PA sense: it biases the ALPHA datum (the real
+		// law trims an on-speed AoA reference), so "trim to on-speed, fly the
+		// ball with power" is a real technique here rather than an automatic.
+		if in.Trim != 0 {
+			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*Dt, -4*math.Pi/180, 4*math.Pi/180)
+		}
 		droopTarget, slatFloor = m.Approaching(pressure)
+		if in.Flap >= 2 {
+			// FULL selected: the heavy shot's and the short field's setting —
+			// honoured even on deck.
+		} else if m.State.Gear.Wow || !in.Gear || in.Flap >= 1 {
+			// Takeoff flap: HALF on deck, through the clean-up climb with the
+			// gear coming up, and whenever the pilot selects it (the field and
+			// strong-crosswind technique). The FULL droop otherwise belongs to
+			// a gear-down approach. Scaled before the lift-cap maths so the
+			// neutral-alpha cap prices the droop actually flying.
+			droopTarget *= c.Droop.Half
+		}
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
 		grade := clamp((need-c.Droop.Lift*schedule)/4.5, 0, c.Onspeed) // 4.5/rad: the TRIMMED lift slope (stabilator download included) fit through the on-speed anchor — see Droop.Lift
@@ -126,7 +151,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		anchor := c.Droop.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
 		blend := clamp((0.80*anchor-need)/(0.18*anchor), 0, 1)
 		level := c.Onspeed - blend*math.Max(c.Onspeed-grade, 0)
-		demand := level + fine*(9*math.Pi/180)
+		demand := level + fine*(9*math.Pi/180) + f.Datum
 		// Flyaway attitude capture: hands-off after a catapult shot the real
 		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
 		// into a full-burner zoom. Binds only when pitch exceeds the datum;
@@ -164,26 +189,35 @@ func (m *Model) fcs(in Inputs, local Air) {
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
 		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
-		if m.State.Gear.Wow {
-			droopTarget *= c.Droop.Half // flaps HALF on deck: the real jet launches (and rolls out) at the takeoff setting; the FULL droop belongs to the airborne approach. The flaperon slew rate carries the change across liftoff and touchdown.
-		}
-		brakeTarget = 0 // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
+		brakeTarget = 0                                               // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
 		// Wing leveler on deck: as lift builds down the stroke the wheels
 		// unload and the crosswind's rolling moment grows — with no roll
 		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
 		// The real FCS wing-levels on the cat; stick can still command roll.
 		up := m.State.Attitude.Rotate(Vec3{Y: 1})
 		starboard := m.State.Attitude.Rotate(Vec3{Z: 1})
-		bank := math.Atan2(starboard.Y, up.Y)                                  // heading-independent roll: the old atan2(-up.Z, up.Y) is world-frame and reads pitch as PHANTOM BANK on any off-axis heading — on the carrier strip (~30 deg off world X) at the trap runout's -8 deg pitch the leveler chased ~4 deg of fiction at gain 2.5 and ground-looped the rollout (#72 scenario 9)
-		flapTarget = clamp(lateral+bank*2.5-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
+		bank := math.Atan2(starboard.Y, up.Y) // heading-independent roll: the old atan2(-up.Z, up.Y) is world-frame and reads pitch as PHANTOM BANK on any off-axis heading — on the carrier strip (~30 deg off world X) at the trap runout's -8 deg pitch the leveler chased ~4 deg of fiction at gain 2.5 and ground-looped the rollout (#72 scenario 9)
+		leveler := 0.0
+		if m.State.Gear.Wow || m.State.Gear.Catapult >= 0 {
+			leveler = bank * 2.5 // the wing leveler belongs to the DECK alone (its own comment always said so): airborne it fought every bank the pilot held at gain 2.5, so entering PA in the turn to final snapped the jet toward wings-level at 1.5 rad/s — the uncommanded roll the pilot reported at ~250 KCAS, which is exactly the PA entry speed with the gear down
+		}
+		flapTarget = clamp(lateral+leveler-m.State.Omega.X*1.2, -1, 1) * 0.30 // +bank: right roll gives bank<0 and needs a left (negative) command
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
-		// Up and away: C* command with the carefree limiter.
-		ceiling := m.Airframe.Limit.Positive
-		if in.Override {
-			ceiling = m.Airframe.Limit.Override
+		// Up and away: C* command with the carefree limiter. The symmetric
+		// limits schedule with gross weight (NATOPS): the placard's g is
+		// written at Limit.Reference, and a heavier jet buys fewer g for the
+		// same wing-root bending moment. The paddle override rides the same
+		// schedule — it is a fraction over the CURRENT placard, not a number.
+		schedule := 1.0
+		if m.Airframe.Limit.Reference > 0 {
+			schedule = math.Min(1, m.Airframe.Limit.Reference/m.mass)
 		}
-		floor := m.Airframe.Limit.Negative
+		ceiling := m.Airframe.Limit.Positive * schedule
+		if in.Override {
+			ceiling = m.Airframe.Limit.Override * schedule
+		}
+		floor := m.Airframe.Limit.Negative * schedule
 		// Neutral-stick feedforward: the load that holds the current flight
 		// path (cos γ); the attitude-hold below owns the actual behaviour.
 		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
@@ -205,6 +239,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 		flying := clamp(math.Abs(stick)*3.3, 0, 1)
 		if flying > 0 {
 			f.Reference = theta
+		} else if in.Trim != 0 {
+			// The pitch trim switch, UA sense: stick-free it walks the held
+			// attitude datum — the chase pauses so the nudge is not undone.
+			f.Reference = clamp(f.Reference+clamp(in.Trim, -1, 1)*0.0105*Dt, -0.6, 0.6)
 		} else {
 			// After release the reference CHASES the nose at 85% of the pitch
 			// rate (deadbanded): it rides the coast and pins where motion
@@ -232,11 +270,18 @@ func (m *Model) fcs(in Inputs, local Air) {
 		} else {
 			demand = level + stick*(level-floor)
 		}
-		// Onset shaping: the demand slews at ~15 g/s, so a stick slam builds
-		// load the loops can track instead of a step they chase. (No zero-
-		// means-fresh sentinel here: a full push slews THROUGH exactly zero,
-		// and a sentinel reset turns it into a 1→0→1 loop that silently
-		// refuses every negative-g command.)
+		// Demand shaping, asymmetric: onset slews at 25 g/s so a stick slam
+		// builds load the loops can track instead of a step they chase, but
+		// the RELEASE unloads at double that — letting g off has no
+		// structural or PIO reason to wait, and the real law is quicker off
+		// than on. Symmetric shaping made a released pull coast ~10° past the
+		// stick (measured); the faster unload halves it to the real jet's
+		// few-degree check. Loading vs unloading is judged against `level`
+		// (the 1 g feedforward), so a pull-to-push reversal is fast down to
+		// level and onset-limited beyond it. (No zero-means-fresh sentinel
+		// here: a full push slews THROUGH exactly zero, and a sentinel reset
+		// turns it into a 1→0→1 loop that silently refuses every negative-g
+		// command.)
 		// Law blend across the gear transition: the PA law caps full stick
 		// near approach alpha; the UA law gives it the full g ceiling. With
 		// the stick held through gear retraction the command used to STEP —
@@ -245,7 +290,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if m.State.Gear.Extension > 0.02 && calibrated < 130 {
 			demand = math.Min(demand, level+(ceiling-level)*(1-m.State.Gear.Extension))
 		}
-		f.Demand += clamp(demand-f.Demand, -25*Dt, 25*Dt)
+		shaping := 25.0
+		if math.Abs(demand-level) < math.Abs(f.Demand-level) {
+			shaping = 50
+		}
+		asked := demand // the stick's own ask, pre-shaping: the release window below is scoped on sensed-minus-ASKED, which is zero in a steady tracked turn and large only when the stick has actually come off a pull
+		f.Demand += clamp(demand-f.Demand, -shaping*Dt, shaping*Dt)
 		demand = f.Demand
 		// Cascaded pitch: the g error commands a PITCH RATE, and the carefree
 		// limits shape that rate demand — it fades to zero approaching the g
@@ -295,7 +345,23 @@ func (m *Model) fcs(in Inputs, local Air) {
 		steady := (m.State.Fcs.Normal - upright) * gravity / math.Max(speed, 60)
 		excess := q - steady
 		wanted := (demand - upright) * gravity / math.Max(speed, 60)
-		rateDemand := clamp(flying*(wanted+star*gain+f.Integral)+(1-flying)*hold, -rateBound, rateBound) // the trim integral belongs INSIDE the flying mode: frozen outside the blend it biased the stick-free rate demand, parking the nose Integral/1.2 rad above the held reference (the push-release rebound)
+		// The RELEASE transient flies the g loop, not the hold: the real law
+		// has no attitude hold to hand a carried rotation to — release means
+		// 1 g, and the g feedback kills the pitch rate at surface bandwidth.
+		// Handing straight to the hold let the rotation coast ~10° on passive
+		// damping (measured); the g path with the fast unload above checks it
+		// in the real jet's few degrees. Blending on the DEMAND's distance
+		// from level scopes this exactly to the moments after commanded g —
+		// stick-free cruise, turbulence, and the idle-decel arrest all sit at
+		// f.Demand ≈ level and never see the g path.
+		release := clamp(math.Abs(m.State.Fcs.Normal-asked)/0.8, 0, 1) * (1 - flying) // sensed minus ASKED: |n−level| also fired during fine tracking in a turn (high g, light corrective stick) and detuned the tracking law at exactly the on-the-pipper moments — the veteran's gunnery went 0/12 on the conversion referendum before this scoping
+		blend := math.Max(flying, release)
+		// The trim integral rides at its own stick weight, outside the blend
+		// product: inside it the weight became flying² and partial-stick trim
+		// went limp (the slow-flight sink arrest lost its wound-up trim); at
+		// full release it stays out entirely — frozen at pull trim it rode
+		// the release window and doubled the coast it was meant to check.
+		rateDemand := clamp(blend*(wanted+star*gain)+flying*f.Integral+(1-blend)*hold, -rateBound, rateBound)
 		// Rate anticipation on the EXCESS pitch rate only: q above the steady
 		// turn rate n·g/V is what is still building g. Penalising total q made
 		// the limiter park a full g below the ceiling in a sustained pull.

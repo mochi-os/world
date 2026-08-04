@@ -42,6 +42,9 @@ type Model struct {
 	// predictor's one-off divergence invisible.
 	probe    float64 // refuelling probe extension 0..1 (~5 s hydraulic stroke)
 	arrestor float64 // arrestor hook extension 0..1 (~2 s swing); named for the carrier hook() method
+	skip     float64 // hook-bounce time remaining, s: a flat arrival skips the hook over the wires
+	scrape   bool    // the hook tip was on the deck last step (the bounce triggers on FIRST contact)
+	starved  float64 // accumulated zero/negative-g time, s: the oil and boost pickups uncover (NATOPS ten-second limit)
 	stores   uint32  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
 
 	// Per-step caches:
@@ -111,7 +114,27 @@ func (m *Model) Step(in Inputs) {
 	m.integrate(in, local)
 	m.wrap()
 	m.burn()
+	m.shake(local)
 	m.State.Time += Dt
+}
+
+// shake grades the aerodynamic buffet the airframe is riding: separated-flow
+// roughness building from moderate alpha, weighted by how hard the LEX vortex
+// is working (its burst wake beating on the wing and tails is the Hornet's
+// signature shake), felt in proportion to dynamic pressure. A cue channel for
+// the client's camera — it feeds no force back into the model.
+func (m *Model) shake(local Air) {
+	body := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
+	speed := body.Length()
+	if speed < 30 {
+		m.State.Buffet = 0
+		return
+	}
+	alpha := math.Abs(math.Atan2(-body.Y, body.X))
+	onset := math.Pow(clamp((alpha-6*math.Pi/180)/(14*math.Pi/180), 0, 1), 1.2)
+	pressure := 0.5 * local.Density * speed * speed
+	felt := clamp(math.Sqrt(pressure/12000), 0.15, 1)
+	m.State.Buffet = onset * (0.7 + 0.3*loading(alpha)) * felt
 }
 
 // weigh caches mass, combined CG, and the inertia tensor (and inverse) for

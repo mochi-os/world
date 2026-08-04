@@ -17,6 +17,7 @@ import (
 	"math"
 )
 
+
 func (m *Model) events(in Inputs) {
 	s := &m.State
 	// Gear travels in ~5 s.
@@ -233,6 +234,7 @@ func (m *Model) wire(s *State, in Inputs) {
 		return
 	}
 	if !in.Hook {
+		m.scrape, m.skip = false, 0 // a raised hook forgets the pass
 		return
 	}
 	relative := s.Velocity.Subtract(c.direction().Scale(c.Speed))
@@ -242,7 +244,26 @@ func (m *Model) wire(s *State, in Inputs) {
 	now := m.hook(s)
 	before := now.Subtract(s.Velocity.Scale(Dt)) // the swept path, derived — nothing stored
 	local := c.local(now, s.Time, m.Environment.Wrap)
-	if local.Y < -1 || local.Y > 0.15 {
+	touching := local.Y >= -1 && local.Y <= 0.15
+	// Hook skip: the damper is sized for a real glideslope sink, and a FLAT
+	// arrival (a flared, floating touch) bounces the point over the wires
+	// instead of driving it through — the hook-skip bolter. Only a gentle
+	// DESCENT bounces: glideslope sink drives the point through and scrapes,
+	// and a hook slung down while the jet climbs away off a bounce is an
+	// in-flight engagement — it takes the wire, hard, as the real one does.
+	// The bounce re-arms while the jet still floats, but not once weight is
+	// on wheels: a settled hook rides the deck and a late wire can still
+	// catch it, exactly like a lucky 4-wire.
+	if touching && !m.scrape && s.Velocity.Y > -1.8 && s.Velocity.Y < 0.5 && !s.Gear.Wow {
+		m.skip = 0.8
+	}
+	if m.skip > 0 {
+		m.skip -= Dt
+		m.scrape = false // the point is airborne between bounces
+		return
+	}
+	m.scrape = touching
+	if !touching {
 		return // the wires sit centimetres proud of the deck: the tip must be SCRAPING, not passing overhead — the old 4 m band snagged wires in mid-air and yanked the jet down mid-flight (the scenario-9 topple)
 	}
 	previous := c.local(before, s.Time, m.Environment.Wrap)

@@ -50,7 +50,7 @@ type slot struct {
 var (
 	model  *flight.Model
 	rings  [ring]slot
-	input  [9]float64
+	input  [11]float64
 	output [flight.Size + extra]float64
 	bytes  []byte // scratch for boundary copies
 )
@@ -177,6 +177,8 @@ func controls() (flight.Inputs, int) {
 		Launch:     flags&16 != 0,
 		Override:   flags&32 != 0,
 		Probe:      flags&64 != 0,
+		Trim:       input[9],
+		Flap:       input[10],
 		Sequence:   uint32(input[6]),
 	}
 	steps := int(input[7])

@@ -568,6 +568,8 @@ func input(data map[string]any) flight.Inputs {
 		Throttle:   clamp(number(data, "throttle"), 0, 1),
 		Speedbrake: clamp(number(data, "speedbrake"), 0, 1),
 		Reheat:     clamp(number(data, "reheat"), 0, 1),
+		Trim:       clamp(number(data, "trim"), -1, 1),
+		Flap:       clamp(number(data, "flap"), 0, 2),
 		Brake:      flag("brake"),
 		Gear:       flag("gear"),
 		Probe:      flag("probe"),

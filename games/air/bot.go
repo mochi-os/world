@@ -436,6 +436,8 @@ type brain struct {
 	reversed uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
 	settled  uint64          // tick the current committed manoeuvre may be replaced (#206): commitment is a SKILL, and it rises with tier
 	starving bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
+	play     string          // the duel arbiter's committed manoeuvre (duel.go)
+	until    uint64          // tick that manoeuvre is re-judged
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -454,6 +456,7 @@ func (b *brain) reborn() {
 	b.aimed, b.closing = 0, 0
 	b.turning, b.turned = 0, 0
 	b.told, b.tallied = -1, -1
+	b.play, b.until = "", 0
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -1189,6 +1192,16 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 
+	// The duel arbiter (#206): a teamless bot picks its manoeuvre by forward
+	// simulation (duel.go), not the ladder below — offence and defence are one
+	// decision there, so an attacker's overshoot flips the fight without a
+	// hand-written bridge between modes. The ladder remains the section doctrine.
+	if a.team == "" {
+		i.duel(slot, a, tick, prey, direction, distance, tail, menace, gap)
+		i.polish(slot, a, tick, speed, pace, nose, direction, distance, tail)
+		return
+	}
+
 	// Commitment gate (#206). A manoeuvre that keeps being replaced accomplishes
 	// nothing: the recorded human fight showed the ace alternating defense and
 	// rebuild every ~1.6 s in the endgame, generating no separation while a
@@ -1835,6 +1848,22 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 			b.hold = tick + 45 // stay on the track: churn is what breaks gun solutions
 		}
+	}
+
+	i.polish(slot, a, tick, speed, pace, nose, direction, distance, tail)
+}
+
+// polish is the shared tail of every fight decision — the g the airframe can
+// actually give, the missile request, the terrain guard, fuel discipline, and
+// the aim wander. Both the section ladder and the duel arbiter end here.
+func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, nose, direction flight.Vec3, distance, tail float64) {
+	b := a.brain
+	me := &a.model.State
+
+	// Wounded flying, re-asserted for BOTH paths: the duel arbiter writes b.g
+	// from its chosen play, which discarded the preamble's shed-structure cap.
+	if me.Damage.Loss > 0 {
+		b.g = math.Min(b.g, 4.5)
 	}
 
 	// Corner discipline (tier 3+): pulling the full limiter while slow just

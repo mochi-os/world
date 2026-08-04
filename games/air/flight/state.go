@@ -22,6 +22,8 @@ type Inputs struct {
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
 	Override   bool    // paddle switch: raises the g ceiling, records overstress
+	Trim       float64 // -1..1 held trim rate, +1 = nose-up: UA nudges the attitude datum, PA biases the alpha datum
+	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
@@ -43,6 +45,7 @@ type State struct {
 	Fcs      FcsState
 	Gear     GearState
 	Damage   DamageState
+	Buffet   float64 // aerodynamic buffet intensity 0..1 — the LEX/stall shake the airframe feels, for the client's seat-of-pants cue
 	Time     float64 // sim time, s — drives turbulence and the carrier pose
 }
 
@@ -73,6 +76,7 @@ type FcsState struct {
 	Demand     float64 // onset-shaped g demand (12 g/s slew — no slam transients)
 	Normal     float64 // sensed load factor (body up) from the last step — the g meter
 	Reference  float64 // attitude-hold datum, rad of pitch (the stick-free hold in both laws; an early design stored trimmed airspeed here and this comment outlived it)
+	Datum      float64 // PA trim bias, rad of alpha about the law's own datum — the pitch trim switch in the landing configuration
 }
 
 // GearState is the undercarriage, catapult, and arrestor condition, plus

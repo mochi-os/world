@@ -573,13 +573,19 @@ func TestBotGunnery(t *testing.T) {
 // radius fight. Doctrine, pinned directly at the decision.
 func TestBotCircles(t *testing.T) {
 	stage := func(speed float64, height float64) string {
+		// Teams: the merge game plan is ladder (section) doctrine — the duel
+		// arbiter picks circles by rehearsal, not by a pinned plan string.
 		g := New()
-		made, _ := g.Create(game.Session{Identifier: "circle", Game: "air", Mode: "furball", Capacity: 100, Seed: 4,
-			Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
+		made, _ := g.Create(game.Session{Identifier: "circle", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
+			Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 		i := made.(*instance)
-		ace, mark := i.aircraft[99], i.aircraft[98] // map order: ace 99, drone 98
-		if ace.brain == nil {
-			ace, mark = i.aircraft[98], i.aircraft[99]
+		var ace, mark *craft
+		for _, slot := range i.slots() {
+			if c := i.aircraft[slot]; c != nil && c.brain != nil {
+				ace = c
+			} else if c != nil {
+				mark = c
+			}
 		}
 		// Head-on INSIDE the lead-turn gate: the probe pins the decision at the
 		// first think — a longer sim lets both jets maneuver the geometry away.
@@ -604,13 +610,19 @@ func TestBotCircles(t *testing.T) {
 // lateral side — the tier-3 defender reverses into him instead of dragging
 // the stale break.
 func TestBotReversal(t *testing.T) {
+	// Teams: the flight-path-flip reversal cue is ladder (section) doctrine —
+	// the duel arbiter answers overshoots by rehearsal (TestConvert).
 	g := New()
-	made, _ := g.Create(game.Session{Identifier: "reverse", Game: "air", Mode: "furball", Capacity: 100, Seed: 4,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
+	made, _ := g.Create(game.Session{Identifier: "reverse", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
+		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 	i := made.(*instance)
-	ace, foe := i.aircraft[99], i.aircraft[98]
-	if ace.brain == nil {
-		ace, foe = i.aircraft[98], i.aircraft[99]
+	var ace, foe *craft
+	for _, slot := range i.slots() {
+		if c := i.aircraft[slot]; c != nil && c.brain != nil {
+			ace = c
+		} else if c != nil {
+			foe = c
+		}
 	}
 	// The foe glued 500 m behind, nose on, first on the left — then teleported
 	// across to the right: a flight-path overshoot by construction.
@@ -1504,13 +1516,23 @@ func TestTeamsFlavour(t *testing.T) {
 // wounded builds the ace-vs-drone pair used by the wounded-flying tests.
 func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
 	t.Helper()
+	// A TEAMS session: the mode ladder these doctrine probes pin is the
+	// section doctrine now — teamless fights belong to the duel arbiter
+	// (duel.go), instrumented by TestConvert, TestOffence, and TestMergeRoll.
 	g := New()
-	made, _ := g.Create(game.Session{Identifier: "wounded", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "drone": 1.0}}})
+	made, _ := g.Create(game.Session{Identifier: "wounded", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
+		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 	i := made.(*instance)
-	ace, foe := i.aircraft[99], i.aircraft[98]
-	if ace.brain == nil {
-		ace, foe = i.aircraft[98], i.aircraft[99]
+	var ace, foe *craft
+	for _, slot := range i.slots() {
+		if c := i.aircraft[slot]; c != nil && c.brain != nil {
+			ace = c
+		} else if c != nil {
+			foe = c
+		}
+	}
+	if ace == nil || foe == nil {
+		t.Fatal("the teams roster is missing a side")
 	}
 	return i, ace, foe
 }
