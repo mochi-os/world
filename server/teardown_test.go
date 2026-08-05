@@ -33,6 +33,7 @@ func (s *stallStream) Write(p []byte) (int, error) {
 	<-s.unblock // block like flow control until CancelWrite/Close releases us
 	return 0, errors.New("write aborted")
 }
+func (s *stallStream) SetReadDeadline(time.Time) error  { return nil } // this fake's Read blocks on unblock, not on time
 func (s *stallStream) SetWriteDeadline(time.Time) error { return nil } // deadline irrelevant: CancelWrite is the unblock under test
 func (s *stallStream) CancelWrite(webtransport.StreamErrorCode) {
 	s.mu.Lock()

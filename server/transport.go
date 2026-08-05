@@ -21,12 +21,32 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/quic-go/quic-go"
 	"github.com/quic-go/quic-go/http3"
 	"github.com/quic-go/webtransport-go"
 )
+
+// connections counts live transport connections, so this path enforces the same
+// ceiling listener_limit gives the TCP listeners. A per-host rate limiter bounds
+// how fast one address may connect, not how many it holds open at once.
+var connections atomic.Int64
+
+// transport_admit reserves a connection slot, reporting false when the server is
+// already at capacity. Reserve-then-check rather than check-then-reserve: two
+// simultaneous upgrades must not both pass the last slot.
+func transport_admit() bool {
+	if connections.Add(1) > CONNECTIONS_MAXIMUM {
+		connections.Add(-1)
+		return false
+	}
+	return true
+}
+
+// transport_release returns a slot taken by transport_admit.
+func transport_release() { connections.Add(-1) }
 
 func transport_start(fatal chan<- error) error {
 	tlsconf, err := certificate_tls()
@@ -76,12 +96,20 @@ func transport_start(fatal chan<- error) error {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
+		if !transport_admit() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
 		session, err := server.Upgrade(w, r)
 		if err != nil {
+			transport_release()
 			debug("transport: upgrade: %v", err)
 			return
 		}
-		go guard("transport connection", func() { session.CloseWithError(0, "fault") }, func() { transport_serve(session) })
+		go guard("transport connection", func() { session.CloseWithError(0, "fault") }, func() {
+			defer transport_release()
+			transport_serve(session)
+		})
 	})
 	info("transport listening on %s (udp)", address)
 	go func() { fatal <- fmt.Errorf("transport: %w", server.Serve(connection)) }()
@@ -120,6 +148,7 @@ func transport_serve(session *webtransport.Session) {
 type wireStream interface {
 	io.Reader
 	Write([]byte) (int, error)
+	SetReadDeadline(time.Time) error
 	SetWriteDeadline(time.Time) error
 	CancelWrite(webtransport.StreamErrorCode)
 	Close() error
@@ -150,12 +179,28 @@ const send_deadline = 5 * time.Second
 
 const frame_most = 65536 // largest accepted message
 
+// frame_deadline bounds the DELIVERY of a frame once it has begun. Silence
+// between frames is legitimate — a quiet player sends nothing for minutes — but
+// a peer that has started a length header, or announced a payload, has
+// committed to finishing it. Without this, two bytes park the reader forever:
+// QUIC's idle timeout watches connection packets, not stream progress, so the
+// server's own keepalives keep the connection healthy while the frame never
+// completes.
+const frame_deadline = 10 * time.Second
+
 // streams reads length-framed messages off the control stream.
 func (l *wire) streams() {
 	header := make([]byte, 4)
 	for {
-		if _, err := io.ReadFull(l.stream, header); err != nil {
+		// The first byte waits without a deadline: between frames the peer is
+		// entitled to be quiet. Everything after it is mid-frame and bounded.
+		if _, err := io.ReadFull(l.stream, header[:1]); err != nil {
 			l.close("gone")
+			return
+		}
+		_ = l.stream.SetReadDeadline(time.Now().Add(frame_deadline))
+		if _, err := io.ReadFull(l.stream, header[1:]); err != nil {
+			l.close("partial")
 			return
 		}
 		length := binary.BigEndian.Uint32(header)
@@ -165,9 +210,10 @@ func (l *wire) streams() {
 		}
 		payload := make([]byte, length)
 		if _, err := io.ReadFull(l.stream, payload); err != nil {
-			l.close("gone")
+			l.close("partial")
 			return
 		}
+		_ = l.stream.SetReadDeadline(time.Time{}) // between frames again
 		select {
 		case l.inbound <- payload:
 		case <-l.closed:
