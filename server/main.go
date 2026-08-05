@@ -17,6 +17,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	stack "runtime/debug" // aliased: this package already has a debug() logger
 	"syscall"
 	"time"
 
@@ -30,6 +31,31 @@ var (
 	shutdown      = make(chan struct{})    // closed once at exit; session loops watch it
 	stopping      = make(chan struct{}, 1) // pushed by the Windows SCM handler to request shutdown
 )
+
+// guard runs f and turns a panic into a logged fault instead of a dead process.
+// The server is crash-only by design, but a crash is per-session state: one
+// malformed frame or one arithmetic edge in a game module must not evict every
+// other match on the host.
+//
+// recover() only ever sees panics raised on its OWN goroutine, so every `go`
+// statement reachable from client input needs its own guard — guarding the
+// function that spawns them catches nothing. after runs during recovery to shut
+// the faulted subject down, and is itself guarded so a second panic while
+// cleaning up cannot defeat the first.
+func guard(name string, after func(), f func()) {
+	defer func() {
+		fault := recover()
+		if fault == nil {
+			return
+		}
+		warn("panic in %s: %v\n%s", name, fault, stack.Stack())
+		if after != nil {
+			defer func() { _ = recover() }()
+			after()
+		}
+	}()
+	f()
+}
 
 func main() {
 	windows_service_redirect_logs()

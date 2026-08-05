@@ -81,7 +81,7 @@ func transport_start(fatal chan<- error) error {
 			debug("transport: upgrade: %v", err)
 			return
 		}
-		go transport_serve(session)
+		go guard("transport connection", func() { session.CloseWithError(0, "fault") }, func() { transport_serve(session) })
 	})
 	info("transport listening on %s (udp)", address)
 	go func() { fatal <- fmt.Errorf("transport: %w", server.Serve(connection)) }()
@@ -105,9 +105,11 @@ func transport_serve(session *webtransport.Session) {
 		outbound: make(chan []byte, 256),
 		closed:   make(chan struct{}),
 	}
-	go l.streams()
-	go l.datagrams()
-	go l.writer()
+	// Each reader owns its own guard: a panic on one of these goroutines is
+	// invisible to the others and to the caller below.
+	go guard("wire streams", func() { l.close("fault") }, l.streams)
+	go guard("wire datagrams", func() { l.close("fault") }, l.datagrams)
+	go guard("wire writer", func() { l.close("fault") }, l.writer)
 	connection_serve(l)
 }
 

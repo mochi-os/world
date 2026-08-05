@@ -197,7 +197,10 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 		state:      "open",
 	}
 	sessions[s.identifier] = s
-	go session_run(s, g)
+	// A panic leaves the instance mid-tick, so the session is ENDED rather than
+	// resumed: continuing to tick a half-updated world would give everyone in
+	// it silently wrong physics instead of a clean failure.
+	go guard("session "+s.identifier, func() { session_close(s, "fault") }, func() { session_run(s, g) })
 	info("session %s created: %s %s %q capacity %d", s.identifier, name, mode, label, capacity)
 	return s, nil
 }
