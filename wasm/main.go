@@ -66,6 +66,7 @@ func main() {
 		"ack":      js.FuncOf(ack),
 		"level":    js.FuncOf(level),
 		"stores":   js.FuncOf(stores),
+		"catalog":  js.FuncOf(catalog),
 		"approach": js.FuncOf(approach),
 		"clear":    js.FuncOf(clear),
 	}
@@ -284,14 +285,43 @@ func approach(this js.Value, arguments []js.Value) any {
 	return throttle
 }
 
-// stores sets the attached external-store bitmask: the client clears a bit as
-// each wingtip missile departs, dropping its mass and carriage drag.
+// stores sets the attached external-store bitmask: the client asserts the
+// flown loadout's bits and clears each store's bit as it departs, dropping
+// its mass and carriage drag (tanks also fill or clamp the external fuel on
+// the transition).
 func stores(this js.Value, arguments []js.Value) any {
 	if model == nil {
 		return "uninitialised"
 	}
 	model.Stores(uint32(arguments[0].Int()))
 	return ""
+}
+
+// catalog returns the named aircraft's fitment catalog as JSON — the
+// world-owned property table (mask bit order, station, mass, drag area, fuel
+// capacity, default mask). The client derives its loadout table from this at
+// boot instead of mirroring the numbers, so the two sides cannot drift.
+func catalog(this js.Value, arguments []js.Value) any {
+	airframe := aircraft.Get(arguments[0].String())
+	if airframe == nil {
+		return ""
+	}
+	entries := make([]map[string]any, len(airframe.Stores))
+	for i := range airframe.Stores {
+		store := &airframe.Stores[i]
+		entries[i] = map[string]any{
+			"name":    store.Name,
+			"station": store.Station,
+			"mass":    store.Mass,
+			"area":    store.Area,
+			"fuel":    store.Fuel,
+		}
+	}
+	payload, err := json.Marshal(map[string]any{"stores": entries, "default": airframe.Default, "internal": airframe.Mass.Fuel, "empty": airframe.Mass.Empty})
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }
 
 // clear acknowledges the contact events the host has read: the touchdown

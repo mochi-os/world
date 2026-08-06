@@ -94,7 +94,11 @@ func (m *Model) propulsion(s *State, total *Forces, local Air) {
 	}
 }
 
-// burn decrements fuel by the flow the current condition demands.
+// burn decrements fuel by the flow the current condition demands. External
+// fuel goes first — the real jet's bleed-air transfer keeps the internal
+// tanks topped while the externals drain — so State.Fuel only falls once
+// State.External is dry. Battle-damage leaks drain the internal tanks
+// regardless: punctures are in the airframe, not the drop tanks.
 func (m *Model) burn() {
 	if m.Environment.Cheat.Fuel {
 		return // infinite-fuel cheat: the tank (and with it the leak drain) stays frozen at the spawn load
@@ -102,11 +106,16 @@ func (m *Model) burn() {
 	local := air(m.State.Position.Y, m.Environment)
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 	mach := v.Length() / local.Sound
-	flow := m.State.Damage.Leak
+	flow := 0.0
 	for i := range m.Airframe.Engines {
 		engine := &m.Airframe.Engines[i]
 		dry, boost := output(m.State.Engine[i], engine, local.Density, mach)
 		flow += dry*engine.Flow.Dry + boost*engine.Flow.Reheat
 	}
-	m.State.Fuel = math.Max(0, m.State.Fuel-flow*Dt)
+	if m.State.External > 0 {
+		m.State.External = math.Max(0, m.State.External-flow*Dt)
+	} else {
+		m.State.Fuel = math.Max(0, m.State.Fuel-flow*Dt)
+	}
+	m.State.Fuel = math.Max(0, m.State.Fuel-m.State.Damage.Leak*Dt)
 }

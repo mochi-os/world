@@ -14,7 +14,8 @@ type Airframe struct {
 	Surfaces  []Surface
 	Body      []Station
 	Engines   []Engine                                                                // 0..4; State carries four slots regardless
-	Stores    []Store                                                                 // external stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks them)
+	Stores    []Store                                                                 // the full catalog of mountable fixtures and stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks the flown subset)
+	Default   uint32                                                                  // the attach mask New arms (the catalog holds every legal fitment; a bare New flies this subset)
 	Mass      struct{ Empty, Fuel float64 }                                           // kg; Fuel = internal capacity
 	Control   Control                                                                 // control-law data the shared law flies with
 	Wave      struct{ Hump, Body float64 }                                            // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
@@ -90,13 +91,21 @@ type Station struct {
 	Drag     float64 // Cd on frontal area
 }
 
-// Store is one external-store position: a mass and a flat-plate drag area
-// carried while attached. Wingtip missiles today; pylons and tanks would land
-// here with honest mass, CG, and drag from day one.
+// Store is one catalog entry: a fixture (pylon, rail, twin adapter) or a
+// store (missile, tank) at its station position, carrying mass and flat-plate
+// drag while its mask bit is set. The catalog lists every legal fitment;
+// mutually exclusive entries (a station's single rail versus its twin
+// adapter) are distinct bits and the mask owner attaches one of them. A
+// fuel-bearing entry (external tank) also extends the fuel system: attaching
+// it fills State.External by its capacity, and weigh() carries the remaining
+// external fuel at the attached tanks' positions.
 type Store struct {
+	Name     string // catalog identity — the wire and client vocabulary
+	Station  int    // NATOPS station 1..9 (port tip to starboard tip)
 	Position Vec3
-	Mass     float64 // kg while attached
+	Mass     float64 // kg while attached (dry mass for tanks)
 	Area     float64 // m² flat plate while attached
+	Fuel     float64 // kg usable capacity; 0 = dry store
 }
 
 // Engine is one powerplant.

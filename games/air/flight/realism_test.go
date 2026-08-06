@@ -133,7 +133,9 @@ func TestWeightSchedule(t *testing.T) {
 	}
 	mass := Fighter.Mass.Empty + Fighter.Mass.Fuel
 	for i := range Fighter.Stores {
-		mass += Fighter.Stores[i].Mass
+		if Fighter.Default&(1<<uint(i)) != 0 { // the catalog lists every legal fitment; the model flies the default subset
+			mass += Fighter.Stores[i].Mass
+		}
 	}
 	scheduled := Fighter.Limit.Positive * Fighter.Limit.Reference / mass
 	if heavy > scheduled+0.35 {

@@ -68,7 +68,7 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity}
 	m.State.Attitude = Quat{W: 1}
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
-	m.stores = ^uint32(0) // every station armed; extra bits beyond the airframe's stations are ignored
+	m.stores = airframe.Default // the airframe's bare configuration; the mask owner asserts the flown loadout (fa18c: wingtips)
 	m.State.Fuel = airframe.Mass.Fuel
 	m.lift = make([]float64, len(airframe.Surfaces))
 	m.base = make([]int, len(airframe.Surfaces))
@@ -90,7 +90,30 @@ func (m *Model) SetWorld(w World) { m.World = w }
 // Environment, World): no I/O, clock, randomness, or allocation.
 // Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]):
 // firing a missile clears its bit, dropping the station's mass and drag.
-func (m *Model) Stores(mask uint32) { m.stores = mask }
+// Fuel-bearing entries extend the fuel system on the transition: a tank
+// arriving (bit off to on) comes full, adding its capacity to
+// State.External; a tank departing clamps the external quantity to the
+// remaining capacity. Re-asserting an unchanged mask is a no-op, so the
+// owner may sync it idempotently every frame.
+func (m *Model) Stores(mask uint32) {
+	if mask != m.stores {
+		capacity := 0.0
+		for i := range m.Airframe.Stores {
+			entry := &m.Airframe.Stores[i]
+			if entry.Fuel <= 0 {
+				continue
+			}
+			if mask&(1<<uint(i)) != 0 {
+				capacity += entry.Fuel
+				if m.stores&(1<<uint(i)) == 0 {
+					m.State.External += entry.Fuel // a fresh tank mounts full
+				}
+			}
+		}
+		m.State.External = math.Min(m.State.External, capacity)
+	}
+	m.stores = mask
+}
 
 func (m *Model) Step(in Inputs) {
 	// Deployable slews: the probe's ~5 s hydraulic stroke and the hook's ~2 s
@@ -138,20 +161,33 @@ func (m *Model) shake(local Air) {
 }
 
 // weigh caches mass, combined CG, and the inertia tensor (and inverse) for
-// the step: empty airframe + fuel point mass at the tank + damage shift.
+// the step: empty airframe + fuel point mass at the tank + attached stores
+// (external fuel riding at the attached tanks, split by capacity — the real
+// jet pressurizes all externals together and they drain in step) + damage
+// shift.
 func (m *Model) weigh() {
 	a := m.Airframe
 	fuel := m.State.Fuel
 	empty := math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
+	capacity := 0.0
+	for i := range a.Stores {
+		if m.stores&(1<<uint(i)) != 0 && a.Stores[i].Fuel > 0 {
+			capacity += a.Stores[i].Fuel
+		}
+	}
 	m.mass = empty + fuel
 	moment := a.Center.Scale(empty).Add(a.Tank.Scale(fuel))
 	for i := range a.Stores {
 		if m.stores&(1<<uint(i)) == 0 {
-			continue // fired away: the station's mass left with the missile
+			continue // fired or jettisoned: the station's mass left with the store
 		}
 		store := &a.Stores[i]
-		m.mass += store.Mass
-		moment = moment.Add(store.Position.Scale(store.Mass))
+		carried := store.Mass
+		if store.Fuel > 0 && capacity > 0 {
+			carried += m.State.External * store.Fuel / capacity
+		}
+		m.mass += carried
+		moment = moment.Add(store.Position.Scale(carried))
 	}
 	m.center = moment.Scale(1 / m.mass).Add(m.State.Damage.Shift)
 	// Parallel-axis: empty tensor is about the empty CG; move every mass to
@@ -161,7 +197,12 @@ func (m *Model) weigh() {
 	tensor = tensor.Add(parallel(a.Tank.Subtract(m.center), fuel))
 	for i := range a.Stores {
 		if m.stores&(1<<uint(i)) != 0 {
-			tensor = tensor.Add(parallel(a.Stores[i].Position.Subtract(m.center), a.Stores[i].Mass))
+			store := &a.Stores[i]
+			carried := store.Mass
+			if store.Fuel > 0 && capacity > 0 {
+				carried += m.State.External * store.Fuel / capacity
+			}
+			tensor = tensor.Add(parallel(store.Position.Subtract(m.center), carried))
 		}
 	}
 	m.inertia = tensor

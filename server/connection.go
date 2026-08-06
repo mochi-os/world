@@ -44,7 +44,8 @@ func connection_serve(l link) {
 		name = "pilot"
 	}
 	team := clean(text(message, "team"), 16)
-	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team}
+	stores, _ := message["stores"].(map[string]any)
+	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team, Stores: stores}
 	reply := make(chan answer, 1)
 	cancel := make(chan struct{})
 	select {

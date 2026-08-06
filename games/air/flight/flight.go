@@ -28,7 +28,10 @@ import (
 // intake rolloff to M1.6, 16° flyaway datum, and the K 0.14 + polar-break
 // drag fit. A version-1 client predicting against a version-2 server
 // diverges everywhere the model changed, which is everywhere it matters.
-const Version = 2
+// 3: the stores generation (#17) — the full fitment catalog with fixtures,
+// per-station missiles and external tanks, external fuel as a new encoded
+// tail word (Size 113 to 114), and external-before-internal burn order.
+const Version = 3
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
 // choose how many steps to run.

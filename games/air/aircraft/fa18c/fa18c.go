@@ -77,10 +77,40 @@ func build() *flight.Airframe {
 	a.Wave.Hump = 0.030 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
 	a.Wave.Body = 0.10
 
-	a.Stores = []flight.Store{ // wingtip AIM-9Ms on the LAU-7 rails (the rails themselves live in the empty weight): 86 kg and ~0.05 m² of carriage drag each, at the measured rail position the crash probes already use
-		{Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -6.26}, Mass: 86, Area: 0.05},
-		{Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 6.26}, Mass: 86, Area: 0.05},
+	// The full fitment catalog (#17). Bits 0 and 1 stay the wingtip AIM-9Ms —
+	// every count-to-mask mapping and the doctrine-calibrated bot rely on
+	// those indices — and Default arms exactly them, so a bare New flies
+	// today's jet. Fixtures (pylon chains, collapsed to one entry each) and
+	// stores are separate bits: the mask owner attaches a station's fixture
+	// plus the stores on its points, and mutually exclusive fixtures (a
+	// station's single rail versus its twin adapter) are never set together.
+	// Masses: AIM-9M 86 kg; SUU-63 + LAU-7 rail 179 kg; SUU-63 + LAU-115 +
+	// two LAU-7 twin 290 kg; wet SUU-63 136 kg; centerline SUU-62 120 kg;
+	// FPU-8/A 330 gal tank 158 kg dry + 1010 kg JP-5. Drag areas are honest
+	// starting points to be flown out via the vspeeds harness (#17 plan).
+	// Lateral positions from the station buttlines (2/8 at 3.35 m, 3/7 at
+	// 2.24 m); tips at the measured rail position the crash probes use.
+	a.Stores = []flight.Store{
+		{Name: "tip1", Station: 1, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -6.26}, Mass: 86, Area: 0.05},
+		{Name: "tip9", Station: 9, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 6.26}, Mass: 86, Area: 0.05},
+		{Name: "rail2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 179, Area: 0.04},
+		{Name: "twin2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 290, Area: 0.06},
+		{Name: "9m2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -3.35}, Mass: 86, Area: 0.05},
+		{Name: "9m2a", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.50}, Mass: 86, Area: 0.05},
+		{Name: "9m2b", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.20}, Mass: 86, Area: 0.05},
+		{Name: "rail8", Station: 8, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: 3.35}, Mass: 179, Area: 0.04},
+		{Name: "twin8", Station: 8, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: 3.35}, Mass: 290, Area: 0.06},
+		{Name: "9m8", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 3.35}, Mass: 86, Area: 0.05},
+		{Name: "9m8a", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.50}, Mass: 86, Area: 0.05},
+		{Name: "9m8b", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.20}, Mass: 86, Area: 0.05},
+		{Name: "pylon3", Station: 3, Position: flight.Vec3{X: 0.3, Y: -0.90, Z: -2.24}, Mass: 136, Area: 0.03},
+		{Name: "tank3", Station: 3, Position: flight.Vec3{X: -0.2, Y: -1.25, Z: -2.24}, Mass: 158, Area: 0.07, Fuel: 1010},
+		{Name: "pylon7", Station: 7, Position: flight.Vec3{X: 0.3, Y: -0.90, Z: 2.24}, Mass: 136, Area: 0.03},
+		{Name: "tank7", Station: 7, Position: flight.Vec3{X: -0.2, Y: -1.25, Z: 2.24}, Mass: 158, Area: 0.07, Fuel: 1010},
+		{Name: "pylon5", Station: 5, Position: flight.Vec3{X: -0.2, Y: -1.15, Z: 0}, Mass: 120, Area: 0.03},
+		{Name: "tank5", Station: 5, Position: flight.Vec3{X: -0.6, Y: -1.45, Z: 0}, Mass: 158, Area: 0.07, Fuel: 1010},
 	}
+	a.Default = 0b11 // the bare jet flies wingtips only, exactly as before the catalog grew
 	a.Engines = make([]flight.Engine, 2)
 	for i := range a.Engines {
 		side := float64(i)*2 - 1

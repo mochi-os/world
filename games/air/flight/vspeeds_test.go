@@ -63,9 +63,13 @@ func vsJet(fuel, alt, speed float64, gear bool) *Model {
 // Returns TAS at the sink onset.
 func vsStall(fuel, alt float64, gear bool) float64 {
 	rho := air(alt, Environment{}).Density
-	v0 := 1.35 * math.Sqrt(2*(10700+fuel)*9.81/(rho*1.3*37.16))
+	probe := New(Fighter, Environment{}, World{}) // weigh the flown configuration instead of guessing empty+fuel: stores mass counts
+	probe.State.Fuel = fuel
+	probe.weigh()
+	gross := probe.mass
+	v0 := 1.35 * math.Sqrt(2*gross*9.81/(rho*1.3*37.16))
 	m := vsJet(fuel, alt, v0, gear)
-	trim := clamp(2*(10700+fuel)*9.81/(rho*v0*v0*37.16)/4.7+0.01, 0, 0.3) // CL/(finite-wing slope) plus a hair
+	trim := clamp(2*gross*9.81/(rho*v0*v0*37.16)/4.7+0.01, 0, 0.3) // CL/(finite-wing slope) plus a hair
 	m.State.Attitude = Axis(Vec3{Z: 1}, trim)
 	m.State.Engine[0] = EngineState{Spool: 0.3}
 	m.State.Engine[1] = EngineState{Spool: 0.3}

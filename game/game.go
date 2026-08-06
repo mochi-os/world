@@ -21,6 +21,7 @@ type Player struct {
 	Name     string
 	Slot     int
 	Team     string
+	Stores   map[string]any // game-defined loadout request (#17), passed through from the join message verbatim; the game validates and clamps it
 }
 
 // Session carries the parameters a session was created with. Parameters is

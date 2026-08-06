@@ -319,18 +319,28 @@ func sessions_list(name string, pilot string) []map[string]any {
 		if name != "" && s.spec.Game != name {
 			continue
 		}
+		// A curated parameters subset rides the listing (#17/#19): the rules a
+		// joiner cares about before entering — never the whole map, which can
+		// carry creator-internal settings (bot counts, cheat details).
+		rules := map[string]any{}
+		for _, key := range []string{"missiles", "tod", "clouds"} {
+			if value, found := s.spec.Parameters[key]; found {
+				rules[key] = value
+			}
+		}
 		list = append(list, map[string]any{
-			"mine":      pilot != "" && s.owner == pilot,
-			"offer":     s.owner != "" && !s.joined,
-			"session":   s.identifier,
-			"game":      s.spec.Game,
-			"mode":      s.spec.Mode,
-			"label":     s.spec.Label,
-			"capacity":  s.spec.Capacity,
-			"players":   s.names,
-			"created":   s.created.Unix(),
-			"state":     s.state,
-			"permanent": s.permanent,
+			"mine":       pilot != "" && s.owner == pilot,
+			"offer":      s.owner != "" && !s.joined,
+			"session":    s.identifier,
+			"game":       s.spec.Game,
+			"mode":       s.spec.Mode,
+			"label":      s.spec.Label,
+			"capacity":   s.spec.Capacity,
+			"players":    s.names,
+			"created":    s.created.Unix(),
+			"state":      s.state,
+			"permanent":  s.permanent,
+			"parameters": rules,
 		})
 	}
 	sort.Slice(list, func(a int, b int) bool {

@@ -43,6 +43,7 @@ type State struct {
 	Attitude Quat // body->world
 	Omega    Vec3 // body, rad/s
 	Fuel     float64
+	External float64        // external-tank fuel, kg, summed over attached tanks; burns before internal (the real transfer order) and rides at the tank positions in weigh()
 	Engine   [4]EngineState // one per Airframe.Engines entry (0..4); unused slots stay zero
 	Fcs      FcsState
 	Gear     GearState

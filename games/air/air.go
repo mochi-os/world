@@ -184,8 +184,9 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
 				}
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level), team: team}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.missiles)}
 				b.arm()
+				b.rearm()
 				i.aircraft[slot] = b
 				// Wingman pairs (#140): consecutive fighting bots on a side fly
 				// as a section, for the instance's life. Levels are created in
@@ -222,6 +223,7 @@ type craft struct {
 	ammunition int     // gun rounds left this life
 	charge     float64 // fractional rounds accumulated at the fire rate
 	missiles   int     // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
+	loadout    loadout // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
 	release    float64 // sim seconds since this craft's last missile left the rail (large when none)
 	ejected    bool    // eject edge consumed this life
 	wait       float64 // seconds until respawn (air mode)
@@ -321,7 +323,14 @@ func (a *craft) arm() {
 	}
 	a.ammunition = rounds
 	a.charge = 0
-	a.missiles = 4 // wingtips plus one LAU-127 dual-rail pair — the human magazine, matching single player. Bots deliberately keep their own two-round b.missiles discipline: the doctrine battery is calibrated against it, and their loadout is #215/#226 business
+	// The magazine is the granted loadout's round count in the SMS firing
+	// order (#17). Fighting bots keep their own two-round b.missiles
+	// discipline regardless: the doctrine battery is calibrated against it.
+	if a.loadout != nil {
+		a.missiles = len(stores_rounds(a.loadout))
+	} else {
+		a.missiles = 4
+	}
 	a.release = 1e9
 	a.ejected = false
 }
@@ -439,6 +448,9 @@ func state_payload(s *flight.State) map[string]any {
 		if i == 57+flight.Elements+flight.Channels+4 { // Pitchwash, signed rad/s: map ±1.5 onto the unit interval
 			v = v/3 + 0.5
 		}
+		if i == 57+flight.Elements+flight.Channels+8 { // External fuel, kg — same scale as Loss
+			v /= 8000
+		}
 		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
 	}
 	return map[string]any{
@@ -483,15 +495,20 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	}
 	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
 	i.spawn(player.Slot, m, team)
-	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, team: team}
+	// The requested loadout, validated and clamped against the match's
+	// missiles rule (#17): the granted result spawns and is what everyone is
+	// told about; the client's persisted choice is never echoed back.
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, team: team, loadout: stores_grant(player.Stores, i.missiles)}
 	a.arm()
+	a.rearm()
 	i.aircraft[player.Slot] = a
-	// The full roster on every join: names AND sides for bots and humans
-	// alike (the transport's own player list carries no team, so a late
-	// joiner would otherwise never learn the sides already in the fight).
+	// The full roster on every join: names, sides, AND loadouts for bots and
+	// humans alike (the transport's own player list carries no team, so a
+	// late joiner would otherwise never learn the sides already in the
+	// fight; the loadout is how remotes render each other's stores).
 	for _, slot := range i.slots() {
 		b := i.aircraft[slot]
-		i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": b.player.Name, "team": b.team})
+		i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": b.player.Name, "team": b.team, "stores": b.loadout})
 	}
 	if i.mode == "joust" && len(i.aircraft) == 2 && !i.started {
 		// The pair is complete THIS instant: the match starts, and both merge
@@ -502,6 +519,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 			i.spawn(slot, b.model, b.team)
 			b.model.State.Damage = flight.DamageState{}
 			b.arm()
+			b.rearm()
 			b.alive = true
 			i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&b.model.State)})
 		}
@@ -641,7 +659,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				if i.launch(slot, a) {
 					if !i.cheat.ammunition {
 						a.missiles--
-						a.model.Stores(armed(a.missiles))
+						a.model.Stores(a.attach()) // the departed round's bit clears in the SMS firing order (#17)
 					}
 					a.release = 0
 				}
@@ -682,6 +700,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				i.spawn(slot, a.model, a.team)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
+				a.rearm() // full grant again, tanks refilled — every spawn is a fresh request/clamp cycle (#17)
 				if a.brain != nil {
 					a.brain.reborn()
 				}
@@ -719,13 +738,17 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	i.drift(dt)
 }
 
-// armed maps a remaining-missile count to the store bitmask (wingtips first).
+// armed maps the bot brain's REMAINING discipline count to the attach mask
+// over the armed standard loadout: the brain fires `shots` rounds in the SMS
+// order and the other rounds stay carried (bot.go calls this on every
+// launch; the discipline itself is #25's re-sweep). Loadout-less crafts'
+// attach() shares it as the legacy fallback.
 func armed(count int) uint32 {
-	mask := uint32(0)
-	for i := 0; i < count && i < 32; i++ {
-		mask |= 1 << uint(i)
+	fired := shots - count
+	if fired < 0 {
+		fired = 0
 	}
-	return mask
+	return stores_mask(bots_loadout(true), fired)
 }
 
 // credit names the killer: the last player to damage this aircraft within
