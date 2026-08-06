@@ -68,7 +68,7 @@ func TestLoadout(t *testing.T) {
 		t.Fatalf("station 5 tank lost: %v", granted["5"])
 	}
 
-	guns, err := sessions_create("air", "furball", "guns only", 4, map[string]any{"missiles": false})
+	guns, err := sessions_create("air", "furball", "guns only", 4, map[string]any{"missiles": false, "cheats": map[string]any{"ammunition": true}})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -100,6 +100,10 @@ func TestLoadout(t *testing.T) {
 			parameters, _ := entry["parameters"].(map[string]any)
 			if parameters == nil || parameters["missiles"] != false {
 				t.Fatalf("listing parameters %v, want the missiles rule advertised", entry["parameters"])
+			}
+			cheats, _ := parameters["cheats"].(map[string]any)
+			if cheats == nil || cheats["ammunition"] != true {
+				t.Fatalf("listing parameters %v, want the cheat set advertised (#19)", entry["parameters"])
 			}
 		}
 	}

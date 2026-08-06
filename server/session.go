@@ -321,9 +321,11 @@ func sessions_list(name string, pilot string) []map[string]any {
 		}
 		// A curated parameters subset rides the listing (#17/#19): the rules a
 		// joiner cares about before entering — never the whole map, which can
-		// carry creator-internal settings (bot counts, cheat details).
+		// carry creator-internal settings (bot counts, per-player fuel). The
+		// cheat set IS advertised: a cheats match that looks standard in the
+		// list is the worst surprise on offer.
 		rules := map[string]any{}
-		for _, key := range []string{"missiles", "tod", "clouds"} {
+		for _, key := range []string{"missiles", "tod", "clouds", "cheats"} {
 			if value, found := s.spec.Parameters[key]; found {
 				rules[key] = value
 			}
