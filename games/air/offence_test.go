@@ -147,10 +147,13 @@ func TestConvert(t *testing.T) {
 				}
 			}
 			if seed == 1 {
-				h := i.aircraft[0]
-				fmt.Printf("      offerer after: loss=%.2f leak=%.2f engines=%.2f/%.2f alive=%v\n",
-					h.model.State.Damage.Loss, h.model.State.Damage.Leak,
-					h.model.State.Damage.Engine[0], h.model.State.Damage.Engine[1], h.alive)
+				if h := i.aircraft[0]; h.model != nil {
+					fmt.Printf("      offerer after: loss=%.2f leak=%.2f engines=%.2f/%.2f alive=%v\n",
+						h.model.State.Damage.Loss, h.model.State.Damage.Leak,
+						h.model.State.Damage.Engine[0], h.model.State.Damage.Engine[1], h.alive)
+				} else {
+					fmt.Printf("      offerer after: detonated (model torn down)\n")
+				}
 			}
 		}
 		pct := 100 * converted / math.Max(total, 1)

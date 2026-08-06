@@ -30,6 +30,7 @@ func TestMergeRoll(t *testing.T) {
 			words := make([]float64, flight.Size)
 			var bank []float64
 			closest, closeAt := 1e9, 0
+			var dodging []bool
 			for tick := 0; tick < 60*30; tick++ {
 				pm.State.Position.X -= 220.0 / 60
 				pm.State.Encode(words)
@@ -39,14 +40,32 @@ func TestMergeRoll(t *testing.T) {
 				up := s.Attitude.Rotate(flight.Vec3{Y: 1})
 				right := s.Attitude.Rotate(flight.Vec3{Z: 1})
 				bank = append(bank, math.Atan2(right.Y, up.Y)*180/math.Pi)
+				dodging = append(dodging, uint64(tick) < b.craft.brain.dodge)
 				if r := pm.State.Position.Subtract(s.Position).Length(); r < closest {
 					closest, closeAt = r, tick
 				}
 			}
-			sign, flips := 0.0, 0.0
+			// A reversal is a SUBSTANTIAL roll in the opposite direction — 15
+			// degrees of bank or more at fighting roll rate. Counting bare
+			// rate-sign alternations scored the wings-levelling wobble after
+			// the pass (a few degrees of rocking at ~30 deg/s) identically to
+			// a genuine direction change, and no reader of the merge would.
+			flips, run, last := 0.0, 0.0, 0.0
+			judge := func() {
+				if math.Abs(run) >= 15 {
+					if last != 0 && math.Signbit(run) != math.Signbit(last) {
+						flips++
+					}
+					last = run
+				}
+				run = 0
+			}
 			for i := closeAt - 120; i < closeAt+120 && i < len(bank); i++ {
 				if i < 1 {
 					continue
+				}
+				if dodging[i] {
+					continue // a commanded guns defence (#251) is deliberately unreadable AIM, the opposite of an unreadable INTENTION: the scripted opponent's bore points straight at the bot through the pass, the flinch answers it, and counting that weave as merge dithering failed the exact behaviour the defensive package exists to add
 				}
 				d := bank[i] - bank[i-1]
 				for d > 180 {
@@ -55,15 +74,15 @@ func TestMergeRoll(t *testing.T) {
 				for d < -180 {
 					d += 360
 				}
-				r := d * 60
-				if math.Abs(r) < 25 {
+				if math.Abs(d*60) < 25 {
 					continue
 				}
-				if sign != 0 && math.Signbit(r) != math.Signbit(sign) {
-					flips++
+				if run != 0 && math.Signbit(d) != math.Signbit(run) {
+					judge()
 				}
-				sign = r
+				run += d
 			}
+			judge()
 			total += flips
 			if flips > worst {
 				worst = flips

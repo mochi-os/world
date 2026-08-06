@@ -36,6 +36,7 @@ type moment struct {
 	direction flight.Vec3 // unit, me toward him
 	distance  float64
 	closure   float64
+	grain     float64 // committed merge side, +1/-1; 0 = uncommitted (#251): a lead turn that re-picks its side as the geometry drifts reads as dithering and IS dithering
 }
 
 // derive fills the dependent fields from the endpoints.
@@ -122,7 +123,8 @@ type order struct {
 // same law it judges.
 type play struct {
 	name string
-	tier int // library tier that unlocks it
+	tier int     // library tier that unlocks it
+	span float64 // rehearsal horizon, seconds; 0 = the tier default (#248): flat pursuit is honestly judged in four seconds, a vertical manoeuvre's payoff lies past eight — one shared horizon systematically biased the arbiter toward flat orbiting (measured: under 4% vertical against a floater begging for it)
 	law  func(m *moment) order
 }
 
@@ -130,7 +132,7 @@ type play struct {
 // re-litigate #225). Tiers: a novice owns pursuit, the breaks, and running
 // away; the circle work, the vertical, and the reversal arrive with skill.
 var plays = []play{
-	{"press", 1, func(m *moment) order {
+	{"press", 1, 0, func(m *moment) order {
 		o := order{aim: m.direction, g: m.pull, throttle: 1, reheat: 1}
 		speed := m.me.Velocity.Length()
 		if m.distance < 1200 {
@@ -155,45 +157,176 @@ var plays = []play{
 		}
 		return o
 	}},
-	{"left", 1, func(m *moment) order {
+	{"left", 1, 0, func(m *moment) order {
 		return order{aim: m.swing(-1.6), g: m.pull, throttle: 1, reheat: 1}
 	}},
-	{"right", 1, func(m *moment) order {
+	{"right", 1, 0, func(m *moment) order {
 		return order{aim: m.swing(1.6), g: m.pull, throttle: 1, reheat: 1}
 	}},
-	{"extend", 1, func(m *moment) order {
+	{"extend", 1, 0, func(m *moment) order {
 		away := level(m.direction.Scale(-1))
 		return order{aim: away, g: 2.5, throttle: 1, reheat: 1}
 	}},
-	{"lag", 2, func(m *moment) order {
+	{"lag", 2, 0, func(m *moment) order {
 		o := order{aim: m.aloft(m.lag()), g: m.pull * 0.92, throttle: 1}
 		if m.me.Velocity.Length() < m.pace {
 			o.reheat = 1
 		}
 		return o
 	}},
-	{"low", 2, func(m *moment) order {
+	{"low", 2, 6, func(m *moment) order {
 		point := m.prey // the gun-frame lead point is a phantom beyond gun range: it swings with my own velocity and the jet chases it in circles
 		if m.distance < 1400 {
 			point = m.lead()
 		}
 		return order{aim: m.aloft(point.Subtract(flight.Vec3{Y: 300})), g: m.pull, throttle: 1, reheat: 1}
 	}},
-	{"high", 3, func(m *moment) order {
+	{"high", 3, 7, func(m *moment) order {
 		o := order{aim: m.aloft(m.lag().Add(flight.Vec3{Y: 450})), g: m.pull * 0.85, throttle: 0.9}
 		if m.closure > 90 {
 			o.brake = 1
 		}
 		return o
 	}},
-	{"reverse", 3, func(m *moment) order {
-		o := order{aim: m.swing(m.side() * 1.9), g: m.pull, throttle: 0.35}
+	{"reverse", 3, 0, func(m *moment) order {
+		side := m.grain
+		if side == 0 {
+			side = m.side()
+		}
+		o := order{aim: m.swing(side * 1.9), g: m.pull, throttle: 0.35}
 		if m.me.Velocity.Length() > m.pace {
 			o.brake = 1
 		}
 		return o
 	}},
-	{"climb", 4, func(m *moment) order {
+	{"saddle", 2, 0, func(m *moment) order {
+		// The slow saddle (#250): park astern at HIS speed. The anti-floater
+		// staple the library lacked — measured orbiting at 135-233 m/s
+		// against a 90 m/s target for minutes, every approach an overshoot.
+		// Station keeps a 280 m perch with a speed bias that closes gently
+		// from behind and never blows through.
+		o := order{aim: m.aloft(m.lead()), g: m.pull * 0.85, throttle: 0.6}
+		his := m.velocity.Length()
+		mine := m.me.Velocity.Length()
+		want := his + clamp((m.distance-280)*0.12, -25, 60)
+		o.throttle = clamp(0.55+(want-mine)*0.012, 0, 1)
+		if mine > want+25 {
+			o.brake = 1
+		}
+		if mine < want-50 {
+			o.reheat = 1
+		}
+		return o
+	}},
+	{"screw", 3, 0, func(m *moment) order {
+		// The displacement (#250): when arriving with overtake to spare,
+		// climb off-axis above his six in proportion to the excess — the
+		// path lengthens, the closure dies, and the position holds instead
+		// of blowing through. Throttle and boards carry the rest.
+		excess := m.closure - 25
+		point := m.lead()
+		if excess > 0 && m.distance < 800 {
+			point = point.Add(flight.Vec3{Y: clamp(excess*4, 0, 350)})
+		}
+		o := order{aim: m.aloft(point), g: m.pull * 0.9, throttle: clamp(0.7-excess*0.008, 0.2, 1)}
+		if excess > 60 {
+			o.brake = 1
+		}
+		return o
+	}},
+	{"pitch", 3, 9, func(m *moment) order {
+		// The pitch-back (#250): bank altitude off an energy-dead opponent,
+		// then pull through the top onto him. Staged on STATE, not time, so
+		// one law carries both phases and the rollout can fly the whole
+		// manoeuvre: while the advantage is unbanked and the jet has climb
+		// speed, zoom; once banked, attack. Needs the relative-energy truth
+		// to score and the long horizon to be judged fairly.
+		rise := m.me.Position.Y - m.prey.Y
+		speed := m.me.Velocity.Length()
+		if rise < 600 && speed > m.pace*0.75 {
+			f := m.flat()
+			return order{aim: flight.Vec3{X: f.X * 0.5, Y: 0.85, Z: f.Z * 0.5}.Normalize(), g: 4.5, throttle: 1, reheat: 1}
+		}
+		o := order{aim: m.aloft(m.lead()), g: m.pull, throttle: 0.75}
+		if m.closure > 60 {
+			o.brake = 1
+		}
+		return o
+	}},
+	{"cross", 3, 0, func(m *moment) order {
+		// The merge lead-turn (#250): closing fast and nose-on, turn EARLY
+		// across his path so the pass ends angles-on instead of neutral;
+		// once past, pull hard into him. The arbiter's merges were straight
+		// — every fight restarted from scratch after the pass.
+		vhat := m.me.Velocity
+		if vhat.Length() > 1 {
+			vhat = vhat.Normalize()
+		}
+		side := m.grain
+		if side == 0 {
+			side = m.side()
+		}
+		if m.closure > 250 && m.distance < 1100 && m.direction.Dot(vhat) > 0.5 {
+			// Turn inside the last second of the closure, not before: an
+			// early lead turn is three seconds of crossing target served to
+			// an opponent who holds nose-on — and every tier now owns the
+			// crossing shot, so the bet went from cheap to fatal (measured:
+			// the ace lead-turning from 2 km lost the bottom ladder rung to
+			// the pilot's face shots).
+			return order{aim: m.swing(side * 0.55), g: m.pull, throttle: 1}
+		}
+		// Past the pass: CONTINUE the committed turn around onto him — one
+		// readable direction through the whole manoeuvre. Aiming at the lead
+		// point from 200 m behind the crossing left the lift-vector law free
+		// to pick either roll direction per tick, and TestMergeRoll read it
+		// as the dithering it was.
+		return order{aim: m.swing(side * 2.0), g: m.pull, throttle: 1, reheat: 1}
+	}},
+	{"split", 2, 7, func(m *moment) order {
+		// The split-S (#251): when there is sky to spend, roll through and
+		// dive out — separation the pursuer must pay the same altitude to
+		// follow. Below the sky it needs, it degrades to the flat run so
+		// the rollout judges an honest law everywhere.
+		if m.me.Position.Y > 2200 {
+			f := m.flat()
+			return order{aim: flight.Vec3{X: -f.X * 0.25, Y: -0.92, Z: -f.Z * 0.25}.Normalize(), g: m.pull, throttle: 1}
+		}
+		away := level(m.direction.Scale(-1))
+		return order{aim: away, g: 3, throttle: 1, reheat: 1}
+	}},
+	{"trap", 3, 6, func(m *moment) order {
+		// The completed overshoot trap (#251): while he is behind, break
+		// across to spend his closure; the moment he crosses my 3/9 line,
+		// reverse INTO him and convert. The old flat reverse ended at the
+		// first phase — a forced overshoot bought nothing.
+		vhat := m.me.Velocity
+		if vhat.Length() > 1 {
+			vhat = vhat.Normalize()
+		}
+		if m.direction.Dot(vhat) < -0.1 {
+			side := m.grain
+			if side == 0 {
+				side = m.side()
+			}
+			o := order{aim: m.swing(side * 1.7), g: m.pull, throttle: 0.45}
+			if m.me.Velocity.Length() > m.pace {
+				o.brake = 1
+			}
+			return o
+		}
+		if m.distance < 600 {
+			// He has JUST crossed — the overshoot the break bought: reverse
+			// into him and convert while his nose is off me.
+			return order{aim: m.aloft(m.lead()), g: m.pull, throttle: 1, reheat: 1}
+		}
+		// Nobody is trapped: he is ahead and FAR, which is a merge, and the
+		// convert stage flown there is a head-on charge into his guns — it
+		// killed an ace at t=10.5 of a ladder fight, first pass, detonated.
+		// A trap without a trapped opponent is patience: hold lag and keep
+		// the energy until there is something to spring.
+		return order{aim: m.aloft(m.lag()), g: m.pull * 0.9, throttle: 1}
+	}},
+	{"climb", 4, 8, func(m *moment) order {
 		f := m.flat()
 		return order{aim: flight.Vec3{X: f.X, Y: 0.6, Z: f.Z}.Normalize(), g: 3, throttle: 1, reheat: 1}
 	}},
@@ -311,7 +444,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 // appraise scores one instant of a rehearsed future. Positive is a fight
 // being won: his tail toward my pointed nose inside the gun band. Negative is
 // a fight being lost: his nose behind my tail, or the sea arriving.
-func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture) float64 {
+func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit) float64 {
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
 	lhat := los.Scale(1 / r)
@@ -336,7 +469,27 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture) 
 	// away. Closure is what a pursuit buys; it fades out approaching the band,
 	// where arriving hot is the classic blown pass.
 	closing := s.Velocity.Subtract(hisV).Dot(lhat)
+	// The RELATIVE energy truth (#248): the fight's currency is the
+	// difference, not the balance. The absolute term above keeps a bot from
+	// dying slow in an empty sky; this one is what makes zooming off a
+	// floater, or refusing to match a slow fight, score as winning — and its
+	// weight is a skill: the novice chases the nose and ignores it.
+	mine := speed*speed/2 + 9.81*s.Position.Y
+	his := hisV.Length()*hisV.Length()/2 + 9.81*hisP.Y
+	edge := clamp((mine-his)/(pace*pace/2), -1, 1)
+	// The circle truth (#248): where I sit relative to HIS turn circle.
+	// Inside it, modest angles convert; outside it, the same angles are an
+	// overshoot being prepared. Instructor tiers only — this is the piece of
+	// BFM that arrives at the weapons school.
+	standing := 0.0
+	if ring.valid && r < 2500 {
+		radial := s.Position.Subtract(ring.centre)
+		planar := radial.Subtract(ring.normal.Scale(radial.Dot(ring.normal)))
+		standing = clamp((ring.radius-planar.Length())/math.Max(ring.radius, 200), -1, 1)
+	}
 	score := w.offence*offence - 1.3*w.threat*threat + w.energy*energy - r/12000 +
+		sk.energy*w.energy*0.4*edge +
+		sk.geometry*0.25*standing*clamp((2500-r)/1500, 0, 1) +
 		w.closing*0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
 		w.offence*0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
 		0.5*clamp((closing-70)/150, 0, 1)*clamp((900-r)/600, 0, 1) // the blown pass, priced: arriving hot inside the merge cannot be stopped by any law (stopping distance alone exceeds the range), and without this the incumbent full-burner play tied the disciplined one and zero-noise argmax never escaped it — the machine overshot every pass it flew
@@ -372,7 +525,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
 		hisP, hisV := evolve(prey, b.ring, age+t)
-		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull}
+		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
 		m.derive()
 		o := chosen.law(&m)
 		shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
@@ -385,7 +538,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		}
 		if k%30 == 0 || k == horizon {
 			w := 0.4 + 0.6*float64(k)/float64(horizon)
-			score += w * appraise(&sim.State, hisP, hisV, pace, stances[b.intent])
+			score += w * appraise(&sim.State, hisP, hisV, pace, stances[b.intent], &b.skill, b.ring)
 			weight += w
 		}
 	}
@@ -425,15 +578,25 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	}
 
 	// Re-judge when the committed line expires — or the picture breaks it: an
-	// attacker arriving close behind invalidates any offensive line now.
+	// attacker arriving close behind invalidates any offensive line now, and
+	// HIS overshoot through my 3/9 line (#251) opens a two-second window the
+	// normal cadence sleeps through — the offensive twin of the threat
+	// bypass, stamped with the tier's reflexes via the commitment floor.
+	vhat := me.Velocity
+	if vhat.Length() > 1 {
+		vhat = vhat.Normalize()
+	}
+	bearing := direction.Dot(vhat)
+	overshot := b.flanked < -0.15 && bearing > 0.15 && distance < 700 && b.skill.library >= 3
+	b.flanked = bearing
 	offensive := b.play == "press" || b.play == "lag" || b.play == "low" || b.play == "high" || b.play == "climb"
-	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) {
+	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) || (overshot && tick-b.picked >= 10) {
 		sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
 		// The horizon must outlive the manoeuvres it judges — in REAL seconds,
 		// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
 		// for the top tiers, enough for a reversal's payoff to show through the
 		// point-progress term without quadrupling the rehearsal budget.
-		horizon := 60*2 + 30*b.skill.library
+		base := 60*2 + 30*b.skill.library
 		best, top, n := b.play, math.Inf(-1), 0
 		for _, p := range plays {
 			if p.tier > b.skill.library {
@@ -442,10 +605,21 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 			if p.name == "extend" && distance > 2500 {
 				continue // already separated: rehearsing more separation buys nothing
 			}
+			horizon := base
+			if p.span > 0 && int(p.span*60) > horizon {
+				horizon = int(p.span * 60)
+			}
 			score := i.rehearse(a, b, sim, p, prey, tick, horizon)
 			// Selection noise is the skill's wander: the ace nearly argmaxes,
 			// the novice sometimes picks the second-best line and flies it well.
 			score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
+			// Personality (#252): a per-MISSION bias on the repertoire — no
+			// tick in the hash, so it holds for the whole fight and the next
+			// mission draws a different opponent rather than a replay. Large
+			// where humans are inconsistent, tie-breaks only at the top:
+			// the machine's optimality is never diluted, its near-ties just
+			// stop being decided the same way every rematch.
+			score += (battle.Roll(i.environment.Seed, uint64(slot)+97, 0, uint64(n)) - 0.5) * 2 * math.Max(0.004, b.skill.wander*0.7)
 			if p.name == b.play {
 				score += 0.02 // ties keep the committed line: churn is its own cost (a larger incumbency rode broken lines past the moment press should take over — measured 6/6 kills falling to 3/6 on the conversion referendum)
 			}
@@ -472,6 +646,19 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	m.prey = predict(prey, age, b.skill.library >= 3)
 	m.velocity = prey.velocity.Add(prey.swing.Scale(age))
 	m.derive()
+	// The merge side is committed ONCE per pass (#251): TestMergeRoll's
+	// claim — a disciplined lead turn is readable — regressed to 1.2-1.4
+	// roll reversals when cross re-picked its side per tick as the
+	// geometry drifted. b.turning was built for exactly this hold in the
+	// classic path; the arbiter now keeps it too.
+	if bearing > 0.5 && distance < 2500 {
+		if b.turning == 0 {
+			b.turning = m.side()
+		}
+	} else if (bearing < -0.2 && distance > 900) || distance > 3000 {
+		b.turning = 0 // released only once the pass is genuinely spent: dropping the commitment AT the crossing un-committed the very turn the gate reads
+	}
+	m.grain = b.turning
 	for _, p := range plays {
 		if p.name == b.play {
 			o := p.law(&m)

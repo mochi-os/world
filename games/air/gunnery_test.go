@@ -237,3 +237,129 @@ func TestLadderDuel(t *testing.T) {
 		}
 	}
 }
+
+// flounder drives the scripted target that reproduces the profile the user
+// actually presented in the 2026-08-06 fight (recording 019fd794...): 50-110
+// m/s, 20-38 degrees alpha for two-thirds of the fight, keyboard-shaped
+// inputs — full-aft pitch camping the limiter in bursts, quantised rolls, a
+// hard break when the bandit closes, and novice gunnery when the nose happens
+// on. Every fighting-speed instrument scored the bots healthy while THIS
+// profile took the superhuman 174 seconds and cost it hits; the fight no
+// instrument covers is always the one that matters.
+func flounder(me, foe *flight.State, tick uint64) map[string]any {
+	toward := foe.Position.Subtract(me.Position)
+	r := math.Max(toward.Length(), 1)
+	line := toward.Scale(1 / r)
+	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+	// Keyboard pitch: full aft in bursts, released in gaps — the limiter camp.
+	phase := tick % 150
+	pitch := 0.0
+	if phase < 126 {
+		pitch = 1.0 // 2.1 s of full-aft, 0.4 s of release: the limiter camp that made the measured 67% above 20 degrees alpha
+	}
+	// Keyboard roll: quantised full-deflection steps toward keeping the
+	// bandit off the nose-tail line, flipped on a slow deterministic clock.
+	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
+	bank := math.Atan2(right.Y, up.Y)
+	roll := 0.0
+	turn := 1.0
+	if (tick/540)%2 == 1 {
+		turn = -1
+	}
+	wantBank := turn * 1.42
+	if r < 900 && line.Dot(me.Velocity.Normalize()) < -0.3 {
+		wantBank = turn * 1.45 // he is behind and close: break harder
+		pitch = 1.0
+	}
+	if wantBank-bank > 0.15 {
+		roll = 1
+	} else if wantBank-bank < -0.15 {
+		roll = -1
+	}
+	// Ham-fisted recovery, like a novice: wings-ish level and pull when low.
+	if me.Position.Y < 700 && me.Velocity.Y < 0 {
+		roll = clamp(-bank*2, -1, 1)
+		pitch = 1.0
+	}
+	// Novice gunnery: squeeze whenever the nose wanders on inside range.
+	fire := r < 900 && nose.Dot(line) > 0.9985
+	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 0.65, "fire": fire}
+}
+
+// TestFlounder is the referendum the tier names answer to (#249): kill the
+// user's measured profile fast and clean. Gates: the superhuman inside 60
+// seconds WITHOUT taking a hit; the ace inside 120. The pilot is reported
+// (its target is parity with the user, judged elsewhere).
+func TestFlounder(t *testing.T) {
+	heavy(t)
+	for _, level := range []string{"pilot", "ace", "superhuman"} {
+		var times []float64
+		struck, unresolved := 0, 0
+		for seed := uint64(1); seed <= 6; seed++ {
+			g := New()
+			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("flounder%s%d", level, seed),
+				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+				Parameters: map[string]any{"missiles": false, "bots": map[string]any{level: 1.0}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := made.(*instance)
+			if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+				t.Fatal(err)
+			}
+			bot := -1
+			for slot, a := range i.aircraft {
+				if a != nil && a.brain != nil {
+					bot = slot
+				}
+			}
+			place(i, 0, bot, 1800) // the bot starts with the picture, not the advantage
+			me := &i.aircraft[0].model.State
+			done := false
+			for tick := uint64(0); tick < 60*180 && !done; tick++ {
+				i.events = i.events[:0]
+				i.Step(tick, map[int][]game.Input{0: {{Sequence: 1, Data: flounder(me, &i.aircraft[bot].model.State, tick)}}})
+				for _, e := range i.events {
+					if e["kind"] == "hit" && e["slot"] == bot {
+						count, _ := e["count"].(int)
+						struck += count
+					}
+				}
+				human := i.aircraft[0]
+				if human.model == nil || !human.alive {
+					times = append(times, float64(tick)/60)
+					done = true
+				}
+				if b := i.aircraft[bot]; b.model == nil || !b.alive {
+					done = true // the flounder killed the bot: counts as unresolved-with-prejudice below
+				}
+			}
+			if !done || len(times) < int(seed) {
+				unresolved++
+			}
+		}
+		mean := 0.0
+		for _, v := range times {
+			mean += v
+		}
+		if len(times) > 0 {
+			mean /= float64(len(times))
+		}
+		fmt.Printf("%-11s killed the flounder %d/6, mean %5.1f s, hits taken %d, unresolved %d\n",
+			level, len(times), mean, struck, unresolved)
+		switch level {
+		case "superhuman":
+			if len(times) < 6 || mean > 60 {
+				t.Errorf("superhuman: %d/6 kills, mean %.1f s — the tier's name promises under 60 with no misses", len(times), mean)
+			}
+			if struck > 0 {
+				t.Errorf("superhuman took %d hits from a keyboard novice — its passes cross the target's nose", struck)
+			}
+		case "ace":
+			if len(times) < 5 || mean > 120 {
+				t.Errorf("ace: %d/6 kills, mean %.1f s — an instructor finishes this fight inside two minutes", len(times), mean)
+			}
+		}
+	}
+}
