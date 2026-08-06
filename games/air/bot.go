@@ -29,7 +29,7 @@ type skill struct {
 	discipline float64 // missile-launch patience, 0..1
 	react      float64 // reaction delay to an inbound missile, s
 	open       float64 // gun opening range, m
-	trigger    float64 // snapshot looseness: how far off a perfect solution this pilot still shoots, as an angle factor on range (#215 — DECOUPLED from wander: aim precision and willingness to fire were one number, so the most accurate tier had the tightest gate and shot least, and lethality ran BACKWARDS up the ladder)
+	trigger    float64 // the shot's PRICE (#235): the minimum walk-through chance this pilot fires a burst at. Low is loose — the novice hoses at 2%, which is authentic; the pilot is disciplined but under-confident at 12%; the top tiers deliberately take the calculated snapshot (6% / 3%) because against a manoeuvring target the converged solution never comes and expected damage beats expected nothing. (Kept from #215: this axis is DECOUPLED from wander — precision and willingness were once one number and lethality ran backwards up the ladder.)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
@@ -80,10 +80,10 @@ type skill struct {
 // perception, discipline, and trigger-cadence humanities the code applies
 // beyond this table.
 var skills = map[string]skill{
-	"novice":     {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.10, commit: 1.0, floor: 0},
-	"pilot":      {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.048, commit: 2.3, floor: 105},
-	"ace":        {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.020, commit: 4.0, floor: 154},
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 700, trigger: 0.008, commit: 4.0, floor: 154, machine: true}, // commit stays ace-grade: strategy re-judged at 1.6 s like the ace — the machine edge is reflex and precision, and a half-second commit just flipped between near-tied lines and finished none of them
+	"novice":     {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0},
+	"pilot":      {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105},
+	"ace":        {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 700, trigger: 0.03, commit: 4.0, floor: 154, machine: true}, // commit stays ace-grade: strategy re-judged at 1.6 s like the ace — the machine edge is reflex and precision, and a half-second commit just flipped between near-tied lines and finished none of them
 }
 
 // commitment is the manoeuvre set that must be flown through rather than
@@ -313,6 +313,7 @@ type track struct {
 	position flight.Vec3
 	velocity flight.Vec3
 	swing    flight.Vec3 // velocity change per second between refreshes (#144): the turn the good shooters lead — a straight-line prediction lands every round behind a 6 g break
+	wobble   float64     // jerk estimate, m/s^3: how fast his acceleration has been CHANGING. This is the target's unpredictability — a steady circle carries a small constant jerk (the acceleration vector rotates with the turn), a reversal spikes it an order of magnitude. The trigger prices its shot against it: a predictable target rewards waiting for a converged solution, an erratic one never converges and the snapshot is the only shot there is (#235).
 	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
 }
 
@@ -410,19 +411,28 @@ type brain struct {
 	drop     bool       // one-shot flare request
 	offset   [2]float64 // this period's aim wander components
 	bursting uint64     // consecutive ticks of trigger: the burst governor (#206)
+	walked   float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
+	walkedAt uint64     // tick of that judgement: consecutive judgements give the sweep rate the crossing shot is priced on
 	magazine int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
 	sampled  uint64     // tick of the stored orbit sample
 	sampleP  flight.Vec3
 	sampleV  flight.Vec3
-	ring     orbit   // the prey's estimated turning circle (#206 planner)
-	quiet    uint64  // tick the mandatory pause ends
-	safed    string  // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
-	turning  float64 // committed lead-turn direction, +1/-1; 0 = not in a pass
-	turned   uint64  // tick the lead turn was committed
-	aimed    float64 // last tick's pointing error, sin of the angle off the aim
-	closing  float64 // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
-	jink     uint64  // tick to re-roll the jink direction
-	phase    float64 // current jink roll phase
+	sampleW  flight.Vec3 // swing at the anchor: a sign flip against it is the reversal that invalidates the arc
+	intent   string      // fight-level posture (#236): convert / deny / reset / finish; "" = neutral
+	minded   uint64      // tick the posture was set: the intent commitment
+	chanced  uint64      // last tick the trigger had a shot worth its price — the stalemate detector's clock
+	nearing  float64     // closure EMA, m/s: is the pursuit actually gaining
+	spanned  float64     // last range, for the closure trend
+	gauged   uint64      // tick of that range
+	ring     orbit       // the prey's estimated turning circle (#206 planner)
+	quiet    uint64      // tick the mandatory pause ends
+	safed    string      // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
+	turning  float64     // committed lead-turn direction, +1/-1; 0 = not in a pass
+	turned   uint64      // tick the lead turn was committed
+	aimed    float64     // last tick's pointing error, sin of the angle off the aim
+	closing  float64     // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
+	jink     uint64      // tick to re-roll the jink direction
+	phase    float64     // current jink roll phase
 	missiles int
 	alert    uint64          // tick an inbound missile was first noticed (react delay runs from here)
 	noticed  map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
@@ -635,8 +645,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 		if seen {
-			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity}
+			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity, wobble: 45}
 			if t, found := b.known[other]; found {
+				fresh.wobble = t.wobble // carried between looks; a fresh contact starts at 45 — treat the unknown as manoeuvring until watched
 				least := 0.05
 				if b.skill.machine {
 					least = 0 // perfect perception includes the acceleration a human infers from spaced looks
@@ -646,6 +657,10 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					if fresh.swing.Length() > 80 {
 						fresh.swing = fresh.swing.Normalize().Scale(80) // cap at ~8 g: track noise is not a maneuver
 					}
+					// The jerk update rides the same pair of looks, on a
+					// roughly half-second memory whatever the refresh rate.
+					jerk := fresh.swing.Subtract(t.swing).Length() / gap
+					fresh.wobble = t.wobble + clamp(gap*3, 0.05, 1)*(jerk-t.wobble)
 				}
 				// TALLY (#146): my own eyes replace the radio picture — tell
 				// the lead his call was picked up. Once per bandit per life.
@@ -1022,7 +1037,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 				spot := predict(prey, horizon, b.skill.library >= 3)
 				direction, span := i.bearing(me.Position, spot)
 				closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
-				time := span / math.Max(battle.Muzzle+closure, 200)
+				time := span / math.Max(battle.Average(span, me.Position.Y)+closure, 200)
 				lead := predict(prey, horizon+time, b.skill.library >= 3).
 					Subtract(me.Velocity.Scale(time)).
 					Add(flight.Vec3{Y: 4.9 * time * time})
@@ -1123,11 +1138,25 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b.prey = prey
 	// Refresh the orbit estimate whenever the track has a NEW observation: two
 	// spaced samples give the circle BFM is flown against (#206 planner).
+	// The pair must be SPACED: two looks a sixtieth of a second apart carry
+	// no measurable turn and circle() rejects them, so an anchor that
+	// advanced on every refresh left the zero-delay tier — alone on the
+	// ladder — with no orbit estimate at all, and its rehearsals evolving
+	// the opponent as a straight-liner (#235). The anchor now holds until
+	// the pair is wide enough. A reversal drops the arc instead of fitting
+	// it: a circle bridged across a direction change confidently predicts
+	// a turn the target has already abandoned, which measured WORSE than no
+	// estimate when this was first tried without the guard.
 	if prey.when != b.sampled {
-		if b.sampled != 0 {
+		if b.sampled == 0 {
+			b.sampled, b.sampleP, b.sampleV, b.sampleW = prey.when, prey.position, prey.velocity, prey.swing
+		} else if prey.swing.Dot(b.sampleW) < 0 && prey.swing.Length() > 25 && b.sampleW.Length() > 25 {
+			b.ring = orbit{}
+			b.sampled, b.sampleP, b.sampleV, b.sampleW = prey.when, prey.position, prey.velocity, prey.swing
+		} else if float64(prey.when-b.sampled)/60 >= 0.25 {
 			b.ring = circle(b.sampleP, b.sampleV, b.sampled, prey.position, prey.velocity, prey.when)
+			b.sampled, b.sampleP, b.sampleV, b.sampleW = prey.when, prey.position, prey.velocity, prey.swing
 		}
-		b.sampled, b.sampleP, b.sampleV = prey.when, prey.position, prey.velocity
 	}
 	age := float64(tick-prey.when) / 60
 	horizon := 0.0
@@ -1839,7 +1868,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// crosser, which is precisely the deflection game). In the control zone,
 	// SADDLE: kill the closure and hold the track.
 	if b.shoot && b.prey != nil && distance < b.skill.open*1.4 {
-		time := distance / math.Max(battle.Muzzle+closure, 200)
+		time := distance / math.Max(battle.Average(distance, me.Position.Y)+closure, 200)
 		lead := predict(prey, horizon+time, b.skill.library >= 3).
 			Subtract(me.Velocity.Scale(time)).
 			Add(flight.Vec3{Y: 4.9 * time * time})
@@ -1942,6 +1971,18 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// noise had made even the rookie untrackable to an ace.
 	b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/150) - 0.5) * 2 * b.skill.wander
 	b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/150) - 0.5) * 2 * b.skill.wander
+	// The machine's defensive JINK (#236): deliberate, not noise. Perfectly
+	// smooth flight is perfectly predictable flight — the wander tiers get
+	// an accidental jink for free, and the tier without it was measured
+	// losing the top of the ladder to burn-downs from crossing shots that
+	// only connect against a clean line. A quarter-second weave while
+	// DENYING spoils the shooter's prediction exactly the way a human's
+	// last-ditch guns defence does; it costs energy and aim, which is why
+	// it rides the defensive posture and not the gun track.
+	if b.skill.machine && b.intent == "deny" {
+		b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/15) - 0.5) * 0.11
+		b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/15) - 0.5) * 0.11
+	}
 }
 
 // committed reports whether a teammate's missile is already chasing the
@@ -2040,6 +2081,49 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 		return b.compose(m, aim, want, 1, 1, 0, false, tick)
 	}
 
+	// The pipper takes the stick (#235): inside the gun envelope, with the
+	// play already carrying the nose near the solution, steer the LED point
+	// rather than the play's control point. The plays are pursuit GEOMETRY —
+	// lag points, yo-yo apexes — and nothing in them ever commanded the bore
+	// onto the firing solution, so the nose crossed it only by accident:
+	// measured, the machine held a solution for 0.4% of its in-range time
+	// while flying textbook offence. The cone keeps the takeover honest —
+	// far off the solution the play's geometry still owns the stick, so lag
+	// pursuit is not collapsed into pure pursuit and the overshoot it
+	// prevents stays prevented. Wander applies AFTER: a novice's pipper
+	// still wanders.
+	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 {
+		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*1.15 && direction.Dot(aim) > 0.94 {
+			// Aim PAST the solution by twice the residual: the pursuit law
+			// is proportional-only, so against a drifting lead direction it
+			// settles with a standing error — measured 0.7 degrees, which is
+			// seven metres at gun range, which is a miss astern where the
+			// airframe is edge-on. Tripling the apparent error divides the
+			// standing error by three; the cone above bounds the input, so
+			// the boost cannot wrench the jet.
+			nose := s.Attitude.Rotate(flight.Vec3{X: 1})
+			aim = direction.Scale(3).Subtract(nose.Scale(2)).Normalize()
+			// The walk needs authority: compose sizes the turn by the
+			// pointing error against this ceiling, and the approach plays
+			// fly low ones — under which a one-degree residual closes at a
+			// tenth of a degree per second and the whole magazine leaves
+			// before the pipper arrives (measured: 16 m of believed miss
+			// decaying 1.5 m/s while 578 rounds passed 9-17 m off a
+			// straight-and-level target). The ceiling is the skill's full
+			// pull, aero-capped: a hard-turning target slews the lead
+			// direction at twenty degrees a second, and a four-g tracking
+			// allowance tops out at six — measured as a machine whose best
+			// aim all fight was 26 m while flying textbook pursuit. The
+			// error-proportional sizing still keeps the demand gentle once
+			// converged; the ceiling only matters while the pipper is being
+			// DRIVEN to him.
+			pace := corner(m)
+			stall := pace / math.Sqrt(m.Airframe.Limit.Positive)
+			cap := math.Max(0.85*(speed/stall)*(speed/stall), 1.1)
+			want = math.Max(want, math.Min(b.skill.pull, cap))
+		}
+	}
+
 	// Aim wander: the skill's imprecision, as a pointing error.
 	side := aim.Cross(flight.Vec3{Y: 1}).Normalize()
 	rise := side.Cross(aim).Normalize()
@@ -2054,7 +2138,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 {
 		fire = b.solution(m, tick)
 	}
-	if fire && !b.skill.machine { // the squeeze-and-pause is trigger discipline, a humanity: the machine holds fire to the solution and the magazine alone
+	if fire { // the squeeze-and-pause paces every tier now that the trigger is a wager: the price buys ONE burst, and the pause re-judges the next — without it the machine turned a three-percent shot into a six-second magazine dump (#235)
 		b.bursting++
 		if b.bursting > 45 {
 			b.bursting = 0
@@ -2067,51 +2151,119 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	return b.compose(m, aim, want, b.throttle, b.reheat, b.brake, fire, tick)
 }
 
-// solution decides the trigger: the nose within tolerance of the target's
-// CURRENT position (extrapolated from the possibly-stale track) — the gun is
-// a hitscan, so there is no bullet time to lead.
-func (b *brain) solution(m *flight.Model, tick uint64) bool {
+// pipper computes the led gun solution: the direction the bore must point
+// for the stream to arrive where the target will be (#real-TOF — rounds fly
+// real time of flight, inherit the shooter's velocity, and drop), how far
+// the nose sits from it in metres at the target, the live range, and the
+// total prediction horizon (track age + bullet transit).
+func (b *brain) pipper(m *flight.Model, tick uint64) (direction flight.Vec3, miss, span, horizon float64) {
 	s := &m.State
+	age := float64(tick-b.prey.when) / 60
+	curved := b.skill.library >= 3
+	current := predict(b.prey, age, curved)
+	line := current.Subtract(s.Position)
+	span = math.Max(line.Length(), 1)
+	closure := s.Velocity.Subtract(b.prey.velocity).Dot(line.Scale(1 / span))
+	transit := span / math.Max(battle.Average(span, s.Position.Y)+closure, 200)
+	spot := predict(b.prey, age+transit, curved).
+		Subtract(s.Velocity.Scale(transit)).
+		Add(flight.Vec3{Y: 4.9 * transit * transit})
+	direction = spot.Subtract(s.Position).Normalize()
+	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
+	miss = math.Acos(clamp(nose.Dot(direction), -1, 1)) * math.Max(span, 50)
+	return direction, miss, span, age + transit
+}
+
+// solution decides the trigger. It is a WAGER, not a verdict (#235): the old
+// gate demanded the nose inside a fixed metre band of the led point, which a
+// PLANNING opponent essentially never grants — measured across sixteen
+// bot-against-bot fights, the band was met on 0.0-0.4% of in-range ticks,
+// nobody fired, and no fight ever resolved, while every single-sided
+// instrument (drones, scripted turners) read healthy. The gate now estimates
+// the chance a burst taken NOW walks through the target and fires when that
+// chance clears the tier's price. Two terms set the chance: the aim error,
+// against the width of the corridor the stream actually kills through; and
+// the target's measured unpredictability (track.wobble), which widens where
+// he might be by bullet arrival. The consequence the old gate could not
+// express: against an erratic target the converged solution never comes, so
+// waiting for it has zero value and the snapshot is worth its low odds —
+// which is exactly how a human treats the same picture.
+func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	if b.distance > b.skill.open {
 		return false
 	}
-	age := float64(tick-b.prey.when) / 60
-	// The gate judges the LED solution (#real-TOF): rounds fly real time of
-	// flight, so a hit is decided by whether the bore matches where he will
-	// be at arrival — the same point the steering already flies. Gating on
-	// his current position made the trigger measure the wrong thing: it held
-	// fire on correct lead in deflection and blessed a no-lead bore that the
-	// gunnery then flew straight behind him.
-	current := predict(b.prey, age, b.skill.library >= 3)
-	los := current.Subtract(s.Position).Normalize()
-	closure := s.Velocity.Subtract(b.prey.velocity).Dot(los)
-	transit := b.distance / math.Max(battle.Muzzle+closure, 200)
-	spot := predict(b.prey, age+transit, b.skill.library >= 3).
-		Subtract(s.Velocity.Scale(transit)).
-		Add(flight.Vec3{Y: 4.9 * transit * transit})
-	direction := spot.Subtract(s.Position).Normalize()
-	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
-	miss := math.Acos(clamp(nose.Dot(direction), -1, 1)) * math.Max(b.distance, 50)
-	// The gate is TRIGGER, not wander (#215): willingness to take the shot is
-	// its own skill axis. When aim noise set the gate, the ace's precision
-	// tightened its own trigger until it fired for 1.2% of a fight and killed
-	// less than the veteran — the burst is a stream, and a good pilot walks a
-	// close stream on; only a rookie hoses at any angle (trigger 0.10 keeps
-	// that authentic). Wander still ruins the rookie's AIM; it no longer
-	// forbids the ace's shot.
-	tolerance := 22 + b.skill.trigger*b.distance*1.5
-	if b.bursting == 0 {
-		// OPEN fire only on a solid solution; keep firing while it merely
-		// holds — the entry hysteresis of a deliberate squeeze, not a hose.
-		// Conservation tightens the entry as the magazine drains: the last
-		// hundred rounds only leave on near-perfect solutions.
-		remaining := clamp(float64(b.magazine)/float64(rounds), 0, 1)
-		tolerance *= 0.4 + 0.25*remaining
+	_, miss, span, horizon := b.pipper(m, tick)
+	// The chance the stream centre passes within the airframe's reach of
+	// him: P(|N(miss, sigma)| < reach). The widths must be the REAL ones —
+	// the first version of this gate used the kill corridor as the sigma,
+	// which called a 20 m miss at 700 m a one-in-three shot; every tier
+	// opened far out on those odds, dumped the magazine on the approach,
+	// and arrived at the kill range Winchester (TestConvert went 0/12 on a
+	// straight-and-level offerer). Sigma is what actually scatters the
+	// stream centre relative to him: the gun's dispersion cone, the
+	// prediction drift his measured unpredictability buys over the bullet's
+	// flight (wobble*h^3/6 — a steady turn's is negligible at gun ranges, a
+	// reversal's is not), this pilot's own aim wander over the burst, and a
+	// floor for the FCS's fine-tracking jitter.
+	// Reach is the vulnerable half-width the stream must land inside. Five
+	// metres, not the airframe's paper envelope: from dead astern — where
+	// most gun kills live — the wings are edge-on and eight metres of
+	// claimed reach called a certain miss a 79 percent shot, which the
+	// machine then spent its whole belt on.
+	reach := 5.0
+	scatter := 0.004 * span
+	drift := b.prey.wobble * horizon * horizon * horizon / 6
+	waver := b.skill.wander * span
+	sigma := math.Sqrt(scatter*scatter + drift*drift + waver*waver)
+	// A burst being WALKED is finished, not re-judged: while the error is
+	// shrinking the stream is converging on him and the next rounds are the
+	// best-priced of the fight. This is the correction loop of real gunnery
+	// — the first rounds find the line, the walk kills.
+	if b.bursting > 0 && miss < b.walked-0.3 {
+		b.walked, b.walkedAt = miss, tick
+		b.chanced = tick
+		return true
 	}
-	if b.pressing(tick) {
-		tolerance *= b.tactics.press.loose // finishing: accept the deflection shot the patient tracker declines (#144)
+	// The crossing shot (#235): against mutual manoeuvre nobody TRACKS the
+	// lead point — it slews at up to forty degrees a second at close range
+	// and the airframe answers with fifteen. Kills come from the bore
+	// SWEEPING through the solution, and a trigger that prices frozen
+	// instants refuses exactly that shot: by the time the instant is good
+	// the sweep has passed it. Price the burst on where the sweep will
+	// bottom over the next four tenths — rounds fired now arrive as the
+	// bore crosses. Measured before this: the machine's best aim across
+	// whole four-minute fights was 26 m, one never-fired standoff, while
+	// the ace's aim WANDER accidentally produced the crossings that won it
+	// fights up the ladder.
+	sweep := 0.0
+	if tick == b.walkedAt+1 && b.walked > miss {
+		sweep = (b.walked - miss) * 60
 	}
-	return miss < tolerance
+	b.walked, b.walkedAt = miss, tick
+	// Only a FAST sweep is a crossing: eighty metres a second separates a
+	// bore slicing through the solution (hundreds) from a pursuit steadily
+	// converging on it (tens). Discounting the slow kind re-opened the
+	// approach-phase magazine dump this gate exists to prevent — measured
+	// straight back to seven of twelve on the conversion referendum.
+	judged := miss
+	if sweep > 80 {
+		judged = math.Max(0, miss-0.4*(sweep-80))
+	}
+	root := sigma * math.Sqrt2
+	chance := 0.5 * (math.Erf((reach-judged)/root) - math.Erf((-reach-judged)/root))
+	// Conservation: the magazine is ~8 seconds of fire for a fight minutes
+	// long, so the last rounds demand better odds than the first.
+	// No pressing discount: the old tolerance needed one because it could
+	// not see range; the chance already prices range, drift, and this
+	// pilot's own scatter, and halving the price just opened fire at 700 m
+	// on two-percent shots — measured dumping the whole belt on the
+	// approach to a straight-and-level offerer.
+	price := b.skill.trigger * (1.6 - 0.6*clamp(float64(b.magazine)/float64(rounds), 0, 1))
+	if chance > price {
+		b.chanced = tick
+		return true
+	}
+	return false
 }
 
 // compose turns an aim direction and a g demand into stick, through the same

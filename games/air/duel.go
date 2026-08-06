@@ -67,7 +67,7 @@ func (m *moment) swing(angle float64) flight.Vec3 {
 // lead is the ballistic intercept point the gunnery flies: his position at
 // bullet arrival, in the shooter's accelerating frame, with gravity drop.
 func (m *moment) lead() flight.Vec3 {
-	transit := m.distance / math.Max(battle.Muzzle+m.closure, 200)
+	transit := m.distance / math.Max(battle.Average(m.distance, m.me.Position.Y)+m.closure, 200)
 	return m.prey.Add(m.velocity.Scale(transit)).
 		Subtract(m.me.Velocity.Scale(transit)).
 		Add(flight.Vec3{Y: 4.9 * transit * transit})
@@ -221,10 +221,97 @@ func evolve(t *track, ring orbit, dt float64) (flight.Vec3, flight.Vec3) {
 	return position, velocity
 }
 
+// posture is the fight-level intent (#236) expressed as weights on the one
+// scorer — never a second planner: the layers cannot fight each other when
+// the upper one only re-prices what the lower one already measures.
+type posture struct {
+	offence float64
+	threat  float64
+	energy  float64
+	closing float64
+}
+
+// stances: CONVERT presses for a firing solution; DENY spoils his and buys
+// separation; RESET rebuilds deliberately when converting has provably
+// stalled; FINISH spends everything on a beaten opponent. Neutral is the
+// novice's whole strategic life — fighting moment to moment is authentic.
+var stances = map[string]posture{
+	"":        {1, 1, 1, 1},
+	"convert": {1.5, 0.8, 0.8, 1.3},
+	"deny":    {0.5, 1.8, 1.3, 0.6},
+	"reset":   {0.3, 1.2, 2.2, -0.4},
+	"finish":  {2.2, 0.4, 0.4, 1.6},
+}
+
+// judge re-decides the posture. Trend, not instantaneous geometry: the
+// signals are whether the pursuit is actually gaining (nearing), how long
+// since the trigger last had a shot worth taking (chanced), and his energy
+// state — the four-second play arbiter below cannot represent "he is out of
+// energy, leave, rebuild, come back", because that plan scores badly at four
+// seconds and only pays at twenty. The posture is COMMITTED between
+// re-judgements or the churn defect returns one level up; DENY and RESET
+// carry their own exits so neither becomes the unbounded flee this layer
+// exists to end — measured before it: a pilot-tier bot ran flat out for
+// three and a half minutes from an attacker who never closed, and the
+// fight could not resolve because nothing in either bot could say "this is
+// settled, turn around".
+func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float64, menace int, gap float64) {
+	if b.skill.library < 2 {
+		return // the novice holds no fight-level intent
+	}
+	commit := uint64(600) // 10 s; the pilot switches slower
+	if b.skill.library < 3 {
+		commit = 900
+	}
+	threatened := menace >= 0 && gap < 1600
+	if b.intent != "" && tick-b.minded < commit {
+		// Commitment guards PATIENCE — riding out a reset, not abandoning a
+		// conversion the moment it feels slow. It must not hold a posture
+		// against the two signals that cannot wait, the same exception the
+		// play arbiter has always carried for a committed line: an attacker
+		// arriving (measured: the machine died in convert, fifteen hits
+		// taken at 300 m while its four-second-old posture was locked), and
+		// an opponent suddenly beaten, whose recovery is bought back at
+		// twenty metres a second.
+		urgent := (threatened && b.intent != "deny") ||
+			(b.skill.library >= 3 && b.intent != "finish" && prey.velocity.Length() < 170 && distance < 2200)
+		if !urgent {
+			return
+		}
+	}
+	// FINISH needs the advantage actually in hand: his energy collapsed,
+	// mine intact, and enough sky under me to spend. Without the guard the
+	// posture chose itself off the opponent's state alone — including while
+	// low, slow, and pointing away, where "spend everything" is suicide.
+	speed := me.Velocity.Length()
+	mine := speed*speed/2 + 9.81*me.Position.Y
+	him := prey.velocity.Length()
+	his := him*him/2 + 9.81*prey.position.Y
+	slow := him < 170 && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
+	starving := tick-b.chanced > 2700 && b.nearing < 12 // 45 s without a shot worth its price, and the range is not coming down
+	next := "convert"
+	switch {
+	case slow && b.skill.library >= 3:
+		next = "finish"
+	case threatened:
+		next = "deny"
+	case b.intent == "reset" && tick-b.minded < 900:
+		next = "reset" // a reset runs its full spell: rebuilding half an energy reserve buys nothing
+	case starving && b.intent != "reset":
+		next = "reset"
+	}
+	if next != b.intent {
+		if next == "convert" || next == "reset" {
+			b.chanced = tick // the conversion clock restarts with the attempt
+		}
+		b.intent, b.minded = next, tick
+	}
+}
+
 // appraise scores one instant of a rehearsed future. Positive is a fight
 // being won: his tail toward my pointed nose inside the gun band. Negative is
 // a fight being lost: his nose behind my tail, or the sea arriving.
-func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64) float64 {
+func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture) float64 {
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
 	lhat := los.Scale(1 / r)
@@ -249,12 +336,21 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64) float64 {
 	// away. Closure is what a pursuit buys; it fades out approaching the band,
 	// where arriving hot is the classic blown pass.
 	closing := s.Velocity.Subtract(hisV).Dot(lhat)
-	score := offence - 1.3*threat + energy - r/12000 +
-		0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
-		0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
+	score := w.offence*offence - 1.3*w.threat*threat + w.energy*energy - r/12000 +
+		w.closing*0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
+		w.offence*0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
 		0.5*clamp((closing-70)/150, 0, 1)*clamp((900-r)/600, 0, 1) // the blown pass, priced: arriving hot inside the merge cannot be stopped by any law (stopping distance alone exceeds the range), and without this the incumbent full-burner play tied the disciplined one and zero-noise argmax never escaped it — the machine overshot every pass it flew
+	// The deck is NON-NEGOTIABLE, whatever the posture: these penalties are
+	// deliberately outside the weights, because FINISH's discounted threat
+	// and energy let otherwise-marginal low lines score positive — measured
+	// as the machine flying itself into the sea at three kilometres from
+	// its target, twice in eight duels, and losing the ladder to the tier
+	// below it on drownings.
 	if s.Position.Y < 400 {
-		score -= 2
+		score -= 6
+	}
+	if s.Velocity.Y < 0 {
+		score -= 1.5 * clamp((700-s.Position.Y)/300, 0, 1)
 	}
 	if speed < 80 {
 		score -= 1
@@ -289,7 +385,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		}
 		if k%30 == 0 || k == horizon {
 			w := 0.4 + 0.6*float64(k)/float64(horizon)
-			score += w * appraise(&sim.State, hisP, hisV, pace)
+			score += w * appraise(&sim.State, hisP, hisV, pace, stances[b.intent])
 			weight += w
 		}
 	}
@@ -304,6 +400,19 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	b := a.brain
 	me := &a.model.State
 	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+
+	// The closure trend, on a ~1.5 s memory: the intent layer judges the
+	// pursuit by whether it GAINS, not by where it points.
+	if b.gauged != 0 && tick > b.gauged {
+		dt := float64(tick-b.gauged) / 60
+		rate := (b.spanned - distance) / dt
+		b.nearing += clamp(dt/1.5, 0.05, 1) * (rate - b.nearing)
+	}
+	b.spanned, b.gauged = distance, tick
+	if b.chanced == 0 {
+		b.chanced = tick // the conversion clock starts when the fight does
+	}
+	b.judge(me, prey, tick, distance, menace, gap)
 
 	// The press clock (the finisher's deliberate looseness, #144): held
 	// advantage in range starts it, losing the range stops it.

@@ -165,9 +165,14 @@ func TestCheats(t *testing.T) {
 		place(i, 0, 99, 250)
 		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
 	}
-	drone := &i.aircraft[99].model.State.Damage
-	if drone.Engine[0]+drone.Engine[1] == 0 && drone.Leak == 0 && total(drone.Element) == 0 && i.aircraft[99].alive {
-		t.Fatal("invulnerability protected a bot: 5 s of tracking fire left the drone untouched")
+	// A detonation (the 3 percent tank-vapour roll) removes the model
+	// outright, so "dead" may mean "no wreck to inspect" — either way the
+	// cheat did not protect it, which is the assertion.
+	if b := i.aircraft[99]; b.alive && b.model != nil {
+		drone := &b.model.State.Damage
+		if drone.Engine[0]+drone.Engine[1] == 0 && drone.Leak == 0 && total(drone.Element) == 0 {
+			t.Fatal("invulnerability protected a bot: 5 s of tracking fire left the drone untouched")
+		}
 	}
 }
 
@@ -1251,28 +1256,31 @@ func TestBotPress(t *testing.T) {
 		t.Fatalf("advantage lost but press still %d", ace.brain.press)
 	}
 
-	// The loose knob (neutral by default — measured: rounds trace the
-	// airframe, wider gates only spray): with it amended open, a pressing
-	// brain takes the ~35 m deflection at 400 m that patience declines.
-	ace.brain.tactics.press.loose = 1.8
-	rig := func(press uint64) bool {
+	// The trigger is a wager on the chance the stream crosses him (#235),
+	// and a KNOWN 35 m offset at 400 m is a certain miss whatever the
+	// posture — every round lands 35 m away, and the old press.loose knob
+	// that once forced this shot was a hose dressed as aggression. What a
+	// finishing pilot legitimately takes is the CROSSING: the bore sweeping
+	// fast through the solution, priced on where the sweep bottoms so the
+	// rounds arrive as it crosses.
+	rig := func(walked float64, at uint64) bool {
 		aloft(ace, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 400, Z: 35}), forward)
 		b := ace.brain
 		b.decided = 1000 // skip decide: the rigged state must survive
-		b.press = press  // 0 = no advantage; 1 = held since tick zero
 		b.shoot = true
 		b.prey = &track{when: 1000, position: prey.model.State.Position, velocity: prey.model.State.Velocity}
 		b.distance = 400
 		b.aim = flight.Vec3{X: 1}
+		b.walked, b.walkedAt = walked, at
 		i.think(ace.player.Slot, ace, 1000)
 		return ace.latest.Fire
 	}
-	if rig(0) {
-		t.Fatal("patient tracker took the deflection shot")
+	if rig(0, 0) {
+		t.Fatal("took a static 35 m deflection shot — that is a spray, not a snapshot")
 	}
-	if !rig(1) {
-		t.Fatal("pressing, but the wider deflection still held fire")
+	if !rig(80, 999) {
+		t.Fatal("the bore is sweeping through the solution at forty-five metres a tick and the trigger still held")
 	}
 }
 
@@ -2040,18 +2048,25 @@ func TestEngagement(t *testing.T) {
 func TestBurstWounds(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 	steady := map[string]any{"throttle": 0.85, "fire": true}
-	for tick := 0; tick < 36; tick++ { // 0.6 s of trigger at 250 m astern
+	// Stop at the FIRST wound: the assertion is that damage arrives as
+	// graduated wounds rather than all-or-nothing, and it must hold at the
+	// moment the first rounds land. Judging after a full 0.6 s burst made
+	// the test hostage to the detonation roll (3 percent per tank hit —
+	// the historical flamer, real and intended), which any ballistics
+	// change re-rolls by shifting which round strikes what and when.
+	for tick := 0; tick < 36; tick++ {
 		place(i, 0, 1, 250)
 		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
+		target := i.aircraft[1]
+		if target.model == nil || !target.alive || target.condition.Killed {
+			t.Fatalf("destroyed at tick %d before any survivable wound was observed — damage is not graduated", tick)
+		}
+		damage := &target.model.State.Damage
+		if damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0 || damage.Jam != nil {
+			return // wounded and flying: the graduated model holds
+		}
 	}
-	damage := &i.aircraft[1].model.State.Damage
-	wounded := damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0 || damage.Jam != nil
-	if !wounded {
-		t.Fatal("0.6 s of tracking fire left no wound at all")
-	}
-	if !i.aircraft[1].alive || i.aircraft[1].condition.Killed {
-		t.Fatal("a short burst must wound, not destroy")
-	}
+	t.Fatal("0.6 s of tracking fire left no wound at all")
 }
 
 // TestBlastCredits: the missile path end to end — launch, pursuit, proximity

@@ -25,6 +25,31 @@ const (
 // gunnery here.
 const Muzzle = 1050.0 // m/s
 
+// Length is the round's drag length at sea level: quadratic drag makes the
+// speed decay exponentially with DISTANCE, v(x) = v0*exp(-x/Length), which
+// fits the published M56/PGU-28 tables (about 1,050 m/s at the barrel, about
+// 700 m/s and 1.16 s at a thousand metres). The length stretches with
+// altitude as the air thins — a high fight genuinely shoots further, which
+// is real and which the no-drag model hid by shooting infinitely far
+// everywhere.
+const Length = 2600.0 // m
+
+// stretched is the drag length at an altitude, on an 8.5 km density scale.
+func stretched(altitude float64) float64 {
+	return Length * math.Exp(math.Max(altitude, 0)/8500)
+}
+
+// Average is the round's mean speed over a flight of span metres starting at
+// an altitude — the number every fire-control solution divides range by. It
+// tends to Muzzle as the span shortens.
+func Average(span, altitude float64) float64 {
+	if span < 1 {
+		return Muzzle
+	}
+	l := stretched(altitude)
+	return span * Muzzle / (l * (math.Expm1(span / l)))
+}
+
 // Pose is the shooter's muzzle state in world coordinates.
 type Pose struct {
 	Position flight.Vec3 // muzzle
@@ -81,6 +106,12 @@ func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []R
 // over these ranges is a second-order correction the fire control never
 // modelled either). Returns true once the round is spent.
 func Fly(r *Round, dt float64) bool {
+	// Quadratic drag on the whole vector: the round flies through the air
+	// mass, and the air does not care which part of the speed was barrel
+	// and which was inherited from the shooter.
+	if speed := r.Velocity.Length(); speed > 1 {
+		r.Velocity = r.Velocity.Scale(1 / (1 + speed*dt/stretched(r.Position.Y)))
+	}
 	r.Velocity.Y -= 9.8 * dt
 	r.Position = r.Position.Add(r.Velocity.Scale(dt))
 	r.Age += dt
