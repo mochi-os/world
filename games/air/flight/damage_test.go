@@ -394,3 +394,33 @@ func TestEncodeGear(t *testing.T) {
 		t.Fatalf("gear damage did not survive the round trip: %v", back.Damage.Gear)
 	}
 }
+
+// TestEngineLossSavesFuel: a dead engine must stop drinking (#41). The fire
+// drill's whole point — and single-engine range — depend on the flow scaling
+// with the same health factor as the thrust; before this, a killed engine
+// burned its full commanded flow while producing nothing.
+func TestEngineLossSavesFuel(t *testing.T) {
+	burned := func(damage float64) float64 {
+		m := cruising(t)
+		m.Direct = true
+		m.State.Damage.Engine[0] = damage
+		start := m.State.Fuel
+		for i := 0; i < 240*10; i++ { // 10 s at full throttle
+			m.Step(flight.Inputs{Throttle: 1})
+		}
+		return start - m.State.Fuel
+	}
+	healthy, wounded := burned(0), burned(1)
+	if healthy <= 0 {
+		t.Fatalf("healthy jet burned nothing (%.3f kg) — the probe is broken", healthy)
+	}
+	ratio := wounded / healthy
+	if ratio > 0.65 || ratio < 0.35 {
+		t.Fatalf("one dead engine of two should roughly halve the burn: %.2f kg vs %.2f kg (ratio %.2f)", wounded, healthy, ratio)
+	}
+	// Partial damage scales proportionally, exactly like the thrust does.
+	half := burned(0.5)
+	if half >= healthy || half <= wounded {
+		t.Fatalf("half-damaged burn %.2f kg should sit between wounded %.2f and healthy %.2f", half, wounded, healthy)
+	}
+}

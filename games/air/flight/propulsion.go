@@ -70,6 +70,13 @@ func (m *Model) spool(in Inputs) {
 }
 
 // output is one engine's dry and reheat thrust at the flight condition.
+// Output is output exported for the rehearsal surrogate (#256): a reduced-order
+// rollout must use the SAME thrust lapse the real jet flies, or it ranks plays
+// against an engine that does not exist.
+func Output(state EngineState, engine *Engine, density float64, mach float64) (float64, float64) {
+	return output(state, engine, density, mach)
+}
+
 func output(state EngineState, engine *Engine, density float64, mach float64) (float64, float64) {
 	sigma := math.Pow(density/1.225, lapse)
 	intake := 1.0
@@ -110,7 +117,11 @@ func (m *Model) burn() {
 	for i := range m.Airframe.Engines {
 		engine := &m.Airframe.Engines[i]
 		dry, boost := output(m.State.Engine[i], engine, local.Density, mach)
-		flow += dry*engine.Flow.Dry + boost*engine.Flow.Reheat
+		// A damaged core burns in proportion to what it still produces — the
+		// same health factor propulsion() applies to its thrust. Without it a
+		// dead engine drank at full rate, halving single-engine range in the
+		// one scenario where fuel is the drama (#41).
+		flow += (dry*engine.Flow.Dry + boost*engine.Flow.Reheat) * m.State.Damage.engine(i)
 	}
 	if m.State.External > 0 {
 		m.State.External = math.Max(0, m.State.External-flow*Dt)
