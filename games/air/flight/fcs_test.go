@@ -187,3 +187,48 @@ func TestPedalRollsAtHighAlpha(t *testing.T) {
 		t.Fatalf("pedal at 3 deg alpha commands no roll: %.3f rad differential", low)
 	}
 }
+
+// TestRollingReduction: a rolling pull is limited BELOW a straight one (#46,
+// NATOPS 11.1.7 — up to 80% NzREF at full lateral stick). It measured the
+// opposite before: full-lateral pulls exceeded the straight ceiling by half
+// a g through the differential stabilator.
+func TestRollingReduction(t *testing.T) {
+	peak := func(roll float64) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 300, Fighter.Mass.Fuel*0.7)
+		top := 0.0
+		for i := 0; i < 240*4; i++ { // 4 s of full aft stick
+			m.Step(Inputs{Throttle: 1, Pitch: 1, Roll: roll})
+			if m.State.Fcs.Normal > top {
+				top = m.State.Fcs.Normal
+			}
+		}
+		return top
+	}
+	straight, rolling := peak(0), peak(1)
+	if rolling >= straight {
+		t.Fatalf("full-lateral pull must peak BELOW the straight pull: %.2f vs %.2f g", rolling, straight)
+	}
+	if rolling < straight*0.72 || rolling > straight*0.92 {
+		t.Fatalf("the rolling reduction is ~20%%: %.2f vs %.2f g (%.0f%%)", rolling, straight, 100*rolling/straight)
+	}
+}
+
+// TestNegativeFloorFixed: the negative command floor does not schedule with
+// gross weight (NATOPS 11.1.7: "fixed at negative 3 g's for all gross
+// weights") — only the positive side does.
+func TestNegativeFloorFixed(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)                        // full internal...
+	m.Stores(Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")) // ...plus three tanks: heavy enough that a weight-scaled floor would stop at -2.4
+	least := 1.0
+	for i := 0; i < 240*3; i++ {
+		m.Step(Inputs{Throttle: 1, Pitch: -1})
+		if m.State.Fcs.Normal < least {
+			least = m.State.Fcs.Normal
+		}
+	}
+	if least > -2.55 {
+		t.Fatalf("heavy jet must still command toward -3 g, not a weight-scaled floor: reached %.2f g", least)
+	}
+}

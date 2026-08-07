@@ -239,10 +239,19 @@ func (m *Model) fcs(in Inputs, local Air) {
 			schedule = math.Min(1, m.Airframe.Limit.Reference/m.mass)
 		}
 		ceiling := m.Airframe.Limit.Positive * schedule
+		// Rolling reduction (#46, NATOPS 11.1.7/2.8.2.3): the limiter takes
+		// commanded load down to 80% NzREF, starting at a quarter of lateral
+		// stick travel and full at full deflection — a rolling pull is
+		// limited BELOW a straight one (asymmetric wing bending rides on the
+		// g). It measured the OPPOSITE before: full-lateral pulls reached
+		// 7.58 g against a 7.01 ceiling.
+		ceiling *= 1 - 0.2*clamp((math.Abs(in.Roll)-0.25)/0.75, 0, 1)
 		if in.Override {
-			ceiling = m.Airframe.Limit.Override * schedule
+			ceiling = m.Airframe.Limit.Override * schedule // the paddle defeats the limiter, rolling reduction included
 		}
-		floor := m.Airframe.Limit.Negative * schedule
+		// The negative command floor is FIXED at -3 g for all gross weights
+		// (NATOPS 11.1.7) — only the positive side schedules with mass.
+		floor := m.Airframe.Limit.Negative
 		// Neutral-stick feedforward: the load that holds the current flight
 		// path (cos γ); the attitude-hold below owns the actual behaviour.
 		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
@@ -314,6 +323,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// with the gear (Extension 1→0 over ~2 s), as the real law fader does.
 		if m.State.Gear.Extension > 0.02 && calibrated < 130 {
 			demand = math.Min(demand, level+(ceiling-level)*(1-m.State.Gear.Extension))
+		}
+		if m.State.Gear.Extension > 0.02 {
+			demand = math.Min(demand, 2.0) // gear in transit or down: +2.0 g structural cap (NATOPS 4.1.8), at ANY speed — the fast gear-down pull was uncapped
 		}
 		shaping := 25.0
 		if math.Abs(demand-level) < math.Abs(f.Demand-level) {
