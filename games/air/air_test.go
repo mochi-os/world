@@ -151,8 +151,14 @@ func TestCheats(t *testing.T) {
 		t.Fatalf("invulnerable human took damage: engines %.2f/%.2f leak %.2f elements %.2f killed %v",
 			human.Engine[0], human.Engine[1], human.Leak, total(human.Element), i.aircraft[1].condition.Killed)
 	}
+	// Infinite AMMUNITION, not a frozen counter (#258): the magazine is full
+	// because it refills, and the rounds that left are still counted — a
+	// cheats match must not report "never fired" to the recorder.
 	if i.aircraft[0].ammunition != rounds {
 		t.Fatalf("infinite ammunition depleted: %d of %d rounds left", i.aircraft[0].ammunition, rounds)
+	}
+	if i.aircraft[0].spent == 0 {
+		t.Fatal("five seconds of held trigger under the ammunition cheat recorded no expenditure")
 	}
 	if fuel := i.aircraft[0].model.State.Fuel; fuel != i.tank {
 		t.Fatalf("infinite fuel depleted: %.1f of %.1f kg left after 5 s in reheat", fuel, i.tank)

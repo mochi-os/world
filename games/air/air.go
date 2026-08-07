@@ -242,6 +242,7 @@ type craft struct {
 	latest     flight.Inputs
 	alive      bool
 	ammunition int     // gun rounds left this life
+	spent      int     // rounds fired this life, cumulative (#258): under the ammunition cheat the magazine refills, so the counter alone can no longer answer "how much did he shoot" — this can
 	charge     float64 // fractional rounds accumulated at the fire rate
 	missiles   int     // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
 	loadout    loadout // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
@@ -343,6 +344,7 @@ func (a *craft) arm() {
 		Condition: &a.condition,
 	}
 	a.ammunition = rounds
+	a.spent = 0 // a fresh life, a fresh expenditure record
 	a.charge = 0
 	// The magazine is the granted loadout's round count in the SMS firing
 	// order (#17). Fighting bots keep their own two-round b.missiles
@@ -869,11 +871,19 @@ func (i *instance) guns(dt float64, tick uint64) {
 			continue
 		}
 		a.charge -= float64(burst)
-		if !i.cheat.ammunition {
-			if burst > a.ammunition {
-				burst = a.ammunition
-			}
-			a.ammunition -= burst
+		if burst > a.ammunition {
+			burst = a.ammunition
+		}
+		a.ammunition -= burst
+		if i.cheat.ammunition {
+			// Infinite AMMUNITION, not a gun that stops counting (#258). The
+			// burst is deducted and the magazine topped straight back up, so
+			// the limiter stays live and expenditure stays observable — the
+			// recorder and the debrief now treat rounds as ground truth
+			// (#238), and a frozen counter feeds them a flat line that reads
+			// as "never fired" rather than "cannot say".
+			a.spent += burst
+			a.ammunition = rounds
 		}
 		state := &a.model.State
 		shooter := battle.Pose{
@@ -901,11 +911,16 @@ func (i *instance) fly(dt float64, tick uint64) {
 	if len(i.rounds) == 0 {
 		return
 	}
+	// The roster is read ONCE (#258): slots() allocates and sorts, and it sat
+	// inside the loop over every round in flight — with ~40k rounds airborne
+	// that is 40k allocations and sorts per tick for a list that cannot
+	// change while the rounds are being flown.
+	order := i.slots()
 	alive := i.rounds[:0]
 	for r := range i.rounds {
 		round := &i.rounds[r]
 		landed := false
-		for _, slot := range i.slots() {
+		for _, slot := range order {
 			a := i.aircraft[slot]
 			if a == nil || !a.alive || a.model == nil || slot == round.Shooter {
 				continue
@@ -1348,18 +1363,36 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		}
 		entry := state_payload(&me.model.State)
 		cores[self] = entry["core"]
+		if me.bot {
+			// A bot has no link, so everything below — its interest set, its
+			// sorted neighbours, its missile list, its whole per-recipient
+			// blob — is built and then discarded (#258). With ninety-nine of
+			// them that is about ninety-nine percent of the snapshot's work
+			// thrown away. Its own pose still went into `cores` above, which
+			// is what the humans actually need from it.
+			continue
+		}
 		// Interest management: everyone else sorted by wrap distance; the
 		// nearest `near` every snapshot, the far tail rotated `roving` at a
 		// time so distant contacts still refresh several times a second.
-		others := make([]int, 0, len(order)-1)
+		// Distance is measured ONCE per candidate, not once per comparison
+		// (#258): span() is wrap-aware, and a comparator that recomputes it
+		// pays for it O(n log n) times instead of n.
+		type neighbour struct {
+			slot int
+			away float64
+		}
+		near_by := make([]neighbour, 0, len(order)-1)
 		for _, slot := range order {
 			if slot != self && i.aircraft[slot].model != nil {
-				others = append(others, slot)
+				near_by = append(near_by, neighbour{slot, i.span(me.model, i.aircraft[slot].model)})
 			}
 		}
-		sort.Slice(others, func(x, y int) bool {
-			return i.span(me.model, i.aircraft[others[x]].model) < i.span(me.model, i.aircraft[others[y]].model)
-		})
+		sort.Slice(near_by, func(x, y int) bool { return near_by[x].away < near_by[y].away })
+		others := make([]int, len(near_by))
+		for n, entry := range near_by {
+			others[n] = entry.slot
+		}
 		picked := others
 		if len(others) > near {
 			// Sticky near set with hysteresis: enter at rank <= near, leave past
