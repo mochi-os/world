@@ -155,3 +155,31 @@ func TestExternalEncode(t *testing.T) {
 		t.Fatalf("round trip lost fuel state: %f %f", back.Fuel, back.External)
 	}
 }
+
+// TestTankJettisonShare: a PART-FULL tank departs with its share of the fuel
+// (#42). The old clamp only bit when the remainder exceeded the new capacity,
+// so punching a part-full tank kept every kilogram — shedding the mass and
+// drag for free. Proportional is exact: attached tanks drain in step.
+func TestTankJettisonShare(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	all := Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")
+	m.Stores(all)
+	if m.State.External != 3030 {
+		t.Fatalf("three tanks filled to %f kg, want 3030", m.State.External)
+	}
+	m.State.External = 1500 // burned down: every tank at the same 49.5% fill
+	m.Stores(Fighter.Default | mask(t, "pylon3", "tank3", "pylon7", "tank7"))
+	if math.Abs(m.State.External-1000) > 0.001 {
+		t.Fatalf("dropping one of three part-full tanks left %f kg, want 1000 (a third of the fuel leaves with its tank)", m.State.External)
+	}
+	// Dropping the rest takes the rest.
+	m.Stores(Fighter.Default)
+	if m.State.External != 0 {
+		t.Fatalf("no tanks but %f kg external", m.State.External)
+	}
+	// The full-tank drop and the rearm refill keep their exact semantics.
+	m.Stores(all)
+	if m.State.External != 3030 {
+		t.Fatalf("re-arm filled to %f kg, want 3030", m.State.External)
+	}
+}

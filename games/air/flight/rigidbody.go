@@ -92,11 +92,25 @@ func (m *Model) SetWorld(w World) { m.World = w }
 // firing a missile clears its bit, dropping the station's mass and drag.
 // Fuel-bearing entries extend the fuel system on the transition: a tank
 // arriving (bit off to on) comes full, adding its capacity to
-// State.External; a tank departing clamps the external quantity to the
-// remaining capacity. Re-asserting an unchanged mask is a no-op, so the
-// owner may sync it idempotently every frame.
+// State.External; a tank departing takes its proportional share of the
+// remaining external fuel with it (#42) — exact, not an approximation,
+// because attached tanks drain in step, so every tank always holds the same
+// fraction of its capacity. A clamp alone only bit when the remainder
+// exceeded the new capacity, so a part-full tank jettisoned mid-flight left
+// every kilogram of its fuel behind. Re-asserting an unchanged mask is a
+// no-op, so the owner may sync it idempotently every frame.
 func (m *Model) Stores(mask uint32) {
 	if mask != m.stores {
+		previous := 0.0
+		for i := range m.Airframe.Stores {
+			if entry := &m.Airframe.Stores[i]; entry.Fuel > 0 && m.stores&(1<<uint(i)) != 0 {
+				previous += entry.Fuel
+			}
+		}
+		fill := 0.0
+		if previous > 0 {
+			fill = m.State.External / previous
+		}
 		capacity := 0.0
 		for i := range m.Airframe.Stores {
 			entry := &m.Airframe.Stores[i]
@@ -108,12 +122,20 @@ func (m *Model) Stores(mask uint32) {
 				if m.stores&(1<<uint(i)) == 0 {
 					m.State.External += entry.Fuel // a fresh tank mounts full
 				}
+			} else if m.stores&(1<<uint(i)) != 0 {
+				m.State.External -= entry.Fuel * fill // a departing tank leaves with its share
 			}
 		}
-		m.State.External = math.Min(m.State.External, capacity)
+		m.State.External = math.Min(math.Max(m.State.External, 0), capacity) // float dust, and the invariant the fuel system assumes
 	}
 	m.stores = mask
 }
+
+// Mass is the current flown mass, kilograms: structure less shed damage,
+// internal and external fuel, and every attached store — the number weigh()
+// maintains each step. Zero before the first step; callers needing a value
+// pre-flight fall back to the empty-plus-fuel approximation.
+func (m *Model) Mass() float64 { return m.mass }
 
 func (m *Model) Step(in Inputs) {
 	// Deployable slews: the probe's ~5 s hydraulic stroke and the hook's ~2 s
