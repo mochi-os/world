@@ -137,10 +137,39 @@ func connection_read(l link, s *session, slot int) {
 				return
 			default: // inbox full: chat loses to inputs
 			}
+		case "jettison":
+			departures := connection_departures(message)
+			if len(departures) == 0 {
+				continue
+			}
+			select {
+			case s.inbox <- order{kind: "jettison", slot: slot, departures: departures}:
+			case <-s.done:
+				return
+			default: // inbox full: a lost jettison re-sends nothing — the client's next one supersedes
+			}
 		case "leave":
 			return
 		}
 	}
+}
+
+// connection_departures decodes a jettison's station list (#18), capped at
+// the nine stations — the instance validates the semantics.
+func connection_departures(message map[string]any) []game.Departure {
+	list, found := message["stations"].([]any)
+	if !found || len(list) > 9 {
+		return nil
+	}
+	departures := []game.Departure{}
+	for _, item := range list {
+		data, found := item.(map[string]any)
+		if !found {
+			continue
+		}
+		departures = append(departures, game.Departure{Station: int(number(data, "station")), What: text(data, "what")})
+	}
+	return departures
 }
 
 // connection_inputs decodes the batched input samples, oldest first.

@@ -15,6 +15,7 @@ package air
 import (
 	"strconv"
 
+	"world/game"
 	"world/games/air/aircraft"
 )
 
@@ -137,12 +138,15 @@ func stores_grant(raw map[string]any, missiles bool) loadout {
 	return lo
 }
 
-// shots is the brain's calibrated firing discipline, mirrored from bot.go
-// (mind()/reborn() set b.missiles = 2 and the doctrine battery is tuned
-// against it — keep in sync). Bots CARRY the full standard loadout below and
-// fire this many rounds from it in the SMS order; opening the discipline to
-// the whole magazine is #25's deliberate re-sweep.
-const shots = 2
+// shots is the brain's magazine, mirrored from bot.go (mind()/reborn() set
+// b.missiles = 6 — keep in sync or the rack-mask arithmetic in armed() goes
+// negative). The full six-round magazine is deliberate (#253): a joust IS
+// the engagement, so rounds saved at its end are rounds wasted — the
+// discipline that matters is PER-WINDOW, and the launch gates (patience,
+// rear-aspect quality, shoot-shoot-look spacing) already carry it. The ace
+// spends six good shots across a fight; the novice sprays its six early at
+// flare-able geometry. Both are authentic.
+const shots = 6
 
 // tips_loadout is the bare armed wingtips — what a stale pre-loadout client's
 // own model carries, and the grant for a join with no stores request.
@@ -266,6 +270,74 @@ func stores_mask(lo loadout, fired int) uint32 {
 		}
 	}
 	return mask
+}
+
+// stores_jettison returns the loadout with a station's departure applied
+// (#18): "stores" empties the mounts and keeps the fixture, "rack" clears the
+// fixture with everything on it. Wingtips (1/9) never jettison — the rails
+// have no ejector.
+func stores_jettison(lo loadout, station int, what string) loadout {
+	out := loadout{}
+	for key, value := range lo {
+		out[key] = value
+	}
+	if station < 2 || station > 8 {
+		return out
+	}
+	key := strconv.Itoa(station)
+	s := out[key]
+	s.Stores = make([]string, len(s.Stores))
+	if what == "rack" {
+		s.Fixture = ""
+	}
+	out[key] = s
+	return out
+}
+
+// Jettison applies a player's stores departure (#18): removal only, tips
+// protected, live rounds leaving on their racks come off the magazine, and
+// the granted loadout is re-published on the roster so every client
+// re-renders this jet. Runs on the tick goroutine (the server's jettisoner
+// interface), the same ownership as Step.
+func (i *instance) Jettison(slot int, departures []game.Departure) {
+	a := i.aircraft[slot]
+	if a == nil || a.loadout == nil || !a.alive {
+		return
+	}
+	before := stores_rounds(a.loadout)
+	fired := len(before) - a.missiles
+	if fired < 0 {
+		fired = 0
+	}
+	next := a.loadout
+	changed := false
+	for _, d := range departures {
+		if d.Station < 2 || d.Station > 8 || (d.What != "stores" && d.What != "rack") {
+			continue
+		}
+		next = stores_jettison(next, d.Station, d.What)
+		changed = true
+	}
+	if !changed {
+		return
+	}
+	live := map[string]bool{}
+	for _, name := range stores_rounds(next) {
+		live[name] = true
+	}
+	gone := 0
+	for _, name := range before[fired:] {
+		if !live[name] {
+			gone++
+		}
+	}
+	a.loadout = next
+	a.missiles -= gone
+	if a.missiles < 0 {
+		a.missiles = 0
+	}
+	a.model.Stores(a.attach())
+	i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": a.player.Name, "team": a.team, "stores": a.loadout})
 }
 
 // attach is the craft's current mask: its granted loadout minus the rounds

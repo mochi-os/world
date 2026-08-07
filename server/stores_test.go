@@ -111,3 +111,55 @@ func TestLoadout(t *testing.T) {
 		t.Fatal("guns session missing from the listing")
 	}
 }
+
+// TestJettison: a jettison event strips the named stations — stores or the
+// whole rack — the tips and junk are refused, and the roster re-emit carries
+// the new granted loadout to every client (#18).
+func TestJettison(t *testing.T) {
+	s, err := sessions_create("air", "furball", "jettison test", 4, map[string]any{"missiles": true})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	a := dial(t)
+	defer a.session.CloseWithError(0, "done")
+	request := map[string]any{
+		"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		"2": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+		"5": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+	}
+	a.send(t, map[string]any{"kind": "join", "session": s.identifier, "name": "alpha", "protocol": protocol, "stores": request})
+	if text(a.receive(t), "kind") != "welcome" {
+		t.Fatal("not welcomed")
+	}
+	event_wait(t, a, "roster", 5*time.Second)
+	a.send(t, map[string]any{"kind": "jettison", "stations": []any{
+		map[string]any{"station": 5, "what": "stores"},
+		map[string]any{"station": 2, "what": "rack"},
+		map[string]any{"station": 9, "what": "rack"},  // tip: refused
+		map[string]any{"station": 3, "what": "bogus"}, // junk: refused
+	}})
+	roster := event_wait(t, a, "roster", 5*time.Second)
+	granted, _ := roster["stores"].(map[string]any)
+	if granted == nil {
+		t.Fatal("roster re-emit carries no loadout")
+	}
+	station5, _ := granted["5"].(map[string]any)
+	if station5 == nil || text(station5, "fixture") != "pylon" {
+		t.Fatalf("station 5 pylon should stay on a stores drop: %v", granted["5"])
+	}
+	if points, _ := station5["stores"].([]any); len(points) != 1 || points[0] != "" {
+		t.Fatalf("station 5 tank should be gone: %v", granted["5"])
+	}
+	station2, _ := granted["2"].(map[string]any)
+	if station2 == nil || text(station2, "fixture") != "" {
+		t.Fatalf("station 2 rack should be gone: %v", granted["2"])
+	}
+	station9, _ := granted["9"].(map[string]any)
+	if station9 == nil || text(station9, "fixture") != "rail" {
+		t.Fatalf("station 9 tip must never jettison: %v", granted["9"])
+	}
+	if points, _ := station9["stores"].([]any); len(points) != 1 || points[0] != "9m" {
+		t.Fatalf("station 9 round must survive: %v", granted["9"])
+	}
+}

@@ -138,6 +138,10 @@ func session_orders(s *session) {
 				}
 			case "chat":
 				session_chat(s, o)
+			case "jettison":
+				if j, ok := s.instance.(jettisoner); ok && s.players[o.slot] != nil {
+					j.Jettison(o.slot, o.departures)
+				}
 			}
 		default:
 			return

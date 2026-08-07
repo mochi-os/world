@@ -42,6 +42,14 @@ type Input struct {
 	Data     map[string]any
 }
 
+// Departure is one station's jettison request (#18): What is "stores" (the
+// mounts leave, the fixture stays) or "rack" (the fixture with everything on
+// it). The game instance validates — the wire promises nothing.
+type Departure struct {
+	Station int
+	What    string
+}
+
 // Game is a registered module: a factory for per-session instances plus its
 // fixed simulation and snapshot rates in Hz.
 type Game interface {

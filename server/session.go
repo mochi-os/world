@@ -36,15 +36,16 @@ type player struct {
 
 // order is a control message from a connection to a session's tick goroutine.
 type order struct {
-	kind   string // join, leave, input, chat
-	player game.Player
-	link   link
-	inputs []game.Input
-	slot   int
-	text   string        // chat only
-	scope  string        // chat only: "team" or "all"
-	reply  chan answer   // join only
-	cancel chan struct{} // join only: closed when the caller stops waiting, so a stalled tick's late join rolls back instead of committing a ghost
+	kind       string // join, leave, input, chat
+	player     game.Player
+	link       link
+	inputs     []game.Input
+	slot       int
+	text       string           // chat only
+	scope      string           // chat only: "team" or "all"
+	departures []game.Departure // jettison only (#18)
+	reply      chan answer      // join only
+	cancel     chan struct{}    // join only: closed when the caller stops waiting, so a stalled tick's late join rolls back instead of committing a ghost
 }
 
 // answer is the tick goroutine's response to a join order (the welcome
@@ -66,6 +67,13 @@ type spoken struct {
 // session's tick goroutine, which owns the instance.
 type sided interface {
 	Team(slot int) string
+}
+
+// jettisoner is the optional game-instance interface for stores departures
+// (#18). Called only from the session's tick goroutine, which owns the
+// instance; the instance validates and re-publishes the granted loadout.
+type jettisoner interface {
+	Jettison(slot int, departures []game.Departure)
 }
 
 type session struct {
