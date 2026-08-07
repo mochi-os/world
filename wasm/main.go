@@ -27,6 +27,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"math"
 	"syscall/js"
 
@@ -67,6 +68,7 @@ func main() {
 		"level":    js.FuncOf(level),
 		"stores":   js.FuncOf(stores),
 		"catalog":  js.FuncOf(catalog),
+		"gust":     js.FuncOf(gust),
 		"approach": js.FuncOf(approach),
 		"clear":    js.FuncOf(clear),
 	}
@@ -81,6 +83,16 @@ func main() {
 }
 
 func version(js.Value, []js.Value) any { return flight.Version }
+
+// gust reports the wind vector sampled at the jet this step — the headless
+// verification that Environment.Wind actually reached the core (#44).
+func gust(js.Value, []js.Value) any {
+	if model == nil {
+		return "no model"
+	}
+	g := model.Gust()
+	return fmt.Sprintf("%.2f,%.2f,%.2f", g.X, g.Y, g.Z)
+}
 
 // initialize builds the model from a JSON payload of environment and world
 // geometry. Returns an error string, or "" on success.

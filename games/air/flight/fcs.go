@@ -73,6 +73,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 	} else if in.Gear && calibrated < 125 {
 		pa = true
 	}
+	if !pa {
+		m.halfleg = false // the clean-up ended the takeoff leg; the next PA entry is an approach
+	}
 	if pa != m.pa {
 		m.launder = 2 // seconds of decay: each law re-learns its own trim behind the demand faders
 	}
@@ -137,15 +140,24 @@ func (m *Model) fcs(in Inputs, local Air) {
 			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*Dt, -4*math.Pi/180, 4*math.Pi/180)
 		}
 		droopTarget, slatFloor = m.Approaching(pressure)
+		// The takeoff configuration is LATCHED, not read off the gear handle:
+		// HALF flap is set on deck (standing start, not a bolter's touch) and
+		// held through the whole clean-up climb — raising the gear must not
+		// halve the droop mid-climb-out (it cost a step of CL at 150 kt heavy
+		// and settled a hands-off launch into the sea), and leaving it down
+		// must not grant the approach's FULL droop off the bow.
+		if m.State.Gear.Wow && m.State.Velocity.Length() < 40 {
+			m.halfleg = true
+		}
 		if in.Flap >= 2 {
 			// FULL selected: the heavy shot's and the short field's setting —
 			// honoured even on deck.
-		} else if m.State.Gear.Wow || !in.Gear || in.Flap >= 1 {
-			// Takeoff flap: HALF on deck, through the clean-up climb with the
-			// gear coming up, and whenever the pilot selects it (the field and
-			// strong-crosswind technique). The FULL droop otherwise belongs to
-			// a gear-down approach. Scaled before the lift-cap maths so the
-			// neutral-alpha cap prices the droop actually flying.
+		} else if m.halfleg || in.Flap >= 1 {
+			// Takeoff flap: HALF from the deck through the clean-up climb,
+			// and whenever the pilot selects it (the field and
+			// strong-crosswind technique). The FULL droop belongs to the
+			// airborne approach entry. Scaled before the lift-cap maths so
+			// the neutral-alpha cap prices the droop actually flying.
 			droopTarget *= c.Droop.Half
 		}
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)

@@ -170,7 +170,12 @@ func (m *Model) stroke(s *State, total *Forces) {
 	// full 88 m/s; a heavy one settles toward the deck edge before flying
 	// away — the sink real launches show.
 	stall := math.Sqrt(2 * m.mass * gravity / (air(m.State.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
-	speed := clamp(1.16*stall, 45, cat.Speed)
+	// The crew sets the shot for AIRSPEED off the bow, and wind over the deck
+	// is part of the budget (#44): a 25 kt headwind means the stroke itself
+	// needs 25 kt less. m.gust is the wind sampled at the jet this step;
+	// -gust·track is the headwind component down the launch track.
+	headwind := math.Max(0, -m.gust.Dot(track))
+	speed := clamp(1.16*stall-headwind, 45, cat.Speed)
 	force := m.mass * speed * speed / (2 * cat.Stroke)
 	force *= clamp(s.Gear.Stroke/8, 0.3, 1) // the real cat builds force over the first metres — stepping full thrust on at fire bounced the jet on its struts (the average loss is made up within the stroke sizing margin)
 	local := s.Attitude.Unrotate(track.Scale(force))
