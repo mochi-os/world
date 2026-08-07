@@ -13,10 +13,12 @@
 package air
 
 import (
+	"math"
 	"strconv"
 
 	"world/game"
 	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 type slot struct {
@@ -310,15 +312,15 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 		fired = 0
 	}
 	next := a.loadout
-	changed := false
+	changed := 0
 	for _, d := range departures {
 		if d.Station < 2 || d.Station > 8 || (d.What != "stores" && d.What != "rack") {
 			continue
 		}
 		next = stores_jettison(next, d.Station, d.What)
-		changed = true
+		changed++
 	}
-	if !changed {
+	if changed == 0 {
 		return
 	}
 	live := map[string]bool{}
@@ -336,8 +338,31 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if a.missiles < 0 {
 		a.missiles = 0
 	}
+	// The release envelope (#43, NATOPS figure 4-4 jettison columns: 575
+	// KCAS / Mach 0.95, +1.0 to +2.0 g). A drop outside it is permitted —
+	// the manual limits, it does not inhibit — but the departing store can
+	// strike the airframe on the way out: a deterministic dent (parasitic
+	// drag) and overstress exposure per offending station. MIRRORED in the
+	// client's jettison_stations for the single-player core — keep in sync.
+	if severity := release_severity(a.model); severity > 0 {
+		struck := math.Min(1, 2*severity)
+		for s := 0; s < changed; s++ {
+			a.model.State.Damage.Drag += 0.05 * struck
+			a.model.State.Damage.Stress += 2 * severity
+		}
+	}
 	a.model.Stores(a.attach())
 	i.events = append(i.events, map[string]any{"kind": "roster", "slot": slot, "name": a.player.Name, "team": a.team, "stores": a.loadout})
+}
+
+// release_severity is how far outside the jettison envelope the jet is:
+// zero inside 575 KCAS / Mach 0.95 between +1 and +2 g, growing with the
+// overspeed ratio and the g deviation beyond it.
+func release_severity(m *flight.Model) float64 {
+	speed := math.Max(m.Cas()*1.9438/575, m.Mach()/0.95)
+	g := m.State.Fcs.Normal
+	deviation := math.Max(0, math.Max(1-g, g-2))
+	return math.Max(0, speed-1) + 0.5*deviation
 }
 
 // attach is the craft's current mask: its granted loadout minus the rounds

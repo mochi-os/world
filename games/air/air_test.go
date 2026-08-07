@@ -2303,3 +2303,34 @@ func TestSelfPoseDamage(t *testing.T) {
 			theirs[26], theirs[29], theirs[30], theirs[31])
 	}
 }
+
+// TestJettisonStrike: a commanded drop outside the release envelope (NATOPS
+// figure 4-4: 575 KCAS / Mach 0.95, +1 to +2 g) dents the airframe — drag and
+// overstress per offending station — while an in-envelope drop stays clean
+// (#43). The manual limits the drop, it does not inhibit it.
+func TestJettisonStrike(t *testing.T) {
+	drop := func(speed float64) (float64, float64) {
+		i := build(t, "furball", map[string]any{"missiles": true}, 1)
+		a := i.aircraft[0]
+		a.loadout = stores_normalize(map[string]any{
+			"3": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+			"5": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+			"7": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+		})
+		a.model.State.Velocity = flight.Vec3{X: speed}
+		a.model.State.Fcs.Normal = 1.3 // inside the g band: only speed decides
+		i.Jettison(0, []game.Departure{{Station: 3, What: "stores"}, {Station: 5, What: "stores"}, {Station: 7, What: "stores"}})
+		return a.model.State.Damage.Drag, a.model.State.Damage.Stress
+	}
+	drag, stress := drop(160) // ~310 KCAS: well inside 575
+	if drag != 0 || stress != 0 {
+		t.Fatalf("in-envelope drop struck the airframe: drag %f stress %f", drag, stress)
+	}
+	drag, stress = drop(350) // ~680 KCAS at sea level: far outside
+	if drag <= 0 || stress <= 0 {
+		t.Fatalf("out-of-envelope drop left no mark: drag %f stress %f", drag, stress)
+	}
+	if drag > 0.2 {
+		t.Fatalf("the strike is a dent, not a shootdown: drag %f m2", drag)
+	}
+}
