@@ -361,6 +361,7 @@ type wreck struct {
 }
 
 type instance struct {
+	rehearsals  int     // arbiter re-plans spent this tick (#256): the allowance that bounds the rollout cost by construction
 	mode        string  // furball (open, endless) or joust (1v1, first kill ends it)
 	started     bool    // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
 	merged      bool    // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
@@ -638,6 +639,7 @@ func number(data map[string]any, key string) float64 {
 
 func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	dt := 1.0 / 60
+	i.rehearsals = 0 // the tick's arbiter allowance (#256)
 	for slot, list := range inputs {
 		a := i.aircraft[slot]
 		if a == nil || len(list) == 0 {
@@ -936,7 +938,15 @@ func (i *instance) acquire(slot int, a *craft) int {
 			continue
 		}
 		tail := direction.Dot(b.model.State.Attitude.Rotate(flight.Vec3{X: 1})) // 1 = square at the tailpipe
-		if distance > missile_range*(0.4+0.6*math.Max(0, tail)) {
+		// The head-on floor is the PLUME's, not the airframe's (#255): a
+		// burner-lit nose is lockable out to half the envelope, a cold one
+		// only close aboard — the 9M-era truth that policed the all-aspect
+		// merge. This is what starves the six-round volley meta at its
+		// source (no lock, no launch), and it makes the afterburner a
+		// beacon both sides can choose to hide: the run-in at MIL is
+		// concealment, for bots and the human alike.
+		floor := 0.15 + 0.35*clamp(b.latest.Reheat, 0, 1)
+		if distance > missile_range*(floor+(1-floor)*math.Max(0, tail)) {
 			continue
 		}
 		if forward.X*direction.X+forward.Y*direction.Y+forward.Z*direction.Z < missile_cone {
@@ -1269,6 +1279,9 @@ func pose(slot int, a *craft) []byte {
 	}
 	if !a.condition.Killed {
 		flags |= 16
+	}
+	if a.condition.Burning {
+		flags |= 32 // fuel fire: the one damage state with no continuous byte of its own, and the pilot's own cockpit needs it (#40)
 	}
 	b[26] = flags
 	b[27] = byte(clamp(a.latest.Reheat, 0, 1) * 255)

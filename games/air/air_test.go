@@ -1326,7 +1326,7 @@ func TestTeamsMissileHold(t *testing.T) {
 	if target := rig(0); target >= 0 {
 		t.Fatalf("launched at slot %d through the teammate on the seeker line", target)
 	}
-	if ace.brain.missiles != 2 {
+	if ace.brain.missiles != 6 { // the full magazine (#253): the assertion is that DECLINING costs nothing
 		t.Fatalf("declined launch spent a missile (%d left)", ace.brain.missiles)
 	}
 	if target := rig(2000); target != enemy.player.Slot {
@@ -2250,5 +2250,56 @@ func TestMissileEvadingFuse(t *testing.T) {
 	d := &target.model.State.Damage
 	if !(d.Engine[0]+d.Engine[1] > 0 || d.Leak > 0 || total(d.Element) > 0 || target.condition.Killed || !target.alive) {
 		t.Fatal("the evading target absorbed the missile untouched — the fuse died with the lock again")
+	}
+}
+
+// TestSelfPoseDamage: a player's OWN pose — the one the server deliberately
+// puts first in every poses blob — must carry the damage their cockpit needs
+// to annunciate: per-engine fire, the fuel fire, and the fuel leak. The client
+// had no reader for it, so in multiplayer the pilot was the only one in the
+// match who could not see their own jet burning (#40).
+func TestSelfPoseDamage(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	me := i.aircraft[0]
+	me.condition.Fire[0] = 0.6
+	me.condition.Burning = true
+	me.model.State.Damage.Leak = 1.5
+
+	snapshot := i.Snapshot(1)
+	poses, _ := snapshot["poses"].(map[int]any)
+	mine, _ := poses[0].(map[string]any)
+	blob, _ := mine["blob"].([]byte)
+	if len(blob) < 34 {
+		t.Fatalf("own pose blob %d bytes, want at least one 34-byte pose", len(blob))
+	}
+	self := blob[:34] // self first, by construction
+
+	if got := float64(self[29]) / 255; got < 0.5 || got > 0.7 {
+		t.Errorf("left engine fire byte %.2f, want ~0.6", got)
+	}
+	if self[30] != 0 {
+		t.Errorf("right engine fire byte %d, want 0 (only the left is alight)", self[30])
+	}
+	if self[26]&32 == 0 {
+		t.Error("fuel-fire flag not set in the self pose: the cockpit cannot raise FUEL FIRE")
+	}
+	if got := float64(self[31]) / 10; got < 1.4 || got > 1.6 {
+		t.Errorf("leak byte %.2f, want ~1.5", got)
+	}
+
+	// An undamaged jet must not annunciate: the flag is not sticky and the
+	// bytes are not noise.
+	clean := i.aircraft[1]
+	if clean.condition.Burning {
+		t.Fatal("slot 1 unexpectedly burning")
+	}
+	other, _ := poses[1].(map[string]any)
+	theirs, _ := other["blob"].([]byte)
+	if len(theirs) < 34 {
+		t.Fatalf("slot 1 blob %d bytes", len(theirs))
+	}
+	if theirs[26]&32 != 0 || theirs[29] != 0 || theirs[30] != 0 || theirs[31] != 0 {
+		t.Errorf("undamaged jet's own pose reports damage: flags %08b fire %d/%d leak %d",
+			theirs[26], theirs[29], theirs[30], theirs[31])
 	}
 }
