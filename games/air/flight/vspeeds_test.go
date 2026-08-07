@@ -617,8 +617,18 @@ func vsCorner(fuel, alt, stall float64) (float64, float64) {
 		}
 		return peak
 	}
+	// The plateau is the MAX over three fast points, and the acceptance sits
+	// an ABSOLUTE 0.2 g below it. The old single-point plateau with a 3%
+	// relative threshold hunted on a flat curve — that is what a plateau is —
+	// so a hundredth of a g of model drift moved the accepted cell ~15 kt
+	// (7.4-vs-7.5 g between builds, the drift that triggered this re-base).
 	plateau := snap(2.4 * stall)
-	target := 0.97 * plateau
+	for _, at := range []float64{2.0, 2.2} {
+		if p := snap(at * stall); p > plateau {
+			plateau = p
+		}
+	}
+	target := plateau - 0.2
 	if snap(stall*1.02) >= target {
 		return stall * 1.02, plateau
 	}

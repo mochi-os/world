@@ -44,7 +44,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # round to whole numbers and duplicates collapse.
 CONSTANTS = {
     "drag.pace":       (0.68, False, "below ~2/3 corner a break neither defeats his solution nor keeps the corner"),
-    "drag.span":       (900,  False, "inside 900 m an extension hands him the saddle; the break stays mandatory"),
+    "drag.span":       (720,  False, "inside 900 m an extension hands him the saddle; the break stays mandatory"),
     "spiral.nose":     (0.90, False, "established = his nose committed, not merely pointed this decision"),
     "spiral.span":     (1400, False, "a spiral against a distant attacker donates altitude for nothing"),
     "spiral.floor":    (2300, False, "the descending turn needs altitude to spend before the guard flattens it"),
@@ -79,7 +79,7 @@ CONSTANTS = {
     "press.loose":     (1.0,  False, "measured: rounds trace the airframe, a wider gate only sprays"),
     "press.closure":   (45,   False, "the overtake ceiling of the run-in to the finishing gap"),
     "press.gap":       (250,  False, "dispersion is angular: half the range is four times the hit density"),
-    "crowd.weight":    (1.0,  False, "spread the section across a target-rich picture; a perch is parked guns"),
+    "crowd.weight":    (2.75,  False, "spread the section across a target-rich picture; a perch is parked guns"),
     "sandwich.reach":  (10000, False, "a rescue 20 km out is a lonely transit to a stale fight, not a rescue"),
     "rejoin.span":     (4000, False, "a pair this far apart is two singles; re-form before crossing into a fight"),
     "rejoin.fight":    (10000, False, "a target inside this is my fight now, rejoined or not"),

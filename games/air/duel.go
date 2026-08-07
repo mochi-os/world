@@ -528,10 +528,18 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
 		m.derive()
 		o := chosen.law(&m)
-		shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
-		in := shadow.steer(sim, tick+uint64(k))
-		for sub := 0; sub < 4; sub++ {
-			sim.Step(in) // the flight core steps at 240 Hz: four substeps per 60 Hz rollout tick, exactly like the live path. One Step per tick ran the WHOLE rehearsal at quarter time — the phantom moved four times faster than the jet, every candidate scored against that fiction, and the rollouts barely discriminated (the press-versus-extend trace that exposed it flew identical paths)
+		if rehearsal.reduced() {
+			// The point-mass surrogate flies the ORDER directly: no stick, no
+			// FCS, no blade element (#256).
+			for sub := 0; sub < rehearsal.substeps(); sub++ {
+				glide(sim, o, rehearsal.span())
+			}
+		} else {
+			shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
+			in := shadow.steer(sim, tick+uint64(k))
+			for sub := 0; sub < rehearsal.substeps(); sub++ {
+				sim.Step(in) // the flight core steps at 240 Hz: four substeps per 60 Hz rollout tick, exactly like the live path. One Step per tick ran the WHOLE rehearsal at quarter time — the phantom moved four times faster than the jet, every candidate scored against that fiction, and the rollouts barely discriminated (the press-versus-extend trace that exposed it flew identical paths). `coarse` reaches the same sim-time honestly, by stepping once at four times the span
+			}
 		}
 		if sim.State.Position.Y < 120 {
 			return -100 // flew it into the sea: veto, whatever else it bought
@@ -543,6 +551,60 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		}
 	}
 	return score / weight
+}
+
+// allowance is how many bots may rehearse in one tick. Two is comfortably
+// above the natural rate — a bot re-plans about every 1.5 s, so even 99 of
+// them want only ~1.1 re-plans per tick — and it exists for the COINCIDENCE,
+// which is what turned a healthy median into multi-second stalls.
+const allowance = 2
+
+// choose runs the candidate rehearsal and returns the winning play. Extracted
+// from duel (#256) so the fidelity experiment can ask the SAME selector for an
+// answer at each fidelity from one live state, rather than measuring a copy of
+// the loop — and so the eventual per-tick rehearsal budget has one place to
+// live.
+func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey *track, tick uint64, distance float64, scores map[string]float64) string {
+	// The horizon must outlive the manoeuvres it judges — in REAL seconds,
+	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
+	// for the top tiers, enough for a reversal's payoff to show through the
+	// point-progress term without quadrupling the rehearsal budget.
+	base := 60*2 + 30*b.skill.library
+	best, top, n := b.play, math.Inf(-1), 0
+	for _, p := range plays {
+		if p.tier > b.skill.library {
+			continue
+		}
+		if p.name == "extend" && distance > 2500 {
+			continue // already separated: rehearsing more separation buys nothing
+		}
+		horizon := base
+		if p.span > 0 && int(p.span*60) > horizon {
+			horizon = int(p.span * 60)
+		}
+		score := i.rehearse(a, b, sim, p, prey, tick, horizon)
+		// Selection noise is the skill's wander: the ace nearly argmaxes,
+		// the novice sometimes picks the second-best line and flies it well.
+		score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
+		// Personality (#252): a per-MISSION bias on the repertoire — no
+		// tick in the hash, so it holds for the whole fight and the next
+		// mission draws a different opponent rather than a replay. Large
+		// where humans are inconsistent, tie-breaks only at the top:
+		// the machine's optimality is never diluted, its near-ties just
+		// stop being decided the same way every rematch.
+		score += (battle.Roll(i.environment.Seed, uint64(slot)+97, 0, uint64(n)) - 0.5) * 2 * math.Max(0.004, b.skill.wander*0.7)
+		if p.name == b.play {
+			score += 0.02 // ties keep the committed line: churn is its own cost (a larger incumbency rode broken lines past the moment press should take over — measured 6/6 kills falling to 3/6 on the conversion referendum)
+		}
+		if scores != nil {
+			scores[p.name] = score
+		}
+		if score > top {
+			best, top = p.name, score
+		}
+		n++
+	}
+	return best
 }
 
 // duel is the teamless fight brain: rehearse, commit, fly. Replaces the mode
@@ -591,46 +653,25 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	b.flanked = bearing
 	offensive := b.play == "press" || b.play == "lag" || b.play == "low" || b.play == "high" || b.play == "climb"
 	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) || (overshot && tick-b.picked >= 10) {
-		sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
-		// The horizon must outlive the manoeuvres it judges — in REAL seconds,
-		// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
-		// for the top tiers, enough for a reversal's payoff to show through the
-		// point-progress term without quadrupling the rehearsal budget.
-		base := 60*2 + 30*b.skill.library
-		best, top, n := b.play, math.Inf(-1), 0
-		for _, p := range plays {
-			if p.tier > b.skill.library {
-				continue
-			}
-			if p.name == "extend" && distance > 2500 {
-				continue // already separated: rehearsing more separation buys nothing
-			}
-			horizon := base
-			if p.span > 0 && int(p.span*60) > horizon {
-				horizon = int(p.span * 60)
-			}
-			score := i.rehearse(a, b, sim, p, prey, tick, horizon)
-			// Selection noise is the skill's wander: the ace nearly argmaxes,
-			// the novice sometimes picks the second-best line and flies it well.
-			score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
-			// Personality (#252): a per-MISSION bias on the repertoire — no
-			// tick in the hash, so it holds for the whole fight and the next
-			// mission draws a different opponent rather than a replay. Large
-			// where humans are inconsistent, tie-breaks only at the top:
-			// the machine's optimality is never diluted, its near-ties just
-			// stop being decided the same way every rematch.
-			score += (battle.Roll(i.environment.Seed, uint64(slot)+97, 0, uint64(n)) - 0.5) * 2 * math.Max(0.004, b.skill.wander*0.7)
-			if p.name == b.play {
-				score += 0.02 // ties keep the committed line: churn is its own cost (a larger incumbency rode broken lines past the moment press should take over — measured 6/6 kills falling to 3/6 on the conversion referendum)
-			}
-			if score > top {
-				best, top = p.name, score
-			}
-			n++
+		// The tick's rehearsal allowance (#256). Cost is bounded by
+		// CONSTRUCTION here, not by hoping the constant stays small: a
+		// roster of any size can only spend so many re-plans per tick, and
+		// the rest wait a few ticks. The commitment they are re-judging
+		// runs about a second, so the deferral is imperceptible — and it
+		// is deterministic (slot order, not wall clock), which the
+		// determinism gates require. Without it, an unauthenticated
+		// session with a 99-bot roster put every re-plan on the same tick,
+		// stalled the session goroutine for seconds, and the liveness
+		// sweep then evicted everyone in it as 15-seconds-silent.
+		if i.rehearsals >= allowance {
+			b.until = tick + 4 // come back for the allowance in a few ticks, keeping the committed line meanwhile
+		} else {
+			i.rehearsals++
+			sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
+			b.play = i.choose(slot, a, b, sim, prey, tick, distance, nil)
+			b.picked = tick
+			b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s at the top — the machine included, whose edge is reflex and precision, not strategy churn
 		}
-		b.play = best
-		b.picked = tick
-		b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s at the top — the machine included, whose edge is reflex and precision, not strategy churn
 	}
 
 	// Fly the committed law against the LIVE geometry — commitment holds the

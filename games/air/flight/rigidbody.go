@@ -33,6 +33,7 @@ type Model struct {
 	// the hysteresis band is harmless.
 	pa      bool
 	lawInit bool
+	halfleg bool // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
 	launder float64
 
 	// Deployable and store memory — unencoded for the same reason: the probe

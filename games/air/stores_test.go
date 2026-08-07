@@ -96,21 +96,34 @@ func TestMask(t *testing.T) {
 		t.Fatalf("empty rails departed with their rounds")
 	}
 	// The armed bot standard is the six-round Fox 2 fighter (decided
-	// 2026-08-06): tips plus outboard twins. The brain's two-round discipline
-	// fires from it in SMS order — tips depart first, the twins stay carried.
+	// 2026-08-06): tips plus outboard twins. The brain fires the WHOLE
+	// magazine in SMS order (#253 — a joust is the engagement; rounds saved
+	// at its end are wasted): tips depart first, then the twin-rack rounds,
+	// and the empty launchers stay carried.
 	if got := len(stores_rounds(bots_loadout(true))); got != 6 {
 		t.Fatalf("armed bot standard carries %d rounds, want 6", got)
 	}
 	if got := stores_mask(bots_loadout(true), 0); got != armed(shots) {
 		t.Fatalf("full bot mask %b differs from armed(%d) %b", got, shots, armed(shots))
 	}
-	reserve := armed(0) // discipline exhausted: both tips fired, twins carried
-	if reserve&bit("tip9") != 0 || reserve&bit("tip1") != 0 {
-		t.Fatalf("discipline-spent bot still carries a tip: %b", reserve)
+	half := armed(shots - 2) // two away: the tips go first in SMS order
+	if half&(bit("tip9")|bit("tip1")) != 0 {
+		t.Fatalf("two rounds fired but a tip remains: %b", half)
 	}
-	for _, name := range []string{"twin2", "twin8", "9m2a", "9m2b", "9m8a", "9m8b"} {
-		if reserve&bit(name) == 0 {
-			t.Fatalf("discipline-spent bot lost %s — the reserve rounds must stay carried", name)
+	for _, name := range []string{"9m2a", "9m2b", "9m8a", "9m8b"} {
+		if half&bit(name) == 0 {
+			t.Fatalf("two rounds fired but the twin round %s left early", name)
+		}
+	}
+	dry := armed(0) // the magazine spent: every round gone, every launcher carried
+	for _, name := range []string{"tip1", "tip9", "9m2a", "9m2b", "9m8a", "9m8b"} {
+		if dry&bit(name) != 0 {
+			t.Fatalf("magazine-dry bot still carries the round %s: %b", name, dry)
+		}
+	}
+	for _, name := range []string{"twin2", "twin8"} { // the twin racks ARE this loadout's launchers; the single rails belong to other fitments
+		if dry&bit(name) == 0 {
+			t.Fatalf("magazine-dry bot lost its launcher %s — carriage does not depart with the rounds", name)
 		}
 	}
 	if got := stores_mask(bots_loadout(false), 0); got != 0 {

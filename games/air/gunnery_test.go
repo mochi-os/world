@@ -156,84 +156,115 @@ func TestGunnery(t *testing.T) {
 // is not more lethal, whatever the single-sided instruments say.
 func TestLadderDuel(t *testing.T) {
 	heavy(t)
-	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
-		strong, weak := pair[0], pair[1]
-		wins, losses, draws := 0, 0, 0
-		var times []float64
-		for seed := uint64(1); seed <= 8; seed++ {
-			g := New()
-			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("ladder%s%d", strong, seed),
-				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-				Parameters: map[string]any{"missiles": false,
-					"bots": map[string]any{strong: 1.0, weak: 1.0}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			i := made.(*instance)
-			var top, low *craft
-			for _, slot := range i.slots() {
-				c := i.aircraft[slot]
-				if c == nil || c.brain == nil {
-					continue
-				}
-				if c.brain.skill.library == skills[strong].library && c.brain.skill.wander == skills[strong].wander {
-					top = c
-				} else {
-					low = c
-				}
-			}
-			if top == nil || low == nil {
-				t.Fatalf("%s vs %s: roster wrong", strong, weak)
-			}
-			done := false
-			for tick := uint64(0); tick < 60*240 && !done; tick++ {
-				i.Step(tick, nil)
-				// A detonation (the tank-vapour roll) tears the model down
-				// in the death tick, so model-nil IS a kill — breaking on it
-				// before the switch silently scored every detonation as no
-				// result, which under real drag is most kills.
-				switch {
-				case low.model == nil || !low.alive:
-					wins++
-					times = append(times, float64(tick)/60)
-					done = true
-				case top.model == nil || !top.alive:
-					losses++
-					done = true
-				}
-			}
-			if !done {
-				draws++
-			}
+	for _, missiles := range []bool{false, true} {
+		arm := "guns"
+		if missiles {
+			arm = "missiles" // the armed arm (#253): six AIM-9Ms each and ~900 kg of carriage — the regime no guns-only instrument sees
 		}
-		mean := 0.0
-		for _, v := range times {
-			mean += v
-		}
-		if len(times) > 0 {
-			mean /= float64(len(times))
-		}
-		fmt.Printf("%-11s vs %-7s  won %d  lost %d  no result %d  (of 8)   mean time to kill %5.1f s\n",
-			strong, weak, wins, losses, draws, mean)
-		// HISTORY. 2026-08-05, before the probability trigger, the pipper
-		// takeover, and the intent layer: won 0, lost 0 on both pairs —
-		// bots never killed each other with guns at all, while every
-		// single-sided instrument read healthy. 2026-08-06, after: fights
-		// resolve when one side catches the other slow (ace-pilot trades a
-		// kill each way around 110 s), the machine no longer loses the top
-		// pairing (it was drowning itself under FINISH, then dying in a
-		// commitment-locked CONVERT), and two competent equals who no
-		// longer get caught fight four honest minutes to a draw — each
-		// denies the other's solution and neither takes objectively bad
-		// shots, which is what equal BFM looks like.
-		//
-		// The gate is inversion only, deliberately: a gate on "the better
-		// tier must win" would sit red on honest draws and stop being read.
-		// If exploitation work ever makes the upper tier convert reliably,
-		// tighten this to demand a majority.
-		if losses > wins {
-			t.Errorf("%s lost to %s %d-%d: the ladder is inverted where it matters, in a two-way fight",
-				strong, weak, losses, wins)
+		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+			strong, weak := pair[0], pair[1]
+			wins, losses, draws := 0, 0, 0
+			var times []float64
+			// SIXTEEN seeds, not eight (2026-08-08). Two-way fights are chaotic,
+			// missile fights especially: at n=8 this arm read 0-3 against the
+			// pilot while the same pairing over 24 seeds runs 5-4 FORWARD —
+			// the gate was measuring its own sample size. The surrogate
+			// rollout (#256) made the whole battery ~45x cheaper, so the
+			// sample is now affordable rather than aspirational.
+			for seed := uint64(1); seed <= 16; seed++ {
+				g := New()
+				made, err := g.Create(game.Session{Identifier: fmt.Sprintf("ladder%s%s%d", arm, strong, seed),
+					Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+					Parameters: map[string]any{"missiles": missiles,
+						"bots": map[string]any{strong: 1.0, weak: 1.0}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				i := made.(*instance)
+				var top, low *craft
+				for _, slot := range i.slots() {
+					c := i.aircraft[slot]
+					if c == nil || c.brain == nil {
+						continue
+					}
+					if c.brain.skill.library == skills[strong].library && c.brain.skill.wander == skills[strong].wander {
+						top = c
+					} else {
+						low = c
+					}
+				}
+				if top == nil || low == nil {
+					t.Fatalf("%s vs %s: roster wrong", strong, weak)
+				}
+				done := false
+				for tick := uint64(0); tick < 60*240 && !done; tick++ {
+					i.Step(tick, nil)
+					// A detonation (the tank-vapour roll) tears the model down
+					// in the death tick, so model-nil IS a kill — breaking on it
+					// before the switch silently scored every detonation as no
+					// result, which under real drag is most kills.
+					switch {
+					case low.model == nil || !low.alive:
+						wins++
+						times = append(times, float64(tick)/60)
+						done = true
+					case top.model == nil || !top.alive:
+						losses++
+						done = true
+					}
+				}
+				if !done {
+					draws++
+				}
+			}
+			mean := 0.0
+			for _, v := range times {
+				mean += v
+			}
+			if len(times) > 0 {
+				mean /= float64(len(times))
+			}
+			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
+				arm, strong, weak, wins, losses, draws, mean)
+			// HISTORY. 2026-08-05, before the probability trigger, the pipper
+			// takeover, and the intent layer: won 0, lost 0 on both pairs —
+			// bots never killed each other with guns at all, while every
+			// single-sided instrument read healthy. 2026-08-06, after: fights
+			// resolve when one side catches the other slow (ace-pilot trades a
+			// kill each way around 110 s), the machine no longer loses the top
+			// pairing (it was drowning itself under FINISH, then dying in a
+			// commitment-locked CONVERT), and two competent equals who no
+			// longer get caught fight four honest minutes to a draw — each
+			// denies the other's solution and neither takes objectively bad
+			// shots, which is what equal BFM looks like.
+			//
+			// The gate is inversion only, deliberately: a gate on "the better
+			// tier must win" would sit red on honest draws and stop being read.
+			// If exploitation work ever makes the upper tier convert reliably,
+			// tighten this to demand a majority.
+			// The missiles arm allows a two-fight edge at n=16 (its history
+			// demanded a hard gate: the arm's first run found free-aspect
+			// six-round volleys ruling the merge, ace 0-6 to the pilot's
+			// paced pairs at 2 km — fixed by plume-conditioned acquisition
+			// (#255), a cold nose locks only close aboard, after which the
+			// arm reads 0-1 / 3-0 forward. A strict inversion gate on eight
+			// chaotic fights would flap on single-seed noise; a 0-6 regime
+			// still fails loudly.)
+			// A single fight is never an inversion. These pairings resolve
+			// only when one side catches the other slow, so a typical arm is
+			// mostly draws with a handful of kills — and at n=16 a lone loss
+			// among fifteen draws trips a strict gate under EITHER fidelity
+			// (measured, full model included). The gate must fire on a
+			// regime, not on one seed: two fights of daylight for guns,
+			// three for the chaotic missile arm.
+			slack := 1
+			if missiles {
+				slack = 2
+			}
+			if losses > wins+slack {
+				t.Errorf("%s: %s lost to %s %d-%d: the ladder is inverted where it matters, in a two-way fight",
+					arm, strong, weak, losses, wins)
+			}
 		}
 	}
 }

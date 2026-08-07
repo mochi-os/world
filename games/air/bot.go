@@ -419,6 +419,7 @@ type brain struct {
 	menace   int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
 	glimpsed uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
 	flanked  float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
+	launched uint64     // tick of the last missile away (#253): shoot-shoot-look — the quick pair is doctrine, the volley is not
 	dodge    uint64     // tick the commanded evasion ends; steer overrides the aim out-of-plane until then
 	magazine int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
 	sampled  uint64     // tick of the stored orbit sample
@@ -475,12 +476,12 @@ func mind(level string) *brain {
 	if !found {
 		return nil
 	}
-	return &brain{skill: s, tactics: doctrine, mode: "cruise", target: -1, mate: -1, told: -1, tallied: -1, known: map[int]*track{}, missiles: 2}
+	return &brain{skill: s, tactics: doctrine, mode: "cruise", target: -1, mate: -1, told: -1, tallied: -1, known: map[int]*track{}, missiles: 6}
 }
 
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
-	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 2, 0
+	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 6, 0
 	b.saddle, b.press = 0, 0
 	b.aimed, b.closing = 0, 0
 	b.turning, b.turned = 0, 0
@@ -539,7 +540,15 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 // altitude: the 1 g stall (the same CLmax≈1.55 the carrier maths uses) scaled
 // by √n. ISA troposphere density inline — flight's air() is package-private.
 func corner(m *flight.Model) float64 {
-	mass := m.Airframe.Mass.Empty + m.State.Fuel
+	// The TRUE flown mass (#253): the stores work hung up to ~900 kg of
+	// missiles and racks on armed jets, and a brain that referenced the
+	// clean jet's corner speed flew every pace-gated behaviour — saddle
+	// bias, climb gates, energy floor, corner throttle — against a speed
+	// the heavy jet does not have.
+	mass := m.Mass()
+	if mass <= 0 {
+		mass = m.Airframe.Mass.Empty + m.State.Fuel
+	}
 	density := 1.225 * math.Pow(math.Max(1-2.2558e-5*m.State.Position.Y, 0.3), 4.2559)
 	stall := math.Sqrt(2 * mass * 9.81 / (density * 1.55 * m.Airframe.Reference.Area))
 	return stall * math.Sqrt(m.Airframe.Limit.Positive)
@@ -588,7 +597,17 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 	if b.loose {
 		b.loose = false
-		if i.missiles && i.free() && b.missiles > 0 {
+		// Shoot-shoot-look (#253): the second round of a pair may follow
+		// inside a second — doubling the Pk against one flare programme is
+		// doctrine — but the third waits three seconds for the look. The
+		// six-round magazine made this load-bearing: without it the
+		// free-aspect tiers rippled the whole rack in the opening merge,
+		// and six missiles in one stream saturate any flare defence — the
+		// ace lost the missiles ladder 0-6 to the pilot, dead at t=10 with
+		// four still flying.
+		paired := b.launched != 0 && tick-b.launched < 60
+		looked := elapsed(tick, b.launched, 180)
+		if i.missiles && i.free() && b.missiles > 0 && (paired || looked) {
 			// Missile shot discipline (#141): the seeker head has no IFF — it
 			// locks the best heat source in the cone whoever owns it. Checked
 			// at the moment of launch, not request (a decision-old request may
@@ -597,6 +616,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
 				if i.launch(slot, a) && !i.cheat.ammunition {
 					b.missiles--
+					b.launched = tick
 					a.model.Stores(armed(b.missiles))
 				}
 			}
@@ -2009,6 +2029,16 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 		// deterministic rhythm — bursts of yank, moments of mush.
 		b.g *= 0.55 + 0.45*battle.Roll(i.environment.Seed, uint64(slot)+41, tick/90)
 	}
+	// Run-in burner discipline (#255): with missiles in play the afterburner
+	// is a beacon — the plume-conditioned seeker locks a lit nose out to half
+	// the envelope and a cold one only close aboard. The instructor tiers run
+	// the approach at MIL when pointed in and fast enough to afford it; the
+	// low tiers keep advertising, which is authentic and is how they die.
+	if b.skill.library >= 3 && i.missiles && b.prey != nil && distance < 3500 &&
+		nose.Dot(direction) > 0.2 && speed > pace*0.85 {
+		b.reheat = 0
+	}
+
 	// The aero cap, every tier: never command far past what the wing gives at
 	// this speed — beyond it the demand rides the alpha limiter, thrust feeds
 	// induced drag, and the jet mushes at 130 m/s in full burner forever.

@@ -120,6 +120,12 @@ func (b *Bandit) Menace(words []float64) {
 // report the trigger and any flare drop.
 func (b *Bandit) Step() (fire bool, flare bool) {
 	b.tick++
+	// The single-player bandit drives think() directly rather than through
+	// instance.Step, so it owns the per-tick arbiter allowance reset (#256)
+	// too. Without it the counter only ever climbed: the bandit re-planned
+	// twice, deferred for the rest of the mission, and flew straight —
+	// TestBandit's pursuit invariant caught it before it shipped.
+	b.arena.rehearsals = 0
 	b.arena.think(1, b.craft, b.tick)
 	for _, event := range b.arena.events {
 		if event["kind"] == "flare" {

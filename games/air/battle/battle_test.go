@@ -281,7 +281,7 @@ func TestVolleyDeflection(t *testing.T) {
 		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
 		aim := m.State.Position
 		if led {
-			time := 600.0 / Muzzle
+			time := 600.0 / Average(600, m.State.Position.Y) // the drag-aware flight, as every fire-control consumer computes it
 			aim = aim.Add(m.State.Velocity.Scale(time)).Add(flight.Vec3{Y: 4.9 * time * time})
 		}
 		bore := aim.Subtract(muzzle).Normalize()
@@ -306,7 +306,12 @@ func TestJinkDefeatsTheBullet(t *testing.T) {
 	shoot := func(jink bool) int {
 		body, m := target()
 		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
-		time := 600.0 / Muzzle
+		// The DRAG-AWARE time of flight (2026-08-08): the round decelerates,
+		// so a lead computed at the muzzle speed lands short and even the
+		// control volley misses — which is precisely what this test then
+		// reported, silently, from the day drag landed until someone ran the
+		// battle package rather than only the game package above it.
+		time := 600.0 / Average(600, m.State.Position.Y)
 		aim := m.State.Position.Add(m.State.Velocity.Scale(time)).Add(flight.Vec3{Y: 4.9 * time * time})
 		bore := aim.Subtract(muzzle).Normalize()
 		pose := Pose{Position: muzzle, Forward: bore, Up: flight.Vec3{Y: 1}, Right: bore.Cross(flight.Vec3{Y: 1})}
