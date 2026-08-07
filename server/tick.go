@@ -239,8 +239,14 @@ func session_join(s *session, o order) answer {
 	if len(s.players) >= s.spec.Capacity {
 		return answer{err: errors.New("full")}
 	}
+	// The lowest slot free of BOTH a player and anything the game placed
+	// itself (game.Occupancy — air's practice bots). The bound is the
+	// capacity plus whatever the game holds, so a full house of bots cannot
+	// make this spin: every step either finds a free slot or passes one that
+	// is genuinely taken.
+	held, _ := s.instance.(game.Occupancy)
 	slot := 0
-	for s.players[slot] != nil {
+	for s.players[slot] != nil || (held != nil && held.Occupied(slot)) {
 		slot++
 	}
 	// The caller waits only 5 s; a stalled tick can process this join long

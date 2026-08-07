@@ -27,7 +27,7 @@ func spam(count int, missile bool, flare bool, alternate bool) []game.Input {
 func hostileSession(t *testing.T) (*instance, int) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "abuse", Game: "air", Mode: "furball", Capacity: 100, Seed: 7,
+	made, err := g.Create(game.Session{Identifier: "abuse", Game: "air", Mode: "furball", Capacity: 16, Seed: 7,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"drone": 1.0}}})
 	if err != nil {
 		t.Fatal(err)

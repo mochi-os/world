@@ -301,7 +301,7 @@ func TestJoustMerge(t *testing.T) {
 // the server CPU budget check for #81. Run: go test ./games/air -bench Step100 -run xx
 func BenchmarkStep100(b *testing.B) {
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "bench", Game: "air", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 99.0}})
+	made, err := g.Create(game.Session{Identifier: "bench", Game: "air", Mode: "furball", Capacity: 16, Seed: 2, Parameters: map[string]any{"bots": 99.0}})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -322,7 +322,7 @@ func BenchmarkStep100(b *testing.B) {
 func TestBotsEndure(t *testing.T) {
 	heavy(t)
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "endure", Game: "air", Mode: "furball", Capacity: 100, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
+	made, err := g.Create(game.Session{Identifier: "endure", Game: "air", Mode: "furball", Capacity: 16, Seed: 2, Parameters: map[string]any{"bots": 20.0}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -345,12 +345,21 @@ func TestBotsEndure(t *testing.T) {
 func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, when uint64) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
+	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 16, Seed: seed,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 1.0, "novice": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	i := made.(*instance)
+	// The two bot slots are DISCOVERED, never assumed (#257): they sit above
+	// the session's capacity so a joining player can never be handed one, so
+	// which numbers they are depends on the session. Hard-coding 98 and 99
+	// here is the same fragility that let joiners overwrite bots for months.
+	pair := i.slots()
+	if len(pair) != 2 {
+		t.Fatalf("duel wants two bots, got %d", len(pair))
+	}
+	other := map[int]int{pair[0]: pair[1], pair[1]: pair[0]}
 	hits := map[int]int{}
 	for tick := uint64(0); tick < ticks; tick++ {
 		i.Step(tick, nil)
@@ -364,17 +373,17 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 		i.events = i.events[:0]
 		for slot, a := range i.aircraft {
 			if a.kills > 0 {
-				loser := 98 + 99 - slot
-				if i.aircraft[loser].condition.Damager < 0 {
+				if i.aircraft[other[slot]].condition.Damager < 0 {
 					splashes++
 				}
 				return slot, splashes, tick
 			}
 		}
 	}
-	t.Logf("  rounds: 98(%s) %d, 99(%s) %d; hits taken: 98 %d, 99 %d",
-		i.aircraft[98].player.Name, rounds-i.aircraft[98].ammunition,
-		i.aircraft[99].player.Name, rounds-i.aircraft[99].ammunition, hits[98], hits[99])
+	t.Logf("  rounds: %d(%s) %d, %d(%s) %d; hits taken: %d %d, %d %d",
+		pair[0], i.aircraft[pair[0]].player.Name, rounds-i.aircraft[pair[0]].ammunition,
+		pair[1], i.aircraft[pair[1]].player.Name, rounds-i.aircraft[pair[1]].ammunition,
+		pair[0], hits[pair[0]], pair[1], hits[pair[1]])
 	return -1, splashes, ticks
 }
 
@@ -410,7 +419,7 @@ func TestBotDuel(t *testing.T) {
 func TestBotLadder(t *testing.T) {
 	heavy(t)
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 100, Seed: 11,
+	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 16, Seed: 11,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "novice": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -449,7 +458,7 @@ func TestBotDeterminism(t *testing.T) {
 func TestBotsFight(t *testing.T) {
 	heavy(t)
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 100, Seed: 5,
+	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 16, Seed: 5,
 		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 6.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -492,7 +501,7 @@ func TestBotsFight(t *testing.T) {
 // not react until the attacker fires or enters view.
 func TestBotBlind(t *testing.T) {
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "blind", Game: "air", Mode: "furball", Capacity: 100, Seed: 7,
+	made, err := g.Create(game.Session{Identifier: "blind", Game: "air", Mode: "furball", Capacity: 16, Seed: 7,
 		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
@@ -522,7 +531,7 @@ func TestBotBlind(t *testing.T) {
 func gunnery(t *testing.T, level string, seed uint64) (int, int) {
 	t.Helper()
 	g := New()
-	made, err := g.Create(game.Session{Identifier: "guns", Game: "air", Mode: "furball", Capacity: 100, Seed: seed,
+	made, err := g.Create(game.Session{Identifier: "guns", Game: "air", Mode: "furball", Capacity: 16, Seed: seed,
 		Parameters: map[string]any{"bots": map[string]any{"drone": 1.0, level: 1.0}}})
 	if err != nil {
 		t.Fatal(err)

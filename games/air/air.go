@@ -168,7 +168,28 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				gather(levels, "")
 			}
 		}
-		slot, total := 99, 0
+		// Bots live ABOVE the players' range (#257). They fill the slot space
+		// downward while joining players are assigned upward from zero out of
+		// the server's own player map, which cannot see them — so a roster
+		// large enough, or a session roomy enough, put the two populations on
+		// the same slot, and Join overwrote unconditionally: every joiner past
+		// the first silently deleted one of the creator's bots. Starting the
+		// bots above the capacity makes the collision impossible by
+		// construction rather than by hoping the numbers stay small. The
+		// classic 99-downward numbering is kept wherever it still fits, which
+		// is every ordinary session.
+		want := 0
+		for _, w := range wanted {
+			want += w.count
+		}
+		if want > 99 {
+			want = 99
+		}
+		top := 99
+		if session.Capacity+want > 100 {
+			top = session.Capacity + want - 1
+		}
+		slot, total := top, 0
 		single := map[string]int{} // per side: the fighting bot still waiting for a pair partner
 		for _, w := range wanted {
 			for n := 1; n <= w.count && total < 99; n++ {
@@ -464,9 +485,23 @@ func state_payload(s *flight.State) map[string]any {
 	}
 }
 
+// Occupied reports a slot already flying (game.Occupancy, #257). Bots take
+// the slot space from the top down and the server assigns joining players
+// from the bottom up out of its own player map, which cannot see them — so
+// without this every joiner past the first landed on a bot, Join overwrote
+// it unconditionally, and the creator's roster quietly evaporated as people
+// arrived. Nothing panicked, which is what made it hard to see from outside.
+func (i *instance) Occupied(slot int) bool { return i.aircraft[slot] != nil }
+
 func (i *instance) Join(player game.Player) (map[string]any, error) {
 	if i.finished {
 		return nil, errors.New("over")
+	}
+	if i.aircraft[player.Slot] != nil {
+		// Belt and braces with Occupied above: never overwrite a live
+		// aircraft, whoever chose the slot. A refused join is recoverable;
+		// a silently deleted bot is not.
+		return nil, errors.New("slot taken")
 	}
 	if i.mode == "joust" && len(i.aircraft) >= 2 {
 		return nil, errors.New("full")

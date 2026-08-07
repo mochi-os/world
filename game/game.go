@@ -76,3 +76,17 @@ type Instance interface {
 	// Finished reports whether the match has ended, with its results.
 	Finished() (bool, map[string]any)
 }
+
+// Occupancy is the optional half of Instance for games that put non-player
+// entities in the SLOT SPACE — air's practice bots take slots from the top
+// down while joining players are assigned from the bottom up. Without it the
+// server hands out slots from its own player map, which knows nothing about
+// them, and Join overwrites unconditionally: every joiner past the first
+// silently deleted one of the creator's bots, and the departing player then
+// took the slot with it. Games that own their whole slot space need not
+// implement it.
+type Occupancy interface {
+	// Occupied reports whether a slot already holds something the game placed
+	// there itself. It is consulted only while choosing a slot for a join.
+	Occupied(slot int) bool
+}
