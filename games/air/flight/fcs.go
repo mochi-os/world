@@ -462,8 +462,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 		droopTarget = clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
 		// Roll-rate command, tempered at low speed and high alpha.
 		limit := 3.8 * clamp(speed/200, 0.35, 1) * clamp(1-0.9*a/m.Airframe.Limit.Alpha, 0.08, 1)
-		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1)  // sideslip strips roll authority: no spin fuel
-		flapTarget = (lateral*limit-p)*0.22 + f.Bank // the roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
+		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1) // sideslip strips roll authority: no spin fuel
+		// Rudder-to-rolling-surface interconnect (NATOPS 11.1.8): above 25°
+		// AoA pedal and lateral stick produce similar roll responses, and
+		// combined inputs outperform either alone from 35° up — the pedal
+		// feeds the same roll-rate command the stick does, blended in across
+		// 25-35° alpha. Below the blend it contributes nothing, as before.
+		rolling := clamp(lateral+pedal*clamp((a-0.44)/0.17, 0, 1), -1, 1)
+		flapTarget = (rolling*limit-p)*0.22 + f.Bank // the roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	}
 
@@ -505,8 +511,16 @@ func (m *Model) fcs(in Inputs, local Air) {
 func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r float64, f *FcsState) float64 {
 	f.Washout += (r - f.Washout) * Dt / 1.0
 	damped := r - f.Washout
-	interconnect := lateral * clamp(a/0.35, 0, 1) * 0.35
-	pedal *= clamp(1-a/0.7, 0.1, 1) // pedals fade at high alpha
+	// RSRI (NATOPS 2.8.2.8): the interconnect schedules with increasing
+	// alpha AND decreasing airspeed — slow and nose-high is where the rudder
+	// does the rolling and the coordination.
+	slow := 1 + 0.6*clamp((90-m.State.Velocity.Subtract(m.gust).Length())/60, 0, 1)
+	interconnect := lateral * clamp(a/0.35, 0, 1) * 0.35 * slow
+	// Pedal authority GROWS with alpha (NATOPS 2.8.2.8: half throw at low to
+	// medium AoA, full throw available at high) — it faded to 10% at 40°
+	// before, the exact opposite schedule, leaving the Hornet's nose-pointing
+	// tool inert everywhere it matters (#45).
+	pedal *= 0.55 + 0.45*clamp(a/0.55, 0, 1)
 	// Signs under the -side rudder geometry (positive rudder pushes the
 	// tail right, yawing the nose left): opposing r means following it with
 	// the rudder (+damped), killing beta means steering away from it (-b),

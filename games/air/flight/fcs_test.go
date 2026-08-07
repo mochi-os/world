@@ -145,3 +145,45 @@ func TestProSpin(t *testing.T) {
 		t.Fatalf("no clean recovery: r %f", r)
 	}
 }
+
+// TestRudderAlphaSchedule: pedal authority GROWS with alpha (#45, NATOPS
+// 2.8.2.8) — half throw low, full available high. The old schedule faded to
+// 10% at 40 deg, the exact opposite.
+func TestRudderAlphaSchedule(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	var f FcsState
+	deflect := func(alpha float64) float64 {
+		f = FcsState{}
+		return math.Abs(m.yaw(1, 0, alpha, 0, 0, &f))
+	}
+	low, high := deflect(0.05), deflect(0.60)
+	throw := Fighter.Control.Throw.Rudder
+	if low > 0.65*throw {
+		t.Fatalf("low alpha should give roughly half throw: %.1f of %.1f deg", low*180/math.Pi, throw*180/math.Pi)
+	}
+	if high <= low*1.4 {
+		t.Fatalf("authority must GROW with alpha: %.2f rad at 34 deg vs %.2f at 3 deg", high, low)
+	}
+}
+
+// TestPedalRollsAtHighAlpha: above 25 deg alpha the pedal feeds the roll
+// command like the stick (NATOPS 11.1.8) — before #45 combined stick+pedal
+// measured identical to stick alone at every alpha.
+func TestPedalRollsAtHighAlpha(t *testing.T) {
+	differential := func(alpha, pedal float64) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 90, Fighter.Mass.Fuel*0.5)
+		// Pitch the nose up so the flow arrives alpha below it.
+		m.State.Attitude = Axis(Vec3{Z: 1}, alpha).Multiply(m.State.Attitude)
+		for i := 0; i < 30; i++ {
+			m.Step(Inputs{Throttle: 0.8, Yaw: pedal})
+		}
+		return math.Abs(m.State.Fcs.Flaperon.Left - m.State.Fcs.Flaperon.Right)
+	}
+	if high := differential(0.55, 1); high < 0.02 {
+		t.Fatalf("full pedal at 31 deg alpha must move the rolling surfaces: %.3f rad differential", high)
+	}
+	if low := differential(0.05, 1); low > 0.01 {
+		t.Fatalf("pedal at 3 deg alpha commands no roll: %.3f rad differential", low)
+	}
+}
