@@ -508,7 +508,13 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	if i.mode == "joust" && len(i.aircraft) >= 2 {
 		return nil, errors.New("full")
 	}
-	kind := "fa18c" // the only catalogue entry today; a requested type would arrive on the join payload
+	// The airframe, granted like the loadout below: a valid request is
+	// honoured, anything else flies the default. The requested type would
+	// arrive on the join payload (the empty request is today's only case);
+	// route whatever it carries through Grant, never Get — an unknown name
+	// through Get hands flight.New a nil to dereference, and that panic
+	// takes the whole session down.
+	kind, airframe := aircraft.Grant("")
 	team := ""
 	if i.mode == "teams" {
 		// Pick-on-join: honour a valid choice, assign anything else to the
@@ -531,7 +537,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 			}
 		}
 	}
-	m := flight.New(aircraft.Get(kind), i.environment, flight.World{Sea: sea})
+	m := flight.New(airframe, i.environment, flight.World{Sea: sea})
 	i.spawn(player.Slot, m, team)
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
@@ -734,7 +740,8 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			a.wait -= dt
 			if a.wait <= 0 {
 				if a.model == nil { // the previous airframe left as a wreck
-					a.model = flight.New(aircraft.Get(a.kind), i.environment, flight.World{Sea: sea})
+					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
+					a.model = flight.New(respawned, i.environment, flight.World{Sea: sea})
 				}
 				i.spawn(slot, a.model, a.team)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet

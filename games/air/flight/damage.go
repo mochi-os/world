@@ -26,6 +26,21 @@ type DamageState struct {
 	Stress  float64    // accumulated overstress exposure, g·s beyond limits (over-g, negative-g, overspeed)
 }
 
+// Copy returns a DamageState whose slices are the caller's own. A struct
+// assignment of State shares Element and Jam with the source, so a scratch
+// model copied from a live jet writes the live jet's damage through them —
+// any rollout must Copy before it may step. Nil stays nil: a pristine jet,
+// the common case, allocates nothing.
+func (d DamageState) Copy() DamageState {
+	if d.Element != nil {
+		d.Element = append([]float64(nil), d.Element...)
+	}
+	if d.Jam != nil {
+		d.Jam = append([]float64(nil), d.Jam...)
+	}
+	return d
+}
+
 // Gear damage thresholds: above GearTyre the wheel is blown (rolling drag,
 // pull, weak braking on that leg); above GearCollapse the strut folds and
 // carries nothing — the belly skids inherit the jet.

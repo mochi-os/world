@@ -2349,3 +2349,50 @@ func TestJettisonStrike(t *testing.T) {
 		t.Fatalf("the strike is a dent, not a shootdown: drag %f m2", drag)
 	}
 }
+
+// The rollout's scratch model is seeded by a struct copy of the live jet's
+// state, and DamageState carries two slices — a copy that keeps the backing
+// arrays would let any damage-writing rehearsal step corrupt the flying
+// aircraft mid-fight, from what reads as a read-only simulation. flight.Step
+// happens not to write them today, which is exactly why this needs a test:
+// the safety must be a property of the copy, not a promise about future
+// physics code.
+func TestRehearsalOwnsItsDamage(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}, 1)
+	bot := -1
+	for _, slot := range i.slots() {
+		if i.aircraft[slot].brain != nil {
+			bot = slot
+		}
+	}
+	if bot < 0 {
+		t.Fatal("no bot spawned")
+	}
+	for tick := uint64(0); tick < 120; tick++ { // two seconds of real flight: tracks, rings, and a committed play all form naturally
+		place(i, bot, 0, 600)
+		i.Step(tick, nil)
+	}
+	a := i.aircraft[bot]
+	a.model.State.Damage.Element = make([]float64, flight.Elements)
+	a.model.State.Damage.Element[0] = 0.25
+	a.model.State.Damage.Jam = make([]float64, flight.Channels)
+	a.model.State.Damage.Jam[0] = 0.5
+	sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
+	his := &i.aircraft[0].model.State
+	prey := &track{when: 120, position: his.Position, velocity: his.Velocity}
+	i.choose(bot, a, a.brain, sim, prey, 120, 600, nil)
+	if len(sim.State.Damage.Element) == 0 || len(sim.State.Damage.Jam) == 0 {
+		t.Fatal("the rehearsal dropped the damage state instead of copying it — a wounded jet must rehearse wounded")
+	}
+	if &sim.State.Damage.Element[0] == &a.model.State.Damage.Element[0] {
+		t.Fatal("the rehearsal's Damage.Element shares its backing array with the live jet")
+	}
+	if &sim.State.Damage.Jam[0] == &a.model.State.Damage.Jam[0] {
+		t.Fatal("the rehearsal's Damage.Jam shares its backing array with the live jet")
+	}
+	sim.State.Damage.Element[0], sim.State.Damage.Jam[0] = 0.9, 0.9
+	if a.model.State.Damage.Element[0] != 0.25 || a.model.State.Damage.Jam[0] != 0.5 {
+		t.Fatalf("writing the rehearsal's damage moved the live jet: element %.2f jam %.2f",
+			a.model.State.Damage.Element[0], a.model.State.Damage.Jam[0])
+	}
+}

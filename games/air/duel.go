@@ -517,6 +517,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 // Later instants weigh more: BFM is judged by where it ends up.
 func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon int) float64 {
 	sim.State = a.model.State
+	sim.State.Damage = sim.State.Damage.Copy() // the struct copy shares Element/Jam with the LIVE jet; a damage-writing Step would corrupt it mid-fight
 	shadow := *b // the executor's scalar state rides along; maps are untouched
 	shadow.shoot = false
 	pace := corner(a.model)
