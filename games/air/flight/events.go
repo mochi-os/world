@@ -25,6 +25,19 @@ func (m *Model) events(in Inputs) {
 		target = 1
 	}
 	s.Gear.Extension += clamp(target-s.Gear.Extension, -Dt/5, Dt/5)
+	// Gear speed limit, 250 KCAS (NATOPS figure 4-2, the same number both
+	// pattern chapters are written around: "below 250 knots lower the gear
+	// and flaps"). Doors and struts in a 400 kt airstream wound the legs
+	// rather than refusing the handle — the thresholds already there blow a
+	// tyre at 0.3 and fold the strut at 0.7, so the consequence follows.
+	// Unlimited before this, which made the gear a free speedbrake (#49).
+	if s.Gear.Extension > 0.02 && !s.Gear.Wow {
+		if over := m.Cas()*1.9438 - 250; over > 0 {
+			for leg := range s.Damage.Gear {
+				s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+over*gearoverspeed*Dt)
+			}
+		}
+	}
 
 	m.touch(s)
 	m.probes(s)

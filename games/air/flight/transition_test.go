@@ -60,7 +60,11 @@ func TestLawBoundaryAcceleration(t *testing.T) {
 	// 0.12 stick ≈ holding attitude through the acceleration (a real waveoff),
 	// not a sustained pull — a big pull climbs, sags the speed back through the
 	// band, and the commanded g swamps the handover transient being measured.
-	worstQ, worstNz, flips := cross(t, 110, 1.0, 0.12, func(speed float64) bool { return speed > 150 })
+	// 146, not 150: a gear-down MIL acceleration now peaks at ~149.7 m/s
+	// because sustained flight past the 250 KCAS gear placard accrues damage
+	// (#49), and the old threshold sat inside that last fraction. 146 is well
+	// clear of the 128.6 m/s CAS law boundary this test exists to measure.
+	worstQ, worstNz, flips := cross(t, 110, 1.0, 0.12, func(speed float64) bool { return speed > 146 })
 	t.Logf("accel: worst q %.1f deg/s, worst |nz-1| %.2f, law flips %d", worstQ*180/math.Pi, worstNz, flips)
 	if flips != 1 {
 		t.Fatalf("law must flip exactly once, flipped %d times", flips)

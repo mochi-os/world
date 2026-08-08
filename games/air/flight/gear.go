@@ -25,8 +25,15 @@ const (
 	sliding   = 0.25 // belly-skid friction
 	soft_drag = 0.18 // extra rolling coefficient on unpaved ground
 	flat      = 0.12 // extra rolling coefficient of a blown tyre grinding on the rim (#78), scaled by the leg's damage
-	tolerable = 7.0  // m/s: sink the oleo absorbs without harm (the type's carrier-rated ~7.3 with margin shaved for gameplay)
-	overload  = 18.0 // damage per (m/s beyond tolerable)·s while a hard strike lasts (#78): ~9 m/s blows the tyre, ~12 folds the leg
+	tolerable = 7.0
+	// Gear overspeed exposure per knot-second past the 250 KCAS placard. The
+	// limit is where damage becomes POSSIBLE, not instant: a few knots over for
+	// a while costs nothing you notice (~45 s at 275 kt to blow a tyre), while a
+	// gross 400 kt extension blows one in about eight seconds and folds a leg if
+	// held. An earlier ten-times-harsher rate made a gear-down MIL acceleration
+	// impossible, which is not what the placard means.
+	gearoverspeed = 0.00025 // m/s: sink the oleo absorbs without harm (the type's carrier-rated ~7.3 with margin shaved for gameplay)
+	overload      = 18.0    // damage per (m/s beyond tolerable)·s while a hard strike lasts (#78): ~9 m/s blows the tyre, ~12 folds the leg
 )
 
 // contact accumulates gear, belly, catapult, and cable forces for a trial

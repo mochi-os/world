@@ -50,7 +50,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	// means different things in the two laws (up-and-away: a pitch-RATE bias;
 	// powered approach: a direct stabilator add), so the flip mis-trimmed by up
 	// to half a radian of stabilator: the gear-cycle trim jump, back on the
-	// unpatched speed path. Enter PA below 125 m/s, leave above 135 (no
+	// unpatched speed path. Enter PA below 125 m/s, leave above 128.6 (no
 	// boundary chatter), and launder the integral across ANY law change — the
 	// old gear-transit-only decay was a special case of this rule.
 	pa := m.pa
@@ -65,9 +65,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// on the climb-out keeps the takeoff flap and its lift, and the law
 		// change arrives where the droop has already faded with q. Stripping
 		// the whole configuration at the gear handle sagged the flight path
-		// and pegged the HUD velocity vector on its 10° cage. 135 m/s stays
+		// and pegged the HUD velocity vector on its 10° cage. 128.6 m/s stays
 		// as the flap overspeed protection, gear position regardless.
-		if (!in.Gear && calibrated > 92.6) || calibrated > 135 {
+		if (!in.Gear && calibrated > 92.6) || calibrated > 128.6 { // 128.6 m/s = the 250 KCAS flap placard (NATOPS figure 4-2); 135 sat 12 kt over it (#49)
 			pa = false
 		}
 	} else if in.Gear && calibrated < 125 {

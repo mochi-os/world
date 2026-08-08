@@ -424,3 +424,33 @@ func TestEngineLossSavesFuel(t *testing.T) {
 		t.Fatalf("half-damaged burn %.2f kg should sit between wounded %.2f and healthy %.2f", half, wounded, healthy)
 	}
 }
+
+// TestGearOverspeed: extending the gear past its 250 KCAS placard wounds the
+// legs (#49, NATOPS figure 4-2) — it was unlimited, a free speedbrake at any
+// speed — while a normal pattern extension costs nothing.
+func TestGearOverspeed(t *testing.T) {
+	harm := func(speed float64) float64 {
+		m := flight.New(fa18c.Airframe, flight.Environment{Seed: 1}, flight.World{Sea: 0})
+		m.State = flight.Level(m, flight.Vec3{Y: 1000}, flight.Vec3{X: 1}, speed, fa18c.Airframe.Mass.Fuel*0.5)
+		// NOT Direct: the FCS holds the attitude, so the speed only falls. In
+		// Direct the nose drops at idle and the dive accelerates the jet back
+		// through the placard, which is what it is measuring.
+		for i := 0; i < 240*14; i++ { // 14 s with the handle down, idle so the speed only falls
+			m.Step(flight.Inputs{Throttle: 0, Gear: true})
+		}
+		worst := 0.0
+		for _, leg := range m.State.Damage.Gear {
+			if leg > worst {
+				worst = leg
+			}
+		}
+		return worst
+	}
+	if pattern := harm(105); pattern > 0 { // ~196 KCAS falling: inside the placard throughout
+		t.Fatalf("a pattern-speed extension must cost nothing: %.3f", pattern)
+	}
+	fast := harm(215) // ~400 KCAS falling: over the placard throughout
+	if fast <= flight.GearTyre {
+		t.Fatalf("a 400 kt extension must at least blow a tyre (>%.1f): %.3f", flight.GearTyre, fast)
+	}
+}
