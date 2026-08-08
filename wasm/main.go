@@ -327,6 +327,7 @@ func catalog(this js.Value, arguments []js.Value) any {
 			"mass":    store.Mass,
 			"area":    store.Area,
 			"fuel":    store.Fuel,
+			"lateral": store.Position.Z, // m signed, port negative — the client's asymmetry arithmetic (NATOPS 4.1.5)
 		}
 	}
 	payload, err := json.Marshal(map[string]any{"stores": entries, "default": airframe.Default, "internal": airframe.Mass.Fuel, "empty": airframe.Mass.Empty})

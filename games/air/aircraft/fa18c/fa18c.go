@@ -88,11 +88,13 @@ func build() *flight.Airframe {
 	// two LAU-7 twin 290 kg; wet SUU-63 136 kg; centerline SUU-62 120 kg;
 	// FPU-8/A 330 gal tank 158 kg dry + 1010 kg JP-5. Drag areas are honest
 	// starting points to be flown out via the vspeeds harness (#17 plan).
-	// Lateral positions from the station buttlines (2/8 at 3.35 m, 3/7 at
-	// 2.24 m); tips at the measured rail position the crash probes use.
+	// Lateral positions from the station buttlines (figure 4-4: 1/9 at
+	// 19.5 ft = 5.94 m, 2/8 at 3.35 m, 3/7 at 2.24 m). The ground-rest
+	// points in Belly below sit wider on purpose: contact must catch where
+	// the DRAWN tip is, and the mesh flies ~5% wide of the real buttline.
 	a.Stores = []flight.Store{
-		{Name: "tip1", Station: 1, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -6.26}, Mass: 86, Area: 0.05},
-		{Name: "tip9", Station: 9, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 6.26}, Mass: 86, Area: 0.05},
+		{Name: "tip1", Station: 1, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -5.94}, Mass: 86, Area: 0.05},
+		{Name: "tip9", Station: 9, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 5.94}, Mass: 86, Area: 0.05},
 		{Name: "rail2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 179, Area: 0.04},
 		{Name: "twin2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 290, Area: 0.06},
 		{Name: "9m2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -3.35}, Mass: 86, Area: 0.05},
@@ -187,7 +189,7 @@ func build() *flight.Airframe {
 	// Crash probes and belly skid points, scaled to the shorter airframe.
 	a.Probes = []flight.Vec3{{X: 8.0, Y: -0.4}, {X: -8.0, Y: 0.3}, {X: -1.4, Z: -5.7}, {X: -1.4, Z: 5.7}, {X: -5.6, Y: 2.9, Z: -1.3}, {X: -5.6, Y: 2.9, Z: 1.3}}
 	a.Belly = []flight.Vec3{{X: 6.3, Y: -1.2}, {X: 2.7, Y: -1.3}, {X: -0.9, Y: -1.35}, {X: -4.2, Y: -1.3}, // fuselage keel MEASURED from the rendered mesh (dev_measure, #72): deepest -1.35 mid, -1.32 at the ventral fins, -1.26 at the nose barrel — eyeballed shallower values sank the model visibly into the runway. The nose point exists because with only aft points the decelerating slide dropped the nose onto the crash probe
-		{X: 0.2, Y: -0.77, Z: -6.26}, {X: 0.2, Y: -0.77, Z: 6.26}} // wingtip rests at the MEASURED rail (y -0.77, z 6.26): the old inboard/shallow guess let a topple lean ~8 degrees and dip the stabilators into the runway; the real rail catches at ~5 and the stabs stay clear (gear.go gates the tips off for unsupported flying-speed arrivals, where the crash probes own them)
+		{X: 0.2, Y: -0.77, Z: -6.26}, {X: 0.2, Y: -0.77, Z: 6.26}} // wingtip rests at the mesh's MEASURED widest tip vertex (y -0.77, z 6.26 — the drawn mesh spans ~5% wide of the figure 4-4 buttline the tip store elements use): an inboard/shallow point lets a topple lean ~8 degrees and dip the stabilators into the runway before physics catches what the eye already sees touching; at the mesh extremity it catches at ~5 and the stabs stay clear (gear.go gates the tips off for unsupported flying-speed arrivals, where the crash probes own them)
 	return a
 }
 
