@@ -416,6 +416,7 @@ type brain struct {
 	bursting uint64     // consecutive ticks of trigger: the burst governor (#206)
 	walked   float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
 	walkedAt uint64     // tick of that judgement: consecutive judgements give the sweep rate the crossing shot is priced on
+	tracking bool       // the pipper owns the stick this tick
 	menace   int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
 	glimpsed uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
 	flanked  float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
@@ -2155,6 +2156,7 @@ func boost(speed, pace, offset float64) float64 {
 // steer converts the brain's command set into FCS inputs. Runs every tick.
 func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	s := &m.State
+	b.tracking = false // re-earned every tick: a latched track would settle the wings for the whole fight
 	speed := math.Max(s.Velocity.Length(), 1)
 	aim, want := b.aim, b.g
 
@@ -2211,6 +2213,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	}
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 && tick >= b.dodge {
 		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*1.15 && direction.Dot(aim) > 0.94 {
+			b.tracking = true
 			// Aim PAST the solution by twice the residual: the pursuit law
 			// is proportional-only, so against a drifting lead direction it
 			// settles with a standing error — measured 0.7 degrees, which is
@@ -2504,6 +2507,13 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// accelerating through it: a pure error term reached the target at full
 	// roll rate every time and flew straight past, and past 140° the sense
 	// lock above then committed it to carrying on round.
+	// TRIED AND REJECTED (#215): damping the roll while the pipper tracks, to
+	// spare the g the rolling reduction taxes. It bought the ace's firing
+	// solutions back (3.46% -> 4.81% of in-range time) and cost far more
+	// elsewhere — the machine tracks almost continuously, so damping its
+	// roll took its manoeuvring with it: the guns ladder inverted 5-1 to 2-9
+	// against the ace, and TestConvert fell from 12/12 to 9/12. A bot that
+	// aims better and loses is not better.
 	b.rolled += clamp(clamp(roll*1.4-s.Omega.X*0.45, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
 	return flight.Inputs{
 		Pitch:      pitch,
