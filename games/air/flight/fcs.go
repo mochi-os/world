@@ -502,6 +502,24 @@ func (m *Model) fcs(in Inputs, local Air) {
 		rolling := clamp(lateral+pedal*clamp((a-0.44)/0.17, 0, 1), -1, 1)
 		flapTarget = (rolling*limit-p)*0.22 + f.Bank // the roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
+		// Insufficient-airspeed departure (NATOPS 11.1.8.1): the FCS prevents
+		// every departure except this one — "nose high, ballistic conditions"
+		// walk the jet in pitch and yaw with few cues. Modelled as a slow
+		// seeded wander on the rudder and stabilator that the q̄-weak surfaces
+		// cannot cancel: it fades in below ~2.5 kPa (124 KEAS), saturates by
+		// 1 kPa, and dies on its own as speed returns. Up-and-away airborne
+		// only — the catapult stroke, waveoff and approach all live above the
+		// band, and the powered-approach law is untouched. Seeded phases keep
+		// the core deterministic (multiplayer prediction replays it exactly).
+		if ballistic := clamp((2500-pressure)/1500, 0, 1); ballistic > 0 && !m.State.Gear.Wow {
+			cycle := m.State.Time
+			slew := func(index uint64, fast float64) float64 {
+				return 0.6*math.Sin(fast*cycle+6.283*noise(m.Environment.Seed, index)) + 0.4*math.Sin(1.7*fast*cycle+6.283*noise(m.Environment.Seed, index+1))
+			}
+			rudderTarget += ballistic * slew(700, 0.5) * c.Throw.Rudder
+			stabTarget += ballistic * slew(702, 0.4) * 0.7 * c.Throw.Down
+			flapTarget += ballistic * slew(704, 0.6) * c.Throw.Flaperon.Down
+		}
 	}
 
 	// Leading-edge flaps schedule with alpha (plus the PA floor set in the gear-down branch).

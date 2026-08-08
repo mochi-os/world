@@ -320,3 +320,49 @@ func TestRollTaperHighAlpha(t *testing.T) {
 		t.Fatalf("the fade below 35° must still taper from real authority: %.3f at 20° vs %.3f at 35°", at(20), at(35))
 	}
 }
+
+// TestBallisticDeparture: overcooking the vertical is the one departure the
+// FCS does not prevent (NATOPS 11.1.8.1). A botched pull to near-vertical at
+// idle must now wander in yaw and pitch while the airspeed is gone — the old
+// model fell through the same profile perfectly symmetric (worst beta 0.0°,
+// worst yaw 0.0°/s) and flew away as if nothing happened. And it must still
+// fly away: the wander is bounded and dies with returning speed, not a spin.
+func TestBallisticDeparture(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel*0.5)
+	for i := 0; i < 240*3; i++ { // pull hard toward the vertical
+		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: 1})
+	}
+	slowest, worstBeta, worstYaw := 1e9, 0.0, 0.0
+	for i := 0; i < 240*30; i++ { // idle, light back stick: up, over, and down
+		m.Step(Inputs{Pitch: 0.2})
+		v := m.State.Velocity.Length()
+		slowest = math.Min(slowest, v)
+		if v < 90 {
+			body := m.State.Attitude.Unrotate(m.State.Velocity)
+			worstBeta = math.Max(worstBeta, math.Abs(beta(body)))
+			_, _, yaw := rates(m.State.Omega)
+			worstYaw = math.Max(worstYaw, math.Abs(yaw))
+		}
+	}
+	t.Logf("slowest %.0f m/s, worst beta %.1f°, worst yaw %.0f°/s", slowest, worstBeta*180/math.Pi, worstYaw*180/math.Pi)
+	if slowest > 80 {
+		t.Fatalf("the botched vertical must actually starve the jet of airspeed: minimum %.0f m/s", slowest)
+	}
+	if worstBeta < 6*math.Pi/180 && worstYaw < 15*math.Pi/180 {
+		t.Fatalf("no departure at %.0f m/s minimum: beta %.1f°, yaw %.0f°/s — the jet is still perfectly obedient out of airspeed", slowest, worstBeta*180/math.Pi, worstYaw*180/math.Pi)
+	}
+	for i := 0; i < 240*10; i++ { // military power, hands off: the wander must die with returning speed
+		m.Step(Inputs{Throttle: 1})
+	}
+	if math.IsNaN(m.State.Position.Y) {
+		t.Fatal("diverged after the departure")
+	}
+	if v := m.State.Velocity.Length(); v < 100 {
+		t.Fatalf("must fly away once airspeed returns: %.0f m/s", v)
+	}
+	p, q, r := rates(m.State.Omega)
+	if math.Abs(p) > 0.5 || math.Abs(q) > 0.5 || math.Abs(r) > 0.5 {
+		t.Fatalf("still tumbling after recovery: p %.2f q %.2f r %.2f rad/s", p, q, r)
+	}
+}
