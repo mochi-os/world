@@ -113,6 +113,14 @@ func build() *flight.Airframe {
 		{Name: "tank5", Station: 5, Position: flight.Vec3{X: -0.6, Y: -1.45, Z: 0}, Mass: 158, Area: 0.07, Fuel: 1010},
 	}
 	a.Default = 0b11 // the bare jet flies wingtips only, exactly as before the catalog grew
+	// R-LIM (NATOPS 2.8.2.8): the wing-pylon tanks engage the FCS roll-rate
+	// reduction while aboard. The centreline tank is not a wing-pylon store —
+	// the manual's condition excludes it, and it adds almost no roll inertia.
+	for i := range a.Stores {
+		if name := a.Stores[i].Name; name == "tank3" || name == "tank7" {
+			a.Stores[i].Limit.Roll = true
+		}
+	}
 	a.Engines = make([]flight.Engine, 2)
 	for i := range a.Engines {
 		side := float64(i)*2 - 1

@@ -103,9 +103,10 @@ type Store struct {
 	Name     string // catalog identity — the wire and client vocabulary
 	Station  int    // NATOPS station 1..9 (port tip to starboard tip)
 	Position Vec3
-	Mass     float64 // kg while attached (dry mass for tanks)
-	Area     float64 // m² flat plate while attached
-	Fuel     float64 // kg usable capacity; 0 = dry store
+	Mass     float64             // kg while attached (dry mass for tanks)
+	Area     float64             // m² flat plate while attached
+	Fuel     float64             // kg usable capacity; 0 = dry store
+	Limit    struct{ Roll bool } // FCS restrictions while attached — Roll: the store engages R-LIM (NATOPS 2.8.2.8, wing-pylon tanks and air-to-ground stores)
 }
 
 // Engine is one powerplant.

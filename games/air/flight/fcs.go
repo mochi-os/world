@@ -472,9 +472,28 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// washes out with dynamic pressure — the FCS reshapes the wing
 		// through a turn, exactly as the real jet's AUTO flap mode does.
 		droopTarget = clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
+		// NATOPS 2.8.4.8: airborne in the AUTO FLAPS UP mode the speedbrake
+		// retracts itself above 6.0 g or 28° alpha (retraction is also part
+		// of departure recovery, 11.2.1) — the board must not keep costing
+		// energy through a hard turn the real jet would have saved. The
+		// game's brake command is maintained, not momentary, so the board
+		// re-extends when the condition clears with the command still held.
+		if !m.State.Gear.Wow && (m.State.Fcs.Normal > 6.0 || a > 28*math.Pi/180) {
+			brakeTarget = 0
+		}
 		// Roll-rate command, tempered at low speed and high alpha.
-		limit := 3.8 * clamp(speed/200, 0.35, 1) * clamp(1-0.9*a/m.Airframe.Limit.Alpha, 0.08, 1)
+		limit := 3.8 * clamp(speed/200, 0.35, 1) * taper(a, m.Airframe.Limit.Alpha)
 		limit *= clamp(1-math.Abs(b)/0.30, 0.05, 1) // sideslip strips roll authority: no spin fuel
+		// R-LIM (NATOPS 2.8.2.8): wing-pylon tanks or air-to-ground stores
+		// with their rack hooks closed cut the maximum roll rate by about a
+		// third. The catalog flags the stores that engage it, so the
+		// reduction rides the live mask and ends when the tanks depart.
+		for i := range m.Airframe.Stores {
+			if m.Airframe.Stores[i].Limit.Roll && m.stores&(1<<uint(i)) != 0 {
+				limit *= 0.67
+				break
+			}
+		}
 		// Rudder-to-rolling-surface interconnect (NATOPS 11.1.8): above 25°
 		// AoA pedal and lateral stick produce similar roll responses, and
 		// combined inputs outperform either alone from 35° up — the pedal
@@ -520,6 +539,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 // with a touch of pedal-commanded beta, and an aileron-rudder interconnect
 // that grows with alpha (pro-spin input ends up refused because the rudder
 // is busy coordinating).
+// taper is the roll command's alpha schedule: authority tapers as alpha
+// rises toward the limiter, then holds at its 35° value — NATOPS 11.1.8 has
+// roll performance "essentially constant" above 35° alpha. The old fixed
+// 0.08 floor kept collapsing past the limiter to a 9°/s crawl in the
+// transient excursions above 40° where rolling matters most.
+func taper(a float64, limit float64) float64 {
+	return clamp(1-0.9*a/limit, 1-0.9*(35*math.Pi/180)/limit, 1)
+}
+
 func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r float64, f *FcsState) float64 {
 	f.Washout += (r - f.Washout) * Dt / 1.0
 	damped := r - f.Washout

@@ -232,3 +232,91 @@ func TestNegativeFloorFixed(t *testing.T) {
 		t.Fatalf("heavy jet must still command toward -3 g, not a weight-scaled floor: reached %.2f g", least)
 	}
 }
+
+// TestBrakeAutoRetract: airborne in the AUTO FLAPS UP mode the speedbrake
+// stows itself above 6.0 g (NATOPS 2.8.4.8) and re-extends when the g clears
+// with the command still held — the maintained-command reading of the real
+// jet's momentary switch.
+func TestBrakeAutoRetract(t *testing.T) {
+	m := calm()
+	launch(m, 240)
+	// One continuous full-aft pull with the board commanded out. The g builds
+	// slowly (the trim integrator walks the pull's tail), so the board is
+	// fully out through the sub-6 g phase and the retract engages as the g
+	// crosses the threshold several seconds in.
+	extended, stowed, peak := 0.0, 1.0, 0.0
+	for i := 0; i < 240*10; i++ {
+		m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 1, Speedbrake: 1})
+		if m.State.Fcs.Normal < 5 {
+			extended = math.Max(extended, m.State.Fcs.Speedbrake)
+		}
+		if m.State.Fcs.Normal > 6.2 {
+			stowed = math.Min(stowed, m.State.Fcs.Speedbrake)
+		}
+		peak = math.Max(peak, m.State.Fcs.Normal)
+	}
+	if extended < 0.9 {
+		t.Fatalf("the board must be out below the threshold: %.2f", extended)
+	}
+	if peak < 6.2 {
+		t.Fatalf("the pull must exceed the 6 g threshold to exercise the retract: peak %.1f g", peak)
+	}
+	if stowed > 0.1 {
+		t.Fatalf("the board must auto-retract above 6 g: still %.2f out", stowed)
+	}
+	for i := 0; i < 240*3; i++ {
+		m.Step(Inputs{Throttle: 0.6, Speedbrake: 1})
+	}
+	if m.State.Fcs.Speedbrake < 0.5 {
+		t.Fatalf("the held command must re-extend the board once the g clears: %.2f", m.State.Fcs.Speedbrake)
+	}
+}
+
+// TestRollLimitTanks: R-LIM (NATOPS 2.8.2.8) — wing-pylon tanks cut the
+// maximum roll rate by about a third. The centreline tank is not a wing-pylon
+// store and must not engage it.
+func TestRollLimitTanks(t *testing.T) {
+	peak := func(names ...string) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel)
+		if len(names) > 0 {
+			m.Stores(Fighter.Default | mask(t, names...))
+		}
+		best := 0.0
+		for i := 0; i < 240*2; i++ {
+			m.Step(Inputs{Roll: 1, Throttle: 0.8})
+			p, _, _ := rates(m.State.Omega)
+			best = math.Max(best, p)
+		}
+		return best
+	}
+	clean := peak()
+	wing := peak("pylon3", "tank3", "pylon7", "tank7")
+	centre := peak("pylon5", "tank5")
+	t.Logf("peak roll: clean %.0f°/s, wing tanks %.0f°/s, centreline %.0f°/s", clean*180/math.Pi, wing*180/math.Pi, centre*180/math.Pi)
+	if wing > clean*0.75 || wing < clean*0.50 {
+		t.Fatalf("wing tanks must cut the peak roll rate about a third: %.0f vs %.0f°/s", wing*180/math.Pi, clean*180/math.Pi)
+	}
+	if centre < clean*0.85 {
+		t.Fatalf("the centreline tank must not engage R-LIM: %.0f vs %.0f°/s clean", centre*180/math.Pi, clean*180/math.Pi)
+	}
+}
+
+// TestRollTaperHighAlpha: roll performance is "essentially constant" above
+// 35° alpha (NATOPS 11.1.8) — the fade tapers to its 35° value and holds
+// there instead of collapsing toward zero (the old fixed 0.08 floor crawled
+// at 9°/s by 40°). Pinned on the schedule directly: the jet cannot SUSTAIN
+// the alphas where the floors differ, so a flown test only sees the pitch-up
+// transient (flight-level high-alpha rolling is TestPedalRollsAtHighAlpha).
+func TestRollTaperHighAlpha(t *testing.T) {
+	at := func(deg float64) float64 { return taper(deg*math.Pi/180, Fighter.Limit.Alpha) }
+	if math.Abs(at(36)-at(45)) > 0.02 {
+		t.Fatalf("roll authority must hold essentially constant above 35°: %.3f at 36° vs %.3f at 45°", at(36), at(45))
+	}
+	if at(40) < 0.2 {
+		t.Fatalf("the 40° roll crawl is back: fade %.3f", at(40))
+	}
+	if at(20) < at(35)+0.2 {
+		t.Fatalf("the fade below 35° must still taper from real authority: %.3f at 20° vs %.3f at 35°", at(20), at(35))
+	}
+}
