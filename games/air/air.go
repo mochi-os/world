@@ -640,6 +640,8 @@ func input(data map[string]any) flight.Inputs {
 		Hook:       flag("hook"),
 		Launch:     flag("launch"),
 		Override:   flag("override"),
+		Dump:       flag("dump"),
+		Secure:     [2]bool{flag("port"), flag("starboard")}, // per-engine fuel OFF: engine 0 is the port core
 		Eject:      flag("eject"),
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
@@ -760,7 +762,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		}
 		// The damage cascade: fires feed or starve on the throttle, fuel
 		// fires run their fuse, weakened wings shed under g.
-		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, 60, i.environment.Seed, uint64(slot), tick) {
+		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, a.latest.Secure, 60, i.environment.Seed, uint64(slot), tick) {
 			i.raise(slot, event)
 		}
 		if a.alive && a.condition.Killed {

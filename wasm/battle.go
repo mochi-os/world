@@ -285,7 +285,8 @@ func progress(this js.Value, arguments []js.Value) any {
 	}
 	if model != nil {
 		body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
-		raised := battle.Advance(&body, model, arsenal[0], 60, model.Environment.Seed, 0, tick)
+		secure := [2]bool{int(arsenal[3])&1 != 0, int(arsenal[3])&2 != 0}
+		raised := battle.Advance(&body, model, arsenal[0], secure, 60, model.Environment.Seed, 0, tick)
 		out[0], out[1] = condition.Fire[0], condition.Fire[1]
 		out[2], out[3] = bit(condition.Burning), bit(condition.Killed)
 		out[4] = events(raised)
@@ -300,7 +301,7 @@ func progress(this js.Value, arguments []js.Value) any {
 		if i == 0 && bandit != nil {
 			throttle = bandit.Throttle() // the bandit's fires feed on ITS lever, so the brain's fire drill (#130) can starve them
 		}
-		raised := battle.Advance(&h.body, nil, throttle, 60, model.Environment.Seed, uint64(i+1), tick)
+		raised := battle.Advance(&h.body, nil, throttle, [2]bool{}, 60, model.Environment.Seed, uint64(i+1), tick)
 		base := 6 + i*8
 		out[base], out[base+1] = h.condition.Fire[0], h.condition.Fire[1]
 		out[base+2], out[base+3] = bit(h.condition.Burning), bit(h.condition.Killed)

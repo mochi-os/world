@@ -159,7 +159,7 @@ func (m *Model) Step(in Inputs) {
 	m.events(in)
 	m.integrate(in, local)
 	m.wrap()
-	m.burn()
+	m.burn(in)
 	m.shake(local)
 	m.State.Time += Dt
 }

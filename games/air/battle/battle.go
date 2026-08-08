@@ -54,19 +54,21 @@ type Event struct {
 // fire growth and the idle-throttle extinguish drill, burn-through, the
 // fuel-fire fuse, and the over-g structural shed. Both hosts call it every
 // tick for every living aircraft.
-func Advance(body *Body, model *flight.Model, throttle float64, rate float64, seed uint64, slot uint64, tick uint64) []Event {
+func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, rate float64, seed uint64, slot uint64, tick uint64) []Event {
 	var events []Event
 	condition := body.Condition
 	damage := body.Damage
 	step := 1 / rate
 	condition.Damaged += step
 
-	// Engine fires: feed on throttle, starve at idle — pulling the engines
-	// back IS the fire drill (one throttle serves both engines for now).
+	// Engine fires: feed on fuel, starve without it. The drill is either the
+	// per-engine cutoff (Inputs.Secure — the real NATOPS 15.1 answer, which
+	// keeps the good engine fighting) or pulling the one throttle to idle.
 	for i := range condition.Fire {
 		if condition.Fire[i] <= 0 {
 			continue
 		}
+		fed := throttle > 0.1 && !(i < len(secure) && secure[i])
 		// A burning engine is a DEAD engine (2026-08-01): the fire drill
 		// extinguishes by shutdown — fuel off — and nothing relights a fire-
 		// damaged turbine in flight. Before this, an extinguished fire handed
@@ -75,7 +77,7 @@ func Advance(body *Body, model *flight.Model, throttle float64, rate float64, se
 		// the second makes a glider, and what the drill saves is the AIRFRAME:
 		// an unfought fire still burns through to the fuel.
 		damage.Engine[i] = 1
-		if throttle > 0.1 {
+		if fed {
 			condition.Fire[i] += 0.05 * step
 		} else {
 			condition.Fire[i] -= 0.08 * step

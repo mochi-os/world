@@ -194,6 +194,8 @@ func controls() (flight.Inputs, int) {
 		Flap:       input[10],
 		Lean:       input[11],
 		Reset:      flags&128 != 0,
+		Dump:       flags&1 != 0, // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
+		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
 		Sequence:   uint32(input[6]),
 	}
 	steps := int(input[7])

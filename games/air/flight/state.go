@@ -26,6 +26,8 @@ type Inputs struct {
 	Lean       float64 // -1..1 held roll-trim rate, +1 = right wing down: walks the differential-flaperon datum
 	Reset      bool    // one-shot trim reset: zero the alpha and roll datums, re-datum the attitude hold
 	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
+	Dump       bool    // fuel dump switch: burn() drains toward the bingo floor at the NATOPS rate while held on
+	Secure     [2]bool // per-engine fuel OFF (the fire drill and the runaway shutdown, NATOPS 15.1); clearing the switch relights
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool

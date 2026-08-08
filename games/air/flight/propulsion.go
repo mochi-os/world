@@ -54,13 +54,17 @@ func (m *Model) spool(in Inputs) {
 			*e = EngineState{} // no engine in this slot
 			continue
 		}
+		target := throttle
+		if i < len(in.Secure) && in.Secure[i] {
+			target = 0 // secured: fuel off, the core winds down and reheat dies (NATOPS 15.1 — the fire drill); clearing the switch spools it back up
+		}
 		constant := spool_up
-		if throttle < e.Spool {
+		if target < e.Spool {
 			constant = spool_down
 		}
-		e.Spool += (throttle - e.Spool) * Dt / constant
+		e.Spool += (target - e.Spool) * Dt / constant
 		lit := 0.0
-		if in.Reheat > 0 && e.Spool > 0.85 && m.State.Fuel > 0 {
+		if in.Reheat > 0 && e.Spool > 0.85 && m.State.Fuel > 0 && target > idle {
 			// The F404 stages reheat in five discrete zones: the fuel control
 			// lights whole segments, so the commanded fraction quantizes up.
 			lit = math.Ceil(clamp(in.Reheat, 0, 1)*5) / 5
@@ -106,9 +110,20 @@ func (m *Model) propulsion(s *State, total *Forces, local Air) {
 // tanks topped while the externals drain — so State.Fuel only falls once
 // State.External is dry. Battle-damage leaks drain the internal tanks
 // regardless: punctures are in the airframe, not the drop tanks.
-func (m *Model) burn() {
+// dumping is the fuel jettison rate and its automatic floor (NATOPS 2.2.7):
+// 600-1,000 lb/min from the DUMP switch, terminating on its own at the bingo
+// caution — internal fuel only, and never below the 3,000 lb bingo state.
+const (
+	dumping   = 6.0  // kg/s ≈ 790 lb/min
+	dumpfloor = 1361 // kg = the 3,000 lb bingo caution
+)
+
+func (m *Model) burn(in Inputs) {
 	if m.Environment.Cheat.Fuel {
 		return // infinite-fuel cheat: the tank (and with it the leak drain) stays frozen at the spawn load
+	}
+	if in.Dump && m.State.Fuel > dumpfloor {
+		m.State.Fuel = math.Max(dumpfloor, m.State.Fuel-dumping*Dt)
 	}
 	local := air(m.State.Position.Y, m.Environment)
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))

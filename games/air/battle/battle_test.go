@@ -127,7 +127,7 @@ func TestFireDrill(t *testing.T) {
 	body, m := target()
 	body.Condition.Fire[0] = 0.1
 	for tick := uint64(0); tick < 300; tick++ { // 5 s at throttle
-		Advance(body, m, 0.8, 60, 7, 3, tick)
+		Advance(body, m, 0.8, [2]bool{}, 60, 7, 3, tick)
 	}
 	if body.Condition.Fire[0] <= 0.1 {
 		t.Fatal("fire did not grow under throttle")
@@ -136,10 +136,31 @@ func TestFireDrill(t *testing.T) {
 		t.Fatal("a burning engine must lose thrust")
 	}
 	for tick := uint64(300); tick < 2000 && body.Condition.Fire[0] > 0; tick++ {
-		Advance(body, m, 0.0, 60, 7, 3, tick)
+		Advance(body, m, 0.0, [2]bool{}, 60, 7, 3, tick)
 	}
 	if body.Condition.Fire[0] > 0 {
 		t.Fatal("the idle drill failed to extinguish the fire")
+	}
+}
+
+// TestSecureDrill: the per-engine cutoff (NATOPS 15.1) starves a fire with
+// the throttle still at power — the good engine keeps fighting while the
+// secured one burns out.
+func TestSecureDrill(t *testing.T) {
+	body, m := target()
+	body.Condition.Fire[0] = 0.1
+	for tick := uint64(0); tick < 2000 && body.Condition.Fire[0] > 0; tick++ {
+		Advance(body, m, 0.8, [2]bool{true, false}, 60, 7, 3, tick)
+	}
+	if body.Condition.Fire[0] > 0 {
+		t.Fatal("securing the burning engine at full throttle must starve its fire")
+	}
+	body.Condition.Fire[1] = 0.1
+	for tick := uint64(0); tick < 300; tick++ {
+		Advance(body, m, 0.8, [2]bool{true, false}, 60, 7, 3, tick)
+	}
+	if body.Condition.Fire[1] <= 0.1 {
+		t.Fatal("the OTHER engine's fire must still feed on the open throttle")
 	}
 }
 
@@ -152,7 +173,7 @@ func TestFuse(t *testing.T) {
 	}
 	exploded := false
 	for tick := uint64(0); tick < 60*31; tick++ {
-		for _, e := range Advance(body, m, 0.5, 60, 7, 3, tick) {
+		for _, e := range Advance(body, m, 0.5, [2]bool{}, 60, 7, 3, tick) {
 			if e.Kind == "explode" {
 				exploded = true
 			}
@@ -173,7 +194,7 @@ func TestShed(t *testing.T) {
 		body, m := target()
 		body.Damage.Stress = stress
 		m.State.Fcs.Normal = normal
-		for _, e := range Advance(body, m, 0.5, 60, 7, 3, 1) {
+		for _, e := range Advance(body, m, 0.5, [2]bool{}, 60, 7, 3, 1) {
 			if e.Kind == "shed" {
 				return true
 			}
@@ -226,7 +247,7 @@ func TestFringeFlies(t *testing.T) {
 			stick = clamp(stick+clamp(((altitude-s.Position.Y)*0.002-s.Velocity.Y*0.02-stick*4)*0.002, -0.004, 0.004), -0.5, 1)
 			m.Step(flight.Inputs{Throttle: 0.8, Pitch: stick})
 		}
-		for _, e := range Advance(body, m, 0.8, 60, 7, 3, tick) {
+		for _, e := range Advance(body, m, 0.8, [2]bool{}, 60, 7, 3, tick) {
 			if e.Kind == "explode" {
 				t.Fatal("the fringe wound cascaded to an explosion within 8 s")
 			}
