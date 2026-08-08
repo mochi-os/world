@@ -1,4 +1,4 @@
-version = 1.1
+version = 1.2
 bin = ../bin
 ldflags = -s -w -X main.build_version=$(version)
 go_sources := $(shell find server game games -name '*.go') go.mod go.sum
@@ -348,7 +348,7 @@ release-publish:
 	@t=$$(date +%s); ../core/build/scripts/apt-repository-update ../packages/apt `cat ../core/local/gpg.txt | tr -d '\n'` && echo ">>> apt reindex (scan + gpg sign): $$(($$(date +%s)-t))s" | tee -a $(timing)
 	rm -f ../packages/rpm/Packages/mochi-world-*.rpm
 	cp $(rpm_x86_64) $(rpm_aarch64) $(rpm_armv7hl) ../packages/rpm/Packages
-	@t=$$(date +%s); ../core/build/scripts/rpm-repository-update ../packages/rpm && echo ">>> rpm reindex (createrepo): $$(($$(date +%s)-t))s" | tee -a $(timing)
+	@t=$$(date +%s); ../core/build/scripts/rpm-repository-update ../packages/rpm `cat ../core/local/gpg.txt | tr -d '\n'` && echo ">>> rpm reindex (createrepo): $$(($$(date +%s)-t))s" | tee -a $(timing)
 	cp $(msi) ../packages/windows/mochi-world.msi
 	cp $(pkg_amd64) ../packages/macos/mochi-world-amd64.pkg
 	cp $(pkg_arm64) ../packages/macos/mochi-world-arm64.pkg

@@ -16,7 +16,14 @@ flags="$*"
 deploy() {
 	local host="$1" role="$2"
 	echo "=== Deploying mochi-world to $host ($role) ==="
-	ssh "root@$host" "apt update && apt install -y $flags mochi-world"
+	# --force-confold: keep the operator's edited conffile. Without it, a
+	# changed packaged world.conf makes dpkg prompt on the non-interactive
+	# ssh, fail on EOF, and leave the package half-configured with the
+	# service STOPPED (prerm runs before the prompt, postinst never runs) —
+	# which took production down on the 1.2 deploy. Keeping the installed
+	# file is dpkg's own default at that prompt; if a release ever needs a
+	# new key, the is-active check below catches the refusal to start.
+	ssh "root@$host" "DEBIAN_FRONTEND=noninteractive apt update && DEBIAN_FRONTEND=noninteractive apt install -y -o Dpkg::Options::=--force-confold $flags mochi-world"
 	ssh "root@$host" "dpkg-query -W -f='$host mochi-world \${Version}\n' mochi-world; systemctl is-active mochi-world"
 }
 
