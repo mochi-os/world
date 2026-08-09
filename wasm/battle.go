@@ -302,13 +302,14 @@ func progress(this js.Value, arguments []js.Value) any {
 			throttle = bandit.Throttle() // the bandit's fires feed on ITS lever, so the brain's fire drill (#130) can starve them
 		}
 		raised := battle.Advance(&h.body, nil, throttle, [2]bool{}, 60, model.Environment.Seed, uint64(i+1), tick)
-		base := 6 + i*8
+		base := 6 + i*9
 		out[base], out[base+1] = h.condition.Fire[0], h.condition.Fire[1]
 		out[base+2], out[base+3] = bit(h.condition.Burning), bit(h.condition.Killed)
 		out[base+4] = events(raised)
 		out[base+5] = (h.damage.Engine[0] + h.damage.Engine[1]) / 2
 		out[base+6] = wings(h)
 		out[base+7] = sum(h.damage.Element)
+		out[base+8] = h.damage.Leak // the visible wound the client streams as fuel mist (#244)
 	}
 	send(out, arguments[1])
 	return nil
