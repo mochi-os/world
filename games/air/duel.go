@@ -508,6 +508,18 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	if speed < 80 {
 		score -= 1
 	}
+	// Midair avoidance (#215), a penalty and NOT a play: 14 m kills both jets
+	// for no kill credited — strictly a loss — and the rollout already carries
+	// his predicted position, so a line threading within collision range is
+	// scored down at exactly the instants it is close, across EVERY play. It
+	// composes with BFM instead of a committed avoidance manoeuvre reacting a
+	// re-plan too late at merge closure. Costs no offence: the gun band factor
+	// is already zero inside 60 m, so nothing legitimate lives here. Instructor
+	// tiers only — a green pilot flying into you is authentic, and it keeps the
+	// novice ram in the game.
+	if sk.library >= 3 && r < 70 {
+		score -= 8 * clamp((70-r)/56, 0, 1) // 0 at 70 m, -8 at the 14 m kill radius
+	}
 	return score
 }
 
