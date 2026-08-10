@@ -44,6 +44,8 @@ type order struct {
 	text       string           // chat only
 	scope      string           // chat only: "team" or "all"
 	departures []game.Departure // jettison only (#18)
+	mode       int              // radar only (#30): 0 silent, 1 search, 2 STT
+	target     int              // radar only (#30): the locked slot, -1 none
 	reply      chan answer      // join only
 	cancel     chan struct{}    // join only: closed when the caller stops waiting, so a stalled tick's late join rolls back instead of committing a ghost
 }
@@ -74,6 +76,13 @@ type sided interface {
 // instance; the instance validates and re-publishes the granted loadout.
 type jettisoner interface {
 	Jettison(slot int, departures []game.Departure)
+}
+
+// radiator is the optional game-instance interface for radar emitter reports
+// (#30). Called only from the session's tick goroutine; the instance validates
+// and stamps the state into everyone's pose records.
+type radiator interface {
+	Radar(slot int, mode int, target int)
 }
 
 type session struct {

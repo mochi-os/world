@@ -2284,10 +2284,10 @@ func TestSelfPoseDamage(t *testing.T) {
 	poses, _ := snapshot["poses"].(map[int]any)
 	mine, _ := poses[0].(map[string]any)
 	blob, _ := mine["blob"].([]byte)
-	if len(blob) < 34 {
-		t.Fatalf("own pose blob %d bytes, want at least one 34-byte pose", len(blob))
+	if len(blob) < 35 {
+		t.Fatalf("own pose blob %d bytes, want at least one 35-byte pose", len(blob))
 	}
-	self := blob[:34] // self first, by construction
+	self := blob[:35] // self first, by construction
 
 	if got := float64(self[29]) / 255; got < 0.5 || got > 0.7 {
 		t.Errorf("left engine fire byte %.2f, want ~0.6", got)

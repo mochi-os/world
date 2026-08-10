@@ -142,6 +142,10 @@ func session_orders(s *session) {
 				if j, ok := s.instance.(jettisoner); ok && s.players[o.slot] != nil {
 					j.Jettison(o.slot, o.departures)
 				}
+			case "radar":
+				if r, ok := s.instance.(radiator); ok && s.players[o.slot] != nil {
+					r.Radar(o.slot, o.mode, o.target)
+				}
 			}
 		default:
 			return

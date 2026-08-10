@@ -148,6 +148,18 @@ func connection_read(l link, s *session, slot int) {
 				return
 			default: // inbox full: a lost jettison re-sends nothing — the client's next one supersedes
 			}
+		case "radar":
+			mode := int(number(message, "mode"))
+			target := int(number(message, "target"))
+			if mode < 0 || mode > 2 {
+				continue // the instance validates the target; a nonsense mode dies at the door
+			}
+			select {
+			case s.inbox <- order{kind: "radar", slot: slot, mode: mode, target: target}:
+			case <-s.done:
+				return
+			default: // inbox full: a lost report re-sends nothing — the client's next state change supersedes
+			}
 		case "leave":
 			return
 		}

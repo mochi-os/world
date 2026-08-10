@@ -106,7 +106,7 @@ func runClient(id int, session, address string, st *stat, measureFrom, stopAt ti
 		return
 	}
 	// framed join
-	join, _ := cbor.Marshal(map[string]any{"kind": "join", "session": session, "name": fmt.Sprintf("load%03d", id), "protocol": 1})
+	join, _ := cbor.Marshal(map[string]any{"kind": "join", "session": session, "name": fmt.Sprintf("load%03d", id), "protocol": 2})
 	head := make([]byte, 4)
 	binary.BigEndian.PutUint32(head, uint32(len(join)))
 	stream.Write(head)

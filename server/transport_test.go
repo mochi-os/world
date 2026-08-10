@@ -238,7 +238,7 @@ func TestAir(t *testing.T) {
 // poses — the headless stand-in for the two-browser test, and the guard
 // this suite keeps against snapshot datagrams outgrowing the QUIC MTU
 // (SendDatagram drops oversized frames silently). Poses ride their own
-// datagram as 34-byte records with the slot in byte 0, self first.
+// datagram as 35-byte records with the slot in byte 0, self first.
 func TestPair(t *testing.T) {
 	s, err := sessions_create("air", "joust", "pair test", 4, nil)
 	if err != nil {
@@ -272,7 +272,7 @@ func TestPair(t *testing.T) {
 		}
 		blob, _ := message["blob"].([]byte)
 		slots := map[int]bool{}
-		for at := 0; at+34 <= len(blob); at += 34 {
+		for at := 0; at+35 <= len(blob); at += 35 {
 			slots[int(blob[at])] = true
 		}
 		if slots[mine] && slots[theirs] {

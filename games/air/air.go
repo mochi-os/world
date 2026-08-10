@@ -253,6 +253,8 @@ type craft struct {
 	team       string  // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
+	emitter    int // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
+	lock       int // the STT'd slot when emitter is 2, -1 otherwise
 }
 
 // hostile reports whether two craft may engage each other: everyone in the
@@ -1286,7 +1288,7 @@ func (i *instance) finish(winner int, loser int) {
 	i.results = map[string]any{"winner": winner, "loser": loser, "name": name(winner)}
 }
 
-// Snapshot wire (#81, 100 players): every remote aircraft is a fixed 34-byte
+// Snapshot wire (#81, 100 players): every remote aircraft is a fixed 35-byte
 // binary pose record — CBOR maps with string keys cost ~300 B per player and
 // burst the QUIC datagram at three. Each recipient gets the NEAREST `near`
 // remotes every snapshot plus `roving` of the far tail round-robin (full far
@@ -1300,10 +1302,10 @@ const (
 	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
 
-// pose packs one aircraft into the 34-byte wire record.
+// pose packs one aircraft into the 35-byte wire record.
 func pose(slot int, a *craft) []byte {
 	s := &a.model.State
-	b := make([]byte, 34)
+	b := make([]byte, 35)
 	b[0] = byte(slot)
 	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(s.Position.X)))
 	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(s.Position.Y)))
@@ -1349,7 +1351,30 @@ func pose(slot int, a *craft) []byte {
 	b[30] = byte(clamp(a.condition.Fire[1], 0, 1) * 255)
 	b[31] = byte(clamp(a.model.State.Damage.Leak*10, 0, 255))
 	binary.LittleEndian.PutUint16(b[32:], uint16(mask(a.model.Airframe, a.model.State.Damage.Element)))
+	target := 63 // #30: byte 34 — high two bits the emitter mode, low six the locked slot (63 = none)
+	if a.emitter == 2 && a.lock >= 0 && a.lock < 63 {
+		target = a.lock
+	}
+	b[34] = byte(a.emitter<<6) | byte(target)
 	return b
+}
+
+// Radar records a client's emitter report (#30): 0 silent, 1 search, 2 STT
+// with the locked slot. The wire promises nothing — the mode is gated at the
+// door, the target must name a present aircraft, and only STT carries one.
+func (i *instance) Radar(slot int, mode int, target int) {
+	a := i.aircraft[slot]
+	if a == nil || a.bot || mode < 0 || mode > 2 {
+		return
+	}
+	if mode != 2 {
+		target = -1
+	}
+	if target >= 63 || (target >= 0 && i.aircraft[target] == nil) {
+		target = -1 // the six wire bits cap the slot space at 62; an absent aircraft is no lock
+	}
+	a.emitter = mode
+	a.lock = target
 }
 
 // span is the wrap-aware distance between two aircraft.
@@ -1451,7 +1476,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			}
 			picked = append(set, far[at:stop]...)
 		}
-		blob := make([]byte, 0, (len(picked)+1)*34)
+		blob := make([]byte, 0, (len(picked)+1)*35)
 		blob = append(blob, pose(self, me)...) // self first: the client's no-prediction fallback reads its own pose from the wire
 		for _, slot := range picked {
 			blob = append(blob, pose(slot, i.aircraft[slot])...)
