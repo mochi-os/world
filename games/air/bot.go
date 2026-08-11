@@ -255,7 +255,7 @@ func standard() tactics {
 	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0.06
 	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
 	t.sandwich.span, t.sandwich.nose, t.sandwich.weight, t.sandwich.reach = 2200, 0.92, 0.3, 10000
-	t.support.span, t.support.share, t.support.engaged = 6000, 0.75, 2200
+	t.support.span, t.support.share, t.support.engaged = 6000, 0.9, 2200 // share 0.75 -> 0.9 (2026-08-10 sweep): defer to a mate a little sooner, so the pair stops both-committing to the same target and trading two jets for one — section deaths fell 11% at flat kills across 80 seeds
 	t.support.behind, t.support.above, t.support.near, t.support.out, t.support.rise, t.support.limit = 1100, 500, 1300, 600, 300, 4
 	t.form.abeam, t.form.blend, t.form.burner = 1500, 1200, 3000
 	// press.closure stays 45: raising it to 54 scored well on the battery
