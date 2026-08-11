@@ -76,7 +76,7 @@ func TestMask(t *testing.T) {
 	for i, s := range aircraft.Get("fa18c").Stores {
 		index[s.Name] = i
 	}
-	bit := func(name string) uint32 { return 1 << uint(index[name]) }
+	bit := func(name string) uint64 { return 1 << uint(index[name]) }
 	lo := stores_grant(fox2(), true)
 	full := stores_mask(lo, 0)
 	for _, name := range []string{"tip1", "tip9", "rail2", "9m2", "rail8", "9m8"} {
@@ -145,5 +145,140 @@ func TestAttach(t *testing.T) {
 	legacy := &craft{missiles: 2}
 	if legacy.attach() != armed(2) {
 		t.Fatalf("loadout-less craft lost the legacy mapping")
+	}
+}
+
+// TestAmraamStores (#27): the cheek stations accept only the AIM-120C, the
+// guns-only clamp strips it like any missile, and the fa18c catalog carries
+// its entries appended after every legacy mask bit.
+func TestAmraamStores(t *testing.T) {
+	lo := stores_grant(map[string]any{
+		"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"2": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"8": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
+	}, true)
+	if got := lo["4"].Stores[0]; got != "120c" {
+		t.Fatalf("cheek AMRAAM dropped: %q", got)
+	}
+	if got := lo["2"].Stores[0]; got != "120c" {
+		t.Fatalf("wing-rail AMRAAM dropped: %q", got)
+	}
+	if got := lo["8"].Stores; len(got) != 2 || got[0] != "120c" || got[1] != "120c" {
+		t.Fatalf("twin AMRAAM pair dropped: %v", got)
+	}
+	if got := stores_entries(8, lo["8"]); len(got) != 3 || got[0] != "twin8" || got[1] != "120c8a" || got[2] != "120c8b" {
+		t.Fatalf("twin pair entries %v", got)
+	}
+	if got := stores_entries(6, lo["6"]); len(got) != 2 || got[0] != "rail6" || got[1] != "120c6" {
+		t.Fatalf("cheek entries %v", got)
+	}
+	guns := stores_grant(map[string]any{"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}}}, false)
+	if got := guns["4"].Stores[0]; got != "" {
+		t.Fatalf("guns-only grant kept the AMRAAM: %q", got)
+	}
+	inboard := stores_grant(map[string]any{
+		"3": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
+		"5": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
+	}, true)
+	if got := inboard["3"].Stores[0]; got != "120c" {
+		t.Fatalf("inboard-pylon AMRAAM dropped: %q", got)
+	}
+	if got := inboard["5"].Stores[0]; got != "" {
+		t.Fatalf("a centreline AMRAAM survived: %q", got)
+	}
+	if got := stores_entries(3, inboard["3"]); len(got) != 2 || got[1] != "120c3" {
+		t.Fatalf("inboard entries %v", got)
+	}
+	// The ten-round fit (#27): twins on all four wing pylons plus the cheeks.
+	// A mixed twin pair is real LAU-115 carriage and survives the grant, and
+	// the pair entries sit past bit 31 — the mask chain is uint64 now, and
+	// the full fit must carry them.
+	spam := stores_grant(map[string]any{
+		"2": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
+		"3": map[string]any{"fixture": "twin", "stores": []any{"120c", "9m"}},
+		"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"7": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
+		"8": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
+	}, true)
+	if got := spam["3"].Stores; got[0] != "120c" || got[1] != "9m" {
+		t.Fatalf("inboard mixed twin pair dropped: %v", got)
+	}
+	if got := stores_entries(3, spam["3"]); len(got) != 3 || got[1] != "120c3a" || got[2] != "9m3b" {
+		t.Fatalf("mixed pair entries %v", got)
+	}
+	if got := stores_entries(7, spam["7"]); len(got) != 3 || got[1] != "120c7a" || got[2] != "120c7b" {
+		t.Fatalf("inboard twin pair entries %v", got)
+	}
+	index := map[string]int{}
+	frame := aircraft.Get("fa18c")
+	names := map[string]bool{}
+	for i, s := range frame.Stores {
+		names[s.Name] = true
+		index[s.Name] = i
+	}
+	for _, want := range []string{"rail4", "120c4", "rail6", "120c6", "120c2", "120c8", "120c3", "120c7", "twin3", "twin7", "120c2a", "120c2b", "120c8a", "120c8b", "120c3a", "120c3b", "120c7a", "120c7b"} {
+		if !names[want] {
+			t.Fatalf("catalog missing %q", want)
+		}
+	}
+	if frame.Stores[0].Name != "tip1" || frame.Stores[1].Name != "tip9" {
+		t.Fatalf("legacy bit order moved: %q %q", frame.Stores[0].Name, frame.Stores[1].Name)
+	}
+	full := stores_mask(spam, 0)
+	for _, name := range []string{"120c3a", "120c7b"} {
+		if index[name] < 32 {
+			t.Fatalf("expected %q past bit 31 (the uint64 regression tripwire), got bit %d", name, index[name])
+		}
+		if full&(1<<uint(index[name])) == 0 {
+			t.Fatalf("ten-round mask missing %q at bit %d", name, index[name])
+		}
+	}
+}
+
+// TestInboardHeaters (#27 follow-up): the Sparrow-capable inboards carry
+// heaters too — singles on the LAU-115C, pairs on its twin rails — and the
+// 9M order steps inboard after the outboard ring, starboard seeding.
+func TestInboardHeaters(t *testing.T) {
+	lo := stores_grant(map[string]any{
+		"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		"2": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+		"3": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+		"5": map[string]any{"fixture": "pylon", "stores": []any{"9m"}},
+		"7": map[string]any{"fixture": "pylon", "stores": []any{"9m"}},
+		"8": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+	}, true)
+	if got := lo["3"].Stores; got[0] != "9m" || got[1] != "9m" {
+		t.Fatalf("inboard twin heaters dropped: %v", got)
+	}
+	if got := lo["7"].Stores[0]; got != "9m" {
+		t.Fatalf("inboard single heater dropped: %q", got)
+	}
+	if got := lo["5"].Stores[0]; got != "" {
+		t.Fatalf("a centreline heater survived: %q", got)
+	}
+	if got := stores_entries(7, lo["7"]); len(got) != 2 || got[0] != "pylon7" || got[1] != "9m7" {
+		t.Fatalf("inboard single entries %v", got)
+	}
+	want := []string{"tip9", "tip1", "9m8a", "9m2a", "9m8b", "9m2b", "9m7", "9m3a", "9m3b"}
+	got := stores_rounds(lo)
+	if len(got) != len(want) {
+		t.Fatalf("rounds %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("rounds %v, want %v", got, want)
+		}
+	}
+	names := map[string]bool{}
+	for _, s := range aircraft.Get("fa18c").Stores {
+		names[s.Name] = true
+	}
+	for _, name := range []string{"9m3", "9m3a", "9m3b", "9m7", "9m7a", "9m7b"} {
+		if !names[name] {
+			t.Fatalf("catalog missing %q", name)
+		}
 	}
 }

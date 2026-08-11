@@ -793,7 +793,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 // order and the other rounds stay carried (bot.go calls this on every
 // launch; the discipline itself is #25's re-sweep). Loadout-less crafts'
 // attach() shares it as the legacy fallback.
-func armed(count int) uint32 {
+func armed(count int) uint64 {
 	fired := shots - count
 	if fired < 0 {
 		fired = 0

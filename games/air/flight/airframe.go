@@ -15,7 +15,7 @@ type Airframe struct {
 	Body      []Station
 	Engines   []Engine                                                                // 0..4; State carries four slots regardless
 	Stores    []Store                                                                 // the full catalog of mountable fixtures and stores, wingtips first — mass and flat-plate drag while attached (Model.Stores masks the flown subset)
-	Default   uint32                                                                  // the attach mask New arms (the catalog holds every legal fitment; a bare New flies this subset)
+	Default   uint64                                                                  // the attach mask New arms (the catalog holds every legal fitment; a bare New flies this subset)
 	Mass      struct{ Empty, Fuel float64 }                                           // kg; Fuel = internal capacity
 	Control   Control                                                                 // control-law data the shared law flies with
 	Wave      struct{ Hump, Body float64 }                                            // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)

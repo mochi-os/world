@@ -29,16 +29,22 @@ type slot struct {
 type loadout map[string]slot
 
 // stores_fixtures lists the fixtures a station accepts; the first entry is
-// the default. Tips carry the integral rail (locked); cheek stations 4/6 are
-// schema-present and empty until a future version.
+// the default. Tips carry the integral rail (locked); cheek stations 4/6
+// (#27) take the LAU-116 ejector — "rail" in this vocabulary. The inboard
+// pylons 3/7 take the twin too — the LAU-115C with a LAU-127 on each side,
+// the dual carriage behind the ten-AMRAAM fit.
 func stores_fixtures(station int) []string {
 	switch station {
 	case 1, 9:
 		return []string{"rail"}
 	case 2, 8:
 		return []string{"", "rail", "twin"}
-	case 3, 5, 7:
+	case 3, 7:
+		return []string{"", "pylon", "twin"}
+	case 5:
 		return []string{"", "pylon"}
+	case 4, 6:
+		return []string{"", "rail"}
 	}
 	return []string{""}
 }
@@ -63,10 +69,16 @@ func stores_option(station int, fixture, store string) bool {
 	if station == 1 || station == 9 {
 		return store == "9m"
 	}
+	if station == 4 || station == 6 {
+		return fixture == "rail" && store == "120c" // the cheeks are the radar-missile positions (#27)
+	}
 	switch fixture {
 	case "rail", "twin":
-		return store == "9m"
+		return store == "9m" || store == "120c" // every rail point is a LAU-127 — either family, single or twin (#27)
 	case "pylon":
+		if store == "9m" || store == "120c" {
+			return station == 3 || station == 7 // the Sparrow-capable inboards hang missiles on the LAU-115C; the centreline never does (#27)
+		}
 		return store == "tank"
 	}
 	return false
@@ -106,14 +118,15 @@ func stores_normalize(raw map[string]any) loadout {
 	return out
 }
 
-// stores_strip removes every missile — the guns-only match clamp. Fixtures
-// and tanks stay: an empty rail still weighs and drags.
+// stores_strip removes every missile — the guns-only match clamp, heaters and
+// AMRAAMs alike (#27). Fixtures and tanks stay: an empty rail still weighs
+// and drags.
 func stores_strip(lo loadout) loadout {
 	out := loadout{}
 	for key, s := range lo {
 		points := make([]string, len(s.Stores))
 		for p, id := range s.Stores {
-			if id != "9m" {
+			if id != "9m" && id != "120c" {
 				points[p] = id
 			}
 		}
@@ -192,19 +205,15 @@ func stores_entries(station int, s slot) []string {
 	out = append(out, s.Fixture+key)
 	switch s.Fixture {
 	case "twin":
-		if len(s.Stores) > 0 && s.Stores[0] == "9m" {
-			out = append(out, "9m"+key+"a")
+		if len(s.Stores) > 0 && s.Stores[0] != "" {
+			out = append(out, s.Stores[0]+key+"a")
 		}
-		if len(s.Stores) > 1 && s.Stores[1] == "9m" {
-			out = append(out, "9m"+key+"b")
-		}
-	case "rail":
-		if len(s.Stores) > 0 && s.Stores[0] == "9m" {
-			out = append(out, "9m"+key)
+		if len(s.Stores) > 1 && s.Stores[1] != "" {
+			out = append(out, s.Stores[1]+key+"b")
 		}
 	default:
-		if len(s.Stores) > 0 && s.Stores[0] == "tank" {
-			out = append(out, "tank"+key)
+		if len(s.Stores) > 0 && s.Stores[0] != "" {
+			out = append(out, s.Stores[0]+key) // any occupied single point: 9m2, 120c4, tank3, 9m7...
 		}
 	}
 	return out
@@ -212,8 +221,9 @@ func stores_entries(station int, s slot) []string {
 
 // stores_rounds lists the missile entries in the SMS priority order
 // (researched 2026-08-05): wingtips first, alternating to the opposite
-// station at the same priority level, starboard seeding; twins fire the
-// outer round before the inner. The k-th launch takes rounds[k].
+// station at the same priority level, starboard seeding, outboard rails
+// before the inboard pylons; twins fire the outer round before the inner.
+// The k-th launch takes rounds[k].
 func stores_rounds(lo loadout) []string {
 	var out []string
 	level := func(stations []int) {
@@ -242,12 +252,13 @@ func stores_rounds(lo loadout) []string {
 	}
 	level([]int{9, 1})
 	level([]int{8, 2})
+	level([]int{7, 3})
 	return out
 }
 
 // stores_mask is the flight-core attach bitmask for a loadout with `fired`
 // rounds expended in stores_rounds order.
-func stores_mask(lo loadout, fired int) uint32 {
+func stores_mask(lo loadout, fired int) uint64 {
 	index := map[string]int{}
 	catalog := aircraft.Get("fa18c").Stores
 	for i := range catalog {
@@ -260,7 +271,7 @@ func stores_mask(lo loadout, fired int) uint32 {
 		}
 		spent[name] = true
 	}
-	mask := uint32(0)
+	mask := uint64(0)
 	for station := 1; station <= 9; station++ {
 		for _, name := range stores_entries(station, lo[strconv.Itoa(station)]) {
 			if spent[name] {
@@ -368,7 +379,7 @@ func release_severity(m *flight.Model) float64 {
 // attach is the craft's current mask: its granted loadout minus the rounds
 // already fired. Crafts without a loadout (never granted) keep the legacy
 // wingtip count mapping.
-func (a *craft) attach() uint32 {
+func (a *craft) attach() uint64 {
 	if a.loadout == nil {
 		return armed(a.missiles)
 	}

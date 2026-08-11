@@ -307,7 +307,7 @@ func stores(this js.Value, arguments []js.Value) any {
 	if model == nil {
 		return "uninitialised"
 	}
-	model.Stores(uint32(arguments[0].Int()))
+	model.Stores(uint64(arguments[0].Int())) // the mask crosses as a JS number — f64-exact well past the catalog's bit count
 	return ""
 }
 

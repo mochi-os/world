@@ -46,7 +46,7 @@ type Model struct {
 	skip     float64 // hook-bounce time remaining, s: a flat arrival skips the hook over the wires
 	scrape   bool    // the hook tip was on the deck last step (the bounce triggers on FIRST contact)
 	starved  float64 // accumulated zero/negative-g time, s: the oil and boost pickups uncover (NATOPS ten-second limit)
-	stores   uint32  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
+	stores   uint64  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
 
 	// Per-step caches:
 	mass    float64
@@ -100,7 +100,7 @@ func (m *Model) SetWorld(w World) { m.World = w }
 // exceeded the new capacity, so a part-full tank jettisoned mid-flight left
 // every kilogram of its fuel behind. Re-asserting an unchanged mask is a
 // no-op, so the owner may sync it idempotently every frame.
-func (m *Model) Stores(mask uint32) {
+func (m *Model) Stores(mask uint64) {
 	if mask != m.stores {
 		previous := 0.0
 		for i := range m.Airframe.Stores {

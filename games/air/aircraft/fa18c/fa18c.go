@@ -111,6 +111,43 @@ func build() *flight.Airframe {
 		{Name: "tank7", Station: 7, Position: flight.Vec3{X: -0.2, Y: -1.25, Z: 2.24}, Mass: 158, Area: 0.07, Fuel: 1010},
 		{Name: "pylon5", Station: 5, Position: flight.Vec3{X: -0.2, Y: -1.15, Z: 0}, Mass: 120, Area: 0.03},
 		{Name: "tank5", Station: 5, Position: flight.Vec3{X: -0.6, Y: -1.45, Z: 0}, Mass: 158, Area: 0.07, Fuel: 1010},
+		// The cheek stations (#27): LAU-116 ejector 31 kg, AIM-120C-5 round
+		// 156 kg (344 lb). Appended so every existing mask bit keeps its index.
+		// Buttline ±0.55 m — the rounds sit against the nacelle sides, slightly
+		// forward of the wing (the arm is a plausible figure, not a survey).
+		{Name: "rail4", Station: 4, Position: flight.Vec3{X: 1.0, Y: -0.70, Z: -0.55}, Mass: 31, Area: 0.01},
+		{Name: "120c4", Station: 4, Position: flight.Vec3{X: 1.0, Y: -0.80, Z: -0.55}, Mass: 156, Area: 0.04},
+		{Name: "rail6", Station: 6, Position: flight.Vec3{X: 1.0, Y: -0.70, Z: 0.55}, Mass: 31, Area: 0.01},
+		{Name: "120c6", Station: 6, Position: flight.Vec3{X: 1.0, Y: -0.80, Z: 0.55}, Mass: 156, Area: 0.04},
+		// Wing-rail AMRAAMs (#27): the LAU-127 positions the 9M already models.
+		{Name: "120c2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -3.35}, Mass: 156, Area: 0.05},
+		{Name: "120c8", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 3.35}, Mass: 156, Area: 0.05},
+		// Inboard-pylon AMRAAMs (#27): the Sparrow-capable 3/7 via LAU-115C,
+		// at the 2.24 m buttline the tanks share.
+		{Name: "120c3", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: -2.24}, Mass: 156, Area: 0.05},
+		{Name: "120c7", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: 2.24}, Mass: 156, Area: 0.05},
+		// Dual AMRAAM carriage (#27): the LAU-115 with a LAU-127 on each
+		// side on all four wing pylons — the ten-round fit. Inboard twins at
+		// the pylon's own arm; round pairs spread ±0.15 m like the heater
+		// twins, a slightly higher hang than the single rail round.
+		{Name: "twin3", Station: 3, Position: flight.Vec3{X: 0.3, Y: -0.90, Z: -2.24}, Mass: 290, Area: 0.06},
+		{Name: "twin7", Station: 7, Position: flight.Vec3{X: 0.3, Y: -0.90, Z: 2.24}, Mass: 290, Area: 0.06},
+		{Name: "120c2a", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.50}, Mass: 156, Area: 0.05},
+		{Name: "120c2b", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.20}, Mass: 156, Area: 0.05},
+		{Name: "120c8a", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.50}, Mass: 156, Area: 0.05},
+		{Name: "120c8b", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.20}, Mass: 156, Area: 0.05},
+		{Name: "120c3a", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.39}, Mass: 156, Area: 0.05},
+		{Name: "120c3b", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.09}, Mass: 156, Area: 0.05},
+		{Name: "120c7a", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.39}, Mass: 156, Area: 0.05},
+		{Name: "120c7b", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.09}, Mass: 156, Area: 0.05},
+		// Inboard heaters (#27 follow-up): the same LAU-115C points the
+		// AMRAAMs hang on — singles on the pylon arm, pairs on the twin.
+		{Name: "9m3", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: -2.24}, Mass: 86, Area: 0.05},
+		{Name: "9m3a", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.39}, Mass: 86, Area: 0.05},
+		{Name: "9m3b", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.09}, Mass: 86, Area: 0.05},
+		{Name: "9m7", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: 2.24}, Mass: 86, Area: 0.05},
+		{Name: "9m7a", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.39}, Mass: 86, Area: 0.05},
+		{Name: "9m7b", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.09}, Mass: 86, Area: 0.05},
 	}
 	a.Default = 0b11 // the bare jet flies wingtips only, exactly as before the catalog grew
 	// R-LIM (NATOPS 2.8.2.8): the wing-pylon tanks engage the FCS roll-rate

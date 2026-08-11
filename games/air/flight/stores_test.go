@@ -12,9 +12,9 @@ import (
 )
 
 // mask returns the bit for a named catalog entry, failing the test on a typo.
-func mask(t *testing.T, names ...string) uint32 {
+func mask(t *testing.T, names ...string) uint64 {
 	t.Helper()
-	m := uint32(0)
+	m := uint64(0)
 	for _, name := range names {
 		found := false
 		for i := range Fighter.Stores {
