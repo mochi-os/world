@@ -428,8 +428,18 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 		next = "finish"
 	case threatened:
 		next = "deny"
-	case b.intent == "reset" && tick-b.minded < 900:
-		next = "reset" // a reset runs its full spell: rebuilding half an energy reserve buys nothing
+	case b.intent == "reset" && tick-b.minded < 900 && distance < 4000:
+		// A reset runs its full spell — rebuilding half an energy reserve buys
+		// nothing — but it is bounded by RANGE as well as time. Two evenly
+		// matched bots both starve at the same moment, both reset, and the
+		// posture's negative closing weight then pays each of them to open:
+		// the separation rate doubles and fifteen seconds of mutual burner
+		// ends the fight ten kilometres apart. Measured before this: a neutral
+		// ace-vs-pilot duel reached EIGHTEEN kilometres, spent 94% of four
+		// minutes outside gun range, fired nothing, and 16 of 16 seeds ended
+		// no-result. Four kilometres is the separation a reset was ever for;
+		// past it the extension is not rebuilding, it is leaving.
+		next = "reset"
 	case starving && b.intent != "reset":
 		next = "reset"
 	}
@@ -487,6 +497,16 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 		planar := radial.Subtract(ring.normal.Scale(radial.Dot(ring.normal)))
 		standing = clamp((ring.radius-planar.Length())/math.Max(ring.radius, 200), -1, 1)
 	}
+	// The range term is deliberately shallow. Every geometry term below dies
+	// at 2.5 km (standing) or 1.7 km (closing), so beyond that this gradient is
+	// nearly the whole scorer, and steepening it to pull a distant bot back
+	// reweights the merge and gun bands too: at r/6000 the ladder inverted —
+	// superhuman v ace fell 3-3 to 0-1 and missiles 5-7 to 1-4 — while the
+	// rollout traces looked better than ever, ranges holding 1-4 km with press
+	// chosen over climb. Judge a doctrine change on kills and rounds; a trace
+	// that reads well is a hypothesis, not evidence. Pulling a bot back from
+	// the far field wants a term that is zero inside weapons range, not a
+	// bigger multiplier on one that applies everywhere.
 	score := w.offence*offence - 1.3*w.threat*threat + w.energy*energy - r/12000 +
 		sk.energy*w.energy*0.4*edge +
 		sk.geometry*0.25*standing*clamp((2500-r)/1500, 0, 1) +
