@@ -523,3 +523,53 @@ func TestPush(t *testing.T) {
 		t.Fatalf("negative-alpha protection failed: %.1f°", alpha*180/math.Pi)
 	}
 }
+
+// TestCarriageDrag: the store catalog's flat-plate areas and masses, flown.
+// Specific excess power at 450 KCAS on the deck, wings level, full reheat —
+// clean, the six-single AMRAAM fit, and the ten-round twin fit, tankless so
+// the comparison is pure carriage at equal fuel. The bands pin the catalog
+// against silent drag regressions: they fail if a fitment's area is zeroed
+// or a catalog append doubles one.
+func TestCarriageDrag(t *testing.T) {
+	point := func(bits uint64) float64 {
+		m := energy()
+		m.Stores(Fighter.Default | bits)
+		ratio := math.Sqrt(1.225 / air(300, m.Environment).Density)
+		m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 450/1.94384*ratio, 2500)
+		height := func() float64 {
+			speed := m.State.Velocity.Length()
+			return m.State.Position.Y + speed*speed/(2*9.80665)
+		}
+		const begin, end = 240 * 3, 240 * 5
+		stick, start := 0.0, 0.0
+		for i := 0; i < end; i++ {
+			stick = clamp(stick+(1-m.Nz())*1.5*Dt, -0.3, 1)
+			m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: stick})
+			if i == begin {
+				start = height()
+			}
+		}
+		return (height() - start) / ((end - begin) / 240.0)
+	}
+	clean := point(0)
+	singles := point(mask(t, "rail2", "120c2", "pylon3", "120c3", "rail4", "120c4", "rail6", "120c6", "pylon7", "120c7", "rail8", "120c8"))
+	twins := point(mask(t, "twin2", "120c2a", "120c2b", "twin3", "120c3a", "120c3b", "rail4", "120c4", "rail6", "120c6", "twin7", "120c7a", "120c7b", "twin8", "120c8a", "120c8b"))
+	t.Logf("Ps at 450 KCAS / 300 m, full reheat: clean %.1f m/s, six singles %.1f (costs %.1f), ten twins %.1f (costs %.1f)",
+		clean, singles, clean-singles, twins, clean-twins)
+	if !(clean > singles && singles > twins) {
+		t.Fatalf("carriage does not order: clean %.1f, singles %.1f, twins %.1f", clean, singles, twins)
+	}
+	// Measured 2026-08-11: clean 278.7, singles cost 64.5, twins cost 99.7 —
+	// roughly 40% mass, 45% flat plate, the rest induced. The bands are wide
+	// enough for aerodynamic retuning and tight enough that a zeroed area or
+	// a doubled append trips them. The per-round area (0.05 m²) follows the
+	// catalog's installed-drag convention shared with the AIM-9 rounds since
+	// the loadout model landed; re-scaling that convention re-prices the
+	// calibrated bot fits and belongs to the flight-model work.
+	if cost := clean - singles; cost < 35 || cost > 95 {
+		t.Fatalf("six-single carriage cost %.1f m/s outside the flown band", cost)
+	}
+	if cost := clean - twins; cost < 60 || cost > 140 {
+		t.Fatalf("ten-twin carriage cost %.1f m/s outside the flown band", cost)
+	}
+}
