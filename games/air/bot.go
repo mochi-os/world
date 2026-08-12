@@ -2511,7 +2511,31 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 		roll *= soften
 	}
 	level := clamp(math.Hypot(s.Velocity.X, s.Velocity.Z)/speed, 0, 1) // cos γ, the 1 g trim the law interpolates from
-	ceiling := m.Airframe.Limit.Positive
+	// The stick is normalised against the ceiling the FCS will actually
+	// enforce THIS tick, rolling reduction included (fcs.go, NATOPS 11.1.7:
+	// 20% of the limiter gone from a quarter of lateral travel — keep the two
+	// schedules in sync). Before this, pitch was scaled against the untaxed
+	// structural limit, so during every rolling correction the delivered g
+	// undershot the demanded lift by up to a fifth and the nose lagged the
+	// solution it was chasing — the deficit behind the 70 m aim floor against
+	// manoeuvring targets (#215 cause 2, bisected to the law landing in
+	// 64a2ad6). This is the OPPOSITE of the rejected roll damper above: roll
+	// keeps its full authority, and the pull is simply honest about what
+	// rolling costs. The slewed roll stick is computed first for exactly this
+	// reason.
+	rolled := clamp(clamp(roll*1.4-s.Omega.X*0.45, -1, 1)-b.rolled, -0.12, 0.12) + b.rolled
+	// The compensation only applies where the jet is G-LIMITED — above corner
+	// speed, where extra stick genuinely buys back the taxed lift. Below
+	// corner the limiter is ALPHA, and pressing into the tax just camps the
+	// alpha limiter: the roll rate dies with the wing and tracking collapses.
+	// Measured both ways on the first cut, which compensated everywhere: the
+	// fast fights improved sharply (guns superhuman-v-ace 3-3 to 7-4, drone
+	// pilot/ace +2 kills each) while every slow fight collapsed (the flounder
+	// went from hunted to UNTOUCHED — zero rounds — and the jinker shed 90%
+	// of the rounds previously landed on it). Slow fights keep the original
+	// normalisation and the plane gate's roll-first sequencing instead.
+	limited := clamp((speed-0.9*corner(m))/math.Max(0.25*corner(m), 1), 0, 1)
+	ceiling := m.Airframe.Limit.Positive * (1 - 0.2*limited*clamp((math.Abs(rolled)-0.25)/0.75, 0, 1))
 	floor := -want // scale symmetric: forward stick interpolates level→Limit.Negative in the law
 	// The load the demanded lift vector actually represents: gravity support
 	// and the turn, at right angles. Aligned and settled it falls to `level` —
@@ -2532,7 +2556,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// roll took its manoeuvring with it: the guns ladder inverted 5-1 to 2-9
 	// against the ace, and TestConvert fell from 12/12 to 9/12. A bot that
 	// aims better and loses is not better.
-	b.rolled += clamp(clamp(roll*1.4-s.Omega.X*0.45, -1, 1)-b.rolled, -0.12, 0.12) // slew: full deflection over ~8 ticks, never a flap
+	b.rolled = rolled // slewed above: full deflection over ~8 ticks, never a flap
 	return flight.Inputs{
 		Pitch:      pitch,
 		Roll:       b.rolled,
