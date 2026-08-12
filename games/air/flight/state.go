@@ -32,6 +32,7 @@ type Inputs struct {
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
 	Missile    bool
+	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
 	Sequence   uint32
 }
 

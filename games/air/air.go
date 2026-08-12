@@ -25,6 +25,7 @@ import (
 	"world/games/air/aircraft"
 	"world/games/air/battle"
 	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 const (
@@ -245,6 +246,7 @@ type craft struct {
 	spent      int     // rounds fired this life, cumulative (#258): under the ammunition cheat the magazine refills, so the counter alone can no longer answer "how much did he shoot" — this can
 	charge     float64 // fractional rounds accumulated at the fire rate
 	missiles   int     // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
+	amraams    int     // AIM-120s left this life (#27): its own magazine, in the amraams() firing order
 	loadout    loadout // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
 	release    float64 // sim seconds since this craft's last missile left the rail (large when none)
 	ejected    bool    // eject edge consumed this life
@@ -353,8 +355,10 @@ func (a *craft) arm() {
 	// discipline regardless: the doctrine battery is calibrated against it.
 	if a.loadout != nil {
 		a.missiles = len(stores_rounds(a.loadout))
+		a.amraams = len(stores_amraams(a.loadout))
 	} else {
 		a.missiles = 4
+		a.amraams = 0
 	}
 	a.release = 1e9
 	a.ejected = false
@@ -375,6 +379,7 @@ type missile struct {
 	number   uint64 // per-instance launch counter, for deterministic decoys
 	window   bool   // a flare window has been judged (one decoy roll per flare)
 	called   bool   // a teammate has called this launch to its victim (#146): one call per round, ever
+	radar    *round.Model // AIM-120 (#27 phase 2c): the shared core flies it; nil for the 9M, which keeps the model above
 }
 
 // wreck is a pilot-dead or ejected airframe that keeps flying until it hits
@@ -648,6 +653,7 @@ func input(data map[string]any) flight.Inputs {
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
 		Missile:    flag("missile"),
+		Radar:      flag("radar"),
 		Sequence:   uint32(number(data, "sequence")),
 	}
 }
@@ -709,6 +715,18 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					if !i.cheat.ammunition {
 						a.missiles--
 						a.model.Stores(a.attach()) // the departed round's bit clears in the SMS firing order (#17)
+					}
+					a.release = 0
+				}
+			}
+			// The AIM-120 (#27 phase 2c) is its own trigger on the wire: a
+			// separate magazine, a separate edge, and a shot that needs the
+			// shooter's own radar rather than the 9M's rear-aspect cone.
+			if in.Radar && !previous.Radar && a.alive && i.missiles && i.free() && a.amraams > 0 && a.release > 1.0 {
+				if i.fox3(slot, a) {
+					if !i.cheat.ammunition {
+						a.amraams--
+						a.model.Stores(a.attach())
 					}
 					a.release = 0
 				}
@@ -798,7 +816,7 @@ func armed(count int) uint64 {
 	if fired < 0 {
 		fired = 0
 	}
-	return stores_mask(bots_loadout(true), fired)
+	return stores_mask(bots_loadout(true), fired, 0)
 }
 
 // credit names the killer: the last player to damage this aircraft within
@@ -1049,12 +1067,101 @@ func (i *instance) launch(slot int, a *craft) bool {
 	return true
 }
 
+// fox3 launches an AIM-120 (#27 phase 2c). Unlike the heater's rear-aspect
+// cone, this shot is the RADAR's: the shooter must be holding an STT lock,
+// which is exactly the emitter state every client already reports and every
+// RWR already hears — so employing the weapon means being seen doing it. A
+// silent radar has no shot. The round then flies the shared round package,
+// datalinked while that lock lives.
+func (i *instance) fox3(slot int, a *craft) bool {
+	if len(i.flying) >= 256 {
+		return false
+	}
+	if a.emitter != 2 || a.lock < 0 {
+		return false // no lock, no launch: the VISUAL/boresight shot is the client's own affair until it earns a wire flag
+	}
+	target := i.aircraft[a.lock]
+	if target == nil || !target.alive || a.lock == slot {
+		return false
+	}
+	if i.mode == "teams" && target.team != "" && target.team == a.team {
+		return false // no fratricide in teams: the same rule the heater's acquire applies
+	}
+	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	i.launched++
+	m := &missile{
+		shooter: slot,
+		target:  a.lock,
+		number:  i.launched,
+		life:    round.Battery,
+	}
+	m.radar = round.New(
+		a.model.State.Position.Add(forward.Scale(3)),
+		a.model.State.Velocity.Add(forward.Scale(30)),
+		&round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity},
+		i.environment.Wrap,
+	)
+	m.position, m.velocity = m.radar.Position, m.radar.Velocity
+	i.flying = append(i.flying, m)
+	i.events = append(i.events, map[string]any{"kind": "fox3", "slot": slot, "target": a.lock})
+	return true
+}
+
+// fly_radar steps one AIM-120 through the shared core and judges its
+// warhead. Datalink support is the shooter's radar: while the lock on this
+// round's target lives, the round gets fresh estimates and steers a
+// lead-collision midcourse; go silent, break the lock, or point away and it
+// coasts on the last prediction until its own seeker wakes. That is the
+// crank, and it is why the emission gameplay matters.
+func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
+	target := i.aircraft[m.target]
+	if target == nil {
+		return false
+	}
+	var support, truth *round.Target
+	if target.alive {
+		truth = &round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
+	}
+	if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.alive && shooter.emitter == 2 && shooter.lock == m.target && truth != nil {
+		support = truth
+	}
+	alive, fired, burst := m.radar.Advance(dt, support, truth)
+	m.position, m.velocity = m.radar.Position, m.radar.Velocity
+	m.life = m.radar.Life
+	if fired && target.alive {
+		if i.cheat.invulnerable && !target.bot {
+			return false // the fuse fires but the warhead cannot hurt a human under the cheat
+		}
+		kill, events := battle.Warhead(battle.Radar, burst, target.model.State.Position, target.model.State.Attitude,
+			&target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+		target.condition.Damager = m.shooter
+		target.condition.Damaged = 0
+		for _, event := range events {
+			if event.Kind != "explode" {
+				i.raise(m.target, event)
+			}
+		}
+		if kill {
+			i.kill(m.target, m.shooter)
+		}
+		return false
+	}
+	return alive && m.position.Y > 0
+}
+
 // pursue advances every missile: pure pursuit toward the target, graded
 // flare decoys judged once per flare drop, and a proximity fuse feeding the
 // battle warhead — a direct hit kills outright, a fringe burst fragments.
 func (i *instance) pursue(dt float64, tick uint64) {
 	alive := i.flying[:0]
 	for _, m := range i.flying {
+		if m.radar != nil { // the AIM-120 flies the shared core (#27 phase 2c)
+			m.flew += dt
+			if i.fly_radar(m, dt, tick) {
+				alive = append(alive, m)
+			}
+			continue
+		}
 		m.life -= dt
 		m.flew += dt
 		speed := m.velocity.Length()
@@ -1509,6 +1616,9 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			binary.LittleEndian.PutUint32(d[16:], math.Float32bits(float32(sh.m.velocity.Y)))
 			binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(sh.m.velocity.Z)))
 			d[24] = byte(sh.m.shooter) // the client hides its OWN darts (it already flies the launch visual) and shows everyone else's
+			if sh.m.radar != nil {
+				d[24] |= 0x80 // the round's KIND rides the shooter byte's high bit (#27): slots stop at 62, so the bit is free, the record stays 25 bytes and an older client simply draws the AIM-120 as a heater
+			}
 			darts = append(darts, d[:]...)
 		}
 		poses[self] = map[string]any{"blob": blob, "missiles": darts}

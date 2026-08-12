@@ -256,9 +256,52 @@ func stores_rounds(lo loadout) []string {
 	return out
 }
 
+// stores_amraams lists the loadout's AIM-120 entries in firing order —
+// cheeks, then outboard rails, then inboard pylons, alternating port-first
+// within each ring so a full expenditure stays balanced; twins fire the
+// outer round before the inner (#27). The mirror of the client's amraams().
+func stores_amraams(lo loadout) []string {
+	var out []string
+	ring := func(stations []int) {
+		queues := make([][]string, len(stations))
+		longest := 0
+		for qi, station := range stations {
+			key := strconv.Itoa(station)
+			s := lo[key]
+			var names []string
+			if s.Fixture == "twin" {
+				if len(s.Stores) > 0 && s.Stores[0] == "120c" {
+					names = append(names, "120c"+key+"a")
+				}
+				if len(s.Stores) > 1 && s.Stores[1] == "120c" {
+					names = append(names, "120c"+key+"b")
+				}
+			} else if (s.Fixture == "rail" || s.Fixture == "pylon") && len(s.Stores) > 0 && s.Stores[0] == "120c" {
+				names = append(names, "120c"+key)
+			}
+			queues[qi] = names
+			if len(names) > longest {
+				longest = len(names)
+			}
+		}
+		for round := 0; round < longest; round++ {
+			for _, q := range queues {
+				if round < len(q) {
+					out = append(out, q[round])
+				}
+			}
+		}
+	}
+	ring([]int{4, 6})
+	ring([]int{2, 8})
+	ring([]int{3, 7})
+	return out
+}
+
 // stores_mask is the flight-core attach bitmask for a loadout with `fired`
-// rounds expended in stores_rounds order.
-func stores_mask(lo loadout, fired int) uint64 {
+// heaters (stores_rounds order) and `expended` AMRAAMs (stores_amraams
+// order) already away: each departure sheds its round's mass and drag.
+func stores_mask(lo loadout, fired int, expended int) uint64 {
 	index := map[string]int{}
 	catalog := aircraft.Get("fa18c").Stores
 	for i := range catalog {
@@ -267,6 +310,12 @@ func stores_mask(lo loadout, fired int) uint64 {
 	spent := map[string]bool{}
 	for k, name := range stores_rounds(lo) {
 		if k >= fired {
+			break
+		}
+		spent[name] = true
+	}
+	for k, name := range stores_amraams(lo) {
+		if k >= expended {
 			break
 		}
 		spent[name] = true
@@ -388,7 +437,11 @@ func (a *craft) attach() uint64 {
 	if fired < 0 {
 		fired = 0
 	}
-	return stores_mask(a.loadout, fired)
+	expended := len(stores_amraams(a.loadout)) - a.amraams
+	if expended < 0 {
+		expended = 0
+	}
+	return stores_mask(a.loadout, fired, expended)
 }
 
 // rearm re-asserts the full loadout on the model, cycling through zero so
@@ -399,5 +452,5 @@ func (a *craft) rearm() {
 		return
 	}
 	a.model.Stores(0)
-	a.model.Stores(stores_mask(a.loadout, 0))
+	a.model.Stores(stores_mask(a.loadout, 0, 0))
 }
