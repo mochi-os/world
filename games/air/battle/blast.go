@@ -18,10 +18,36 @@ const (
 	fragments = 10   // fragment rays thrown across the fringe
 )
 
+// Warhead classes: the radii above are the AIM-9M's 9.4 kg annular blast,
+// deliberately tight numbers tuned for the heater's own gameplay. Callers
+// pass the class; Blast keeps the 9M as its default so every existing call
+// is unchanged.
+//
+// Radar is the AIM-120's 22 kg blast-fragmentation warhead. Cube-root
+// charge scaling alone gives only 1.33x, which under-reads it twice over:
+// the 9M reference is conservative against the ~10 m lethal radius the real
+// heater is credited with, and the AMRAAM's warhead is a DIRECTED
+// fragmentation design built for exactly this endgame — a high-closure pass
+// where the round has metres, not a stern chase where it has seconds.
+// Anchoring on the published ~10 m lethal radius puts the class at 2.0, and
+// that is what makes a well-flown BVR shot lethal against a defending
+// fighter: our terminal geometry passes such a target at 6-10 m.
+const (
+	Heater = 1.0 // AIM-9M, 9.4 kg — the reference, 5 m lethal / 12 m fringe
+	Radar  = 2.0 // AIM-120C, 22 kg directed fragmentation — 10 m lethal / 24 m fringe
+)
+
 // Blast detonates an AIM-9M-class warhead at a world point against a target
 // body. Returns whether the blast was an outright structural kill, and the
 // events the fragment strikes raised.
 func Blast(point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event) {
+	return Warhead(Heater, point, position, attitude, body, wrap, seed, slot, tick)
+}
+
+// Warhead is Blast with an explicit charge class (Heater, Radar): the radii
+// scale with the cube root of the charge mass.
+func Warhead(class float64, point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event) {
+	lethal, fringe := lethal*class, fringe*class
 	relative := flight.Vec3{
 		X: flight.Shortest(position.X, point.X, wrap),
 		Y: point.Y - position.Y,

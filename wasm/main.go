@@ -78,6 +78,9 @@ func main() {
 	for name, export := range bandits() {
 		exports[name] = export
 	}
+	for name, export := range rounds() {
+		exports[name] = export
+	}
 	js.Global().Set("air_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
 }
