@@ -379,3 +379,144 @@ func TestFrameRate(t *testing.T) {
 		t.Fatalf("30 Hz and 240 Hz flights diverged by %.0f m", drift)
 	}
 }
+
+// TestChaff (#29): the doppler gate is the whole doctrine. A beaming
+// defender's chaff takes the seeker every time; the same bloom from a hot
+// or cold defender is rejected outright; and a seduced seeker that reaches
+// its cloud reacquires a defender who stayed in the cone — chaff buys time
+// and geometry, not immunity.
+func TestChaff(t *testing.T) {
+	_, sound := atmosphere(6000)
+	launch := func(beaming bool) (*Model, Target) {
+		// Approach HOT to Pitbull — a beaming target cannot be freshly
+		// acquired (the capture gate) — then, for the beaming case, the
+		// defender breaks into the beam as the RWR calls MISSILE, which is
+		// the doctrinal timing. The established track holds through the
+		// notch; only the chaff can steal it.
+		target := Target{Position: flight.Vec3{X: 14000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		for m.Time < 60 && m.Phase != Pitbull {
+			if !m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target) {
+				break
+			}
+			target.Position = target.Position.Add(target.Velocity.Scale(dt))
+		}
+		if m.Phase != Pitbull {
+			t.Fatalf("never reached Pitbull (phase %d)", m.Phase)
+		}
+		if beaming {
+			target.Velocity = flight.Vec3{Z: 0.9 * sound}
+		}
+		return m, target
+	}
+
+	// Out of the notch: rejected, and the intercept continues to a fuse.
+	m, target := launch(false)
+	if m.Distract(target.Position, target) {
+		t.Fatalf("a hot target's chaff seduced the seeker — the velocity gate must reject it")
+	}
+	if m.Phase != Pitbull {
+		t.Fatalf("a rejected bloom disturbed the track (phase %d)", m.Phase)
+	}
+
+	// In the notch: seduced — the track becomes the cloud, immune to truth
+	// capture and datalink while held.
+	m, target = launch(true)
+	bloom := target.Position
+	if !m.Distract(bloom, target) {
+		t.Fatalf("a beaming target's chaff failed to seduce")
+	}
+	if m.Phase != Active {
+		t.Fatalf("seduction left phase %d, want Active", m.Phase)
+	}
+	if again := m.Distract(bloom, target); again {
+		t.Fatalf("a held seeker took a second bloom")
+	}
+	// While held, the round closes on the CLOUD, not the defender: feed it
+	// perfect datalink on the real target and watch it ignore the feed.
+	for i := 0; i < int(1.0/dt); i++ {
+		m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target)
+		target.Position = target.Position.Add(target.Velocity.Scale(dt))
+	}
+	if drift := m.relative(m.Estimate, bloom).Length(); drift > 200 {
+		t.Fatalf("held estimate wandered %.0f m from the cloud — datalink or truth capture leaked through", drift)
+	}
+
+	// The release: past the hold, a defender still in the cone and now out
+	// of the notch is reacquired — and the miss it bought is real distance.
+	for m.Time < Battery && m.held > 0 {
+		m.Step(dt, nil, &target)
+		target.Position = target.Position.Add(target.Velocity.Scale(dt))
+	}
+	target.Velocity = flight.Vec3{X: -0.7 * sound, Z: 0.3 * sound} // out of the notch, turning back hot
+	recaptured := false
+	for i := 0; i < int(8.0/dt); i++ {
+		m.Step(dt, nil, &target)
+		target.Position = target.Position.Add(target.Velocity.Scale(dt))
+		if m.Phase == Pitbull {
+			recaptured = true
+			break
+		}
+	}
+	if !recaptured {
+		t.Fatalf("the seeker never reacquired a co-cone defender after the hold (phase %d)", m.Phase)
+	}
+}
+
+// TestChaffDefeat (#29): flown end to end, the notch-and-chaff defence
+// turns a killing shot into a miss. The same geometry without chaff fuses.
+func TestChaffDefeat(t *testing.T) {
+	_, sound := atmosphere(6000)
+	fly := func(dispensing bool) (bool, float64) {
+		// The defender starts HOT (so the seeker can build its track), then
+		// breaks into the beam and dispenses as the seeker goes terminal —
+		// the notch-and-chaff defence flown as briefed.
+		target := Target{Position: flight.Vec3{X: 16000, Y: 6000}, Velocity: flight.Vec3{X: -0.85 * sound}}
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		offered, broke := false, false
+		for m.Time < Battery {
+			if !m.Step(dt, nil, &target) {
+				break
+			}
+			target.Position = target.Position.Add(target.Velocity.Scale(dt))
+			// The break into the beam at the terminal call, then the chaff —
+			// and the beam is FLOWN, not set once: each step the defender
+			// re-squares its velocity to the current line of sight, which is
+			// the real discipline (keep the threat on the wingtip). A
+			// fixed-heading "beam" drifts out of the notch as the geometry
+			// rotates, and the seeker takes the reacquisition it is owed.
+			if m.Phase == Pitbull {
+				broke = true // the RWR terminal call: break into the beam NOW
+			}
+			if broke {
+				sight := target.Position.Subtract(m.Position).Normalize()
+				beam := flight.Vec3{X: -sight.Z, Z: sight.X}
+				if beam.Dot(target.Velocity) < 0 && (beam.Z != 0 || beam.X != 0) {
+					beam = beam.Scale(-1)
+				}
+				target.Velocity = beam.Scale(0.85 * sound)
+			}
+			// Chaff AFTER the velocity is squared to the line of sight: beam
+			// first, then dispense — the order is the doctrine, and a bloom
+			// dropped while still hot is rejected on doppler (TestChaff).
+			if broke && !offered && dispensing {
+				offered = m.Distract(target.Position, target)
+			}
+			if fired, _ := m.Fused(dt, target); fired {
+				return true, m.Least
+			}
+		}
+		return false, m.Least
+	}
+	fused, _ := fly(false)
+	if !fused {
+		t.Fatalf("the control shot (no chaff) never fused — the test geometry is broken")
+	}
+	fused, closest := fly(true)
+	if fused {
+		t.Fatalf("the chaff-in-the-notch shot still fused (closest %.0f m)", closest)
+	}
+	if closest < 100 {
+		t.Fatalf("the deceived round still passed within %.0f m", closest)
+	}
+}

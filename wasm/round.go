@@ -26,6 +26,10 @@
 // 6-8 target position, 9-11 target velocity, 12 wrap. Output words:
 // 0 aero, 1 max, 2 escape, 3 minimum, 4 seconds-to-active preview.
 //
+// round_distract input words: 0 slot, 1-3 bloom position, 4-6 truth
+// position, 7-9 truth velocity. Returns whether the seduction took — the
+// core's doppler gate decides (#29).
+//
 // round_drop input words: 0 slot. No output.
 package main
 
@@ -45,9 +49,19 @@ func rounds() map[string]any {
 	return map[string]any{
 		"round_launch": js.FuncOf(round_launch),
 		"round_step":   js.FuncOf(round_step),
-		"round_ladder": js.FuncOf(round_ladder),
-		"round_drop":   js.FuncOf(round_drop),
+		"round_ladder":   js.FuncOf(round_ladder),
+		"round_distract": js.FuncOf(round_distract),
+		"round_drop":     js.FuncOf(round_drop),
 	}
+}
+
+func round_distract(this js.Value, arguments []js.Value) any {
+	receive(arguments[0], quiver[:10])
+	slot := int(quiver[0])
+	if slot < 0 || slot >= len(flying) || flying[slot] == nil {
+		return false
+	}
+	return flying[slot].Distract(vec(quiver, 1), round.Target{Position: vec(quiver, 4), Velocity: vec(quiver, 7)})
 }
 
 func vec(words []float64, at int) flight.Vec3 {

@@ -217,7 +217,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
 				}
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.missiles)}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.missiles)}
 				b.arm()
 				b.rearm()
 				i.aircraft[slot] = b
@@ -263,6 +263,8 @@ type craft struct {
 	ejected    bool    // eject edge consumed this life
 	wait       float64 // seconds until respawn (air mode)
 	flared     float64 // sim seconds since the last flare drop (large when none)
+	cloud      flight.Vec3 // where the last chaff bloomed (#29): the mixed program drops chaff with every flare
+	clouded    float64     // sim seconds since that bloom (large when none)
 	team       string  // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
@@ -612,7 +614,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
 	// told about; the client's persisted choice is never echoed back.
-	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, team: team, loadout: stores_grant(player.Stores, i.missiles)}
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.missiles)}
 	a.arm()
 	a.rearm()
 	i.aircraft[player.Slot] = a
@@ -772,6 +774,11 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			// (their own discipline in bot.go), so their behaviour is untouched.
 			if in.Flare && !previous.Flare && a.alive && a.flared > 0.5 {
 				a.flared = 0
+				// The mixed program (#29): every dispense is a flare AND a
+				// chaff bloom — one magazine, both effects, and the round
+				// package's doppler gate decides whether the chaff matters.
+				a.cloud = a.model.State.Position
+				a.clouded = 0
 				i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
 			}
 			if in.Missile && !previous.Missile && a.alive && i.missiles && i.free() && a.missiles > 0 && a.release > 1.0 {
@@ -818,6 +825,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
 		a.flared += dt
+		a.clouded += dt
 		a.release += dt
 		if !a.alive {
 			if i.mode == "joust" {
@@ -1187,7 +1195,24 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 		truth = &round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
 	}
 	if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.alive && shooter.emitter == 2 && shooter.lock == m.target && truth != nil {
-		support = truth
+		// The datalink is only as good as the shooter's radar, and that
+		// radar has the same clutter notch the seeker does (#29): a beamed
+		// target's return sits in the rejection gate with the ground, so a
+		// defender squared to the SHOOTER starves the round of updates too.
+		// This is what makes beam-and-chaff the complete defence rather
+		// than a two-second inconvenience — and the shooter's own display
+		// catching up with that truth (track memory, broken lock) is the EW
+		// task's, not this line's.
+		direction, _ := i.bearing(shooter.model.State.Position, target.model.State.Position)
+		if math.Abs(target.model.State.Velocity.Dot(direction)) > round.Notch {
+			support = truth
+		}
+	}
+	// A fresh chaff bloom from the target is offered to the seeker (#29):
+	// the round package's doppler gate decides — in the notch it seduces,
+	// out of it the velocity gate rejects it, exactly as briefed.
+	if truth != nil && target.clouded < round.Window {
+		m.radar.Distract(target.cloud, *truth)
 	}
 	alive, fired, burst := m.radar.Advance(dt, support, truth)
 	m.position, m.velocity = m.radar.Position, m.radar.Velocity

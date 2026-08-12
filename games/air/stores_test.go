@@ -393,3 +393,70 @@ func TestFox3Trigger(t *testing.T) {
 		t.Fatalf("the second press left %d AMRAAMs, want 0", shooter.amraams)
 	}
 }
+
+// TestChaffServer (#29): the whole defence against a SERVER round — the
+// defender breaks into the beam and dispenses (the mixed program's flare
+// edge), and the missile that was killing them goes stupid; the same
+// geometry without the dispense fuses. The bloom is offered through the
+// same fields the flare edge sets, so this also pins the wiring.
+func TestChaffServer(t *testing.T) {
+	fly := func(dispensing bool) float64 {
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		for _, slot := range []int{0, 1} {
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
+			a := &craft{model: m, alive: true, lock: -1, flared: 1e9, clouded: 1e9, loadout: stores_grant(map[string]any{
+				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			}, true)}
+			a.arm()
+			i.aircraft[slot] = a
+		}
+		shooter, target := i.aircraft[0], i.aircraft[1]
+		target.model.State.Position = flight.Vec3{X: 15000, Y: 8000}
+		target.model.State.Velocity = flight.Vec3{X: -280}
+		shooter.emitter, shooter.lock = 2, 1
+		if !i.fox3(0, shooter) {
+			t.Fatalf("launch refused")
+		}
+		m := i.flying[0]
+		defending := false
+		for step := 0; step < 240*90 && len(i.flying) > 0; step++ {
+			dt := 1.0 / 240
+			// The defender flies the doctrine once the seeker goes terminal,
+			// and KEEPS flying it — the beam is held against the round's
+			// bearing for the rest of the defence, not set once and
+			// abandoned the moment the seduction drops the phase.
+			if m.radar.Phase >= 2 {
+				defending = true
+			}
+			if defending {
+				sight := target.model.State.Position.Subtract(m.radar.Position).Normalize()
+				beam := flight.Vec3{X: -sight.Z, Z: sight.X}
+				if beam.Dot(target.model.State.Velocity) < 0 {
+					beam = beam.Scale(-1)
+				}
+				target.model.State.Velocity = beam.Scale(280)
+				if dispensing && target.clouded > 1e8 {
+					target.flared = 0
+					target.cloud = target.model.State.Position
+					target.clouded = 0
+				}
+			}
+			target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+			target.clouded += dt
+			i.pursue(dt, uint64(step))
+			if !target.alive {
+				break
+			}
+		}
+		// The round's own closest approach is the honest verdict — whether
+		// the warhead's fragment luck killed is battle's stochastic business.
+		return m.radar.Least
+	}
+	if closest := fly(false); closest > 20 {
+		t.Fatalf("the control shot (beam, no chaff) passed at %.0f m — an established track must hold through the notch", closest)
+	}
+	if closest := fly(true); closest < 100 {
+		t.Fatalf("the beamed-and-chaffed defender was still passed at %.0f m", closest)
+	}
+}

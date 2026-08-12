@@ -626,6 +626,8 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	if b.drop {
 		b.drop = false
 		a.flared = 0
+		a.cloud = a.model.State.Position // the mixed program (#29): bots inherit chaff through their flare discipline
+		a.clouded = 0
 		i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
 	}
 }

@@ -43,6 +43,24 @@ const (
 	Warhead    = 22.0    // kg — blast-fragmentation class, consumed by battle
 )
 
+// Chaff (#29). A bloomed cloud stops within seconds, so a pulse-doppler
+// seeker rejects it on velocity — UNLESS the defender is beaming: with the
+// defender's radial velocity inside the clutter notch, jet and cloud sit in
+// the same range-doppler cell and the gate has nothing to discriminate on.
+// So the seduction is DOPPLER-GATED and deterministic: chaff without the
+// beam does essentially nothing, chaff in the notch takes the seeker every
+// time — do it right and it works, which is the doctrine (beam the threat,
+// then dispense). The deceived seeker flies at the hanging cloud; the hold
+// releases as the round reaches it (or times out), and the normal
+// reacquisition basket decides what happens next — a defender who stayed in
+// the cone and left the notch gets reacquired late, which is chaff buying
+// time and geometry rather than immunity.
+const (
+	Notch  = 60.0 // m/s — the defender's radial speed in the seeker's frame must sit inside this
+	Hold   = 2.5  // s — how long the seeker stares at the cloud before the velocity gate shakes it off
+	Window = 2.0  // s — a bloom older than this has dispersed below a useful cell (callers stop offering it)
+)
+
 // Guidance phases, in flight order.
 const (
 	Midcourse = iota // command inertial toward the datalinked prediction, loft available
@@ -80,6 +98,38 @@ type Model struct {
 	accel flight.Vec3 // estimated target acceleration, averaged across samples
 	since float64     // time since the last distinct velocity sample
 	seen  bool        // moved holds a real sample
+	held  float64     // seconds left staring at a chaff cloud (0 = clean)
+}
+
+// Distract offers the seeker a chaff bloom. It takes only when the seeker
+// is looking (Active or Pitbull), not already deceived, and the DEFENDER is
+// in the notch — radial velocity in the seeker's frame inside the clutter
+// gate. A hot or cold target is trivially rejected on doppler, which is why
+// dispensing without the beam is wasted chaff. On seduction the cloud
+// becomes the track: near-stationary, sinking gently, and immune to both
+// datalink correction and the seeker's own truth capture until the hold
+// releases.
+func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
+	if m.Phase != Active && m.Phase != Pitbull {
+		return false
+	}
+	if m.held > 0 {
+		return false // already on a cloud
+	}
+	sight := m.relative(m.Position, truth.Position)
+	reach := sight.Length()
+	if reach < 1 || reach > Activation {
+		return false
+	}
+	if math.Abs(truth.Velocity.Dot(sight.Scale(1/reach))) > Notch {
+		return false // out of the notch: the velocity gate rejects the cloud outright
+	}
+	m.Phase = Active
+	m.held = Hold
+	m.Estimate = bloom
+	m.Drift = flight.Vec3{Y: -1} // the cloud hangs, sinking
+	m.Stale = 0
+	return true
 }
 
 // New launches a round: the shooter's position and velocity (the round
@@ -130,9 +180,28 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	m.Time += dt
 	m.Life -= dt
 
+	// A deceived seeker stares at its cloud: no datalink correction, no
+	// truth capture, until the hold releases. HOW it releases matters. A
+	// timeout is the velocity gate shaking the dispersing cloud off at
+	// range — the seeker returns to its basket and may reacquire (chaff
+	// bought seconds). Reaching the cloud is the overshoot: the round flew
+	// through a target that was never there, the seeker cannot look behind
+	// its own gimbal, and there is no coming back from that — ballistic,
+	// fuse live. Without this, a high-energy round would orbit the stale
+	// point until the departing defender's LOS geometry swung out of the
+	// notch, then legally reacquire and re-attack: the overshoot is what
+	// makes terminal chaff a DEFEAT rather than a two-second inconvenience.
+	if m.held > 0 {
+		m.held -= dt
+		if m.Range() < 150 {
+			m.held = 0
+			m.Phase = Loose
+		}
+	}
+
 	// Datalink: a fresh estimate replaces the coasted one; otherwise the
 	// prediction flies on under its own remembered velocity.
-	if support != nil && m.Phase <= Active {
+	if support != nil && m.Phase <= Active && m.held <= 0 {
 		m.Estimate = support.Position
 		m.Drift = support.Velocity
 		m.Stale = 0
@@ -153,10 +222,20 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	if m.Phase == Midcourse && m.Range() <= Activation {
 		m.Phase = Active
 	}
-	if m.Phase == Active && truth != nil {
+	if m.Phase == Active && truth != nil && m.held <= 0 {
 		sight := m.relative(m.Position, truth.Position)
 		reach := sight.Length()
-		if reach <= Activation && sight.Scale(1/math.Max(reach, 1)).Dot(forward) >= Gimbal {
+		unit := sight.Scale(1 / math.Max(reach, 1))
+		// ACQUISITION respects the clutter notch: a searching seeker cannot
+		// pick up a target with near-zero radial velocity — that return sits
+		// in the rejection gate with the ground and the chaff. An
+		// ESTABLISHED track is different: Pitbull holds through the notch
+		// (ECCM track memory), so beaming alone never breaks a lock here —
+		// deeper notch fidelity is the EW task's, not this file's. The pair
+		// of rules is exactly what makes the doctrine work: chaff steals the
+		// established track, and the released seeker cannot re-acquire a
+		// defender who STAYS in the beam.
+		if reach <= Activation && unit.Dot(forward) >= Gimbal && math.Abs(truth.Velocity.Dot(unit)) > Notch {
 			// HUSKY: the seeker sees the target and becomes the estimate's
 			// source — datalink no longer matters. PITBULL at terminal range.
 			m.Estimate = truth.Position
@@ -164,7 +243,7 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 			m.Stale = 0
 			if reach <= Terminal {
 				m.Phase = Pitbull
-				m.sight = sight.Scale(1 / math.Max(reach, 1))
+				m.sight = unit
 			}
 		}
 	}
