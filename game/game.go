@@ -25,7 +25,12 @@ type Player struct {
 }
 
 // Session carries the parameters a session was created with. Parameters is
-// game-defined and opaque to the server (mode settings, map, rules).
+// game-defined and opaque to the server (mode settings, map, rules) — and
+// READ-ONLY from Create onward, for the game as much as the server: the map
+// is shared between the instance and the server's records, and a write after
+// creation would race concurrent readers, which for a Go map is a fatal
+// runtime error, not a recoverable panic. A game wanting mutable per-match
+// state copies what it needs out of Parameters in Create.
 type Session struct {
 	Identifier string
 	Game       string

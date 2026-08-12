@@ -170,9 +170,15 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "request"})
 			return
 		}
-		if len(request.Label) > 64 {
-			request.Label = request.Label[:64]
-		}
+		// Everything a creator sends that comes back out of the public
+		// listing goes through clean(), exactly like Name and Pilot below:
+		// Mode used to pass through RAW (control characters and newlines
+		// reached every client's match-list poll, and a near-64 KB mode
+		// string was repeated in every listing), and Label was byte-sliced,
+		// which both kept control characters and could split a multi-byte
+		// rune at the boundary.
+		request.Mode = clean(request.Mode, 32)
+		request.Label = clean(request.Label, 64)
 		// One offer at a time: a new match replaces whatever this pilot was
 		// already offering, so the list can never fill with a single player's
 		// abandoned matches.

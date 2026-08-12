@@ -88,6 +88,7 @@ type radiator interface {
 type session struct {
 	identifier string
 	spec       game.Session
+	rules      map[string]any // the curated Parameters subset the lobby lists — copied ONCE at creation, because spec.Parameters is the same map object the game instance holds (see sessions_rules)
 	instance   game.Instance
 	created    time.Time
 	inbox      chan order
@@ -204,6 +205,7 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 		permanent:  permanent,
 		identifier: spec.Identifier,
 		spec:       spec,
+		rules:      sessions_rules(spec.Parameters),
 		instance:   instance,
 		created:    time.Now(),
 		inbox:      make(chan order, 256),
@@ -220,6 +222,35 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	go guard("session "+s.identifier, func() { session_close(s, "fault") }, func() { session_run(s, g) })
 	info("session %s created: %s %s %q capacity %d", s.identifier, name, mode, label, capacity)
 	return s, nil
+}
+
+// sessions_rules copies the curated parameters subset the lobby advertises
+// (#17/#19): the rules a joiner cares about before entering — never the whole
+// map, which can carry creator-internal settings. The cheat set IS advertised:
+// a cheats match that looks standard in the list is the worst surprise on
+// offer. Copied ONCE, at creation, because spec.Parameters is the same map
+// object handed to the game instance: a listing that read it live would race
+// any game that ever wrote a parameter after Create, and a concurrent map
+// read-write is a FATAL runtime error no guard() can recover — the whole
+// process dies, every session with it. The copy is deep for the one nested
+// value (cheats), so not even that map is shared.
+func sessions_rules(parameters map[string]any) map[string]any {
+	rules := map[string]any{}
+	for _, key := range []string{"missiles", "tod", "clouds", "cheats"} {
+		value, found := parameters[key]
+		if !found {
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			inner := make(map[string]any, len(nested))
+			for k, v := range nested {
+				inner[k] = v
+			}
+			value = inner
+		}
+		rules[key] = value
+	}
+	return rules
 }
 
 // OFFER_GRACE is how long an unjoined offer outlives its owner's last
@@ -350,17 +381,10 @@ func sessions_list(name string, pilot string) []map[string]any {
 		if name != "" && s.spec.Game != name {
 			continue
 		}
-		// A curated parameters subset rides the listing (#17/#19): the rules a
-		// joiner cares about before entering — never the whole map, which can
-		// carry creator-internal settings (bot counts, per-player fuel). The
-		// cheat set IS advertised: a cheats match that looks standard in the
-		// list is the worst surprise on offer.
-		rules := map[string]any{}
-		for _, key := range []string{"missiles", "tod", "clouds", "cheats"} {
-			if value, found := s.spec.Parameters[key]; found {
-				rules[key] = value
-			}
-		}
+		// The curated rules subset was copied at creation (sessions_rules);
+		// the listing must never read spec.Parameters, which the game
+		// instance owns from Create onward.
+		rules := s.rules
 		list = append(list, map[string]any{
 			"mine":       pilot != "" && s.owner == pilot,
 			"offer":      s.owner != "" && !s.joined,

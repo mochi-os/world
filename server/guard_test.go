@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"sync/atomic"
 	"world/game"
 )
 
@@ -28,13 +29,15 @@ func (f *faultyInstance) Step(tick uint64, in map[int][]game.Input) {
 	}
 }
 
-// countingInstance just records that it is still being ticked.
+// countingInstance just records that it is still being ticked. The counter is
+// atomic because the tick goroutine writes it while the test body reads it —
+// as a plain int this was itself a data race under -race.
 type countingInstance struct {
 	fakeInstance
-	steps int
+	steps atomic.Int64
 }
 
-func (c *countingInstance) Step(uint64, map[int][]game.Input) { c.steps++ }
+func (c *countingInstance) Step(uint64, map[int][]game.Input) { c.steps.Add(1) }
 
 type fakeGame struct {
 	name     string
@@ -114,9 +117,9 @@ func TestSessionPanicIsContained(t *testing.T) {
 	}
 
 	// And it must still be ticking, not merely present.
-	before := healthy.steps
+	before := healthy.steps.Load()
 	time.Sleep(200 * time.Millisecond)
-	if healthy.steps <= before {
-		t.Fatalf("healthy session stopped ticking: %d steps", healthy.steps-before)
+	if healthy.steps.Load() <= before {
+		t.Fatalf("healthy session stopped ticking: %d steps", healthy.steps.Load()-before)
 	}
 }

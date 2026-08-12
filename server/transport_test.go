@@ -22,6 +22,8 @@ import (
 
 	"github.com/quic-go/webtransport-go"
 
+	"strings"
+	"unicode/utf8"
 	"world/games/air"
 	"world/games/echo"
 )
@@ -486,6 +488,134 @@ func TestStaleOffer(t *testing.T) {
 		if s.withdrawn {
 			t.Errorf("%s was flagged and should not be", s.identifier)
 		}
+	}
+}
+
+// TestListingRulesCopied pins the creation-time copy of the advertised rules
+// (#21): spec.Parameters is the same map object the game instance holds, so
+// the listing must carry a snapshot, not a live read. A game (or anyone
+// holding the request map) mutating parameters after Create must not change
+// what the lobby advertises — and above all must not be able to RACE it,
+// which the companion race exercise below drives under -race.
+func TestListingRulesCopied(t *testing.T) {
+	parameters := map[string]any{
+		"missiles": true,
+		"cheats":   map[string]any{"fuel": true},
+		"bots":     map[string]any{"ace": 1.0}, // creator-internal: must never be listed
+	}
+	s, err := sessions_create("echo", "test", "rules copy", 2, parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		sessions_lock.Lock()
+		delete(sessions, s.identifier)
+		sessions_lock.Unlock()
+	}()
+
+	// The hostile future: a writer mutating the original map after Create.
+	parameters["missiles"] = false
+	parameters["cheats"].(map[string]any)["fuel"] = false
+	parameters["tod"] = "night"
+
+	listed := func() map[string]any {
+		for _, row := range sessions_list("echo", "") {
+			if row["session"] == s.identifier {
+				return row["parameters"].(map[string]any)
+			}
+		}
+		t.Fatal("session not listed")
+		return nil
+	}
+	rules := listed()
+	if rules["missiles"] != true {
+		t.Error("listing followed a post-create write to missiles")
+	}
+	if rules["cheats"].(map[string]any)["fuel"] != true {
+		t.Error("listing followed a post-create write inside the nested cheats map — the copy is not deep")
+	}
+	if _, found := rules["tod"]; found {
+		t.Error("listing picked up a key added after creation")
+	}
+	if _, found := rules["bots"]; found {
+		t.Error("creator-internal parameters leaked into the listing")
+	}
+
+	// The race the copy exists to prevent: hammer writes into the shared map
+	// while the lobby lists. Run under -race this fails on the pre-copy code
+	// (sessions_list read spec.Parameters live) and passes now, because the
+	// listing no longer touches the map at all.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			parameters["missiles"] = i%2 == 0
+		}
+	}()
+	for i := 0; i < 100; i++ {
+		listed()
+	}
+	<-done
+}
+
+// TestCreateSanitizes pins the input hygiene of the open lobby: everything a
+// creator sends that comes back out of the public listing goes through
+// clean(). Mode used to pass through raw and Label was byte-sliced — control
+// characters reached every client's match-list poll, and the slice could
+// split a multi-byte rune at byte 64, emitting invalid UTF-8.
+func TestCreateSanitizes(t *testing.T) {
+	// Label: 63 ASCII bytes then a multi-byte rune, so a byte slice at 64
+	// would cut the rune in half; plus control characters that must vanish.
+	label := strings.Repeat("x", 63) + "\u00e9\x1b[31m\ntrailing"
+	made, _ := json.Marshal(map[string]any{
+		"game":  "echo",
+		"mode":  "furball\r\nINJECTED\x1b[2J" + strings.Repeat("m", 500),
+		"label": label,
+		"pilot": "sanitize-test-pilot",
+	})
+	r := httptest.NewRequest("POST", "/sessions", bytes.NewReader(made))
+	r.RemoteAddr = "192.0.2.77:1"
+	w := httptest.NewRecorder()
+	lobby_sessions(w, r)
+	if w.Code != 200 {
+		t.Fatalf("create refused: %d %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Session string `json:"session"`
+		Mode    string `json:"mode"`
+		Label   string `json:"label"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		sessions_lock.Lock()
+		if s := sessions[response.Session]; s != nil {
+			delete(sessions, response.Session)
+		}
+		sessions_lock.Unlock()
+	}()
+
+	for name, value := range map[string]string{"mode": response.Mode, "label": response.Label} {
+		for _, r := range value {
+			if r < 32 || r == 127 {
+				t.Errorf("%s kept a control character: %q", name, value)
+				break
+			}
+		}
+		if !utf8.ValidString(value) {
+			t.Errorf("%s is not valid UTF-8: %q", name, value)
+		}
+	}
+	if runes := []rune(response.Mode); len(runes) > 32 {
+		t.Errorf("mode not capped: %d runes", len(runes))
+	}
+	if runes := []rune(response.Label); len(runes) > 64 {
+		t.Errorf("label not capped: %d runes", len(runes))
+	}
+	// The é survived intact: rune truncation keeps it, a byte slice halved it.
+	if !strings.HasSuffix(response.Label, "é") {
+		t.Errorf("label lost its 64th rune to truncation: %q", response.Label)
 	}
 }
 
