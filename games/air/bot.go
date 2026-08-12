@@ -1250,7 +1250,25 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
 				continue
 			}
-			if _, span := i.bearing(mate.model.State.Position, spot); span < math.Min(b.tactics.support.share*distance, b.tactics.support.engaged) {
+			_, span := i.bearing(mate.model.State.Position, spot)
+			if span > b.tactics.support.engaged {
+				continue // he is not fighting this target, whatever else he is doing
+			}
+			// He is the engaged fighter if he is meaningfully closer — or if we
+			// are COMPARABLY placed and he wins the deterministic tiebreak. The
+			// comparable band is the case the old rule missed entirely: a pair
+			// arriving together is near-equidistant, so neither was ever
+			// "closer times share", neither deferred, both committed, and the
+			// section traded two jets for one (the 2026-08-10 sweep's verdict:
+			// no constant closes the gate, the pair must SEQUENCE). Both bots
+			// evaluate the same rule with the same inputs, so the split is
+			// consistent without a radio call: the lower slot takes the fight,
+			// the other banks energy on the perch — and the roles swap
+			// naturally as the geometry moves them out of the band, or the
+			// instant the picture changes (the sandwich weighting and the
+			// nose-on `tail` check both bypass this whole block).
+			if span < b.tactics.support.share*distance ||
+				(span < distance/b.tactics.support.share && other < slot) {
 				engaged = true
 				break
 			}

@@ -56,6 +56,49 @@ variable as **MOCHI\_<SECTION>\_<KEY>** (for example
 :   Comma-separated list of permanent sessions to create at startup, in
     addition to each game's default standing session.
 
+**public**
+:   *true* to publish this server in the network-wide join list. Requires a
+    Mochi server on the same machine: the server pushes its status - name,
+    address, flight version, per-service player counts - over the Mochi
+    server's local world socket, on change (at most once a minute) and on a
+    ten-minute idle floor. Listings expire 45 minutes after the last push.
+    With *public* false or unset, nothing is pushed and no Mochi server is
+    needed; players join by URL. Requires **name**: a public server with no
+    name refuses to publish and logs a warning. Default *false*.
+
+**data**
+:   Directory for the server's persistent state, currently the stable
+    listing id (*world.id*) - what makes a rename update the existing
+    listing rather than create a second one. Default */var/lib/mochi-world*
+    (the [acme] cache shares that default via its own key).
+
+## [*service*]
+
+One optional section per hosted game (e.g. *[air]*), overriding the
+server-wide listing values for that service:
+
+**name**
+:   Display name for this service in its game's join list. Defaults to the
+    *[world]* name.
+
+**public**
+:   *false* to keep this service out of the join list while others publish.
+    Defaults to the *[world]* value.
+
+A service may appear once: for two separately-branded instances of one game,
+run a second **mochi-world** with its own configuration, port, and data
+directory - each gets its own listing.
+
+## [mochi]
+
+**socket**
+:   Path of the co-located Mochi server's world socket (named pipe on
+    Windows). Default */var/lib/mochi/run/world.sock*, matching a standard
+    native install; point it elsewhere for a relocated data directory. The
+    socket's group permission (**mochi-world**, plus the **mochi** user and
+    root) is the entire credential - there is no token and no TLS on a
+    same-machine channel the operating system already gates.
+
 ## [lobby]
 
 **listen**
@@ -127,7 +170,8 @@ hash, which the lobby advertises.
 :   Server configuration.
 
 */var/lib/mochi-world*
-:   ACME certificate cache (only used with [acme]).
+:   Persistent state: ACME certificate cache and the stable listing id
+    (*world.id*).
 
 # SEE ALSO
 

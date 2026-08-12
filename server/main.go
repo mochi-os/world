@@ -79,6 +79,7 @@ func main_serve(ready func()) int {
 	games_register(air.New())
 
 	sessions_standing()
+	go sessions_stale_manager()
 	if err := certificate_start(); err != nil {
 		warn("startup: %v", err)
 		return 1
@@ -97,6 +98,7 @@ func main_serve(ready func()) int {
 		warn("startup: %v", err)
 		return 1
 	}
+	listing_start()
 	if ready != nil {
 		ready()
 	}

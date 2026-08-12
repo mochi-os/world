@@ -353,6 +353,159 @@ func flounder(me, foe *flight.State, tick uint64) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 0.95, "fire": fire}
 }
 
+// jinker drives the scripted target the aiming measurement predicts is
+// unhittable (#215, 2026-08-11): a FAST, erratic evader. The flounder is the
+// slow high-alpha limiter-camper; this is its opposite — military power,
+// full-deflection keyboard rolls whose direction flips on an IRREGULAR clock,
+// hard pulls through each break and a deliberate unload across each reversal.
+// The point of the irregularity is jerk: the ace's aim error against the
+// (smooth) superhuman was 1.7 m and against the sloppier pilot bot never came
+// below 69.9 m, so the tracking failure is specifically against unsteady
+// motion — and a human actively jinking is unsteadier than any bot. If bots
+// cannot land rounds on this profile, evasion is a cheat code for players.
+func jinker(me, foe *flight.State, tick uint64) map[string]any {
+	toward := foe.Position.Subtract(me.Position)
+	r := math.Max(toward.Length(), 1)
+	line := toward.Scale(1 / r)
+	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+	// The irregular reversal clock: segment lengths cycle through a fixed
+	// pattern (0.9-2.4 s), so the rhythm never settles into anything a
+	// constant-rate predictor can ride. Deterministic, like everything here.
+	pattern := [8]uint64{78, 132, 96, 54, 144, 66, 108, 90}
+	total := uint64(0)
+	for _, d := range pattern {
+		total += d
+	}
+	phase := tick % total
+	segment, into := 0, uint64(0)
+	for k, d := range pattern {
+		if phase < d {
+			segment, into = k, phase
+			break
+		}
+		phase -= d
+	}
+	turn := 1.0
+	if segment%2 == 1 {
+		turn = -1
+	}
+	// Pull hard through the front of each segment, UNLOAD across the
+	// reversal: the out-of-plane jink. The unload is what spikes the jerk —
+	// the acceleration vector collapses and re-forms on the other side.
+	breaking := into < pattern[segment]*3/5
+	pitch := 0.15
+	if breaking {
+		pitch = 0.9
+	}
+	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
+	bank := math.Atan2(right.Y, up.Y)
+	wantBank := turn * 1.15
+	// Same sign convention as the flounder: positive stick rolls RIGHT, which
+	// is NEGATIVE bank in atan2(right.Y, up.Y) — see the flounder's comment
+	// for the split-S this cost when it was inverted.
+	roll := 0.0
+	if wantBank-bank > 0.35 {
+		roll = -1
+	} else if wantBank-bank < -0.35 {
+		roll = 1
+	}
+	// The flounder's recovery, verbatim: level first, THEN pull. A scripted
+	// target that kills itself turns the instrument into a green light that
+	// measures nothing.
+	if me.Position.Y < 1600 && me.Velocity.Y < 0 {
+		if math.Abs(bank) > 0.3 {
+			roll = clamp(bank*2, -1, 1)
+			pitch = 0.2
+		} else {
+			roll = 0
+			pitch = 1.0
+		}
+	}
+	fire := r < 900 && nose.Dot(line) > 0.9985
+	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "fire": fire}
+}
+
+// TestJink measures whether the bots can hit an actively evading human. No
+// outcome gate yet, deliberately — the whole reason this instrument exists is
+// that the answer is expected to be NO, and a gate that sits red stops being
+// read (the ladder learned that; its gate is inversion-only for the same
+// reason). It fatals only on the script drowning itself, exactly like the
+// flounder. Gates come when the bots earn them.
+func TestJink(t *testing.T) {
+	heavy(t)
+	for _, level := range []string{"pilot", "ace", "superhuman"} {
+		var times []float64
+		struck, unresolved, landed, engaged := 0, 0, 0, 0
+		for seed := uint64(1); seed <= 6; seed++ {
+			g := New()
+			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("jink%s%d", level, seed),
+				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+				Parameters: map[string]any{"missiles": false, "bots": map[string]any{level: 1.0}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := made.(*instance)
+			if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+				t.Fatal(err)
+			}
+			bot := -1
+			for slot, a := range i.aircraft {
+				if a != nil && a.brain != nil {
+					bot = slot
+				}
+			}
+			place(i, 0, bot, 1800)
+			me := &i.aircraft[0].model.State
+			done := false
+			for tick := uint64(0); tick < 60*180 && !done; tick++ {
+				i.events = i.events[:0]
+				i.Step(tick, map[int][]game.Input{0: {{Sequence: 1, Data: jinker(me, &i.aircraft[bot].model.State, tick)}}})
+				for _, e := range i.events {
+					if e["kind"] != "hit" {
+						continue
+					}
+					count, _ := e["count"].(int)
+					if e["slot"] == bot {
+						struck += count
+					} else {
+						landed += count
+					}
+				}
+				if b := i.aircraft[bot]; b.model != nil && i.aircraft[0].model != nil &&
+					b.model.State.Position.Subtract(i.aircraft[0].model.State.Position).Length() < 900 {
+					engaged++
+				}
+				human := i.aircraft[0]
+				if human.model == nil || !human.alive {
+					if human.condition.Damager < 0 {
+						t.Fatalf("%s seed %d: the jinker flew into the sea at %.1f s with nobody having hit it — the instrument is measuring its own script, not the bot",
+							level, seed, float64(tick)/60)
+					}
+					times = append(times, float64(tick)/60)
+					done = true
+				}
+				if b := i.aircraft[bot]; b.model == nil || !b.alive {
+					done = true
+				}
+			}
+			if !done || len(times) < int(seed) {
+				unresolved++
+			}
+		}
+		mean := 0.0
+		for _, v := range times {
+			mean += v
+		}
+		if len(times) > 0 {
+			mean /= float64(len(times))
+		}
+		_ = unresolved
+		fmt.Printf("%-11s killed the jinker %d/6, mean %5.1f s | rounds landed on it %4d | in gun range %5.1f%% | hits taken %d\n",
+			level, len(times), mean, landed, 100*float64(engaged)/float64(6*60*180), struck)
+	}
+}
+
 // TestFlounder is the referendum the tier names answer to (#249): kill the
 // user's measured profile fast and clean. Gates: the superhuman inside 60
 // seconds WITHOUT taking a hit; the ace inside 120. The pilot is reported

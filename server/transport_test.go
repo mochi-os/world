@@ -449,6 +449,46 @@ func TestLobbyChat(t *testing.T) {
 	}
 }
 
+// TestStaleOffer pins the sweep that retires abandoned offers — now on its
+// own 1 Hz clock (sessions_stale_manager) rather than every session tick, so
+// this drives one sweep synchronously and checks every category: only an
+// unjoined, impermanent, past-grace offer is flagged.
+func TestStaleOffer(t *testing.T) {
+	past := time.Now().Add(-2 * OFFER_GRACE)
+	cases := []*session{
+		{identifier: "stale-flags", owner: "a", offered: past},
+		{identifier: "stale-fresh", owner: "b", offered: time.Now()},
+		{identifier: "stale-joined", owner: "c", offered: past, joined: true},
+		{identifier: "stale-permanent", owner: "d", offered: past, permanent: true},
+		{identifier: "stale-ownerless", offered: past},
+	}
+	sessions_lock.Lock()
+	for _, s := range cases {
+		sessions[s.identifier] = s
+	}
+	sessions_lock.Unlock()
+	defer func() {
+		sessions_lock.Lock()
+		for _, s := range cases {
+			delete(sessions, s.identifier)
+		}
+		sessions_lock.Unlock()
+	}()
+
+	sessions_stale()
+
+	sessions_lock.RLock()
+	defer sessions_lock.RUnlock()
+	if !cases[0].withdrawn {
+		t.Error("a past-grace offer was not flagged")
+	}
+	for _, s := range cases[1:] {
+		if s.withdrawn {
+			t.Errorf("%s was flagged and should not be", s.identifier)
+		}
+	}
+}
+
 // TestHeartbeat pins the offer clock the match-list poll drives: a pilot's own
 // poll refreshes their offer and nobody else's. A token holding no offer takes
 // the cheap read-only path, and must still leave every clock alone.

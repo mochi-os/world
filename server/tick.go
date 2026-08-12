@@ -90,8 +90,10 @@ func session_run(s *session, g game.Game) {
 				}
 			}
 			// Withdrawn offers close here: only this goroutine may end a
-			// session, so the lobby handler flags and the tick loop acts.
-			sessions_stale()
+			// session, so the stale sweeper (sessions_stale_manager) and the
+			// lobby handler FLAG, and the tick loop ACTS. The flagging used
+			// to happen right here, every tick, under the global write lock;
+			// see sessions_stale for what that cost.
 			sessions_lock.RLock()
 			gone := s.withdrawn
 			sessions_lock.RUnlock()

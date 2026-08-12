@@ -736,7 +736,7 @@ func TestBotSection(t *testing.T) {
 	// on sample size. Its sibling TestBotSectionEqual was recalibrated for the
 	// same reason; this one needed the seeds rather than a band, because the
 	// defensive claim against WEAKER opposition should hold strictly.
-	_, sectionDeaths, _, soloDeaths, resolved := section(t, 40,
+	_, sectionDeaths, _, soloDeaths, _ := section(t, 40,
 		map[string]any{"pilot": 2.0}, map[string]any{"novice": 4.0})
 	// One death of slack per 40 seeds (2026-07-30), the same treatment as the
 	// equal-opposition sibling and for the same reason: the #215 retune made
@@ -746,7 +746,10 @@ func TestBotSection(t *testing.T) {
 	// death at 40 seeds. The failure class this guards — pre-rejoin tactics
 	// dying 8-30 km from the pair — reads as section deaths far EXCEEDING
 	// solo and still trips; a genuine restored edge is the tactics pass's job.
-	if sectionDeaths > soloDeaths+int(resolved/40) {
+	// The slack (one death per 40 seeds, 2026-07-30) is GONE: the sequencing
+	// tiebreak (2026-08-11) gave the pair the missing behaviour — one engages,
+	// one perches, deterministically — and the claim holds strictly again.
+	if sectionDeaths > soloDeaths {
 		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
 	}
 }
@@ -780,7 +783,10 @@ func TestBotSectionEqual(t *testing.T) {
 	// EXCEEDING solo and still trips. Restoring a genuine survival edge is the
 	// TACTICS pass's job (crowd/support weights), which the retune staging
 	// deliberately left until the skill constants settled.
-	if sectionDeaths > soloDeaths+int(sweep/40) {
+	// Slack removed 2026-08-11 with the sequencing tiebreak: measured 87 v 89
+	// at 40 seeds, a strict pass, where the pre-sequencing doctrine sat at
+	// exactly 78 v 70 across four measurements.
+	if sectionDeaths > soloDeaths {
 		// A tie passes: the equal-opposition survival edge measures 1-3 deaths
 		// per 24-48 seeds, and a strict inequality at the default sweep is a
 		// coin flip on that margin (it failed 9 v 9 when the store masses

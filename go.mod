@@ -25,6 +25,7 @@ require (
 )
 
 require (
+	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/dunglas/httpsfv v1.1.0 // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect

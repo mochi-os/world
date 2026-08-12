@@ -68,6 +68,15 @@ func pursue(me, foe *flight.State) map[string]any {
 	}
 	// Aim for a point behind the bandit — the classic novice's "get on his
 	// tail" rather than a proper lead-pursuit gun solution.
+	// The human failing the LIMIT note demands before the tracked-share gate
+	// can be honest: a novice arriving with high closure at short range cannot
+	// stop it — he blows through. Unload and ride the overshoot straight
+	// through the pass. No state is needed: geometry ends it by itself, since
+	// once he is past, the closure goes negative and the condition releases.
+	rel := me.Velocity.Subtract(foe.Velocity)
+	if closing := rel.Dot(toward.Scale(1 / range_)); range_ < 400 && closing > 70 {
+		return map[string]any{"pitch": 0.1, "roll": 0.0, "throttle": 0.85, "fire": false}
+	}
 	six := foe.Position.Subtract(foe.Velocity.Normalize().Scale(math.Min(300, range_*0.6)))
 	want := six.Subtract(me.Position).Normalize()
 	forward := me.Attitude.Rotate(flight.Vec3{X: 1})
@@ -215,7 +224,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			fmt.Printf(" %s %.0f%%", e.mode, 100*float64(e.ticks)/math.Max(1, float64(total)))
 		}
 		fmt.Println()
-		if level == "ace" && false { // see LIMIT above: re-enable once the attacker can overshoot
+		if level == "ace" { // re-enabled 2026-08-11: the attacker now overshoots (see pursue), which is the failing the LIMIT note required before this share could be judged
 			// The report's claim, made falsifiable: an ace held at gun
 			// parameters for most of a minute by an attacker this crude is
 			// not a threat to anyone.

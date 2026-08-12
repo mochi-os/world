@@ -293,7 +293,14 @@ func sessions_touch(owner string) {
 	sessions_lock.Unlock()
 }
 
-// sessions_stale flags offers whose owner has stopped heartbeating.
+// sessions_stale flags offers whose owner has stopped heartbeating. The
+// FLAGGING is global, cheap and time-based; the ACTING (closing) stays with
+// each session's own tick goroutine, which is the only goroutine allowed to
+// end a session. One sweep per second is plenty against a 25-second grace —
+// this used to run on EVERY session's EVERY tick (60 Hz for air), which took
+// the global write lock N*60 times a second and scanned all N sessions each
+// time: O(N^2) lock-hold growth on the hottest path in the process, for a
+// check whose answer changes once per grace period.
 func sessions_stale() {
 	now := time.Now()
 	sessions_lock.Lock()
@@ -303,6 +310,13 @@ func sessions_stale() {
 		}
 	}
 	sessions_lock.Unlock()
+}
+
+// sessions_stale_manager runs the sweep on its own clock, forever.
+func sessions_stale_manager() {
+	for range time.Tick(time.Second) {
+		sessions_stale()
+	}
 }
 
 func seed() (uint64, error) {
@@ -372,6 +386,20 @@ func sessions_list(name string, pilot string) []map[string]any {
 }
 
 // sessions_counts returns total sessions and connected players for /status.
+// sessions_players is the live connected-player count for one game — the
+// number the public listing announces per service.
+func sessions_players(game string) int64 {
+	sessions_lock.RLock()
+	defer sessions_lock.RUnlock()
+	players := int64(0)
+	for _, s := range sessions {
+		if s.spec.Game == game {
+			players += int64(s.connected)
+		}
+	}
+	return players
+}
+
 func sessions_counts() (int, int) {
 	sessions_lock.RLock()
 	defer sessions_lock.RUnlock()
