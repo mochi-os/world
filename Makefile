@@ -1,4 +1,4 @@
-version = 1.2
+version = 1.3
 bin = ../bin
 ldflags = -s -w -X main.build_version=$(version)
 go_sources := $(shell find server game games -name '*.go') go.mod go.sum
@@ -163,7 +163,12 @@ $(deb_amd64): $(bin)/mochi-world $(bin)/mochi-world.8
 	sed 's/_VERSION_/$(version)/' build/deb/DEBIAN/control > $(build_linux_amd64)/DEBIAN/control
 	cp -av install/* $(build_linux_amd64)
 	cp -av $(bin)/mochi-world $(build_linux_amd64)/usr/sbin
-	upx -1 -qq $(build_linux_amd64)/usr/sbin/mochi-world
+	# NO upx: the unit sets MemoryDenyWriteExecute, and a UPX stub needs
+	# writable+executable pages to unpack - the 1.3 deb shipped that pair and
+	# the binary SEGV'd instantly on start, before main, with no output at
+	# all. mochi-server survives the same packing only because ITS unit
+	# carries no MemoryDenyWriteExecute (wazero needs W^X off anyway). The
+	# ~7 MB saved is not worth a sandbox hole or a dead server.
 	mkdir -p $(build_linux_amd64)/usr/share/man/man8
 	cp $(bin)/mochi-world.8 $(build_linux_amd64)/usr/share/man/man8/
 	dpkg-deb -Zxz -z9 --build --root-owner-group $(build_linux_amd64)
