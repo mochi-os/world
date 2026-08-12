@@ -1,2 +1,5 @@
 # Docker-staged binaries - build products of `make docker-stage`
 build/docker/bin/
+
+# Editor swap files
+.*.swp
