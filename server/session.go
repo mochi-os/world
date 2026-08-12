@@ -332,11 +332,33 @@ func sessions_touch(owner string) {
 // the global write lock N*60 times a second and scanned all N sessions each
 // time: O(N^2) lock-hold growth on the hottest path in the process, for a
 // check whose answer changes once per grace period.
+// ORPHAN_GRACE is how long a session nobody ever joined survives when it has no
+// owner to heartbeat for it.
+//
+// Every condition in the owner sweep below is about an owner who has stopped
+// polling, so a creator who simply omits "pilot" satisfies none of them:
+// sessions_own returns early without an owner, offered stays zero, and the
+// session then lived until the tick's 300 s idle close. At a hundred slots and
+// ten creates per minute per address, two addresses kept the server permanently
+// full. Nothing legitimate needs this window: a real creator opens the page,
+// which heartbeats, and a real match sets joined the moment anyone connects.
+const ORPHAN_GRACE = 30 * time.Second
+
 func sessions_stale() {
 	now := time.Now()
 	sessions_lock.Lock()
 	for _, s := range sessions {
-		if s.owner != "" && !s.joined && !s.permanent && !s.withdrawn && !s.offered.IsZero() && now.Sub(s.offered) > OFFER_GRACE {
+		if s.joined || s.permanent || s.withdrawn {
+			continue
+		}
+		// An owner who has stopped heartbeating.
+		if s.owner != "" && !s.offered.IsZero() && now.Sub(s.offered) > OFFER_GRACE {
+			s.withdrawn = true
+			continue
+		}
+		// No owner at all: reap on age since creation instead, so omitting
+		// the field cannot buy a longer life than supplying it.
+		if s.owner == "" && s.connected == 0 && now.Sub(s.created) > ORPHAN_GRACE {
 			s.withdrawn = true
 		}
 	}

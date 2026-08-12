@@ -74,9 +74,23 @@ func connection_serve(l link) {
 	connection_read(l, s, a.slot)
 }
 
+// HANDSHAKE_GRACE bounds how long a connection may hold a slot without saying
+// anything. read() blocks on a channel with no deadline, and the slot is
+// reserved by transport_admit BEFORE this runs, so a peer that completes the
+// QUIC handshake and then sends nothing parked a goroutine and a slot forever:
+// the liveness sweep only walks joined players, and the server's own 15 s
+// keepalives stop QUIC idling the connection out. Filling CONNECTIONS_MAXIMUM
+// that way costs an attacker nothing but open sockets.
+//
+// Ten seconds is far longer than a real client needs — it sends its join
+// immediately after the stream opens — and short enough that the slot returns
+// before a flood can accumulate.
+// A var, not a const, only so a test can shorten it.
+var HANDSHAKE_GRACE = 10 * time.Second
+
 // connection_join reads and validates the first message.
 func connection_join(l link) (map[string]any, error) {
-	bytes, err := l.read()
+	bytes, err := connection_first(l)
 	if err != nil {
 		return nil, err
 	}
@@ -184,10 +198,22 @@ func connection_departures(message map[string]any) []game.Departure {
 	return departures
 }
 
+// INPUTS_MAXIMUM caps the samples one frame may carry, the way
+// connection_departures caps stations at nine. A client batches the samples it
+// took since its last frame, so a handful is normal and a long stall might
+// carry a few dozen; sixteen covers a quarter-second gap at 60 Hz.
+//
+// Without a cap the list length was bounded only by the 64 KB frame: a frame of
+// empty CBOR maps decodes to tens of thousands of elements, and each one is
+// retained whole as Input.Data, so a single frame turned into megabytes. The
+// sibling below has always capped, which is what makes this an omission rather
+// than a decision.
+const INPUTS_MAXIMUM = 16
+
 // connection_inputs decodes the batched input samples, oldest first.
 func connection_inputs(message map[string]any) []game.Input {
 	list, found := message["inputs"].([]any)
-	if !found {
+	if !found || len(list) > INPUTS_MAXIMUM {
 		return nil
 	}
 	inputs := []game.Input{}
@@ -199,6 +225,35 @@ func connection_inputs(message map[string]any) []game.Input {
 		inputs = append(inputs, game.Input{Sequence: uint32(number(data, "sequence")), Data: data})
 	}
 	return inputs
+}
+
+// connection_first reads the handshake message under HANDSHAKE_GRACE.
+//
+// The read runs on its own goroutine because link.read() cannot be cancelled:
+// closing the link is what releases it (read selects on the closed channel), so
+// the timeout path closes and the reader then returns EOF into a buffered
+// channel nobody is waiting on. Buffered deliberately — an unbuffered send
+// would leak the goroutine that lost the race.
+func connection_first(l link) ([]byte, error) {
+	type result struct {
+		bytes []byte
+		err   error
+	}
+	done := make(chan result, 1)
+	go func() {
+		bytes, err := l.read()
+		done <- result{bytes: bytes, err: err}
+	}()
+
+	timer := time.NewTimer(HANDSHAKE_GRACE)
+	defer timer.Stop()
+	select {
+	case r := <-done:
+		return r.bytes, r.err
+	case <-timer.C:
+		l.close("handshake")
+		return nil, errors.New("handshake")
+	}
 }
 
 func connection_refuse(l link, reason string) {

@@ -338,6 +338,26 @@ func stores_mask(lo loadout, fired int, expended int) uint64 {
 // (#18): "stores" empties the mounts and keeps the fixture, "rack" clears the
 // fixture with everything on it. Wingtips (1/9) never jettison — the rails
 // have no ejector.
+// JETTISON_COOLDOWN is the minimum ticks between one jet's jettisons, at the
+// 60 Hz air rate — one second.
+const JETTISON_COOLDOWN = 60
+
+// stores_occupied reports whether a station actually holds what the request
+// asks to drop: any round for "stores", a fixture for "rack". An empty station
+// is not a departure, so it must not count towards the broadcast.
+func stores_occupied(lo loadout, station int, what string) bool {
+	s := lo[strconv.Itoa(station)]
+	if what == "rack" {
+		return s.Fixture != ""
+	}
+	for _, name := range s.Stores {
+		if name != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func stores_jettison(lo loadout, station int, what string) loadout {
 	out := loadout{}
 	for key, value := range lo {
@@ -371,10 +391,25 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if fired < 0 {
 		fired = 0
 	}
+	// One jettison per second per jet. Every call ends by appending a roster
+	// event, which goes to every player on the reliable channel, and a client
+	// whose reliable queue fills is torn down as "slow" — so an unthrottled
+	// jettison let one player disconnect the whole match. A real drop is a
+	// deliberate act a second apart at most.
+	if last, dropped := i.jettisoned[slot]; dropped && i.stepped-last < JETTISON_COOLDOWN {
+		return
+	}
+
 	next := a.loadout
 	changed := 0
 	for _, d := range departures {
 		if d.Station < 2 || d.Station > 8 || (d.What != "stores" && d.What != "rack") {
+			continue
+		}
+		// Count only stations that HELD something. Counting every well-formed
+		// request meant nine empty stations passed the changed==0 guard below
+		// and bought a full broadcast, which is what made the flood free.
+		if !stores_occupied(next, d.Station, d.What) {
 			continue
 		}
 		next = stores_jettison(next, d.Station, d.What)
@@ -383,6 +418,10 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if changed == 0 {
 		return
 	}
+	if i.jettisoned == nil {
+		i.jettisoned = map[int]uint64{}
+	}
+	i.jettisoned[slot] = i.stepped
 	live := map[string]bool{}
 	for _, name := range stores_rounds(next) {
 		live[name] = true

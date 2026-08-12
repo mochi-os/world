@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync/atomic"
 
 	"world/game"
 	"world/games/air/aircraft"
@@ -186,6 +187,14 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		if want > 99 {
 			want = 99
 		}
+		// Against the SERVER's budget, not just this session's. Ninety-nine
+		// was a per-session clamp, and sessions are created by an
+		// unauthenticated POST: a hundred of them is ~9900 server-flown
+		// aircraft, every one costing CPU on this machine with nobody
+		// connected. bots_reserve grants what is left and no more, so a flood
+		// gets emptier and emptier matches instead of the whole machine.
+		want = bots_reserve(want)
+		i.bots = want
 		top := 99
 		if session.Capacity+want > 100 {
 			top = session.Capacity + want - 1
@@ -193,7 +202,9 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		slot, total := top, 0
 		single := map[string]int{} // per side: the fighting bot still waiting for a pair partner
 		for _, w := range wanted {
-			for n := 1; n <= w.count && total < 99; n++ {
+			// Bounded by what was actually granted, not the fixed 99: the
+			// reservation above is only a reservation if the loop honours it.
+			for n := 1; n <= w.count && total < want; n++ {
 				team := w.team
 				if mode != "teams" {
 					team = "" // sides exist only in the teams mode
@@ -376,9 +387,9 @@ type missile struct {
 	position flight.Vec3
 	velocity flight.Vec3
 	life     float64
-	number   uint64 // per-instance launch counter, for deterministic decoys
-	window   bool   // a flare window has been judged (one decoy roll per flare)
-	called   bool   // a teammate has called this launch to its victim (#146): one call per round, ever
+	number   uint64       // per-instance launch counter, for deterministic decoys
+	window   bool         // a flare window has been judged (one decoy roll per flare)
+	called   bool         // a teammate has called this launch to its victim (#146): one call per round, ever
 	radar    *round.Model // AIM-120 (#27 phase 2c): the shared core flies it; nil for the 9M, which keeps the model above
 }
 
@@ -415,6 +426,58 @@ type instance struct {
 	results  map[string]any
 	score    map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
 	warned   map[int]uint64 // last BREAK call per menaced human slot (#139): one warning per victim per few seconds, whoever calls it
+
+	stepped    uint64         // the tick Step is on, so handlers off the Step path (Jettison) share its clock
+	jettisoned map[int]uint64 // last jettison tick per slot: the cooldown's clock, same shape as warned
+
+	bots int // practice bots reserved from the server-wide budget, released by Close
+}
+
+// BOTS_MAXIMUM is how many practice bots this SERVER will fly at once, across
+// every session. Each is a full aircraft stepped at 60 Hz, and a session is
+// created by an unauthenticated POST, so without a server-wide ceiling the
+// per-session clamp of 99 multiplied by the 100-session cap: thousands of
+// simulated jets on one machine with nobody connected.
+//
+// Sized for the practice cases the feature exists for — a solo pilot against a
+// handful of bots, or a full furball — several times over, while staying a
+// small fraction of what the machine could be asked for before.
+const BOTS_MAXIMUM = 200
+
+var bots_live atomic.Int64
+
+// bots_reserve grants up to want bots from the server-wide budget, returning
+// how many were actually granted (zero when the budget is spent). Reserve then
+// trim rather than check then reserve: two concurrent Creates must not both
+// pass the last slot.
+func bots_reserve(want int) int {
+	if want <= 0 {
+		return 0
+	}
+	live := bots_live.Add(int64(want))
+	if over := live - BOTS_MAXIMUM; over > 0 {
+		if over >= int64(want) {
+			bots_live.Add(-int64(want))
+			return 0
+		}
+		bots_live.Add(-over)
+		return want - int(over)
+	}
+	return want
+}
+
+// bots_release returns a reservation to the budget.
+func bots_release(count int) {
+	if count > 0 {
+		bots_live.Add(-int64(count))
+	}
+}
+
+// Close releases this match's share of the bot budget. The server calls it
+// once, when the session ends (game.Closer).
+func (i *instance) Close() {
+	bots_release(i.bots)
+	i.bots = 0
 }
 
 // slots iterates the aircraft in slot order: map order is random per
@@ -692,6 +755,7 @@ func number(data map[string]any, key string) float64 {
 
 func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	dt := 1.0 / 60
+	i.stepped = tick // Jettison runs on this goroutine but off this call: it reads the clock here
 	i.rehearsals = 0 // the tick's arbiter allowance (#256)
 	for slot, list := range inputs {
 		a := i.aircraft[slot]

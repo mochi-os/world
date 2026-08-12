@@ -48,6 +48,53 @@ func transport_admit() bool {
 // transport_release returns a slot taken by transport_admit.
 func transport_release() { connections.Add(-1) }
 
+// HOST_CONNECTIONS_MAXIMUM caps how many transport connections ONE address may
+// hold at once. The sliding-minute limiter beside it bounds how fast an address
+// may connect, not how many it keeps — so a single host could hold every one of
+// CONNECTIONS_MAXIMUM open indefinitely and every other player got a 503.
+//
+// Generous on purpose: a household behind one NAT address, or several tabs on
+// one machine, are ordinary. What it stops is one address holding hundreds.
+const HOST_CONNECTIONS_MAXIMUM = 16
+
+var (
+	hosts      = map[string]int{}
+	hosts_lock sync.Mutex
+)
+
+// transport_host_admit reserves a per-host slot, reporting false when this
+// address already holds its share. Paired with transport_host_release.
+func transport_host_admit(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	hosts_lock.Lock()
+	defer hosts_lock.Unlock()
+	if hosts[host] >= HOST_CONNECTIONS_MAXIMUM {
+		return false
+	}
+	hosts[host]++
+	return true
+}
+
+// transport_host_release returns a slot taken by transport_host_admit, and
+// deletes the entry at zero so the map cannot grow with every address that has
+// ever connected.
+func transport_host_release(address string) {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		host = address
+	}
+	hosts_lock.Lock()
+	defer hosts_lock.Unlock()
+	if hosts[host] <= 1 {
+		delete(hosts, host)
+		return
+	}
+	hosts[host]--
+}
+
 func transport_start(fatal chan<- error) error {
 	tlsconf, err := certificate_tls()
 	if err != nil {
@@ -100,14 +147,24 @@ func transport_start(fatal chan<- error) error {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}
+		// Concurrent holds, not just connect rate: without this one address
+		// could occupy every slot the global cap allows and hold them.
+		address := r.RemoteAddr
+		if !transport_host_admit(address) {
+			transport_release()
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		session, err := server.Upgrade(w, r)
 		if err != nil {
+			transport_host_release(address)
 			transport_release()
 			debug("transport: upgrade: %v", err)
 			return
 		}
 		go guard("transport connection", func() { session.CloseWithError(0, "fault") }, func() {
 			defer transport_release()
+			defer transport_host_release(address)
 			transport_serve(session)
 		})
 	})

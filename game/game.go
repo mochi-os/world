@@ -95,3 +95,16 @@ type Occupancy interface {
 	// there itself. It is consulted only while choosing a slot for a join.
 	Occupied(slot int) bool
 }
+
+// Closer is the optional half of Instance for games holding a resource that
+// outlives a single tick and is shared across sessions. The server calls Close
+// exactly once, when the session ends, whatever ended it.
+//
+// Air needs it for the practice-bot budget: bots are server-flown aircraft, so
+// they are the one thing a session creator can ask for that costs CPU on this
+// machine without anybody connecting. Reserving against a server-wide ceiling
+// is only safe if the reservation is released, and Instance had no lifecycle
+// at all — Create with no counterpart.
+type Closer interface {
+	Close()
+}

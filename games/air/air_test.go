@@ -36,6 +36,12 @@ func heavy(t *testing.T) {
 
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
 	t.Helper()
+	// Practice bots are reserved from a server-wide budget and released by
+	// Close, which the server calls at session end. A test discards its
+	// instance instead, so without this each build would spend budget nothing
+	// gives back and a test standing up several instances would silently get
+	// fewer bots in the later ones.
+	bots_live.Store(0)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "test", Game: "air", Mode: mode, Capacity: 16, Seed: 2, Parameters: parameters})
 	if err != nil {

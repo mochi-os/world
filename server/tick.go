@@ -379,5 +379,11 @@ func session_close(s *session, reason string) {
 			p.link = nil
 		}
 	}
+	// Release whatever server-wide resource the game reserved at Create (air's
+	// practice-bot budget). Every close funnels through here, so this is the
+	// one place that cannot be missed by a new end reason.
+	if closer, ok := s.instance.(game.Closer); ok {
+		closer.Close()
+	}
 	session_end(s, reason)
 }

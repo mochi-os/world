@@ -146,6 +146,10 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		if !lobby_browse(r) {
+			lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
+			return
+		}
 		// The match-list poll doubles as the offer heartbeat (#77): a player
 		// browsing this server keeps their own offer alive by being here. The
 		// same token tells the listing which offer is the caller's own.
@@ -351,6 +355,22 @@ var retires = map[string][]time.Time{}
 
 func lobby_retire(r *http.Request) bool {
 	return lobby_permit(retires, r, ini_int("limits", "withdraws", 30))
+}
+
+// lobby_browse rate-limits the match-list read. Every WRITE here had a budget
+// and the READ had none, which is the wrong way round for the one endpoint
+// that returns a body proportional to the whole server and sets
+// Access-Control-Allow-Origin: *: any page a visitor loads could drive their
+// browser at it, and the reply is many times the size of the request.
+//
+// The budget is the loosest of the four because this poll doubles as the offer
+// heartbeat (#77) — a player sitting on the match list polls every few seconds
+// for as long as they are there, so the limit has to sit well above a steady
+// human poll while still refusing a flood.
+var browses = map[string][]time.Time{}
+
+func lobby_browse(r *http.Request) bool {
+	return lobby_permit(browses, r, ini_int("limits", "browses", 120))
 }
 
 // lobby_permit is the shared per-host sliding-minute limiter.

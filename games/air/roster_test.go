@@ -83,6 +83,11 @@ func TestRosterSitsAboveThePlayers(t *testing.T) {
 		{8, 99, 99, 106},   // the maximum roster in a small session
 		{16, 200, 99, 114}, // an over-large request is still capped at 99 bots
 	} {
+		// Each case is its own server as far as the bot budget is concerned:
+		// bots are reserved at Create and released by Close, which only the
+		// server calls, so a test discarding instances would otherwise see the
+		// budget drain case by case and the later rosters come up short.
+		bots_live.Store(0)
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "above", Game: "air", Mode: "furball",
 			Capacity: c.capacity, Seed: 1,

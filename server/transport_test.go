@@ -457,13 +457,21 @@ func TestLobbyChat(t *testing.T) {
 // unjoined, impermanent, past-grace offer is flagged.
 func TestStaleOffer(t *testing.T) {
 	past := time.Now().Add(-2 * OFFER_GRACE)
+	stale := time.Now().Add(-2 * ORPHAN_GRACE)
 	cases := []*session{
-		{identifier: "stale-flags", owner: "a", offered: past},
-		{identifier: "stale-fresh", owner: "b", offered: time.Now()},
-		{identifier: "stale-joined", owner: "c", offered: past, joined: true},
-		{identifier: "stale-permanent", owner: "d", offered: past, permanent: true},
-		{identifier: "stale-ownerless", offered: past},
+		{identifier: "stale-flags", owner: "a", offered: past, created: time.Now()},
+		{identifier: "stale-fresh", owner: "b", offered: time.Now(), created: time.Now()},
+		{identifier: "stale-joined", owner: "c", offered: past, joined: true, created: stale},
+		{identifier: "stale-permanent", owner: "d", offered: past, permanent: true, created: stale},
+		// An ownerless session is not the OWNER rule's business however old it
+		// is — that rule is about a creator who stopped heartbeating, and this
+		// one never had a creator to lose. It is reaped instead by the orphan
+		// rule below, on age since creation, so that omitting "pilot" cannot
+		// buy a longer life than supplying it (the DoS this pins).
+		{identifier: "stale-ownerless", offered: past, created: time.Now()},
 	}
+	orphan := &session{identifier: "stale-orphan", offered: past, created: stale}
+	cases = append(cases, orphan)
 	sessions_lock.Lock()
 	for _, s := range cases {
 		sessions[s.identifier] = s
@@ -484,7 +492,10 @@ func TestStaleOffer(t *testing.T) {
 	if !cases[0].withdrawn {
 		t.Error("a past-grace offer was not flagged")
 	}
-	for _, s := range cases[1:] {
+	if !orphan.withdrawn {
+		t.Error("an ownerless session past the orphan grace was not flagged: omitting the pilot must not outlive supplying it")
+	}
+	for _, s := range cases[1 : len(cases)-1] {
 		if s.withdrawn {
 			t.Errorf("%s was flagged and should not be", s.identifier)
 		}
