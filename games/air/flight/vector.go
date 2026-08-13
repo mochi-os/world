@@ -93,6 +93,47 @@ func (q Quat) Derivative(omega Vec3) Quat {
 	}
 }
 
+// Basis builds the attitude whose body forward (+X) axis points along
+// `forward` and whose body up (+Y) axis lies as close to `up` as
+// orthogonality allows. Both may be approximate: forward is normalized and up
+// is re-squared against it.
+func Basis(forward, up Vec3) Quat {
+	f := forward.Normalize()
+	s := f.Cross(up)
+	if s.Length() < 1e-9 { // up (anti)parallel to forward: any perpendicular serves
+		s = f.Cross(Vec3{Y: 1})
+		if s.Length() < 1e-9 {
+			s = f.Cross(Vec3{Z: 1})
+		}
+	}
+	s = s.Normalize()
+	u := s.Cross(f)
+	// Shepperd's method on the rotation matrix whose columns are the world
+	// images of the body axes X, Y, Z.
+	m00, m01, m02 := f.X, u.X, s.X
+	m10, m11, m12 := f.Y, u.Y, s.Y
+	m20, m21, m22 := f.Z, u.Z, s.Z
+	var q Quat
+	if t := m00 + m11 + m22; t > 0 {
+		r := math.Sqrt(1 + t)
+		c := 0.5 / r
+		q = Quat{0.5 * r, (m21 - m12) * c, (m02 - m20) * c, (m10 - m01) * c}
+	} else if m00 >= m11 && m00 >= m22 {
+		r := math.Sqrt(1 + m00 - m11 - m22)
+		c := 0.5 / r
+		q = Quat{(m21 - m12) * c, 0.5 * r, (m01 + m10) * c, (m02 + m20) * c}
+	} else if m11 >= m22 {
+		r := math.Sqrt(1 - m00 + m11 - m22)
+		c := 0.5 / r
+		q = Quat{(m02 - m20) * c, (m01 + m10) * c, 0.5 * r, (m12 + m21) * c}
+	} else {
+		r := math.Sqrt(1 - m00 - m11 + m22)
+		c := 0.5 / r
+		q = Quat{(m10 - m01) * c, (m02 + m20) * c, (m12 + m21) * c, 0.5 * r}
+	}
+	return q.Normalize()
+}
+
 // Look builds the attitude whose forward axis points along a horizontal
 // heading vector, wings level (used for spawns).
 func Look(direction Vec3) Quat {

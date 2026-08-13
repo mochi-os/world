@@ -332,25 +332,30 @@ var plays = []play{
 	}},
 }
 
-// evolve advances the opponent's track by dt seconds: around his estimated
-// circle when one is readable, straight otherwise. The arc is capped — a
-// half-circle of extrapolation is prediction, a full one is fantasy.
-func evolve(t *track, ring orbit, dt float64) (flight.Vec3, flight.Vec3) {
-	if !ring.valid {
-		return t.position.Add(t.velocity.Scale(dt)), t.velocity
+// evolve advances the opponent's track by dt seconds along the LOCAL CURVE:
+// his velocity plus the swing (his observed acceleration), which is the same
+// model the gunnery's own lead is built on (predict()). Speed is preserved
+// rather than integrated, because a turn changes a jet's direction and not
+// much else.
+//
+// This used to swing him around his estimated turn circle, capped at 2.6
+// radians of arc. TestYouModel measured that against both scripted humans
+// and it was not prediction, it was fantasy: wrong by 49 m at a quarter
+// second, 192 m at one second, and 750 m at the four-second rollout horizon,
+// where the local curve holds 2 m and 58 m — and where a DEAD STRAIGHT LINE
+// scored 6.9 m and 100 m, beating the circle 28-fold. Every candidate play
+// was being ranked against a phantom hundreds of metres from where the
+// target actually went, which is the arbiter's whole discrimination problem
+// in one number. The circle estimate stays where it earns its place: judging
+// where I sit relative to his turn (appraise's standing term) and picking
+// the lag point, both of which read the circle NOW rather than extrapolating
+// a reversal into a future that never happens.
+func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
+	position := t.position.Add(t.velocity.Scale(dt)).Add(t.swing.Scale(0.5 * dt * dt))
+	velocity := t.velocity.Add(t.swing.Scale(dt))
+	if speed := t.velocity.Length(); speed > 1 && velocity.Length() > 1 {
+		velocity = velocity.Normalize().Scale(speed)
 	}
-	arc := clamp(ring.omega*dt, 0, 2.6)
-	radial := t.position.Subtract(ring.centre)
-	planar := radial.Subtract(ring.normal.Scale(radial.Dot(ring.normal)))
-	if planar.Length() < 1 {
-		return t.position.Add(t.velocity.Scale(dt)), t.velocity
-	}
-	u := planar.Normalize()
-	w := ring.normal.Cross(u)
-	turned := u.Scale(math.Cos(arc)).Add(w.Scale(math.Sin(arc)))
-	position := ring.centre.Add(turned.Scale(planar.Length())).Add(ring.normal.Scale(radial.Dot(ring.normal)))
-	speed := t.velocity.Length()
-	velocity := ring.normal.Cross(turned).Normalize().Scale(speed)
 	return position, velocity
 }
 
@@ -422,8 +427,35 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	his := him*him/2 + 9.81*prey.position.Y
 	slow := him < 170 && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
 	starving := tick-b.chanced > 2700 && b.nearing < 12 // 45 s without a shot worth its price, and the range is not coming down
+	// FINISH must also be WORKING. Deny and reset each carry an exit; this
+	// one had none, and its entry condition is the OPPONENT's state, which
+	// stays true for as long as he stays slow — so the posture renewed
+	// itself every commitment window and the starvation check below, the
+	// one signal that notices a conversion which is simply not happening,
+	// could never be reached. Measured once the opponent model was made
+	// honest (2026-08-13), which is what let the machine judge a target
+	// beaten with confidence: against a compliant drone it entered finish
+	// and flew pitch-backs for three minutes — 4237 ticks inside gun range
+	// at a 412 m aim error — while the ace, which never entered finish,
+	// killed the same drone six times from six. Spending everything on a
+	// beaten opponent is only a plan while it is buying something.
 	next := "convert"
 	switch {
+	// FINISH IS UNBOUNDED, and that is a known open defect (2026-08-13):
+	// its condition is the OPPONENT's state, which holds for as long as he
+	// stays slow, so the posture renews itself every commitment window and
+	// the starvation escape below can never be reached. Measured once the
+	// opponent model was made honest: the machine judged a compliant drone
+	// beaten, entered finish, and flew pitch-backs at it for three minutes
+	// while the ace, which never entered finish, killed the same drone six
+	// times from six. A thirty-second spell with a re-entry guard was the
+	// obvious answer and was MEASURED AND REJECTED: slow-target conversion
+	// legitimately runs past thirty seconds, so the bound evicted the ace
+	// from a posture it was winning with — the flounder fell from 16 kills
+	// to 13 (the ace alone 7 to 4) and the drone did not move. Whatever
+	// bounds this has to key on the conversion FAILING, not on elapsed
+	// time, and the starvation signal cannot do it either because a stalled
+	// finish keeps taking priced shots: it is firing and not killing.
 	case slow && b.skill.library >= 3:
 		next = "finish"
 	case threatened:
@@ -545,19 +577,20 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 
 // rehearse flies one candidate law forward through the real flight model —
 // the same airframe, FCS, and executor imperfections the live bot flies —
-// against the opponent's evolved track, and returns the weighted score.
-// Later instants weigh more: BFM is judged by where it ends up.
+// against the opponent's evolved track, and returns the MEAN score over the
+// sampled instants. Every instant counts alike: see the sampling comment
+// below for why the old terminal weighting was measured out.
 func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon int) float64 {
 	sim.State = a.model.State
 	sim.State.Damage = sim.State.Damage.Copy() // the struct copy shares Element/Jam with the LIVE jet; a damage-writing Step would corrupt it mid-fight
-	shadow := *b // the executor's scalar state rides along; maps are untouched
+	shadow := *b                               // the executor's scalar state rides along; maps are untouched
 	shadow.shoot = false
 	pace := corner(a.model)
 	age := float64(tick-prey.when) / 60
-	score, weight := 0.0, 0.0
+	score, samples := 0.0, 0.0
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
-		hisP, hisV := evolve(prey, b.ring, age+t)
+		hisP, hisV := evolve(prey, age+t)
 		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
 		m.derive()
 		o := chosen.law(&m)
@@ -578,12 +611,29 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			return -100 // flew it into the sea: veto, whatever else it bought
 		}
 		if k%30 == 0 || k == horizon {
-			w := 0.4 + 0.6*float64(k)/float64(horizon)
-			score += w * appraise(&sim.State, hisP, hisV, pace, stances[b.intent], &b.skill, b.ring)
-			weight += w
+			// Every sampled instant counts alike. The old curve rose from
+			// 0.4 to 1.0 across the horizon on the reasoning that BFM is
+			// judged by where it ends up — true of POSITION, false of
+			// GUNNERY: rounds land during the trajectory, so time on the
+			// solution is itself the payoff, and discounting the early
+			// instants discounted the tracking the fight is won by.
+			// Measured 2026-08-13 on two independent seed blocks (the kill
+			// counts are too sparse to read alone, so this is judged on
+			// rounds landed, which replicated 4 comparisons of 4): flat
+			// lands 1.6-4x the rounds on both scripted humans — jinker 130
+			// against 66 and 69 against 44, flounder 235 against 57 and 182
+			// against 81 — with kills equal or better, and it agrees with
+			// the FULL model more, not less: 69.1% against 66.0%, costly
+			// picks 5.3% against 6.7%. A steeper curve (0.15 to 1.0) was
+			// measured too and lands between the two, so the gradient is
+			// real rather than seed luck. All gates hold, including the two
+			// that reject over-eager tracking (the drone ladder's
+			// monotonicity and TestConvert).
+			score += appraise(&sim.State, hisP, hisV, pace, stances[b.intent], &b.skill, b.ring)
+			samples++
 		}
 	}
-	return score / weight
+	return score / samples
 }
 
 // allowance is how many bots may rehearse in one tick. Two is comfortably

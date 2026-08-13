@@ -9,6 +9,7 @@ package air
 import (
 	"fmt"
 	"math"
+	"sort"
 	"testing"
 
 	"world/game"
@@ -512,10 +513,22 @@ func TestJink(t *testing.T) {
 // (its target is parity with the user, judged elsewhere).
 func TestFlounder(t *testing.T) {
 	heavy(t)
+	// Twelve seeds (2026-08-13, was six): the kill counts sit near zero, so
+	// per-seed noise dominated any six-seed read — variants measured a day
+	// apart flipped tiers between 0/6 and 1/6 on seed luck alone.
+	const flounderSeeds = 12
 	for _, level := range []string{"pilot", "ace", "superhuman"} {
 		var times []float64
 		struck, unresolved, landed, engaged := 0, 0, 0, 0
-		for seed := uint64(1); seed <= 6; seed++ {
+		// The conversion diagnosis columns (#215 item 8): how often the bot
+		// FIRES, how often it holds the advantage position (nose on, inside
+		// 900 m), which plays it flies, and how fast it is overtaking while
+		// in range — the floater deficit lives in one of those, and a kill
+		// count alone cannot say which.
+		firing, advantage, total := 0, 0, 0
+		closure, closures := 0.0, 0
+		modes := map[string]int{}
+		for seed := uint64(1); seed <= flounderSeeds; seed++ {
 			g := New()
 			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("flounder%s%d", level, seed),
 				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
@@ -550,9 +563,29 @@ func TestFlounder(t *testing.T) {
 						landed += count
 					}
 				}
-				if b := i.aircraft[bot]; b.model != nil && i.aircraft[0].model != nil &&
-					b.model.State.Position.Subtract(i.aircraft[0].model.State.Position).Length() < 900 {
-					engaged++
+				if b := i.aircraft[bot]; b.model != nil && i.aircraft[0].model != nil && b.brain != nil {
+					total++
+					modes[b.brain.mode]++
+					if b.latest.Fire {
+						firing++
+					}
+					h, p := &b.model.State, &i.aircraft[0].model.State
+					to := p.Position.Subtract(h.Position)
+					r := to.Length()
+					if r < 900 {
+						engaged++
+						// Closure along the line of sight while in range: the
+						// floater fight is decided by whether the bot arrives
+						// saddled or screaming past.
+						if r > 1 {
+							closure += h.Velocity.Subtract(p.Velocity).Dot(to.Scale(1 / r))
+							closures++
+						}
+						nose := h.Attitude.Rotate(flight.Vec3{X: 1})
+						if r > 1 && math.Acos(clamp(nose.Dot(to.Scale(1/r)), -1, 1))*180/math.Pi < 30 {
+							advantage++
+						}
+					}
 				}
 				human := i.aircraft[0]
 				if human.model == nil || !human.alive {
@@ -584,8 +617,36 @@ func TestFlounder(t *testing.T) {
 		if len(times) > 0 {
 			mean /= float64(len(times))
 		}
-		fmt.Printf("%-11s killed the flounder %d/6, mean %5.1f s | rounds landed on it %4d | in gun range %5.1f%% | hits taken %d\n",
-			level, len(times), mean, landed, 100*float64(engaged)/float64(6*60*180), struck)
+		top := ""
+		{
+			type share struct {
+				mode  string
+				count int
+			}
+			shares := []share{}
+			for m, c := range modes {
+				shares = append(shares, share{m, c})
+			}
+			sort.Slice(shares, func(a, b int) bool { return shares[a].count > shares[b].count })
+			for k, sh := range shares {
+				if k >= 3 || total == 0 {
+					break
+				}
+				top += fmt.Sprintf("%s %.0f%% ", sh.mode, 100*float64(sh.count)/float64(total))
+			}
+		}
+		rate := func(n int) float64 {
+			if total == 0 {
+				return 0
+			}
+			return 100 * float64(n) / float64(total)
+		}
+		overtake := 0.0
+		if closures > 0 {
+			overtake = closure / float64(closures)
+		}
+		fmt.Printf("%-11s killed the flounder %d/%d, mean %5.1f s | rounds landed %4d | in gun range %5.1f%% | nose on %4.1f%% | trigger %4.1f%% | closure %+5.1f m/s | hits taken %d | modes %s\n",
+			level, len(times), flounderSeeds, mean, landed, rate(engaged), rate(advantage), rate(firing), overtake, struck, top)
 		// THE GATES, re-based 2026-08-08 against an HONEST script. The old
 		// ones (superhuman 6/6 inside 60 s) were measured while the flounder
 		// flew itself into the sea — the roll sign was inverted, so it rolled
@@ -616,7 +677,7 @@ func TestFlounder(t *testing.T) {
 			// stops being read, so this is loud rather than failing, and it
 			// becomes an assertion the moment the conversion work lands.
 			t.Logf("KNOWN (#215): superhuman landed NO rounds on the flounder in three minutes while inside gun range %.1f%% of it — the bot cannot convert against a floater",
-				100*float64(engaged)/float64(6*60*180))
+				100*float64(engaged)/float64(flounderSeeds*60*180))
 		}
 		if struck > 0 {
 			t.Errorf("%s took %d hits from a keyboard novice — its passes cross the target's nose", level, struck)

@@ -39,17 +39,18 @@ const (
 // point-mass surrogate at 60 Hz — since 2026-08-08 (#256), and the choice is
 // measured, not assumed:
 //
-//	full 240 Hz     436.7 ms per re-plan   the old live path
-//	surrogate 60 Hz   1.4 ms               313x cheaper
+//	full 240 Hz     481.3 ms per re-plan   the old live path
+//	surrogate 60 Hz   1.7 ms               ~243x cheaper
 //
-// Paired over 360 decision points it picks the same play 57% of the time, and
+// Paired over 360 decision points it picks the same play 66% of the time, and
 // the disagreements are cheap: judged by the FULL model's own scores it gives
-// up 11% of the candidate spread on average, and only 5% of all decisions cost
-// more than a fifth of it. Ranking candidates is a far weaker requirement than
-// simulating them, which is why this works at all. What matters is that the
-// FIGHTS did not degrade: TestConvert, TestGunnery, TestOffence, TestFlounder
-// and the guns ladder all hold or improve (the superhuman kills the flounder
-// in 50.0 s against the full model's 50.8 s).
+// up 12% of the candidate spread on average, and only 7% of all decisions cost
+// more than a fifth of it. (Before the surrogate learned to roll and to store
+// a full attitude, those read 48% / 21% / 19%.) Ranking candidates is a far
+// weaker requirement than simulating them, which is why this works at all.
+// What matters is that the FIGHTS moved TOWARD the full model, not just the
+// metric: the superhuman guns edge the ladder used to show was surrogate
+// fiction (0-0 at full fidelity), and the honest rollout plays it even.
 //
 // `full` remains, and TestFidelity keeps measuring against it — a surrogate
 // that drifts from the jet it stands in for is the quarter-time bug wearing a
@@ -83,6 +84,18 @@ func (f fidelity) reduced() bool { return f == surrogate || f == both }
 // Thrust comes from the real engine lapse (flight.Output) and the atmosphere
 // from the real table, so the surrogate cannot drift from the jet on the two
 // terms an energy fight is decided by.
+//
+// A NOSE-SETTLING mirror of the executor's pipper takeover was tried here
+// and rejected by measurement (2026-08-13, three forms: parked instantly,
+// parked with the tier's wander as the floor, and driven at a 0.4 s time
+// constant — all scoped to the gun band). Each closed some of the floater
+// conversion gap (stock kills 2/1/1 of twelve against the full model's
+// 5/4/3) but every form INVERTED the drone ladder (machine 9/12 under the
+// ace's 11): against a compliant target every rehearsed approach holds the
+// solution window, so a settling nose scores every play as converting and
+// the machine's argmax loses its gradient exactly where it discriminates.
+// The floater gap is real but it is not worth that trade; whatever closes
+// it must discriminate BETTER close-in, not saturate.
 func glide(m *flight.Model, o order, dt float64) {
 	s := &m.State
 	speed := s.Velocity.Length()
@@ -128,31 +141,66 @@ func glide(m *flight.Model, o order, dt float64) {
 	}
 
 	// Turn: rotate the velocity toward the aim at the rate the available
-	// lateral g gives, never past the aim itself. `heave` is where lift acts
-	// — the turn it is buying plus the gravity it is holding — because the
-	// nose sits alpha degrees from the flight path IN THAT DIRECTION, and
-	// the nose is what every offensive term in appraise() is scored on.
+	// lateral g gives — in the plane the WINGS span this instant, not the
+	// ideal one. The lift direction is carried tick to tick through the
+	// attitude and slews at the FCS roll-rate law, so a rehearsed reversal
+	// costs the roll the live jet pays. The first surrogate rolled instantly
+	// at full g, which flattered every close-in escape: the rehearsed
+	// defender was always cleaner than the jet could fly, and the superhuman
+	// guns edge the ladder gated on turned out to be that fiction (0-0 at
+	// full fidelity). The limiter's rolling-pull reduction is deliberately
+	// NOT mirrored here: modelling it on the standing bank error was
+	// measured and rejected — it over-taxed reversal-heavy missile defence
+	// and inverted the superhuman-ace arm 0-6 where the full model plays it
+	// near even. The slew alone prices reorientation time.
 	direction := s.Velocity.Scale(1 / speed)
-	lateral := 9.81 * math.Sqrt(math.Max(lift*lift-1, 0))
 	skyward := flight.Vec3{Y: 1}.Subtract(direction.Scale(direction.Y))
-	heave := skyward
+	lifting := s.Attitude.Rotate(flight.Vec3{Y: 1})
+	lifting = lifting.Subtract(direction.Scale(lifting.Dot(direction)))
+	if lifting.Length() < 1e-6 {
+		lifting = skyward
+	}
+	if lifting.Length() < 1e-6 { // flying straight up or down: any lateral serves
+		lifting = flight.Vec3{Z: 1}.Subtract(direction.Scale(direction.Z))
+	}
+	lifting = lifting.Normalize()
+
+	// Where the play wants the lift: bending the path toward the aim while
+	// holding gravity; with no aim, holding the sky.
+	desired := skyward
+	angle := 0.0
 	if aim := o.aim; aim.Length() > 0.5 {
 		want := aim.Normalize()
-		if angle := math.Acos(clamp(direction.Dot(want), -1, 1)); angle > 1e-4 {
-			turn := math.Min(lateral/speed*dt, angle)
-			axis := direction.Cross(want)
-			if axis.Length() > 1e-6 {
-				axis = axis.Normalize()
-				pull := axis.Cross(direction) // the direction the flight path is being bent
-				heave = pull.Scale(lateral).Add(skyward.Scale(9.81))
-				// Rodrigues about the turn axis: the velocity swings.
-				sin, cos := math.Sin(turn), math.Cos(turn)
-				direction = direction.Scale(cos).
-					Add(axis.Cross(direction).Scale(sin)).
-					Add(axis.Scale(axis.Dot(direction) * (1 - cos)))
-				direction = direction.Normalize()
-			}
+		angle = math.Acos(clamp(direction.Dot(want), -1, 1))
+		if axis := direction.Cross(want); angle > 1e-4 && axis.Length() > 1e-6 {
+			pull := axis.Normalize().Cross(direction)
+			desired = pull.Scale(9.81 * math.Sqrt(math.Max(lift*lift-1, 0))).Add(skyward.Scale(9.81))
 		}
+	}
+
+	// Roll toward the desired plane at the rate the FCS grants (KEEP IN
+	// SYNC with fcs.go's roll-rate command; the alpha taper and store
+	// limits are dropped as sub-dominant here).
+	roll := 0.0
+	if d := desired.Subtract(direction.Scale(desired.Dot(direction))); d.Length() > 1e-6 {
+		want := d.Normalize()
+		roll = math.Atan2(direction.Dot(lifting.Cross(want)), lifting.Dot(want))
+	}
+	rate := 3.8 * clamp(speed/200, 0.35, 1)
+	step := clamp(roll, -rate*dt, rate*dt)
+	if math.Abs(step) > 1e-9 {
+		sin, cos := math.Sin(step), math.Cos(step)
+		lifting = lifting.Scale(cos).Add(direction.Cross(lifting).Scale(sin)).Normalize()
+	}
+	// Bend the path along the current lift direction, never past the aim.
+	lateral := 9.81 * math.Sqrt(math.Max(lift*lift-1, 0))
+	heave := skyward
+	if angle > 1e-4 && lateral > 1e-6 {
+		turn := math.Min(lateral/speed*dt, angle)
+		heave = lifting.Scale(lateral).Add(skyward.Scale(9.81))
+		sin, cos := math.Sin(turn), math.Cos(turn)
+		direction = direction.Scale(cos).Add(lifting.Scale(sin))
+		direction = direction.Normalize()
 	}
 
 	// Energy: thrust less drag along the path, less the climb.
@@ -167,17 +215,29 @@ func glide(m *flight.Model, o order, dt float64) {
 	// solution the offensive term scores — lives in exactly that gap. The
 	// first surrogate pointed the nose down the velocity vector and the
 	// superhuman, whose margin is the thinnest on the ladder, lost forty
-	// seconds on the flounder gate for it.
+	// seconds on the flounder gate for it. The attitude stores the FULL
+	// frame — Look() flattened it to a wings-level horizontal heading, which
+	// handed appraise() a pitchless nose in every vertical fight.
+	//
+	// The nose SETTLES ON THE AIM when the aim is within the alpha budget —
+	// the executor's pipper takeover does exactly that in the full rollout,
+	// and appraise() scores the nose, so a surrogate whose nose only ever
+	// tilts into the pull plane cannot tell a converting approach from a
+	// near miss: the full model killed the floater 5/4/3 of twelve while
+	// stock managed 2/1/1 on the SAME play distribution, because the
+	// fine-grained choices never saw the conversion coming.
 	alpha := clamp(coefficient/5.9, 0, m.Airframe.Limit.Alpha)
 	nose := direction
 	if heave.Length() > 1e-6 && alpha > 1e-4 {
-		lifting := heave.Subtract(direction.Scale(heave.Dot(direction)))
-		if lifting.Length() > 1e-6 {
-			lifting = lifting.Normalize()
-			nose = direction.Scale(math.Cos(alpha)).Add(lifting.Scale(math.Sin(alpha))).Normalize()
+		if plane := heave.Subtract(direction.Scale(heave.Dot(direction))); plane.Length() > 1e-6 {
+			nose = direction.Scale(math.Cos(alpha)).Add(plane.Normalize().Scale(math.Sin(alpha))).Normalize()
 		}
 	}
-	s.Attitude = flight.Look(nose)
+	up := lifting
+	if lift < 0 {
+		up = lifting.Scale(-1) // a push carries the canopy away from the pull
+	}
+	s.Attitude = flight.Basis(nose, up)
 	s.Fcs.Normal = lift
 	s.Time += dt
 }
