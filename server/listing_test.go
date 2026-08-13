@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -92,5 +93,11 @@ func TestListingPayload(t *testing.T) {
 	}
 	if parsed.World.Address == "" {
 		t.Fatal("payload carries no advertised address")
+	}
+	// The listing advertises the base origin a player would paste into a join
+	// page, not the WebTransport connect URL — a /play suffix breaks the
+	// client's server-address handling.
+	if strings.HasSuffix(parsed.World.Address, "/play") {
+		t.Fatalf("advertised address %q carries the /play path", parsed.World.Address)
 	}
 }

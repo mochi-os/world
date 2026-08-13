@@ -402,11 +402,18 @@ func lobby_permit(table map[string][]time.Time, r *http.Request, limit int) bool
 	return true
 }
 
-// transport_address is the WebTransport URL advertised to clients.
-func transport_address() string {
+// transport_origin is the server's advertised base URL. This is the address a
+// player pastes or picks in a join page — the /play path is a protocol detail
+// the client adds when it opens the WebTransport session.
+func transport_origin() string {
 	address := ini_string("transport", "address", "")
 	if address == "" {
 		address = fmt.Sprintf("https://127.0.0.1:%d", ini_int("transport", "port", 4433))
 	}
-	return strings.TrimSuffix(address, "/") + "/play"
+	return strings.TrimSuffix(address, "/")
+}
+
+// transport_address is the WebTransport URL advertised to clients.
+func transport_address() string {
+	return transport_origin() + "/play"
 }

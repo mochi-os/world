@@ -117,7 +117,7 @@ func listing_payload(id, name string) ([]byte, error) {
 		"world": map[string]any{
 			"id":      id,
 			"name":    name,
-			"address": transport_address(),
+			"address": transport_origin(),
 			// The flight model version is what decides whether a client can
 			// fly here (the wasm and the server must agree), so it is the
 			// compatibility number the join page judges by.
