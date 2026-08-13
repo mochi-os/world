@@ -32,6 +32,16 @@ func heavy(t *testing.T) {
 	if os.Getenv("AIR_DOCTRINE") == "" {
 		t.Skip("bot doctrine sweep: set AIR_DOCTRINE=1 (or run `make test-doctrine`)")
 	}
+	// The doctrine tests spawn hundreds of bots across a binary and almost
+	// none Close() their instances, so the server-wide budget
+	// (BOTS_MAXIMUM, returned only by Close) leaks until later sessions
+	// get NO bots at all — a "roster wrong" or a nil-craft panic in
+	// whichever test runs after the pool empties. That failure depends on
+	// which -run set shares the binary, which made it look like phantom
+	// flake for days. Every leaked reservation belongs to a test that has
+	// already finished, so resetting the counter between doctrine tests
+	// is exact, not a fudge.
+	t.Cleanup(func() { bots_live.Store(0) })
 }
 
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
@@ -358,7 +368,7 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 	t.Helper()
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 16, Seed: seed,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 1.0, "novice": 1.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 1.0, "novice": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -432,7 +442,7 @@ func TestBotLadder(t *testing.T) {
 	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 16, Seed: 11,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 3.0, "novice": 3.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 3.0, "novice": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +481,7 @@ func TestBotsFight(t *testing.T) {
 	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 16, Seed: 5,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{"ace": 6.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 6.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -688,7 +698,7 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 	arm := func(seed uint64, solo bool) (kills, deaths int) {
 		g := New()
 		made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
-			Parameters: map[string]any{"missiles": true, "bots": map[string]any{"red": red, "blue": blue}}})
+			Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"red": red, "blue": blue}}})
 		i := made.(*instance)
 		for _, slot := range i.slots() {
 			if a := i.aircraft[slot]; a.team == "red" && a.brain != nil {
@@ -1144,7 +1154,7 @@ func TestBotPadlock(t *testing.T) {
 func TestTeamsMissileCall(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "plume", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
 			"red":  map[string]any{"ace": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
@@ -1317,7 +1327,7 @@ func TestBotPress(t *testing.T) {
 func TestTeamsMissileHold(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "hold", Game: "air", Mode: "teams", Capacity: 16, Seed: 6,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
 			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
@@ -1368,7 +1378,7 @@ func TestTeamsMissileHold(t *testing.T) {
 func TestTeamsMissileShare(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "share", Game: "air", Mode: "teams", Capacity: 16, Seed: 10,
-		Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
 			"red":  map[string]any{"ace": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})

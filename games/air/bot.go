@@ -17,6 +17,7 @@ import (
 
 	"world/games/air/battle"
 	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 // skill is one row of the ladder.
@@ -396,79 +397,94 @@ func predict(t *track, horizon float64, curved bool) flight.Vec3 {
 // brain is the per-bot fight state. The decision layer runs at the skill's
 // cadence and writes the command set; steer() turns it into Inputs every tick.
 type brain struct {
-	skill    skill
-	tactics  tactics // per-brain copy of the doctrine (#143): the battery amends one bot's numbers without touching the roster
-	mode     string  // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
-	target   int     // slot, -1 none
-	decided  uint64  // last decision tick
-	known    map[int]*track
-	prey     *track  // the target's track at decision time (steer aims/fires against it)
-	distance float64 // to the target at decision time
-	aim      flight.Vec3
-	g        float64
-	throttle float64
-	reheat   float64
-	brake    float64
-	shoot    bool       // guns solution may be attempted this period
-	loose    bool       // one-shot missile request, consumed by think()
-	drop     bool       // one-shot flare request
-	offset   [2]float64 // this period's aim wander components
-	bursting uint64     // consecutive ticks of trigger: the burst governor (#206)
-	walked   float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
-	walkedAt uint64     // tick of that judgement: consecutive judgements give the sweep rate the crossing shot is priced on
-	tracking bool       // the pipper owns the stick this tick
-	menace   int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
-	glimpsed uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
-	flanked  float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
-	launched uint64     // tick of the last missile away (#253): shoot-shoot-look — the quick pair is doctrine, the volley is not
-	dodge    uint64     // tick the commanded evasion ends; steer overrides the aim out-of-plane until then
-	magazine int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
-	sampled  uint64     // tick of the stored orbit sample
-	sampleP  flight.Vec3
-	sampleV  flight.Vec3
-	sampleW  flight.Vec3 // swing at the anchor: a sign flip against it is the reversal that invalidates the arc
-	intent   string      // fight-level posture (#236): convert / deny / reset / finish; "" = neutral
-	minded   uint64      // tick the posture was set: the intent commitment
-	chanced  uint64      // last tick the trigger had a shot worth its price — the stalemate detector's clock
-	nearing  float64     // closure EMA, m/s: is the pursuit actually gaining
-	spanned  float64     // last range, for the closure trend
-	gauged   uint64      // tick of that range
-	ring     orbit       // the prey's estimated turning circle (#206 planner)
-	quiet    uint64      // tick the mandatory pause ends
-	safed    string      // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
-	turning  float64     // committed lead-turn direction, +1/-1; 0 = not in a pass
-	turned   uint64      // tick the lead turn was committed
-	aimed    float64     // last tick's pointing error, sin of the angle off the aim
-	closing  float64     // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
-	jink     uint64      // tick to re-roll the jink direction
-	phase    float64     // current jink roll phase
-	missiles int
-	alert    uint64          // tick an inbound missile was first noticed (react delay runs from here)
-	noticed  map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
-	judged   map[uint64]bool // rounds whose one launch-sighting roll has been taken
-	plan     string          // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
-	planned  uint64          // tick the plan was chosen
-	side     float64         // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
-	rolling  uint64          // rolling-scissors phase start; 0 = not rolling
-	sense    float64         // committed roll direction while the aim is beyond ±140° (atan2 flips sides chaotically there)
-	hold     uint64          // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
-	stuck    int             // consecutive decisions of neutral non-progress (stalemate detector)
-	tangle   int             // consecutive decisions locked in close combat (scissors detector)
-	saddle   int             // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
-	press    uint64          // tick+1 the offensive advantage was first held in range (#144), 0 = none: patience becomes the finish once it has lasted (a tick clock, not a decision count — maneuver holds throttle decisions)
-	solo     bool            // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
-	mate     int             // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
-	spoke    uint64          // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
-	told     int             // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
-	tallied  int             // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
-	rolled   float64         // last roll input: the command is slew-limited so the executor cannot flap the stick
-	ahead    float64         // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
-	reversed uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
-	settled  uint64          // tick the current committed manoeuvre may be replaced (#206): commitment is a SKILL, and it rises with tier
-	starving bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
-	play     string          // the duel arbiter's committed manoeuvre (duel.go)
-	until    uint64          // tick that manoeuvre is re-judged
-	picked   uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
+	skill     skill
+	tactics   tactics // per-brain copy of the doctrine (#143): the battery amends one bot's numbers without touching the roster
+	mode      string  // cruise, form, offense, defense, neutral, evade, and the named maneuvers below
+	target    int     // slot, -1 none
+	decided   uint64  // last decision tick
+	known     map[int]*track
+	prey      *track  // the target's track at decision time (steer aims/fires against it)
+	distance  float64 // to the target at decision time
+	aim       flight.Vec3
+	g         float64
+	throttle  float64
+	reheat    float64
+	brake     float64
+	shoot     bool       // guns solution may be attempted this period
+	loose     bool       // one-shot missile request, consumed by think()
+	drop      bool       // one-shot flare request
+	offset    [2]float64 // this period's aim wander components
+	bursting  uint64     // consecutive ticks of trigger: the burst governor (#206)
+	walked    float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
+	walkedAt  uint64     // tick of that judgement: consecutive judgements give the sweep rate the crossing shot is priced on
+	tracking  bool       // the pipper owns the stick this tick
+	menace    int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
+	glimpsed  uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
+	flanked   float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
+	launched  uint64     // tick of the last missile away (#253): shoot-shoot-look — the quick pair is doctrine, the volley is not
+	dodge     uint64     // tick the commanded evasion ends; steer overrides the aim out-of-plane until then
+	magazine  int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
+	sampled   uint64     // tick of the stored orbit sample
+	sampleP   flight.Vec3
+	sampleV   flight.Vec3
+	sampleW   flight.Vec3 // swing at the anchor: a sign flip against it is the reversal that invalidates the arc
+	intent    string      // fight-level posture (#236): convert / deny / reset / finish; "" = neutral
+	minded    uint64      // tick the posture was set: the intent commitment
+	chanced   uint64      // last tick the trigger had a shot worth its price — the stalemate detector's clock
+	nearing   float64     // closure EMA, m/s: is the pursuit actually gaining
+	spanned   float64     // last range, for the closure trend
+	gauged    uint64      // tick of that range
+	ring      orbit       // the prey's estimated turning circle (#206 planner)
+	quiet     uint64      // tick the mandatory pause ends
+	safed     string      // which doctrine last safed the gun — the offence instrument (TestOffence) prints it for every wasted firing window, which is how the preamble default was caught disarming the saddle (#206)
+	turning   float64     // committed lead-turn direction, +1/-1; 0 = not in a pass
+	zone      round.Zone  // cached AMRAAM DLZ against the current target (hunt.go; refreshed at most once a second)
+	assessed  uint64      // tick the zone was computed
+	supported uint64      // tick of this bot's last AMRAAM launch: the crank window opens here
+	cranked   uint64      // tick the BVR overlay last overrode the aim (observability: the seam test asserts it never fires inside the merge)
+	alerted   uint64      // tick an inbound radar round first crossed the Active call; 0 = clear sky
+	guarding  uint64      // number of the round being defended: a new round re-rolls the engagement character
+	squared   uint64      // tick the beam was last re-squared (the re-square cadence dial)
+	beam      flight.Vec3 // the held beam heading between re-squares: it DRIFTS as the LOS rotates, which is the characterised pilot failure
+	askew     float64     // this engagement's beam error sample, radians (the geometry-tolerance dial)
+	lapse     bool        // this engagement reverts to drag (the seeded lapse: some defences simply fail)
+	jam       bool        // brain-driven jammer arming (the machine's emission trade); applied to latest.Jammer after steer
+	contact   flight.Vec3 // last place a BVR contact was held (hunt.go): the fight's address when the picture goes dark
+	contacted uint64      // tick of that memory; a defence drops both radars into each other's notch at once, and without this the pair politely flies apart forever
+	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
+	futiled   int         // the target that futility was counted against; a new target resets the lesson
+	turned    uint64      // tick the lead turn was committed
+	aimed     float64     // last tick's pointing error, sin of the angle off the aim
+	closing   float64     // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
+	jink      uint64      // tick to re-roll the jink direction
+	phase     float64     // current jink roll phase
+	missiles  int
+	alert     uint64          // tick an inbound missile was first noticed (react delay runs from here)
+	noticed   map[uint64]bool // inbound rounds already sighted (launch flash or the corner of the eye)
+	judged    map[uint64]bool // rounds whose one launch-sighting roll has been taken
+	plan      string          // the circle game plan chosen at the merge: "one" or "two" (held ~12 s; re-deciding every cadence is no plan at all)
+	planned   uint64          // tick the plan was chosen
+	side      float64         // which side the current threat/target sits (sign of the lateral LOS) — a flip while defensive is the reversal cue
+	rolling   uint64          // rolling-scissors phase start; 0 = not rolling
+	sense     float64         // committed roll direction while the aim is beyond ±140° (atan2 flips sides chaotically there)
+	hold      uint64          // maneuver commitment: decisions re-evaluate but keep the aim until this tick (a yo-yo that flickers per decision is no yo-yo)
+	stuck     int             // consecutive decisions of neutral non-progress (stalemate detector)
+	tangle    int             // consecutive decisions locked in close combat (scissors detector)
+	saddle    int             // consecutive defensive decisions with the attacker established behind (spiral gate: transients must not trigger a committed spiral)
+	press     uint64          // tick+1 the offensive advantage was first held in range (#144), 0 = none: patience becomes the finish once it has lasted (a tick clock, not a decision count — maneuver holds throttle decisions)
+	solo      bool            // section tactics OFF: fly pure individual BFM even with a team (the #138 pair-versus-pair control group)
+	mate      int             // assigned section partner's slot (#140), -1 unpaired — set once at roster creation, stable across respawns
+	spoke     uint64          // tick of the last brevity call (#139): one voice, one call at a time, never a chat storm
+	told      int             // target already announced with ENGAGED (#139), -1 none — the call is an edge, not a repeat
+	tallied   int             // contact already confirmed with TALLY (#146), -1 none — one call per bandit per life
+	rolled    float64         // last roll input: the command is slew-limited so the executor cannot flap the stick
+	ahead     float64         // last tick's boresight error, rad — the executor's tracking damper predicts from its closure
+	reversed  uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
+	settled   uint64          // tick the current committed manoeuvre may be replaced (#206): commitment is a SKILL, and it rises with tier
+	starving  bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
+	play      string          // the duel arbiter's committed manoeuvre (duel.go)
+	until     uint64          // tick that manoeuvre is re-judged
+	picked    uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -567,7 +583,9 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		b.decided = tick
 		i.decide(slot, a, tick)
 	}
+	i.hunt(slot, a, tick) // BVR radar, DLZ shot, crank, and defence (hunt.go): inert without AMRAAMs aboard or radar rounds inbound
 	a.latest = b.steer(a.model, tick)
+	a.latest.Jammer = b.jam // the armed level, brain-driven for bots the way a client reports it for humans (same equipment, same trade-offs)
 	// The fire drill (#130, deferred from #78): engine fires feed on throttle
 	// and starve at idle (battle.Advance) — chopping the power IS the drill,
 	// and it overrides every plan except a live missile evade (twenty seconds
@@ -652,6 +670,16 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			continue
 		}
 		seen := i.visible(a, c, tick)
+		if !seen && i.painted(a, c) {
+			// The radar picture (hunt.go): a BVR-armed bot's search radar
+			// extends its perception far past the canopy's twelve
+			// kilometres, feeding the same track table vision feeds — so
+			// swing, wobble, staleness, and the section radio all work on
+			// radar contacts unchanged. Gated on AMRAAMs aboard and the
+			// emitter being on: a heater bot's picture, and every dogfight
+			// battery's, is byte-identical.
+			seen = true
+		}
 		// Lost tally (#144): under load the head is pinned — the eyes hold
 		// the current target and the forward view, and everyone else goes
 		// unseen until the g comes off. Discipline raises the strain a pilot

@@ -187,7 +187,7 @@ func TestLadderDuel(t *testing.T) {
 				g := New()
 				made, err := g.Create(game.Session{Identifier: fmt.Sprintf("ladder%s%s%d", arm, strong, seed),
 					Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-					Parameters: map[string]any{"missiles": missiles,
+					Parameters: map[string]any{"missiles": missiles, "weapons": map[bool]string{false: "guns", true: "fox2"}[missiles],
 						"bots": map[string]any{strong: 1.0, weak: 1.0}}})
 				if err != nil {
 					t.Fatal(err)

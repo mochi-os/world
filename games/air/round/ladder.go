@@ -81,13 +81,23 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 		return mach
 	}
 
-	// Bisect the outermost range satisfying a criterion. All three rungs
-	// shrink monotonically with range, so twelve halvings pin each to well
-	// under a kilometre.
+	// Bisect the outermost range satisfying a criterion. Goodness shrinks
+	// monotonically with range at the TOP — but not at the bottom: a
+	// shooter whose velocity is off the line of sight (a crank, a beam, a
+	// defensive turn at the moment of assessment) cannot make the turn-in
+	// at point-blank range while a mid-range shot arrives cleanly. The
+	// first version probed only the 2 km floor and declared the whole
+	// ladder empty for exactly that geometry — measured as a cranking bot
+	// whose every rung read zero against a hot target at 73 km, so it
+	// never fired at all. Walk the floor outward past the dead inner band
+	// before bisecting the outer edge.
 	rung := func(good func(float64) bool) float64 {
 		low, high := 2000.0, 150000.0
-		if !good(low) {
-			return 0
+		for !good(low) {
+			low *= 2
+			if low > high/2 {
+				return 0
+			}
 		}
 		for i := 0; i < 12; i++ {
 			mid := (low + high) / 2

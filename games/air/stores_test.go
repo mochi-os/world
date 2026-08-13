@@ -105,10 +105,10 @@ func TestMask(t *testing.T) {
 	// magazine in SMS order (#253 — a joust is the engagement; rounds saved
 	// at its end are wasted): tips depart first, then the twin-rack rounds,
 	// and the empty launchers stay carried.
-	if got := len(stores_rounds(bots_loadout(true))); got != 6 {
+	if got := len(stores_rounds(bots_loadout("fox2"))); got != 6 {
 		t.Fatalf("armed bot standard carries %d rounds, want 6", got)
 	}
-	if got := stores_mask(bots_loadout(true), 0, 0); got != armed(shots) {
+	if got := stores_mask(bots_loadout("fox2"), 0, 0); got != armed(shots) {
 		t.Fatalf("full bot mask %b differs from armed(%d) %b", got, shots, armed(shots))
 	}
 	half := armed(shots - 2) // two away: the tips go first in SMS order
@@ -131,7 +131,7 @@ func TestMask(t *testing.T) {
 			t.Fatalf("magazine-dry bot lost its launcher %s — carriage does not depart with the rounds", name)
 		}
 	}
-	if got := stores_mask(bots_loadout(false), 0, 0); got != 0 {
+	if got := stores_mask(bots_loadout("guns"), 0, 0); got != 0 {
 		t.Fatalf("clean bot standard mask %b, want 0", got)
 	}
 }

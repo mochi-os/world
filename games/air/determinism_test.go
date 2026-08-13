@@ -36,7 +36,7 @@ func TestDeterminism(t *testing.T) {
 			// doubled one. This is the arm that actually diverged.
 			game.Session{Identifier: fmt.Sprintf("sec%d", seed), Game: "air", Mode: "teams",
 				Capacity: 16, Seed: uint64(seed),
-				Parameters: map[string]any{"missiles": true, "bots": map[string]any{
+				Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
 					"red": map[string]any{"ace": 2.0}, "blue": map[string]any{"ace": 4.0}}}})
 	}
 	for _, session := range sessions {

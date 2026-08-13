@@ -177,9 +177,14 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 	// Practice bots: the parameter is a per-level count map {"drone": n,
 	// "novice": n, ...} — the match creator chooses how many of each. A bare
 	// number still means drones (test-harness convenience). Bots fill slots
-	// from 99 downward, grouped by level, named for the kill feed. Open mode
-	// only — a joust is strictly the pair.
-	if mode != "joust" {
+	// from 99 downward, grouped by level, named for the kill feed. A joust
+	// stays strictly the pair — but the pair may include bots (settled
+	// 2026-08-13): exactly two combatants, not two humans. Join's own
+	// len(aircraft) >= 2 check counts the bots, so a full bot pair refuses
+	// human joiners and a single bot leaves one seat. Head-on placement
+	// falls out of the slot-parity angle in bvr(): 99 is odd, so the first
+	// bot faces slot 0, and a second bot at 98 takes the opposite end.
+	{
 		type order struct {
 			level string
 			count int
@@ -226,6 +231,10 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		if want > 99 {
 			want = 99
 		}
+		if mode == "joust" && want > 2 {
+			want = 2 // the pair, whoever fills it
+		}
+		startable := mode == "joust" && want == 2 // a full bot pair: nobody will ever Join, so the match starts at creation (below, once both exist)
 		// Against the SERVER's budget, not just this session's. Ninety-nine
 		// was a per-session clamp, and sessions are created by an
 		// unauthenticated POST: a hundred of them is ~9900 server-flown
@@ -256,7 +265,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
 				}
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.missiles)}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), lock: -1}
 				b.arm()
 				b.rearm()
 				i.aircraft[slot] = b
@@ -277,6 +286,17 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				total++
 			}
 		}
+		if startable && len(i.aircraft) == 2 {
+			// A full bot pair fills the joust at creation: nobody will ever
+			// Join, so the start Join performs happens here. The pair was
+			// spawned at its positions this instant — no respawn needed,
+			// nobody sat frozen in the waiting room.
+			i.started = true
+			if i.apart > 0 {
+				i.merged = true
+				i.events = append(i.events, map[string]any{"kind": "fighton"})
+			}
+		}
 	}
 	return i, nil
 }
@@ -292,20 +312,20 @@ type craft struct {
 	condition  battle.Condition
 	latest     flight.Inputs
 	alive      bool
-	ammunition int     // gun rounds left this life
-	spent      int     // rounds fired this life, cumulative (#258): under the ammunition cheat the magazine refills, so the counter alone can no longer answer "how much did he shoot" — this can
-	charge     float64 // fractional rounds accumulated at the fire rate
-	missiles   int     // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
-	amraams    int     // AIM-120s left this life (#27): its own magazine, in the amraams() firing order
-	loadout    loadout // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
-	release    float64 // sim seconds since this craft's last missile left the rail (large when none)
-	ejected    bool    // eject edge consumed this life
-	wait       float64 // seconds until respawn (air mode)
-	flared     float64 // sim seconds since the last flare drop (large when none)
+	ammunition int         // gun rounds left this life
+	spent      int         // rounds fired this life, cumulative (#258): under the ammunition cheat the magazine refills, so the counter alone can no longer answer "how much did he shoot" — this can
+	charge     float64     // fractional rounds accumulated at the fire rate
+	missiles   int         // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
+	amraams    int         // AIM-120s left this life (#27): its own magazine, in the amraams() firing order
+	loadout    loadout     // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
+	release    float64     // sim seconds since this craft's last missile left the rail (large when none)
+	ejected    bool        // eject edge consumed this life
+	wait       float64     // seconds until respawn (air mode)
+	flared     float64     // sim seconds since the last flare drop (large when none)
 	cloud      flight.Vec3 // where the last chaff bloomed (#29): the mixed program drops chaff with every flare
 	clouded    float64     // sim seconds since that bloom (large when none)
 	loud       bool        // the jammer is RADIATING this tick (#31): armed (latest.Jammer) and painted by a threat
-	team       string  // "red"/"blue" in the teams mode, "" otherwise
+	team       string      // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
 	emitter    int // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
@@ -932,7 +952,12 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	// rather than a constant beacon.
 	for slot, a := range i.aircraft {
 		a.loud = false
-		if !a.alive || a.bot || !a.latest.Jammer {
+		if !a.alive || !a.latest.Jammer {
+			// Bots pass through the same truth (settled 2026-08-13: same
+			// equipment, same trade-offs) — their latest.Jammer stays false
+			// until the brain arms it, so today this line changes nothing,
+			// and when the top tier learns the emission trade its radiation
+			// will cost it exactly what a human's costs.
 			continue
 		}
 		for other, b := range i.aircraft {
@@ -1016,7 +1041,7 @@ func armed(count int) uint64 {
 	if fired < 0 {
 		fired = 0
 	}
-	return stores_mask(bots_loadout(true), fired, 0)
+	return stores_mask(bots_loadout("fox2"), fired, 0)
 }
 
 // credit names the killer: the last player to damage this aircraft within
@@ -1377,6 +1402,13 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			m.flew += dt
 			if i.fly_radar(m, dt, tick) {
 				alive = append(alive, m)
+			} else if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.brain != nil {
+				// The look half of shoot-look-shoot (hunt.go): a bot's round
+				// that dies with its target still flying is a lesson about
+				// that target's defence, not a reason to feed it another.
+				if target := i.aircraft[m.target]; target != nil && target.alive && shooter.brain.futiled == m.target {
+					shooter.brain.futile++
+				}
 			}
 			continue
 		}

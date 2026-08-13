@@ -190,7 +190,7 @@ type battery struct {
 func arena(name string, seed uint64, doc tactics, missiles bool, red, blue map[string]any) *instance {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: name, Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
-		Parameters: map[string]any{"missiles": missiles, "bots": map[string]any{"red": red, "blue": blue}}})
+		Parameters: map[string]any{"missiles": missiles, "weapons": map[bool]string{false: "guns", true: "fox2"}[missiles], "bots": map[string]any{"red": red, "blue": blue}}})
 	if err != nil {
 		panic(err)
 	}

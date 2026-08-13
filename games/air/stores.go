@@ -197,16 +197,33 @@ func tips_loadout() loadout {
 // bots_loadout is the server bot's standard: the Fox 2 fighter — six AIM-9Ms
 // on tips and outboard twins (decided 2026-08-06) — when missiles are
 // allowed, clean otherwise.
-func bots_loadout(missiles bool) loadout {
-	if !missiles {
+func bots_loadout(weapons string) loadout {
+	// Bots arm to the match's weapons class exactly as humans are clamped
+	// by stores_grant — same equipment, same trade-offs (settled 2026-08-13,
+	// air-amraam.md). The fox2 fit is the pinned six-heater configuration
+	// every dogfight battery calibrates against; those suites pin their
+	// weapons class explicitly and the WVR silence sentinel holds them to
+	// it.
+	switch weapons {
+	case "guns":
 		return stores_normalize(nil)
+	case "open":
+		return stores_normalize(map[string]any{
+			"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+			"2": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"8": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		})
+	default: // fox2
+		return stores_normalize(map[string]any{
+			"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+			"2": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+			"8": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
+			"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		})
 	}
-	return stores_normalize(map[string]any{
-		"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
-		"2": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
-		"8": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
-		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
-	})
 }
 
 // stores_entries names the catalog entries a station's slot attaches: the
