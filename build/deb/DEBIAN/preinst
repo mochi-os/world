@@ -12,3 +12,26 @@ then
 		adduser --system --disabled-login --ingroup mochi --no-create-home --home /var/lib/mochi --gecos "Mochi server" --shell /usr/sbin/nologin mochi >/dev/null
 	fi
 fi
+
+# The world-status socket's group. mochi-server chowns <data>/run/world.sock
+# to this group, so it has to exist before that server starts - and it is
+# created here, by the package that supplies the only thing which speaks to
+# that socket. The shipped unit runs mochi-world as the mochi user, which
+# reaches the socket by OWNERSHIP; the group is what lets an operator run the
+# world server under its own account instead, without handing it the Mochi
+# server's data directory.
+if ! getent group mochi-world >/dev/null; then
+	addgroup --system mochi-world >/dev/null
+fi
+
+# ...and the Mochi server's own account joins it. The socket is created by
+# mochi-server running as mochi, and Linux only lets you chgrp a file to a
+# group you are IN - without this the chown fails EPERM, the socket keeps the
+# server's own group, and the mochi-world group is decorative no matter who
+# else is in it. Supplementary groups are read at process start, so the socket
+# takes its group on the next mochi-server restart; until then mochi-world
+# reaches it by ownership exactly as before, which is why this degrades
+# quietly instead of breaking a running pair.
+if getent passwd mochi >/dev/null && ! id -nG mochi 2>/dev/null | tr ' ' '\n' | grep -qx mochi-world; then
+	usermod -a -G mochi-world mochi >/dev/null 2>&1 || true
+fi

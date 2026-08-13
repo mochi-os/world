@@ -99,6 +99,15 @@ directory - each gets its own listing.
     root) is the entire credential - there is no token and no TLS on a
     same-machine channel the operating system already gates.
 
+    This package creates the **mochi-world** group and adds the **mochi**
+    account to it. The shipped unit runs this server as **mochi**, which
+    reaches the socket as its owner; the group exists so the server can
+    instead be run under an account of its own - put that account in
+    **mochi-world** and give it the data directory below. That is the
+    stricter arrangement, since this server accepts connections from anyone
+    on the internet while the **mochi** account owns the Mochi server's
+    databases and keys.
+
 ## [lobby]
 
 **listen**
