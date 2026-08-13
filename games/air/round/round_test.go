@@ -611,3 +611,36 @@ func TestBeacon(t *testing.T) {
 		t.Fatalf("the unsupported quiet long shot got within %.0f m — the control is broken", miss)
 	}
 }
+
+// TestChaffResolve (#29 addendum): up close the seeker resolves the jet
+// from its cloud — the skin return dominates the cell and no bloom seduces,
+// however well the defender is beaming. Chaff is a mid-game defence; the
+// endgame belongs to geometry.
+func TestChaffResolve(t *testing.T) {
+	_, sound := atmosphere(6000)
+	target := Target{Position: flight.Vec3{X: 14000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
+	m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+	for m.Time < 60 && m.Phase != Pitbull {
+		if !m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target) {
+			break
+		}
+		target.Position = target.Position.Add(target.Velocity.Scale(dt))
+	}
+	if m.Phase != Pitbull {
+		t.Fatalf("never reached Pitbull")
+	}
+	// Close to inside the resolve floor, then beam and dispense: rejected.
+	for m.relative(m.Position, target.Position).Length() > Resolve-200 {
+		if !m.Step(dt, nil, &target) {
+			t.Fatalf("round died closing")
+		}
+		target.Position = target.Position.Add(target.Velocity.Scale(dt))
+	}
+	target.Velocity = flight.Vec3{Z: 0.9 * sound} // the beam — perfect geometry
+	if m.Distract(target.Position, target) {
+		t.Fatalf("a bloom seduced inside the resolve floor — the skin return must dominate up close")
+	}
+	if m.Phase != Pitbull {
+		t.Fatalf("the rejected bloom disturbed the track (phase %d)", m.Phase)
+	}
+}

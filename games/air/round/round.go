@@ -56,9 +56,10 @@ const (
 // the cone and left the notch gets reacquired late, which is chaff buying
 // time and geometry rather than immunity.
 const (
-	Notch  = 60.0 // m/s — the defender's radial speed in the seeker's frame must sit inside this
-	Hold   = 2.5  // s — how long the seeker stares at the cloud before the velocity gate shakes it off
-	Window = 2.0  // s — a bloom older than this has dispersed below a useful cell (callers stop offering it)
+	Notch   = 60.0   // m/s — the defender's radial speed in the seeker's frame must sit inside this
+	Hold    = 2.5    // s — how long the seeker stares at the cloud before the velocity gate shakes it off
+	Window  = 2.0    // s — a bloom older than this has dispersed below a useful cell (callers stop offering it)
+	Resolve = 2500.0 // m — inside this the seeker RESOLVES the jet from its cloud: the skin return dominates the cell and no bloom seduces, however perfect the beam. Chaff is a mid-game defence (the historical record shows no close-range chaff defeats of active seekers); the endgame belongs to the notch and geometry.
 )
 
 // The jammer (#31). Deception jamming attacks TRACKS — the victim radar's
@@ -131,8 +132,8 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	}
 	sight := m.relative(m.Position, truth.Position)
 	reach := sight.Length()
-	if reach < 1 || reach > Activation {
-		return false
+	if reach < Resolve || reach > Activation {
+		return false // too close: the seeker resolves the jet from the cloud — burn-through, chaff's version
 	}
 	if math.Abs(truth.Velocity.Dot(sight.Scale(1/reach))) > Notch {
 		return false // out of the notch: the velocity gate rejects the cloud outright
