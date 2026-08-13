@@ -38,7 +38,7 @@ const (
 	Terminal   = 9000.0  // m — the seeker holds its own track (PITBULL) inside this
 	Gimbal     = 0.5     // cos 60°: the seeker's look cone about the velocity vector
 	Battery    = 100.0   // s — thermal battery life, the default Life
-	Fuse       = 12.0    // m — proximity fuse trigger
+	Fuse       = 20.0    // m — proximity fuse trigger, sized to the 22 kg warhead it carries (battle's Radar class fragments to ~24 m; the trigger sits just inside)
 	Arming     = 1.5     // s — the fuse arms this long after launch
 	Warhead    = 22.0    // kg — blast-fragmentation class, consumed by battle
 )
@@ -60,6 +60,18 @@ const (
 	Hold   = 2.5  // s — how long the seeker stares at the cloud before the velocity gate shakes it off
 	Window = 2.0  // s — a bloom older than this has dispersed below a useful cell (callers stop offering it)
 )
+
+// The jammer (#31). Deception jamming attacks TRACKS — the victim radar's
+// gate is stolen and walked off — so its effects live in the radar and
+// datalink layers, not here. What lives here is the cost: HOME-ON-JAM is a
+// submode of the seeker, and a radiating target is a beacon offering
+// perfect angle at any range — no datalink needed, no notch to hide in, no
+// cloud loud enough to matter. But angle is ALL it offers: no range, no
+// closing velocity, so the round flies degraded pursuit at the noise
+// rather than a lead collision. Burnthrough is the duel's other bound: the
+// skin echo beats the jammer as geometry closes, so inside it the victim
+// radar sees through and jamming is pure liability.
+const Burnthrough = 9000.0 // m — inside this the echo wins and jamming stops working on the radar
 
 // Guidance phases, in flight order.
 const (
@@ -89,6 +101,7 @@ type Model struct {
 	Wrap     float64
 
 	Least    float64     // closest approach to the truth seen so far, m (0 = never measured)
+	Beacon   bool        // the target is RADIATING this step (#31): the seeker homes on the jam — set by the caller, who owns emission truth
 	Estimate flight.Vec3 // where the round believes the target is (datalinked, then coasted)
 	Drift    flight.Vec3 // the estimate's velocity
 	Stale    float64     // seconds since the last datalink update
@@ -219,8 +232,54 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		speed = 1
 	}
 	forward := m.Velocity.Scale(1 / speed)
+
+	// HOME-ON-JAM (#31): a radiating target is the loudest thing in the sky.
+	// The beacon overrides everything — the chaff hold (no cloud outshines
+	// it), the notch (angle needs no doppler), the datalink (angle needs no
+	// track), even the activation schedule (the jam is receivable at any
+	// range). But angle is ALL it gives: the round flies pursuit at the
+	// noise, no lead, no loft — and the moment the target goes quiet, the
+	// seeker is back to its ordinary rules with whatever geometry the chase
+	// left it. The toggle stays a live decision for the whole flight.
+	if m.Beacon && truth != nil {
+		m.held = 0
+		sight := m.relative(m.Position, truth.Position)
+		reach := sight.Length()
+		unit := sight.Scale(1 / math.Max(reach, 1))
+		// Bearing-only PN: the strobe gives a clean angle RATE, so the round
+		// still leads the turn — what it cannot do without range or closing
+		// velocity is compute a lead-collision point or a loft, and the gain
+		// scales off its own speed rather than the true closure. Dangerous
+		// against anyone not defending hard; a max-performance extension can
+		// still bleed it dry. Naive pure pursuit was tried first and died
+		// every time — a crossing defender outran it as it hairpinned.
+		command := unit.Subtract(forward.Scale(unit.Dot(forward))).Scale(speed / steering)
+		if m.sight.Length() > 0.5 {
+			rate := unit.Subtract(m.sight).Scale(1 / dt)
+			rate = rate.Subtract(unit.Scale(rate.Dot(unit)))
+			command = command.Add(rate.Scale(3 * speed))
+		}
+		m.Estimate = truth.Position
+		m.Drift = truth.Velocity
+		m.Stale = 0
+		m.sight = unit // also keeps the PN state fresh so a beacon-drop hands over cleanly
+		if m.Phase == Midcourse || m.Phase == Loose {
+			m.Phase = Active // the seeker is on the jam; a ballistic round recovers ONLY through the beacon
+		}
+		return m.integrate(dt, command, speed, forward)
+	}
 	if m.Phase == Midcourse && m.Range() <= Activation {
 		m.Phase = Active
+	}
+	// The generalised overshoot: an ACTIVE round arriving at a STALE
+	// estimate — no datalink refreshing it, no seeker capture correcting it
+	// — has flown through a point nothing occupies, and the seeker cannot
+	// look behind its gimbal. Without this the round ORBITS the stale point
+	// (a chaff cloud it timed out on, a dead prediction) until something
+	// blunders into the circle. A fresh estimate is different: the target
+	// is genuinely there and the flythrough fuses on proximity.
+	if m.Phase == Active && m.Stale > 1 && m.Range() < 150 {
+		m.Phase = Loose
 	}
 	if m.Phase == Active && truth != nil && m.held <= 0 {
 		sight := m.relative(m.Position, truth.Position)
@@ -331,6 +390,13 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		// Ballistic: gravity and drag only.
 	}
 
+	return m.integrate(dt, command, speed, forward)
+}
+
+// integrate applies one slice of physics for a commanded lateral
+// acceleration: the shared tail of every guidance mode, including the
+// home-on-jam pursuit that bypasses the phase machine entirely.
+func (m *Model) integrate(dt float64, command flight.Vec3, speed float64, forward flight.Vec3) bool {
 	// The lateral channel, capped by structure and by what the air gives.
 	density, sound := atmosphere(m.Position.Y)
 	dynamic := 0.5 * density * speed * speed

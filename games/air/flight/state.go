@@ -33,6 +33,7 @@ type Inputs struct {
 	Flare      bool
 	Missile    bool
 	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
+	Jammer     bool // the jammer's ARMED state (#31): a level, not an edge — the server judges when it actually radiates
 	Sequence   uint32
 }
 

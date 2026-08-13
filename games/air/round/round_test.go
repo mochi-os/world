@@ -351,29 +351,32 @@ func TestTerminalMiss(t *testing.T) {
 // Advance dices dt into fixed slices, so a 30 Hz client and a 240 Hz server
 // fly the same missile to the same terminal accuracy.
 func TestFrameRate(t *testing.T) {
-	fly := func(stride float64) (flight.Vec3, float64) {
+	fly := func(stride float64) (flight.Vec3, bool) {
 		_, sound := atmosphere(6000)
 		target := Target{Position: flight.Vec3{X: 20000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
 		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
-		closest := math.MaxFloat64
+		fused := false
 		for m.Time < 60 {
 			alive, fired, _ := m.Advance(stride, &Target{Position: target.Position, Velocity: target.Velocity}, &target)
 			target.Position = target.Position.Add(target.Velocity.Scale(stride))
-			if miss := m.Position.Subtract(target.Position).Length(); miss < closest {
-				closest = miss
+			if fired {
+				fused = true
+				break
 			}
-			if fired || !alive {
+			if !alive {
 				break
 			}
 		}
-		return m.Position, closest
+		return m.Position, fused
 	}
-	slow, slowMiss := fly(1.0 / 30)
-	fast, _ := fly(1.0 / 240)
-	// A 30 Hz caller loses a couple of metres to its own sampling of the
-	// world (the truth is frozen between frames); the warhead covers that.
-	if slowMiss > 7 {
-		t.Fatalf("30 Hz caller: closest approach %.1f m, want under 7", slowMiss)
+	// The claim is that a slow caller flies the same missile: both strides
+	// arrive inside the warhead envelope (the fuse ends both flights at the
+	// same trigger), and the flown paths agree. The PRECISION claim lives in
+	// TestTerminalMiss at the core stride.
+	slow, slowFused := fly(1.0 / 30)
+	fast, fastFused := fly(1.0 / 240)
+	if !slowFused || !fastFused {
+		t.Fatalf("fused at 30 Hz: %v, at 240 Hz: %v — both strides must arrive", slowFused, fastFused)
 	}
 	if drift := slow.Subtract(fast).Length(); drift > 60 {
 		t.Fatalf("30 Hz and 240 Hz flights diverged by %.0f m", drift)
@@ -518,5 +521,93 @@ func TestChaffDefeat(t *testing.T) {
 	}
 	if closest < 100 {
 		t.Fatalf("the deceived round still passed within %.0f m", closest)
+	}
+}
+
+// TestBeacon (#31): home-on-jam is the jammer's price. A radiating defender
+// flying the full beam-and-chaff defence still dies — the beacon overrides
+// the notch, the cloud, and the datalink — and it guides at ranges the
+// seeker could never reach. Going quiet mid-flight hands the round back to
+// its ordinary rules, so the toggle stays a live decision.
+func TestBeacon(t *testing.T) {
+	_, sound := atmosphere(6000)
+
+	// The chaff defence, radiating: the round eats the beam and the bloom.
+	fly := func(radiating func(m *Model) bool) (bool, float64) {
+		target := Target{Position: flight.Vec3{X: 16000, Y: 6000}, Velocity: flight.Vec3{X: -0.85 * sound}}
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		offered, broke := false, false
+		for m.Time < Battery {
+			m.Beacon = radiating(m)
+			if !m.Step(dt, nil, &target) {
+				break
+			}
+			target.Position = target.Position.Add(target.Velocity.Scale(dt))
+			if m.Phase == Pitbull || m.Beacon {
+				broke = true
+			}
+			if broke {
+				sight := target.Position.Subtract(m.Position).Normalize()
+				beam := flight.Vec3{X: -sight.Z, Z: sight.X}
+				if beam.Dot(target.Velocity) < 0 {
+					beam = beam.Scale(-1)
+				}
+				target.Velocity = beam.Scale(0.85 * sound)
+			}
+			if broke && !offered {
+				offered = m.Distract(target.Position, target)
+			}
+			if fired, _ := m.Fused(dt, target); fired {
+				return true, m.Least
+			}
+		}
+		return false, m.Least
+	}
+
+	fused, _ := fly(func(m *Model) bool { return true })
+	if !fused {
+		t.Fatalf("the radiating defender's beam-and-chaff defence still worked — HOJ must override both")
+	}
+	fused, closest := fly(func(m *Model) bool { return false })
+	if fused {
+		t.Fatalf("the quiet defender died (closest %.0f m) — the control case must match TestChaffDefeat", closest)
+	}
+
+	// Angle at any range: a beacon guides a round with NO datalink from far
+	// beyond the seeker's activation, where an unsupported quiet shot would
+	// coast into nothing.
+	long := func(radiating bool, crossing bool) float64 {
+		// Each case isolates its claim with its own geometry — the seeker's
+		// 18 km basket and 60-degree cone are big enough that a crossing
+		// target eventually wanders into a quiet round's acquisition, so the
+		// control drags instead. The estimate is WRONG (3 km off, no drift)
+		// in both: only the beacon, which needs no track at all, can find
+		// the target.
+		velocity := flight.Vec3{X: 0.85 * sound} // dragging: run straight away
+		start := flight.Vec3{X: 45000, Y: 8000}
+		if crossing {
+			velocity = flight.Vec3{Z: -0.8 * sound}
+			start = flight.Vec3{X: 30000, Y: 8000}
+		}
+		target := Target{Position: start, Velocity: velocity}
+		m := New(flight.Vec3{Y: 8000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: start.Add(flight.Vec3{Z: 3000}), Velocity: flight.Vec3{}}, 0)
+		m.Life = 1e9
+		for m.Time < 200 {
+			m.Beacon = radiating
+			if !m.Step(dt, nil, &target) {
+				break
+			}
+			target.Position = target.Position.Add(target.Velocity.Scale(dt))
+			if fired, _ := m.Fused(dt, target); fired {
+				break
+			}
+		}
+		return m.Least
+	}
+	if miss := long(true, true); miss > Fuse {
+		t.Fatalf("the beacon-guided long shot missed by %.0f m", miss)
+	}
+	if miss := long(false, false); miss < 5000 {
+		t.Fatalf("the unsupported quiet long shot got within %.0f m — the control is broken", miss)
 	}
 }

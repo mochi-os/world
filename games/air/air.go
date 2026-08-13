@@ -265,6 +265,7 @@ type craft struct {
 	flared     float64 // sim seconds since the last flare drop (large when none)
 	cloud      flight.Vec3 // where the last chaff bloomed (#29): the mixed program drops chaff with every flare
 	clouded    float64     // sim seconds since that bloom (large when none)
+	loud       bool        // the jammer is RADIATING this tick (#31): armed (latest.Jammer) and painted by a threat
 	team       string  // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
@@ -719,6 +720,7 @@ func input(data map[string]any) flight.Inputs {
 		Flare:      flag("flare"),
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
+		Jammer:     flag("jammer"),
 		Sequence:   uint32(number(data, "sequence")),
 	}
 }
@@ -819,6 +821,31 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				i.think(slot, a, tick) // the fighting brain (bot.go)
 			} else {
 				weave(slot, a, tick) // drones keep the original wander
+			}
+		}
+	}
+	// Jammer radiation truth (#31): armed AND painted — a hostile STT
+	// holding this craft, or an active radar round hunting it. The armed
+	// state is the pilot's standing decision; whether it radiates right now
+	// follows the threat picture, so forgetting it armed is a carried risk
+	// rather than a constant beacon.
+	for slot, a := range i.aircraft {
+		a.loud = false
+		if !a.alive || a.bot || !a.latest.Jammer {
+			continue
+		}
+		for other, b := range i.aircraft {
+			if other != slot && b.alive && b.emitter == 2 && b.lock == slot {
+				a.loud = true
+				break
+			}
+		}
+		if !a.loud {
+			for _, m := range i.flying {
+				if m.radar != nil && m.target == slot && m.radar.Phase >= round.Active {
+					a.loud = true
+					break
+				}
 			}
 		}
 	}
@@ -1214,6 +1241,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	if truth != nil && target.clouded < round.Window {
 		m.radar.Distract(target.cloud, *truth)
 	}
+	m.radar.Beacon = target.loud && target.alive // home-on-jam (#31): the radiating defender is a beacon, and the round takes the angle it is given
 	alive, fired, burst := m.radar.Advance(dt, support, truth)
 	m.position, m.velocity = m.radar.Position, m.radar.Velocity
 	m.life = m.radar.Life
@@ -1539,6 +1567,9 @@ func pose(slot int, a *craft) []byte {
 	}
 	if a.condition.Burning {
 		flags |= 32 // fuel fire: the one damage state with no continuous byte of its own, and the pilot's own cockpit needs it (#40)
+	}
+	if a.loud {
+		flags |= 64 // the jammer is radiating (#31): victims draw the strobe and break their locks from this bit — additive, old clients ignore it
 	}
 	b[26] = flags
 	b[27] = byte(clamp(a.latest.Reheat, 0, 1) * 255)

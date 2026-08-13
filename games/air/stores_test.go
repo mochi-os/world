@@ -12,6 +12,7 @@ import (
 	"world/game"
 	"world/games/air/aircraft"
 	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 func fox2() map[string]any {
@@ -458,5 +459,141 @@ func TestChaffServer(t *testing.T) {
 	}
 	if closest := fly(true); closest < 100 {
 		t.Fatalf("the beamed-and-chaffed defender was still passed at %.0f m", closest)
+	}
+}
+
+// TestJammerServer (#31): the armed jammer radiates only when painted, its
+// radiation starves the shooter's datalink outside burnthrough (and not
+// inside), and an inbound round homes on the beacon — through the full
+// beam-and-chaff defence that saves a quiet defender.
+func TestJammerServer(t *testing.T) {
+	build := func() (*instance, *craft, *craft) {
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		for _, slot := range []int{0, 1} {
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
+			a := &craft{model: m, alive: true, lock: -1, flared: 1e9, clouded: 1e9, loadout: stores_grant(map[string]any{
+				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			}, true)}
+			a.arm()
+			i.aircraft[slot] = a
+		}
+		shooter, target := i.aircraft[0], i.aircraft[1]
+		target.model.State.Position = flight.Vec3{X: 16000, Y: 8000}
+		target.model.State.Velocity = flight.Vec3{X: -280}
+		shooter.emitter, shooter.lock = 2, 1
+		return i, shooter, target
+	}
+
+	// Radiation truth: armed alone is quiet; armed + a hostile lock radiates;
+	// disarming silences immediately.
+	i, shooter, target := build()
+	target.latest.Jammer = true
+	shooter.emitter, shooter.lock = 1, -1
+	i.Step(1, nil)
+	if target.loud {
+		t.Fatalf("an unpainted jammer radiated — armed must not mean loud")
+	}
+	shooter.emitter, shooter.lock = 2, 1
+	i.Step(2, nil)
+	if !target.loud {
+		t.Fatalf("a locked, armed jammer stayed quiet")
+	}
+	target.latest.Jammer = false
+	i.Step(3, nil)
+	if target.loud {
+		t.Fatalf("a disarmed jammer kept radiating")
+	}
+
+	// The toggle is a live decision: a defender who jams on the way in but
+	// goes QUIET at the terminal call — then beams and dispenses — survives;
+	// the one who keeps radiating dies to HOJ (the next case). The support
+	// gate itself is deliberately unobservable from outside while the
+	// beacon guides: jamming trades the denied datalink for the granted
+	// beacon, and this pair is that trade measured end to end.
+	i, shooter, target = build()
+	target.latest.Jammer = true
+	if !i.fox3(0, shooter) {
+		t.Fatalf("launch refused")
+	}
+	m := i.flying[0]
+	defending := false
+	for step := 0; step < 240*90 && len(i.flying) > 0; step++ {
+		dt := 1.0 / 240
+		// The radiation truth is set directly (case 1 above tests the real
+		// computation): a full i.Step here would pursue the round a second
+		// time each iteration and fly it against a teleporting target.
+		target.loud = target.latest.Jammer && shooter.emitter == 2
+		if m.radar.Phase >= 2 || m.radar.Beacon {
+			defending = true
+		}
+		if defending {
+			target.latest.Jammer = false // the terminal call: go quiet, beam, dispense
+			sight := target.model.State.Position.Subtract(m.radar.Position).Normalize()
+			if m.radar.Phase == 3 {
+				// The round went stupid: EXTEND. Circling the impact zone
+				// is how a ballistic round kills you by accident.
+				target.model.State.Velocity = sight.Scale(280)
+			} else {
+				beam := flight.Vec3{X: -sight.Z, Z: sight.X}
+				if beam.Dot(target.model.State.Velocity) < 0 {
+					beam = beam.Scale(-1)
+				}
+				target.model.State.Velocity = beam.Scale(280)
+				if target.clouded > 1.5 {
+					target.flared = 0
+					target.cloud = target.model.State.Position
+					target.clouded = 0
+				}
+			}
+		}
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		target.clouded += dt
+		i.pursue(dt, uint64(10+step))
+		if !target.alive {
+			break
+		}
+	}
+	if m.radar.Least <= round.Fuse {
+		t.Fatalf("the defender who went quiet and defended still died (closest %.0f m) — disarming must hand the round back to rules the defence beats", m.radar.Least)
+	}
+
+		// The full defence, radiating: HOJ eats the beam and the chaff. The
+	// quiet control of this same defence is TestChaffServer's.
+	i, shooter, target = build()
+	target.latest.Jammer = true
+	if !i.fox3(0, shooter) {
+		t.Fatalf("launch refused")
+	}
+	m = i.flying[0]
+	defending = false
+	for step := 0; step < 240*90 && len(i.flying) > 0; step++ {
+		dt := 1.0 / 240
+		target.loud = target.latest.Jammer && shooter.emitter == 2
+		if m.radar.Phase >= 2 || m.radar.Beacon {
+			defending = true
+		}
+		if defending {
+			sight := target.model.State.Position.Subtract(m.radar.Position).Normalize()
+			beam := flight.Vec3{X: -sight.Z, Z: sight.X}
+			if beam.Dot(target.model.State.Velocity) < 0 {
+				beam = beam.Scale(-1)
+			}
+			target.model.State.Velocity = beam.Scale(280)
+			if target.clouded > 1e8 {
+				target.flared = 0
+				target.cloud = target.model.State.Position
+				target.clouded = 0
+			}
+		}
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		target.clouded += dt
+		i.pursue(dt, uint64(100+step))
+		if !target.alive {
+			break
+		}
+	}
+	if m.radar.Least > round.Fuse {
+		t.Fatalf("the radiating defender's beam-and-chaff defence still worked: closest %.0f m — HOJ must override it", m.radar.Least)
 	}
 }
