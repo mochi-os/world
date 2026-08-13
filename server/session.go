@@ -236,7 +236,7 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 // value (cheats), so not even that map is shared.
 func sessions_rules(parameters map[string]any) map[string]any {
 	rules := map[string]any{}
-	for _, key := range []string{"missiles", "tod", "clouds", "cheats"} {
+	for _, key := range []string{"missiles", "weapons", "start", "spaced", "tod", "clouds", "cheats"} {
 		value, found := parameters[key]
 		if !found {
 			continue

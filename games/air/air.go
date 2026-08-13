@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"sync"
 	"sync/atomic"
 
 	"world/game"
@@ -56,6 +57,29 @@ const (
 	muzzle   = 6.53   // m forward of the datum — the M61 port on the nose top, matching the client's tracer origin
 	derelict = 30.0   // s a pilot-dead/ejected wreck keeps flying
 )
+
+// The BVR spawn block (#32): separation is DERIVED from the round's own
+// ladder, never hand-picked — head-on Rmax at the spawn state plus the
+// commit buffer (the P-825 shape: employment plus fifteen nautical miles of
+// organisation room). Geometry provides the pre-fight seconds, so there is
+// no countdown and no weapons hold: the closing run IS the commit phase,
+// and a flight-model retune moves the match geometry automatically
+// (TestSeparation pins the relationship). Spaced open respawns use half the
+// joust separation; anchored team walls use all of it.
+const (
+	bvraltitude = 6096.0  // m (20,000 ft)
+	bvrspeed    = 272.0   // m/s (~M0.85 at the block): organised, fighting speed
+	commit      = 27780.0 // m (15 nmi): organisation room beyond head-on Rmax
+)
+
+var separation = sync.OnceValue(func() float64 {
+	ladder := round.Ladder(
+		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: flight.Vec3{X: bvrspeed}},
+		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
+		0,
+	)
+	return ladder.Max + commit
+})
 
 // Missile constants: pursuit guidance with an aspect-aware seeker, graded
 // flare decoys, and a real proximity fuse feeding the battle warhead.
@@ -105,10 +129,19 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 	if mode != "joust" && mode != "teams" {
 		mode = "furball"
 	}
-	allowed, _ := session.Parameters["missiles"].(bool)
+	weapons, _ := session.Parameters["weapons"].(string)
+	if weapons != "guns" && weapons != "fox2" && weapons != "open" {
+		// Old clients send only the boolean; derive the class it always meant.
+		if allowed, _ := session.Parameters["missiles"].(bool); allowed {
+			weapons = "open"
+		} else {
+			weapons = "guns"
+		}
+	}
 	i := &instance{
 		mode:        mode,
-		missiles:    allowed,
+		weapons:     weapons,
+		missiles:    weapons != "guns",
 		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
 		aircraft:    map[int]*craft{},
 	}
@@ -124,6 +157,12 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 	}
 	if tod, _ := session.Parameters["tod"].(string); tod == "night" {
 		i.night = true
+	}
+	if start, _ := session.Parameters["start"].(string); start == "bvr" && mode == "joust" {
+		i.apart = separation() // the BVR joust (#32): the pair opens the full derived distance apart
+	}
+	if spaced, _ := session.Parameters["spaced"].(bool); spaced && mode != "joust" {
+		i.apart = separation() // spaced/anchored spawns (#32): open respawns at half this, team anchors the full width
 	}
 	if cheats, found := session.Parameters["cheats"].(map[string]any); found {
 		i.cheat.invulnerable, _ = cheats["invulnerable"].(bool)
@@ -409,7 +448,9 @@ type instance struct {
 	mode        string  // furball (open, endless) or joust (1v1, first kill ends it)
 	started     bool    // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
 	merged      bool    // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
-	missiles    bool    // rule: missiles allowed
+	missiles    bool    // rule: any missiles allowed (weapons != "guns" — kept for the gates that only care about that much)
+	weapons     string  // the loadout class rule (#32): "guns" | "fox2" | "open"
+	apart       float64 // BVR spawn separation, m (0 = the merge ring): the joust's BVR start, and the spaced/anchored spawn distance
 	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
 	sky         string // session cloud preset (bot visibility occlusion)
@@ -500,6 +541,9 @@ func (i *instance) slots() []int {
 // spawn in opposing 120° arcs — red centred on one bearing, blue opposite —
 // so a team match opens as a line-abreast wall meeting a wall.
 func (i *instance) spawn(slot int, m *flight.Model, team string) {
+	if i.apart > 0 && i.bvr(slot, m, team) {
+		return
+	}
 	angle := float64(slot) * math.Pi
 	if slot > 1 {
 		angle = float64(slot) * 2.399963
@@ -514,6 +558,57 @@ func (i *instance) spawn(slot int, m *flight.Model, team string) {
 	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
 	m.State = flight.Level(m, position, inward, speed, i.tank)
+}
+
+// bvr places a spawn for the separated match shapes (#32) and reports
+// whether it did: the joust pair head-on across the full derived separation;
+// anchored team walls, each side line abreast at its own anchor facing the
+// other's; and spaced open respawns re-entering half the separation from the
+// fight's centre of mass, approaching it — every life begins with a commit
+// under the RWR rather than a merge. An empty open room falls back to the
+// merge ring (nothing to space from).
+func (i *instance) bvr(slot int, m *flight.Model, team string) bool {
+	radius := i.apart / 2
+	if team != "" {
+		base := 0.0
+		if team == "blue" {
+			base = math.Pi
+		}
+		inward := flight.Vec3{X: -math.Cos(base), Y: 0, Z: -math.Sin(base)}
+		across := flight.Vec3{X: -inward.Z, Z: inward.X}
+		position := flight.Vec3{X: math.Cos(base) * radius, Y: bvraltitude, Z: math.Sin(base) * radius}
+		position = position.Add(across.Scale(float64((slot%9)-4) * 500)) // line abreast, not a queue
+		m.State = flight.Level(m, position, inward, bvrspeed, i.tank)
+		return true
+	}
+	if i.mode == "joust" {
+		angle := float64(slot) * math.Pi
+		position := flight.Vec3{X: math.Cos(angle) * radius, Y: bvraltitude, Z: math.Sin(angle) * radius}
+		inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
+		m.State = flight.Level(m, position, inward, bvrspeed, i.tank)
+		return true
+	}
+	centre, count := flight.Vec3{}, 0
+	for other, b := range i.aircraft {
+		if other == slot || !b.alive || b.model == nil {
+			continue
+		}
+		centre = centre.Add(b.model.State.Position)
+		count++
+	}
+	if count == 0 {
+		return false // an empty room: the merge ring is fine
+	}
+	centre = centre.Scale(1 / float64(count))
+	angle := float64(slot) * 2.399963 // golden-angle bearings: re-entries spread, never queue up a lane
+	away := flight.Vec3{X: math.Cos(angle), Z: math.Sin(angle)}
+	position := flight.Vec3{X: centre.X + away.X*radius, Y: bvraltitude, Z: centre.Z + away.Z*radius}
+	if i.environment.Wrap > 0 {
+		position.X = flight.Shortest(0, position.X, i.environment.Wrap)
+		position.Z = flight.Shortest(0, position.Z, i.environment.Wrap)
+	}
+	m.State = flight.Level(m, position, away.Scale(-1), bvrspeed, i.tank)
+	return true
 }
 
 // state_payload is one aircraft's snapshot entry: the legacy derived fields
@@ -615,7 +710,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
 	// told about; the client's persisted choice is never echoed back.
-	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.missiles)}
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.weapons)}
 	a.arm()
 	a.rearm()
 	i.aircraft[player.Slot] = a
@@ -631,6 +726,12 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		// The pair is complete THIS instant: the match starts, and both merge
 		// fresh and simultaneously however long the first arrival sat frozen.
 		i.started = true
+		if i.apart > 0 {
+			// BVR start (#32): no merge hold — the derived separation is the
+			// organisation phase, and the fighton releases both clients now.
+			i.merged = true
+			i.events = append(i.events, map[string]any{"kind": "fighton"})
+		}
 		for _, slot := range i.slots() {
 			b := i.aircraft[slot]
 			i.spawn(slot, b.model, b.team)

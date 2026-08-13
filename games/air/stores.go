@@ -136,21 +136,43 @@ func stores_strip(lo loadout) loadout {
 }
 
 // stores_grant is the join-time clamp: normalize the request and apply the
-// match's missiles rule. The persisted client choice is never echoed back —
-// the granted loadout is what spawns. A join with NO request (a stale
-// pre-loadout client or a bare test driver) gets the armed wingtips — the
-// calibrated configuration bots fly and exactly what such a client's own
-// model carries. Current clients always send the full nine-station request,
-// so empty means absent, never "asked for a clean jet".
-func stores_grant(raw map[string]any, missiles bool) loadout {
+// match's loadout class (#32) — "guns" strips every missile, "fox2" strips
+// the radar missiles and keeps the heaters, "open" strips nothing (magazine
+// depth is priced by the flight model's carriage drag, not by rules). The
+// persisted client choice is never echoed back — the granted loadout is what
+// spawns. A join with NO request (a stale pre-loadout client or a bare test
+// driver) gets the armed wingtips — the calibrated configuration bots fly
+// and exactly what such a client's own model carries. Current clients always
+// send the full nine-station request, so empty means absent, never "asked
+// for a clean jet".
+func stores_grant(raw map[string]any, weapons string) loadout {
 	lo := stores_normalize(raw)
 	if len(raw) == 0 {
 		lo = tips_loadout()
 	}
-	if !missiles {
+	switch weapons {
+	case "guns":
 		lo = stores_strip(lo)
+	case "fox2":
+		lo = stores_heaters(lo)
 	}
 	return lo
+}
+
+// stores_heaters removes the radar missiles and keeps everything else — the
+// Fox 2 class clamp: heaters, tanks and fixtures stay.
+func stores_heaters(lo loadout) loadout {
+	out := loadout{}
+	for key, s := range lo {
+		points := make([]string, len(s.Stores))
+		for p, id := range s.Stores {
+			if id != "120c" {
+				points[p] = id
+			}
+		}
+		out[key] = slot{Fixture: s.Fixture, Stores: points}
+	}
+	return out
 }
 
 // shots is the brain's magazine, mirrored from bot.go (mind()/reborn() set

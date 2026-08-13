@@ -9,6 +9,8 @@ package air
 import (
 	"testing"
 
+	"math"
+
 	"world/game"
 	"world/games/air/aircraft"
 	"world/games/air/flight"
@@ -23,11 +25,11 @@ func fox2() map[string]any {
 // TestGrant: a legal request passes through; missiles strip under a guns-only
 // rule while fixtures and tanks survive; junk is dropped.
 func TestGrant(t *testing.T) {
-	lo := stores_grant(fox2(), true)
+	lo := stores_grant(fox2(), "open")
 	if got := len(stores_rounds(lo)); got != 4 {
 		t.Fatalf("fox2 granted %d rounds, want 4", got)
 	}
-	guns := stores_grant(fox2(), false)
+	guns := stores_grant(fox2(), "guns")
 	if got := len(stores_rounds(guns)); got != 0 {
 		t.Fatalf("guns-only grant kept %d rounds", got)
 	}
@@ -38,7 +40,7 @@ func TestGrant(t *testing.T) {
 		"2": map[string]any{"fixture": "catapult", "stores": []any{"brick"}},
 		"3": map[string]any{"fixture": "pylon", "stores": []any{"tank", "tank"}},
 		"4": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
-	}, true)
+	}, "open")
 	if junk["2"].Fixture != "" {
 		t.Fatalf("unknown fixture survived: %q", junk["2"].Fixture)
 	}
@@ -58,7 +60,7 @@ func TestRounds(t *testing.T) {
 		"2": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
 		"8": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
 		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
-	}, true)
+	}, "open")
 	want := []string{"tip9", "tip1", "9m8a", "9m2a", "9m8b", "9m2b"}
 	got := stores_rounds(lo)
 	if len(got) != len(want) {
@@ -80,7 +82,7 @@ func TestMask(t *testing.T) {
 		index[s.Name] = i
 	}
 	bit := func(name string) uint64 { return 1 << uint(index[name]) }
-	lo := stores_grant(fox2(), true)
+	lo := stores_grant(fox2(), "open")
 	full := stores_mask(lo, 0, 0)
 	for _, name := range []string{"tip1", "tip9", "rail2", "9m2", "rail8", "9m8"} {
 		if full&bit(name) == 0 {
@@ -137,7 +139,7 @@ func TestMask(t *testing.T) {
 // TestAttach: the craft mask follows the remaining count, and rearm cycles
 // through zero so tanks refill.
 func TestAttach(t *testing.T) {
-	a := &craft{loadout: stores_grant(fox2(), true)}
+	a := &craft{loadout: stores_grant(fox2(), "open")}
 	a.missiles = 4
 	full := a.attach()
 	a.missiles = 0
@@ -160,7 +162,7 @@ func TestAmraamStores(t *testing.T) {
 		"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 		"2": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 		"8": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
-	}, true)
+	}, "open")
 	if got := lo["4"].Stores[0]; got != "120c" {
 		t.Fatalf("cheek AMRAAM dropped: %q", got)
 	}
@@ -176,14 +178,14 @@ func TestAmraamStores(t *testing.T) {
 	if got := stores_entries(6, lo["6"]); len(got) != 2 || got[0] != "rail6" || got[1] != "120c6" {
 		t.Fatalf("cheek entries %v", got)
 	}
-	guns := stores_grant(map[string]any{"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}}}, false)
+	guns := stores_grant(map[string]any{"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}}}, "guns")
 	if got := guns["4"].Stores[0]; got != "" {
 		t.Fatalf("guns-only grant kept the AMRAAM: %q", got)
 	}
 	inboard := stores_grant(map[string]any{
 		"3": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
 		"5": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
-	}, true)
+	}, "open")
 	if got := inboard["3"].Stores[0]; got != "120c" {
 		t.Fatalf("inboard-pylon AMRAAM dropped: %q", got)
 	}
@@ -204,7 +206,7 @@ func TestAmraamStores(t *testing.T) {
 		"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 		"7": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
 		"8": map[string]any{"fixture": "twin", "stores": []any{"120c", "120c"}},
-	}, true)
+	}, "open")
 	if got := spam["3"].Stores; got[0] != "120c" || got[1] != "9m" {
 		t.Fatalf("inboard mixed twin pair dropped: %v", got)
 	}
@@ -252,7 +254,7 @@ func TestInboardHeaters(t *testing.T) {
 		"7": map[string]any{"fixture": "pylon", "stores": []any{"9m"}},
 		"8": map[string]any{"fixture": "twin", "stores": []any{"9m", "9m"}},
 		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
-	}, true)
+	}, "open")
 	if got := lo["3"].Stores; got[0] != "9m" || got[1] != "9m" {
 		t.Fatalf("inboard twin heaters dropped: %v", got)
 	}
@@ -299,7 +301,7 @@ func TestFox3Server(t *testing.T) {
 			a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
 				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 				"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
-			}, true)}
+			}, "open")}
 			a.arm()
 			i.aircraft[slot] = a
 		}
@@ -362,7 +364,7 @@ func TestFox3Trigger(t *testing.T) {
 		a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
 			"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 			"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
-		}, true)}
+		}, "open")}
 		a.arm()
 		a.release = 1e9
 		i.aircraft[slot] = a
@@ -408,7 +410,7 @@ func TestChaffServer(t *testing.T) {
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
 			a := &craft{model: m, alive: true, lock: -1, flared: 1e9, clouded: 1e9, loadout: stores_grant(map[string]any{
 				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
-			}, true)}
+			}, "open")}
 			a.arm()
 			i.aircraft[slot] = a
 		}
@@ -474,7 +476,7 @@ func TestJammerServer(t *testing.T) {
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
 			a := &craft{model: m, alive: true, lock: -1, flared: 1e9, clouded: 1e9, loadout: stores_grant(map[string]any{
 				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
-			}, true)}
+			}, "open")}
 			a.arm()
 			i.aircraft[slot] = a
 		}
@@ -595,5 +597,159 @@ func TestJammerServer(t *testing.T) {
 	}
 	if m.radar.Least > round.Fuse {
 		t.Fatalf("the radiating defender's beam-and-chaff defence still worked: closest %.0f m — HOJ must override it", m.radar.Least)
+	}
+}
+
+// TestSeparation (#32): the BVR spawn distance is DERIVED from the round's
+// own ladder — head-on Rmax at the spawn state plus the fifteen-mile commit
+// buffer — so a flight-model retune moves the match geometry automatically.
+// This pins the relationship and the sanity band, not a number.
+func TestSeparation(t *testing.T) {
+	ladder := round.Ladder(
+		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: flight.Vec3{X: bvrspeed}},
+		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
+		0,
+	)
+	apart := separation()
+	if apart != ladder.Max+commit {
+		t.Fatalf("separation %.0f is not head-on Rmax (%.0f) plus the commit buffer (%.0f)", apart, ladder.Max, commit)
+	}
+	if apart < 45000 || apart > 120000 {
+		t.Fatalf("separation %.0f m outside the sanity band — the ladder or the spawn state moved a long way", apart)
+	}
+	// The organisation phase is real: from spawn, the pair closes for tens
+	// of seconds before either can be inside Rmax.
+	if organise := commit / (2 * bvrspeed); organise < 30 {
+		t.Fatalf("the commit buffer gives only %.0f s of closing before Rmax", organise)
+	}
+}
+
+// TestWeaponsGrant (#32): the three loadout classes clamp at the grant —
+// guns strips everything, Fox 2 keeps the heaters and the tank, open keeps
+// the lot.
+func TestWeaponsGrant(t *testing.T) {
+	request := map[string]any{
+		"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		"2": map[string]any{"fixture": "twin", "stores": []any{"120c", "9m"}},
+		"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"5": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+	}
+	open := stores_grant(request, "open")
+	if len(stores_amraams(open)) != 2 || len(stores_rounds(open)) != 3 {
+		t.Fatalf("open kept %d AMRAAMs / %d heaters, want 2 / 3", len(stores_amraams(open)), len(stores_rounds(open)))
+	}
+	fox2 := stores_grant(request, "fox2")
+	if len(stores_amraams(fox2)) != 0 {
+		t.Fatalf("fox2 kept %d AMRAAMs", len(stores_amraams(fox2)))
+	}
+	if len(stores_rounds(fox2)) != 3 {
+		t.Fatalf("fox2 kept %d heaters, want 3", len(stores_rounds(fox2)))
+	}
+	if fox2["5"].Stores[0] != "tank" || fox2["2"].Fixture != "twin" {
+		t.Fatalf("fox2 stripped the tank or the fixture")
+	}
+	guns := stores_grant(request, "guns")
+	if len(stores_amraams(guns)) != 0 || len(stores_rounds(guns)) != 0 {
+		t.Fatalf("guns kept missiles")
+	}
+	if guns["5"].Stores[0] != "tank" {
+		t.Fatalf("guns stripped the tank")
+	}
+}
+
+// TestBvrJoust (#32): the BVR start spawns the pair head-on across the
+// derived separation, organised and WEAPONS FREE from the first tick — the
+// distance is the hold. The merge joust keeps its 3/9 gate untouched.
+func TestBvrJoust(t *testing.T) {
+	make_joust := func(start string) *instance {
+		parameters := map[string]any{"missiles": true}
+		if start != "" {
+			parameters["start"] = start
+		}
+		made, err := (&Air{}).Create(game.Session{Mode: "joust", Seed: 7, Parameters: parameters})
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		i := made.(*instance)
+		if _, err := i.Join(game.Player{Name: "one", Slot: 0}); err != nil {
+			t.Fatalf("join one: %v", err)
+		}
+		if _, err := i.Join(game.Player{Name: "two", Slot: 1}); err != nil {
+			t.Fatalf("join two: %v", err)
+		}
+		return i
+	}
+
+	bvr := make_joust("bvr")
+	a, b := bvr.aircraft[0], bvr.aircraft[1]
+	apart := bvr.span(a.model, b.model)
+	if math.Abs(apart-separation()) > 1000 {
+		t.Fatalf("BVR pair spawned %.0f m apart, want the derived %.0f", apart, separation())
+	}
+	if !bvr.free() {
+		t.Fatalf("the BVR joust held weapons — the separation is the hold")
+	}
+	if a.model.State.Position.Y < bvraltitude-200 || a.model.State.Position.Y > bvraltitude+200 {
+		t.Fatalf("BVR spawn altitude %.0f, want the block at %.0f", a.model.State.Position.Y, bvraltitude)
+	}
+	// Head-on: each nose points at the other jet.
+	sight, _ := bvr.bearing(a.model.State.Position, b.model.State.Position)
+	if sight.Dot(a.model.State.Attitude.Rotate(flight.Vec3{X: 1})) < 0.98 {
+		t.Fatalf("the BVR pair did not spawn pointed at each other")
+	}
+
+	merge := make_joust("")
+	if merge.free() {
+		t.Fatalf("the merge joust freed weapons before the 3/9 crossing")
+	}
+	if d := merge.span(merge.aircraft[0].model, merge.aircraft[1].model); d > 3*ring {
+		t.Fatalf("the merge joust spawned %.0f m apart — the BVR change leaked into it", d)
+	}
+}
+
+// TestSpaced (#32): spaced open respawns re-enter half the separation from
+// the fight's centre of mass, approaching it; anchored team spawns hold each
+// side at its own anchor, the full separation from the other's.
+func TestSpaced(t *testing.T) {
+	made, err := (&Air{}).Create(game.Session{Mode: "furball", Seed: 7, Parameters: map[string]any{"missiles": true, "spaced": true}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	i := made.(*instance)
+	if _, err := i.Join(game.Player{Name: "one", Slot: 0}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if _, err := i.Join(game.Player{Name: "two", Slot: 1}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	// The second joiner spaces off the first: half the separation away,
+	// pointed back at the fight.
+	a, b := i.aircraft[0], i.aircraft[1]
+	if d := i.span(a.model, b.model); math.Abs(d-separation()/2) > 2000 {
+		t.Fatalf("spaced join entered %.0f m out, want ~%.0f", d, separation()/2)
+	}
+	sight, _ := i.bearing(b.model.State.Position, a.model.State.Position)
+	if sight.Dot(b.model.State.Attitude.Rotate(flight.Vec3{X: 1})) < 0.9 {
+		t.Fatalf("the spaced entry does not approach the fight")
+	}
+
+	teams, err := (&Air{}).Create(game.Session{Mode: "teams", Seed: 7, Parameters: map[string]any{"missiles": true, "spaced": true}})
+	if err != nil {
+		t.Fatalf("create teams: %v", err)
+	}
+	ti := teams.(*instance)
+	if _, err := ti.Join(game.Player{Name: "red", Slot: 0}); err != nil {
+		t.Fatalf("join red: %v", err)
+	}
+	if _, err := ti.Join(game.Player{Name: "blue", Slot: 1}); err != nil {
+		t.Fatalf("join blue: %v", err)
+	}
+	red, blue := ti.aircraft[0], ti.aircraft[1]
+	if red.team == blue.team {
+		t.Fatalf("the pair landed on one side (%s/%s)", red.team, blue.team)
+	}
+	if d := ti.span(red.model, blue.model); math.Abs(d-separation()) > 5000 {
+		t.Fatalf("anchored walls %.0f m apart, want ~%.0f", d, separation())
 	}
 }
