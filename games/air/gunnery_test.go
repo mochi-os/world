@@ -427,18 +427,24 @@ func jinker(me, foe *flight.State, tick uint64) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "fire": fire}
 }
 
-// TestJink measures whether the bots can hit an actively evading human. No
-// outcome gate yet, deliberately — the whole reason this instrument exists is
-// that the answer is expected to be NO, and a gate that sits red stops being
-// read (the ladder learned that; its gate is inversion-only for the same
-// reason). It fatals only on the script drowning itself, exactly like the
-// flounder. Gates come when the bots earn them.
+// TestJink measures whether the bots can hit an actively evading human.
+// The gated quantity is ROUNDS LANDED, not kills: against real evasion a
+// kill is a rare binary event that one seed swings, but rounds landed is
+// the continuous gunnery truth underneath and moves smoothly when doctrine
+// changes. Kills stay reported. The gate holds the ends only — a
+// disciplined tier landing fewer rounds than the pilot across a full
+// twelve-seed block is a real regression; the ace-versus-machine middle is
+// reported, because the machine spends fewer rounds per kill (measured at
+// arming, 2026-08-14: pilot 48 landed, ace 234, superhuman 180, with 1/3/4
+// kills) and demanding round-count order would punish exactly that
+// efficiency. Fatals on the script drowning itself, like the flounder.
 func TestJink(t *testing.T) {
 	heavy(t)
+	floor := map[string]int{}
 	for _, level := range []string{"pilot", "ace", "superhuman"} {
 		var times []float64
 		struck, unresolved, landed, engaged := 0, 0, 0, 0
-		for seed := uint64(1); seed <= 6; seed++ {
+		for seed := uint64(1); seed <= 12; seed++ {
 			g := New()
 			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("jink%s%d", level, seed),
 				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
@@ -502,8 +508,14 @@ func TestJink(t *testing.T) {
 			mean /= float64(len(times))
 		}
 		_ = unresolved
-		fmt.Printf("%-11s killed the jinker %d/6, mean %5.1f s | rounds landed on it %4d | in gun range %5.1f%% | hits taken %d\n",
-			level, len(times), mean, landed, 100*float64(engaged)/float64(6*60*180), struck)
+		fmt.Printf("%-11s killed the jinker %d/12, mean %5.1f s | rounds landed on it %4d | in gun range %5.1f%% | hits taken %d\n",
+			level, len(times), mean, landed, 100*float64(engaged)/float64(12*60*180), struck)
+		floor[level] = landed
+	}
+	for _, level := range []string{"ace", "superhuman"} {
+		if floor[level] < floor["pilot"] {
+			t.Errorf("gunnery against evasion inverts: %s landed %d rounds on the jinker, the pilot %d", level, floor[level], floor["pilot"])
+		}
 	}
 }
 
