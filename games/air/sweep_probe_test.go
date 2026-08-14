@@ -11,6 +11,7 @@ package air
 import (
 	"fmt"
 	"math"
+	"os"
 	"sort"
 	"testing"
 
@@ -49,10 +50,15 @@ func TestMachineSweep(t *testing.T) {
 			}
 			previous, last := "", 0.0
 			empty := false
+			landed := 0 // rounds of the hunter's that actually struck the drone
 			var seedRanges, seedMisses []float64
 			seedModes, seedIntent := map[string]int{}, map[string]int{}
-			outcome, at := "TIMEOUT", 180.0
-			for tick := uint64(0); tick < 60*180; tick++ {
+			horizon := 180.0
+			if v := os.Getenv("SWEEP_SECONDS"); v != "" {
+				fmt.Sscanf(v, "%f", &horizon)
+			}
+			outcome, at := "TIMEOUT", horizon
+			for tick := uint64(0); tick < uint64(60*horizon); tick++ {
 				if hunter.model == nil || prey.model == nil || hunter.brain == nil {
 					break
 				}
@@ -71,8 +77,27 @@ func TestMachineSweep(t *testing.T) {
 					dry++
 					emptied = append(emptied, float64(tick)/60)
 				}
+				i.events = i.events[:0]
 				i.Step(tick, nil)
+				for _, e := range i.events {
+					if e["kind"] == "hit" {
+						if by, ok := e["by"].(int); ok && i.aircraft[by] == hunter {
+							if n, ok := e["count"].(int); ok {
+								landed += n
+							} else {
+								landed++
+							}
+						}
+					}
+				}
 				if hunter.model == nil || prey.model == nil || hunter.brain == nil {
+					// The craft was replaced inside this very step — say by
+					// whom, or a kill this close to the swap reads as TIMEOUT.
+					outcome = fmt.Sprintf("SWAP h:%v/%v p:%v/%v", hunter.alive, hunter.model != nil, prey.alive, prey.model != nil)
+					at = float64(tick) / 60
+					if !prey.alive {
+						killed++
+					}
 					break
 				}
 				b := hunter.brain
@@ -83,6 +108,20 @@ func TestMachineSweep(t *testing.T) {
 					previous = b.play
 				}
 				decisions++
+				if os.Getenv("SWEEP_TRACE") != "" && level == "superhuman" && (seed == 1 || seed == 5) && tick%60 == 0 {
+					// One line a second: the flight's actual shape on the
+					// failing seeds — where it is, what it flies, whether it
+					// fires — sampled before the in-range gate so the
+					// out-of-range orbit is visible too.
+					span := hunter.model.State.Position.Subtract(prey.model.State.Position).Length()
+					_, miss, _, _ := b.pipper(hunter.model, tick)
+					fire := 0
+					if hunter.latest.Fire {
+						fire = 1
+					}
+					fmt.Printf("      trace seed %d t %5.1f | span %6.0f | miss %6.0f | play %-8s intent %-8s | nearing %6.1f | fire %d | ammo %d\n",
+						seed, float64(tick)/60, span, miss, b.play, b.intent, b.nearing, fire, hunter.ammunition)
+				}
 				if b.prey == nil {
 					continue
 				}
@@ -132,8 +171,8 @@ func TestMachineSweep(t *testing.T) {
 					stance, most = m, c
 				}
 			}
-			fmt.Printf("   %-11s seed %d %-8s at %5.1f s | in-range ticks %5d | range p50 %5.0f m | miss p50 %6.1f m | commonest %s | posture %s %.0f%%\n",
-				level, seed, outcome, at, len(seedRanges), within(seedRanges, 0.5), within(seedMisses, 0.5), top, stance, 100*float64(most)/math.Max(float64(len(seedRanges)), 1))
+			fmt.Printf("   %-11s seed %d %-8s at %5.1f s | in-range ticks %5d | range p50 %5.0f m | miss p50 %6.1f m | hits given %3d | commonest %s | posture %s %.0f%%\n",
+				level, seed, outcome, at, len(seedRanges), within(seedRanges, 0.5), within(seedMisses, 0.5), landed, top, stance, 100*float64(most)/math.Max(float64(len(seedRanges)), 1))
 		}
 		_ = emptied
 		pct := func(v []float64, p float64) float64 {

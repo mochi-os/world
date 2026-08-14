@@ -59,6 +59,17 @@ func TestDroneKill(t *testing.T) {
 				}
 				aliveBefore := prey.alive
 				i.Step(tick, nil)
+				if aliveBefore && !prey.alive && killed < 0 {
+					// The kill check must precede the respawn break: a burst
+					// violent enough to kill and tear the craft down inside
+					// one step — the machine's signature ending — otherwise
+					// reads as a timeout (measured: a 44.3 s gun kill scored
+					// as no result, and the ladder blamed the doctrine).
+					killed = float64(tick) / 60
+					kills++
+					times = append(times, killed)
+					break
+				}
 				if hunter.model == nil || prey.model == nil || hunter.brain == nil {
 					break
 				}
@@ -78,12 +89,6 @@ func TestDroneKill(t *testing.T) {
 					if rng < 900 && off < 30 {
 						advantage++
 					}
-				}
-				if aliveBefore && !prey.alive && killed < 0 {
-					killed = float64(tick) / 60
-					kills++
-					times = append(times, killed)
-					break
 				}
 			}
 		}

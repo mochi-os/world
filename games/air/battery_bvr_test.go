@@ -114,6 +114,19 @@ func TestBvrLadder(t *testing.T) {
 	if end.weak > end.strong {
 		t.Fatalf("the BVR ladder inverted end to end: novice beat superhuman %d-%d", end.weak, end.strong)
 	}
+	// The top rung, armed 2026-08-14 with counter-fire (ruling 9): the
+	// machine must not LOSE to the ace beyond one-seed noise. Before
+	// counter-fire this rung sat at 7-11 over twenty seeds — the machine
+	// died with a full rack whenever the ace's first credible shot forced
+	// it defensive early — and a 0-6 inversion passed this battery unseen
+	// because only the end pair was gated. The rung's measured state is
+	// level (7-7 at twenty seeds, 6 draws): symmetric competent BVR
+	// neutralizes, so ordering is not demanded, but losing it again is a
+	// regression this gate now catches.
+	top := results["superhuman v ace"]
+	if top.weak > top.strong+1 {
+		t.Fatalf("the top rung inverted: ace beat superhuman %d-%d", top.weak, top.strong)
+	}
 	for _, pair := range pairs {
 		r := results[pair[0]+" v "+pair[1]]
 		if r.closest > 20000 {

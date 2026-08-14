@@ -105,6 +105,91 @@ func (i *instance) painted(a, c *craft) bool {
 	return radial > round.Notch
 }
 
+// counterfire is ruling 9 (settled 2026-08-14): a withholding tier being
+// forced defensive takes the one shot it currently has before committing
+// to the notch. The measured alternative was dying with a full rack — the
+// deep tiers' commit range arrives later than an aggressor's first
+// credible shot, and a defending bot never fires (the machine lost the
+// twenty-seed mid-ladder to the ace 7-11 by exactly this, and every
+// opening-depth dial was measured and refuted). The shot is DLZ-judged at
+// the full working envelope — the round arrives if he flies on as now —
+// floored only by the physics, and leaves through the same fox3() as any
+// other; the momentary STT collapses back to search immediately and the
+// round coasts to its own pitbull, exactly as an abandoned track does.
+// Full rack only: the counter-shot exists to stop a bot dying without
+// ever firing, and that is the whole licence — once anything has left the
+// rails, normal doctrine owns the fight. The first form latched once per
+// threat EPISODE, and every fresh inbound round is a fresh episode:
+// sustained duels ping-ponged counter-shots, every pairing spent 45-48 of
+// 48 (the battery's dump gate tripped), the ladder's end pair collapsed
+// 5-1 to 2-2, and the attacker in the defence instrument converted
+// nothing at all — measured 2026-08-14, same day as the ruling.
+func (i *instance) counterfire(slot int, a *craft, tick uint64) {
+	b := a.brain
+	if i.weapons != "open" || a.amraams == 0 || !i.free() {
+		return
+	}
+	if a.amraams != len(stores_amraams(a.loadout)) {
+		return
+	}
+	if !pressing(b.skill.library, b.skill.machine).withhold {
+		return
+	}
+	if b.countered >= b.alerted || (b.launched > 0 && tick-b.launched <= 60) {
+		return
+	}
+	// The credibility gate: answer only a round that would still arrive
+	// supersonic — the ladder's own kill bar, asked of the threat
+	// mid-flight. Without it the novice's max-range spray bought the
+	// machine's one licensed round for free: the end pairing's draws
+	// tripled while every sprayed husk died six kilometres out anyway.
+	credible := false
+	for _, m := range i.flying {
+		if m.radar == nil || m.target != slot || m.radar.Phase < round.Active {
+			continue
+		}
+		if round.Lethal(*m.radar, round.Target{Position: a.model.State.Position,
+			Velocity: a.model.State.Velocity}, 0.2) {
+			credible = true
+			break
+		}
+	}
+	if !credible {
+		return
+	}
+	target := b.target
+	if target < 0 {
+		return
+	}
+	prey := i.aircraft[target]
+	if prey == nil || !prey.alive || prey.model == nil || !hostile(a, prey) {
+		return
+	}
+	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
+	nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1})
+	radial := math.Abs(prey.model.State.Velocity.Subtract(a.model.State.Velocity).Dot(line))
+	if nose.Dot(line) < round.Gimbal || span > radar_reach || radial <= round.Notch {
+		return
+	}
+	zone := round.Ladder(
+		round.Target{Position: a.model.State.Position, Velocity: a.model.State.Velocity},
+		round.Target{Position: prey.model.State.Position, Velocity: prey.model.State.Velocity},
+		i.environment.Wrap)
+	if span > zone.Max || span < zone.Minimum {
+		return
+	}
+	a.emitter, a.lock = 2, target
+	if i.fox3(slot, a) {
+		if !i.cheat.ammunition {
+			a.amraams--
+			a.model.Stores(a.attach())
+		}
+		a.release = 0
+		b.supported = tick
+		b.countered = tick
+	}
+}
+
 // hunt is the whole of a bot's BVR offence, run every tick from think()
 // between decide and steer: hold the emitter state everyone else reads,
 // take the DLZ-judged shot through the same fox3() a human trigger
@@ -118,7 +203,9 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		// Defence owns the flight path; the radar drops to search (or to
 		// silence with an empty rack) — a beaming defender cannot hold an
 		// STT anyway, and fly_radar lets an abandoned round coast on
-		// memory. Behaviour 3 outranks every offensive overlay.
+		// memory. Behaviour 3 outranks every offensive overlay, except the
+		// one counter-shot ruling 9 lets leave first.
+		i.counterfire(slot, a, tick)
 		if a.amraams > 0 && i.missiles {
 			a.emitter, a.lock = 1, -1
 		} else if a.emitter != 0 {

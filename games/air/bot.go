@@ -431,6 +431,9 @@ type brain struct {
 	intent    string      // fight-level posture (#236): convert / deny / reset / finish; "" = neutral
 	minded    uint64      // tick the posture was set: the intent commitment
 	chanced   uint64      // last tick the trigger had a shot worth its price — the stalemate detector's clock
+	struck    uint64      // last tick a round of mine hit anyone — the signal that a conversion is actually wounding
+	finished  uint64      // tick a finish was evicted for not wounding — its re-entry cooldown
+	countered uint64      // tick of the last counter-fire shot: one round per threat episode
 	nearing   float64     // closure EMA, m/s: is the pursuit actually gaining
 	spanned   float64     // last range, for the closure trend
 	gauged    uint64      // tick of that range

@@ -440,23 +440,27 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	// killed the same drone six times from six. Spending everything on a
 	// beaten opponent is only a plan while it is buying something.
 	next := "convert"
+	// FINISH must be WOUNDING to keep its claim. Its entry condition is the
+	// OPPONENT's state, which holds for as long as he stays slow, so the
+	// posture renews itself every commitment window and the starvation
+	// escape below can never notice it (a stalled finish keeps taking
+	// priced shots: firing and not killing). A thirty-second SPELL with a
+	// re-entry guard was measured and rejected — slow-target conversion
+	// legitimately runs past thirty seconds, and the time bound evicted the
+	// ace from finishes it was winning (flounder 16 kills to 13, the ace
+	// alone 7 to 4). The key is rounds landing: a finish younger than
+	// thirty seconds, or one that has wounded him inside the last thirty,
+	// is working; one doing neither is pitch-backs at a target it cannot
+	// hit (measured: 4237 in-range ticks at a 412 m aim error while the
+	// ace killed the same drone six from six), and it yields to convert
+	// with a minute's cooldown before finish may claim again.
+	finishing := b.intent == "finish"
+	wounding := tick-b.minded < 1800 || (b.struck > 0 && tick-b.struck < 1800)
 	switch {
-	// FINISH IS UNBOUNDED, and that is a known open defect (2026-08-13):
-	// its condition is the OPPONENT's state, which holds for as long as he
-	// stays slow, so the posture renews itself every commitment window and
-	// the starvation escape below can never be reached. Measured once the
-	// opponent model was made honest: the machine judged a compliant drone
-	// beaten, entered finish, and flew pitch-backs at it for three minutes
-	// while the ace, which never entered finish, killed the same drone six
-	// times from six. A thirty-second spell with a re-entry guard was the
-	// obvious answer and was MEASURED AND REJECTED: slow-target conversion
-	// legitimately runs past thirty seconds, so the bound evicted the ace
-	// from a posture it was winning with — the flounder fell from 16 kills
-	// to 13 (the ace alone 7 to 4) and the drone did not move. Whatever
-	// bounds this has to key on the conversion FAILING, not on elapsed
-	// time, and the starvation signal cannot do it either because a stalled
-	// finish keeps taking priced shots: it is firing and not killing.
-	case slow && b.skill.library >= 3:
+	case slow && b.skill.library >= 3 && finishing && !wounding:
+		b.finished = tick
+		next = "convert"
+	case slow && b.skill.library >= 3 && (finishing || b.finished == 0 || tick-b.finished > 3600):
 		next = "finish"
 	case threatened:
 		next = "deny"

@@ -1197,6 +1197,9 @@ func (i *instance) fly(dt float64, tick uint64) {
 			for _, event := range events {
 				if event.Kind == "hit" {
 					i.events = append(i.events, map[string]any{"kind": "hit", "slot": slot, "by": round.Shooter, "count": event.Count})
+					if shooter := i.aircraft[round.Shooter]; shooter != nil && shooter.brain != nil {
+						shooter.brain.struck = tick // the wounding signal the finish posture's claim rests on
+					}
 					continue
 				}
 				i.raise(slot, event)

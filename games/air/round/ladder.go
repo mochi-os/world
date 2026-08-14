@@ -134,3 +134,31 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 	}
 	return zone
 }
+
+// Lethal is the defender's credibility judgement on a round already in
+// flight: from its present state — position, energy, fuel, phase — would
+// it still arrive supersonic against a target flying on as now? The same
+// bar Zone.Max sets for a shot not yet taken, asked mid-flight. The model
+// is copied and flown virtually; the caller's round is untouched. A real
+// shot at its Active call passes; a husk gliding in from a max-range
+// spray fails, and answering one wastes the answer.
+func Lethal(m Model, target Target, dt float64) bool {
+	virtual := target
+	closest, mach := math.MaxFloat64, -1.0
+	for {
+		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
+		if !m.Step(dt, support, &virtual) {
+			break
+		}
+		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
+		miss := m.relative(m.Position, virtual.Position).Length()
+		if miss < closest {
+			closest = miss
+			_, sound := atmosphere(m.Position.Y)
+			mach = m.Velocity.Length() / sound
+		} else if miss > closest+2000 {
+			break
+		}
+	}
+	return closest <= 500 && mach >= 1
+}
