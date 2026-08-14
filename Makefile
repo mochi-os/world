@@ -1,4 +1,4 @@
-version = 1.4
+version = 1.5
 bin = ../bin
 ldflags = -s -w -X main.build_version=$(version)
 go_sources := $(shell find server game games -name '*.go') go.mod go.sum

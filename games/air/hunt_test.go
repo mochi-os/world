@@ -140,16 +140,28 @@ func TestHuntBvrJoust(t *testing.T) {
 }
 
 // TestHuntDefence flies a fixed superhuman attacker against a defender of
-// each level over six seeds and orders the outcomes: defence quality must
-// rise with level. The ends of the ladder are gated; the middle is reported
-// (kill counts at this sample size swing, and the dials are the battery's
-// to tune). The jammer trade is asserted here too: only the machine ever
-// arms it, loud beyond the terminal call and quiet inside it.
+// each level over six seeds and measures the defence with gradient, not a
+// coin flip: binary survival compresses (the novice's full-burner drag
+// authentically survives marginal stern shots by running), so the
+// instrument tracks time alive under fire, every inbound radar round's
+// closest approach, and how many of those rounds died with the defender
+// still flying. The jammer trade is asserted here too: only the machine
+// ever arms it, loud beyond the terminal call and quiet inside it.
 func TestHuntDefence(t *testing.T) {
+	type outcome struct {
+		alive    float64 // s the defender lasted (full fight = the limit)
+		faced    int     // inbound radar rounds launched at the defender
+		settled  int     // rounds that reached a verdict before the fight ended
+		defeated int     // rounds that died with the defender still alive
+		least    float64 // summed closest approach of settled rounds (m)
+	}
+	const limit = 300.0
+	score := map[string]*outcome{}
 	survived := map[string]int{}
 	loud := map[string]bool{}
 	quieted := map[string]bool{}
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+		score[level] = &outcome{}
 		for seed := uint64(1); seed <= 6; seed++ {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("defence%s%d", level, seed),
 				Game: "air", Mode: "joust", Seed: seed,
@@ -186,8 +198,16 @@ func TestHuntDefence(t *testing.T) {
 			if defender == nil || attacker == nil {
 				t.Fatal("defence roster wrong")
 			}
-			alive := true
-			for tick := uint64(0); tick < 60*300 && alive; tick++ {
+			slot := -1
+			for _, s := range i.slots() {
+				if i.aircraft[s] == defender {
+					slot = s
+				}
+			}
+			closest := map[*missile]float64{} // every inbound round's nearest point so far
+			resolved := map[*missile]bool{}
+			o := score[level]
+			for tick := uint64(0); tick < uint64(60*limit); tick++ {
 				i.Step(tick, nil)
 				if defender.brain.jam {
 					loud[level] = true
@@ -198,30 +218,74 @@ func TestHuntDefence(t *testing.T) {
 				if loud[level] && !defender.brain.jam && defender.alive && defender.brain.alerted > 0 {
 					quieted[level] = true
 				}
+				current := map[*missile]bool{}
+				if defender.alive && defender.model != nil {
+					for _, m := range i.flying {
+						if m.radar == nil || m.target != slot {
+							continue
+						}
+						current[m] = true
+						_, d := i.bearing(m.position, defender.model.State.Position)
+						if prev, ok := closest[m]; !ok || d < prev {
+							closest[m] = d
+						}
+					}
+				}
+				for m, d := range closest {
+					if current[m] || resolved[m] {
+						continue
+					}
+					// The round is gone; the defender's state at retirement
+					// is the verdict. The killing round retires unresolved
+					// with the defender dead and rightly counts undefeated.
+					resolved[m] = true
+					o.settled++
+					o.least += d
+					if defender.alive {
+						o.defeated++
+					}
+				}
 				if !defender.alive || defender.model == nil {
-					alive = false
+					o.alive += float64(tick) / 60
+					break
 				}
 				if attacker.model == nil || !attacker.alive {
-					break // the defender won outright: counts as survival
+					break // the defender won outright: full time credit below
 				}
 			}
-			if alive {
+			if defender.alive && defender.model != nil {
+				o.alive += limit
 				survived[level]++
 			}
+			o.faced += len(closest)
 			i.Close()
 		}
 	}
-	fmt.Printf("bvr defence vs a superhuman attacker: novice %d/6, pilot %d/6, ace %d/6, superhuman %d/6 survived\n",
-		survived["novice"], survived["pilot"], survived["ace"], survived["superhuman"])
-	// Survival compresses at this sample size, and the physics keeps it
-	// compressed: the novice's full-burner drag is authentically the best
-	// pure-survival play against marginal stern shots — it survives by
-	// running and never wins, which is why the BvrLadder battery, not this
-	// gate, owns the outcome ordering. Fail only on separation beyond
-	// one-seed noise; the tuning round owes this instrument a sharper
-	// metric (time alive, rounds defeated) than binary survival.
-	if survived["novice"] > survived["superhuman"]+1 {
-		t.Fatalf("defence ladder inverted end to end: novice survived %d, superhuman %d", survived["novice"], survived["superhuman"])
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+		o := score[level]
+		mean := 0.0
+		if o.settled > 0 {
+			mean = o.least / float64(o.settled)
+		}
+		fmt.Printf("bvr defence vs a superhuman attacker: %-10s alive %5.1f s mean, survived %d/6, rounds faced %2d, defeated %2d/%2d, closest approach %6.0f m mean\n",
+			level, o.alive/6, survived[level], o.faced, o.defeated, o.settled, mean)
+	}
+	// The gates hold the instrument's ends: the novice must not outlast the
+	// machine by more than one fight of noise, and the machine's defence
+	// must beat the novice's on round quality — the fraction of inbound
+	// rounds it defeats. The middle tiers are reported for the tuning round;
+	// their per-dial ordering belongs to the battery.
+	if score["novice"].alive > score["superhuman"].alive+limit {
+		t.Fatalf("defence ladder inverted end to end: novice alive %.0f s total, superhuman %.0f s", score["novice"].alive, score["superhuman"].alive)
+	}
+	ratio := func(o *outcome) float64 {
+		if o.settled == 0 {
+			return 0
+		}
+		return float64(o.defeated) / float64(o.settled)
+	}
+	if ratio(score["superhuman"]) < ratio(score["novice"])-0.34 {
+		t.Fatalf("the machine defeats a smaller share of inbound rounds than the novice: %.2f vs %.2f", ratio(score["superhuman"]), ratio(score["novice"]))
 	}
 	if !loud["superhuman"] {
 		t.Fatal("the machine never armed its jammer with a round inbound")
