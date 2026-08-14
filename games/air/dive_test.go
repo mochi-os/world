@@ -27,7 +27,7 @@ import (
 func TestDiveRecovery(t *testing.T) {
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		for _, dive := range []float64{45, 60, 77, 85} {
-			b := NewBandit(level, 5, 250000, "", false, false)
+			b := NewBandit(level, 5, 250000, "", false, false, "")
 			const speed = 260.0
 			down := math.Sin(dive * math.Pi / 180)
 			along := math.Cos(dive * math.Pi / 180)

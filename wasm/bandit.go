@@ -26,7 +26,7 @@ var (
 	bandit *air.Bandit
 	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive)
 	back   [flight.Size]float64     // bandit state out
-	shots  [36]float64              // up to six player missiles, six words each
+	shots  [64]float64              // up to eight rounds in the air, eight words each: position, velocity, shooter, phase
 )
 
 func bandits() map[string]any {
@@ -50,11 +50,12 @@ func banditInitialize(this js.Value, arguments []js.Value) any {
 		Sky      string
 		Night    bool
 		Missiles bool
+		Weapons  string
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles)
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons)
 	return ""
 }
 
@@ -93,11 +94,11 @@ func banditMenace(this js.Value, arguments []js.Value) any {
 		return "uninitialised"
 	}
 	count := arguments[1].Int()
-	if count > 6 {
-		count = 6
+	if count > 8 {
+		count = 8
 	}
-	receive(arguments[0], shots[:count*6])
-	bandit.Menace(shots[:count*6])
+	receive(arguments[0], shots[:count*8])
+	bandit.Menace(shots[:count*8])
 	return ""
 }
 
@@ -110,7 +111,7 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	if fleet[0].used {
 		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
 	}
-	fire, flare := bandit.Step()
+	fire, flare, launch := bandit.Step()
 	bandit.State().Encode(back[:])
 	send(back[:], arguments[0])
 	flags := 0
@@ -119,6 +120,13 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	}
 	if flare {
 		flags |= 2
+	}
+	if launch {
+		flags |= 4 // an AMRAAM left the rail this frame: the client owns the round from here
+	}
+	flags |= bandit.Emitter() << 3 // bits 3-4: the radar state the player's RWR reads
+	if bandit.Locked() {
+		flags |= 32 // the STT holds the player: datalink support for the client-flown round
 	}
 	return flags
 }

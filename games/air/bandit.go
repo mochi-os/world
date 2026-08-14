@@ -18,6 +18,7 @@ import (
 	"world/games/air/aircraft"
 	"world/games/air/battle"
 	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 type Bandit struct {
@@ -47,7 +48,20 @@ type Bandit struct {
 // Revisit when a map with real relief lands. The tell is a bot holding a level
 // break straight into rising ground - the floor will read its height above the
 // SEA and be perfectly happy.
-func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool) *Bandit {
+// weapons is the match's weapons class, exactly as a server session carries
+// it (settled 2026-08-13: bots arm to the class, same equipment as humans).
+// "open" arms the bandit with the BVR fit and wakes hunt.go — radar,
+// AMRAAM employment, crank, and the radar-round defence — in single player,
+// the same brain path the server flies. "" preserves the older callers:
+// fox2 when the player can fire missiles, guns otherwise.
+func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string) *Bandit {
+	if weapons == "" {
+		if missiles {
+			weapons = "fox2"
+		} else {
+			weapons = "guns"
+		}
+	}
 	environment := flight.Environment{Seed: seed, Wrap: wrap}
 	mirror := &craft{player: game.Player{Name: "player", Slot: 0}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9}
@@ -58,10 +72,11 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 	}
 	fighter := &craft{player: game.Player{Name: "bandit", Slot: 1}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9,
-		bot: true, brain: thought}
+		bot: true, brain: thought, lock: -1, loadout: bots_loadout(weapons)}
 	fighter.arm()
 	return &Bandit{
-		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night, missiles: missiles,
+		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night,
+			missiles: missiles || weapons == "open", weapons: weapons,
 			aircraft: map[int]*craft{0: mirror, 1: fighter}},
 		craft: fighter,
 	}
@@ -105,20 +120,34 @@ func (b *Bandit) Mirror(words []float64, firing bool, alive bool) {
 	reflection.alive = alive
 }
 
-// Menace declares the player's missiles currently chasing the bandit, six
-// words each (position, velocity) — the brain's evade logic reads them.
+// Menace declares every missile in the air, eight words each: position,
+// velocity, shooter (0 the player, 1 the bandit), and phase (-1 a heater,
+// otherwise the radar round's guidance phase). The client is the source of
+// truth for rounds in single player — it flies them — and the stubs built
+// here are exactly what the brain reads everywhere else: the evade logic
+// wants inbound positions, the defence wants phase >= Active radar rounds
+// targeting the bandit, and the shoot-look-shoot discipline wants the
+// bandit's own rounds' phases. Rebuilt every frame, so nothing accumulates.
 func (b *Bandit) Menace(words []float64) {
 	b.arena.flying = b.arena.flying[:0]
-	for at := 0; at+6 <= len(words); at += 6 {
-		b.arena.flying = append(b.arena.flying, &missile{shooter: 0, target: 1, life: missile_life,
+	for at := 0; at+8 <= len(words); at += 8 {
+		shooter := 0
+		if words[at+6] > 0.5 {
+			shooter = 1
+		}
+		m := &missile{shooter: shooter, target: 1 - shooter, life: missile_life,
 			position: flight.Vec3{X: words[at], Y: words[at+1], Z: words[at+2]},
-			velocity: flight.Vec3{X: words[at+3], Y: words[at+4], Z: words[at+5]}})
+			velocity: flight.Vec3{X: words[at+3], Y: words[at+4], Z: words[at+5]}}
+		if phase := int(words[at+7]); phase >= 0 {
+			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity}
+		}
+		b.arena.flying = append(b.arena.flying, m)
 	}
 }
 
 // Step advances the bandit one 60 Hz frame: think, fly four substeps, and
 // report the trigger and any flare drop.
-func (b *Bandit) Step() (fire bool, flare bool) {
+func (b *Bandit) Step() (fire bool, flare bool, launch bool) {
 	b.tick++
 	// The single-player bandit drives think() directly rather than through
 	// instance.Step, so it owns the per-tick arbiter allowance reset (#256)
@@ -131,13 +160,18 @@ func (b *Bandit) Step() (fire bool, flare bool) {
 		if event["kind"] == "flare" {
 			flare = true
 		}
+		if event["kind"] == "fox3" {
+			launch = true
+		}
 	}
 	b.arena.events = b.arena.events[:0]
 	for substep := 0; substep < 4; substep++ {
 		b.craft.model.Step(b.craft.latest)
 	}
 	b.craft.flared += 1.0 / 60
-	return b.craft.latest.Fire, flare
+	b.craft.clouded += 1.0 / 60
+	b.craft.release += 1.0 / 60
+	return b.craft.latest.Fire, flare, launch
 }
 
 // State exposes the bandit's flight state for the client to render.
@@ -166,3 +200,11 @@ func (b *Bandit) Wound(damage flight.DamageState, condition battle.Condition) {
 // cascade feeds engine fires on it, so the fire drill can actually starve
 // them (a hardcoded cascade throttle would burn a drilling bandit forever).
 func (b *Bandit) Throttle() float64 { return b.craft.latest.Throttle }
+
+// Emitter reports the bandit's radar state for the player's RWR: the same
+// craft field a server pose relays, driven by the same hunt.go.
+func (b *Bandit) Emitter() int { return b.craft.emitter }
+
+// Locked reports whether the bandit's STT holds the player — the datalink
+// truth for a bandit-shot round the client is flying.
+func (b *Bandit) Locked() bool { return b.craft.emitter == 2 && b.craft.lock == 0 }
