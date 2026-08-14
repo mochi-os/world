@@ -119,8 +119,9 @@ func TestMachineSweep(t *testing.T) {
 					if hunter.latest.Fire {
 						fire = 1
 					}
-					fmt.Printf("      trace seed %d t %5.1f | span %6.0f | miss %6.0f | play %-8s intent %-8s | nearing %6.1f | fire %d | ammo %d\n",
-						seed, float64(tick)/60, span, miss, b.play, b.intent, b.nearing, fire, hunter.ammunition)
+					fmt.Printf("      trace seed %d t %5.1f | span %6.0f | miss %6.0f | play %-8s intent %-8s | nearing %6.1f | fire %d | ammo %d | alt %5.0f v %3.0f\n",
+						seed, float64(tick)/60, span, miss, b.play, b.intent, b.nearing, fire, hunter.ammunition,
+						hunter.model.State.Position.Y, hunter.model.State.Velocity.Length())
 				}
 				if b.prey == nil {
 					continue
