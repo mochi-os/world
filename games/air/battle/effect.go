@@ -32,6 +32,7 @@ const (
 	detonate  = 0.06 // chance a tank hit simply blows the jet up: HEI in the vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty. Doubled from 0.03 (2026-08-15) with the same reasoning that added `rupture` below: a kill the shooter cannot SEE is a kill that does not read, and the fuel-fire fuse hid most of them behind twenty seconds of burning
 	rupture   = 0.04 // chance a WET-WING hit blows the jet up: the wing tanks are vapour space too, and a round through one had no catastrophic path at all — only the slow `flash` fire. Lower than the fuselage tank's: less ullage, more structure in the way
 	cookoff   = 0.22 // chance per kg of warhead ÷ 10 that a hit on a live round detonates it — a 9.4 kg heater ~21%, a 22 kg AMRAAM ~48%. This is why crews jettison stores when they are hit, and it makes a loaded bandit a visibly more explosive target than one that has shot its rack
+	splinter  = 0.18 // a FRAGMENT's share of a direct hit's catastrophic odds. A warhead splinter is spent metal against a casing built to survive it, and a tank's vapour space is a smaller target for it — but the answer is not zero, which is how a jet comes apart at six to ten metres. Ten rays a burst compound: at this share a fringe blast rarely blows a jet up, and the rate test holds the band
 	flash     = 0.05 // chance a wet-wing hit lights the fuel
 	mortal    = 0.40 // chance a cockpit hit kills the pilot
 	plumbing  = 0.12 // chance a fuselage hit cuts a hydraulic run
@@ -41,13 +42,14 @@ const (
 // strike applies one hit to a part. The three hash words identify the hit
 // uniquely (shooter/tick/round) so every conditional roll is deterministic.
 // A CATASTROPHIC path — the fuel-air explosion, the round cooking off on
-// the rail — belongs to a direct hit, not to a fragment. A 20 mm HEI shell
-// is a small explosive charge arriving intact; a warhead fragment is spent
-// metal, and a modern round's casing is built to survive exactly that (the
-// whole point of insensitive munitions). Keeping fragments out of these
-// rolls is also what preserves the non-binary promise the fringe tests
-// encode: a near miss wounds a jet that still flies, however many rays it
-// throws, while a hit can end the fight where the shooter can see it.
+// the rail — is far likelier from a direct hit than from a fragment. A 20
+// mm HEI shell is a small explosive charge arriving intact; a warhead
+// splinter is spent metal against a casing built to survive it. But it is
+// not impossible, and a burst that finds a wing tank's vapour space or a
+// round on the rail is exactly how a jet comes apart at six to ten metres
+// — so a fragment rolls the same paths at `splinter` of the odds. Ten rays
+// compound, which is what keeps a fringe miss usually survivable and
+// occasionally spectacular.
 func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, slot uint64, tick uint64, round uint64) []Event {
 	var events []Event
 	damage := body.Damage
@@ -55,7 +57,10 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 		return roll(seed, slot, tick, round, salt) < p*severity
 	}
 	catastrophe := func(p float64, salt uint64) bool {
-		return direct && roll(seed, slot, tick, round, salt) < p
+		if !direct {
+			p *= splinter
+		}
+		return roll(seed, slot, tick, round, salt) < p
 	}
 	switch part.Kind {
 	case Structure:

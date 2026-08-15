@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	lethal    = 7.5  // m, inside this the annular blast is a structural kill
+	lethal    = 5.5  // m, inside this the annular blast is a structural kill
 	fringe    = 12.0 // m, fragment envelope
 	fragments = 10   // fragment rays thrown across the fringe
 )
@@ -22,26 +22,35 @@ const (
 // Callers pass the class; Blast keeps the 9M as its default so every
 // existing call is unchanged.
 //
-// The heater's lethal radius was 5 m until 2026-08-15 — deliberately tight,
-// tuned for gameplay rather than physics, and the note below already
-// conceded it read conservative against the ~10 m the real 9M is credited
-// with. It now sits at 7.5 m, between the two: a well-placed heater blows
-// the target up, which is what a hit is SUPPOSED to look like, without
-// claiming the paper figure outright.
+// This radius is a CERTAINTY, not the published figure. The ~10 m credited
+// to a 9M-class round is a probability contour — the distance within which
+// a fighter-sized target is likely to take mission-killing damage — while
+// `lethal` here means destroyed outright with no roll. Blast overpressure
+// alone only breaks an airframe within a very few metres of a 9 kg
+// warhead; past that it is fragments, and whether a fragment finds a spar,
+// a tank, an engine or just skin is chance. So the certainty radius sits
+// where destruction really is near-certain (5.5 m), and the frequent,
+// VISIBLE explosions come from the stochastic paths in the fragment band
+// instead — a splinter into the vapour space or a warhead on the rail.
+// That is also how real aircraft blow up at six to ten metres, and it is
+// what leaves the graded middle the fringe tests guard: wounded and
+// flying, sometimes burning down, occasionally coming apart.
 //
 // Radar is the AIM-120's 22 kg blast-fragmentation warhead, a DIRECTED
 // design built for exactly this endgame — a high-closure pass where the
 // round has metres, not a stern chase where it has seconds. Its class is
-// anchored so the LETHAL radius holds the published ~10 m: at 1.4 it is
-// 10.5 m, which is where it sat before (class 2.0 over a 5 m base) and what
-// makes a well-flown BVR shot lethal against a defending fighter, our
-// terminal geometry passing such a target at 6-10 m. The class fell from
-// 2.0 to 1.4 only because the base rose to 7.5: the multiplier was carrying
-// the heater's conservatism, and the fragment envelope it also scaled was
-// inflated to 24 m as a side effect.
+// now simply the charge scaling: the cube root of 22 over 9.4 is 1.33, and
+// 1.4 allows a little for the directed pattern. That is the physically
+// honest number, and it becomes usable only once the base radius means
+// what it says — the class used to be 2.0 because the multiplier was
+// carrying the heater's conservatism, which inflated the fragment envelope
+// to 24 m as a side effect. A well-flown BVR shot stays lethal because our
+// terminal geometry passes a defending fighter at 6-10 m: inside the
+// fragment band, where the stochastic paths live even when the burst is
+// outside the certainty radius.
 const (
-	Heater = 1.0 // AIM-9M, 9.4 kg — the reference, 7.5 m lethal / 12 m fringe
-	Radar  = 1.4 // AIM-120C, 22 kg directed fragmentation — 10.5 m lethal / 16.8 m fringe
+	Heater = 1.0 // AIM-9M, 9.4 kg — the reference, 5.5 m lethal / 12 m fringe
+	Radar  = 1.4 // AIM-120C, 22 kg directed fragmentation — 7.7 m lethal / 16.8 m fringe
 )
 
 // Blast detonates an AIM-9M-class warhead at a world point against a target

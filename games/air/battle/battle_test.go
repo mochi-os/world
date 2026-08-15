@@ -7,6 +7,7 @@
 package battle
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -391,4 +392,56 @@ func TestVolleyImpactsLandOnTheAirframe(t *testing.T) {
 		}
 	}
 	t.Logf("%d hits reported %d impact points, all on structure", hits, len(impacts))
+}
+
+// TestFringeRate is the honest form of the fringe promise. A probabilistic
+// model cannot promise any particular seed, so this measures the SHARE of
+// fringe bursts (outside the certainty radius, inside the fragment
+// envelope) that end in a catastrophic kill, across many seeds and burst
+// geometries, and holds it in a band: rarely, but not never.
+//
+// The band is the design intent stated plainly. Too low and a near miss is
+// a formality — the graded middle swallows every shot and a kill never
+// reads. Too high and the certainty radius is a lie, because everything
+// inside the envelope dies anyway and the fringe promise (a wounded jet
+// that still flies) is gone with it. A loaded jet sits at the top of the
+// band and a Winchester one at the bottom: the rounds on its own rails are
+// part of what kills it.
+func TestFringeRate(t *testing.T) {
+	blown, total := 0, 0
+	for seed := uint64(1); seed <= 240; seed++ {
+		body, m := target()
+		body.Stores = ^uint64(0) // a full rack: the most explosive case the model allows
+		// A burst somewhere in the fragment band, walked around the jet so
+		// no single geometry dominates the answer.
+		angle := float64(seed%12) * math.Pi / 6
+		reach := lethal + 0.5 + float64(seed%5)
+		point := m.State.Position.Add(flight.Vec3{
+			X: reach * math.Cos(angle) * 0.4,
+			Y: reach * math.Sin(angle),
+			Z: reach * math.Cos(angle),
+		})
+		if point.Subtract(m.State.Position).Length() <= lethal {
+			continue // inside the certainty radius: not a fringe burst
+		}
+		kill, _ := Blast(point, m.State.Position, m.State.Attitude, body, 0, seed, 3, 2)
+		if kill {
+			continue // an outright structural kill is the certainty radius, not this measurement
+		}
+		total++
+		if body.Condition.Burning && body.Condition.Fuse <= 0.5 {
+			blown++ // a catastrophic path took: the jet is coming apart now, not burning down over half a minute
+		}
+	}
+	if total < 100 {
+		t.Fatalf("only %d fringe bursts landed: the geometry walk is not exercising the envelope", total)
+	}
+	share := 100 * float64(blown) / float64(total)
+	fmt.Printf("fringe bursts on a fully loaded jet: %d of %d ended catastrophically (%.0f%%)\n", blown, total, share)
+	if share < 4 {
+		t.Errorf("a fringe burst never blows a jet up (%.0f%% of %d): the stochastic paths are dead and only the certainty radius kills", share, total)
+	}
+	if share > 35 {
+		t.Errorf("a fringe burst blows a jet up %.0f%% of the time (%d bursts): the fragment band has become a second certainty radius", share, total)
+	}
 }
