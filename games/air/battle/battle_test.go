@@ -445,3 +445,43 @@ func TestFringeRate(t *testing.T) {
 		t.Errorf("a fringe burst blows a jet up %.0f%% of the time (%d bursts): the fragment band has become a second certainty radius", share, total)
 	}
 }
+
+// TestShedElements pins the element ranges the CLIENT hides wing panels by.
+// engine.ts cannot ask the airframe how its surfaces are ordered, so it
+// carries the shed halves as constants (elements 4-7 port, 20-23 starboard).
+// If the airframe's construction order ever changes, this fails here — with
+// the file to edit named — rather than silently hiding the wrong wing.
+func TestShedElements(t *testing.T) {
+	base, ranges := 0, map[float64][2]int{}
+	for si := range fa18c.Airframe.Surfaces {
+		s := &fa18c.Airframe.Surfaces[si]
+		if s.Kind == flight.Wing {
+			ranges[s.Side] = [2]int{base + len(s.Elements)/2, base + len(s.Elements)}
+		}
+		base += len(s.Elements)
+	}
+	if got, want := ranges[-1], [2]int{4, 8}; got != want {
+		t.Errorf("the PORT wing's shed elements are %v, not %v — engine.ts PANELS[0].first must change with it", got, want)
+	}
+	if got, want := ranges[1], [2]int{20, 24}; got != want {
+		t.Errorf("the STARBOARD wing's shed elements are %v, not %v — engine.ts PANELS[1].first must change with it", got, want)
+	}
+	// And the shed itself must write exactly that range.
+	body, _ := target()
+	for si := range fa18c.Airframe.Surfaces {
+		if fa18c.Airframe.Surfaces[si].Kind == flight.Wing && fa18c.Airframe.Surfaces[si].Side == -1 {
+			if !shed(body, si) {
+				t.Fatal("the port wing would not shed")
+			}
+			break
+		}
+	}
+	for e := 4; e < 8; e++ {
+		if body.Damage.Element[e] < 1 {
+			t.Errorf("element %d survived the port shed (%.2f): the client hides the panel on 4-7 all being gone", e, body.Damage.Element[e])
+		}
+	}
+	if body.Damage.Element[3] >= 1 {
+		t.Error("the shed reached element 3 — that is the INBOARD half, and the panel the client hides is only the outboard one")
+	}
+}
