@@ -29,7 +29,9 @@ const (
 	linkage   = 0.25 // chance a fin-root hit restricts the rudder
 	kindle    = 0.30 // chance a hit on an already-damaged engine starts a fire
 	torch     = 0.08 // chance a tank hit lights the fuel
-	detonate  = 0.03 // chance a tank hit simply blows the jet up (#144): HEI in vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty
+	detonate  = 0.06 // chance a tank hit simply blows the jet up: HEI in the vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty. Doubled from 0.03 (2026-08-15) with the same reasoning that added `rupture` below: a kill the shooter cannot SEE is a kill that does not read, and the fuel-fire fuse hid most of them behind twenty seconds of burning
+	rupture   = 0.04 // chance a WET-WING hit blows the jet up: the wing tanks are vapour space too, and a round through one had no catastrophic path at all — only the slow `flash` fire. Lower than the fuselage tank's: less ullage, more structure in the way
+	cookoff   = 0.22 // chance per kg of warhead ÷ 10 that a hit on a live round detonates it — a 9.4 kg heater ~21%, a 22 kg AMRAAM ~48%. This is why crews jettison stores when they are hit, and it makes a loaded bandit a visibly more explosive target than one that has shot its rack
 	flash     = 0.05 // chance a wet-wing hit lights the fuel
 	mortal    = 0.40 // chance a cockpit hit kills the pilot
 	plumbing  = 0.12 // chance a fuselage hit cuts a hydraulic run
@@ -38,11 +40,22 @@ const (
 
 // strike applies one hit to a part. The three hash words identify the hit
 // uniquely (shooter/tick/round) so every conditional roll is deterministic.
-func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, tick uint64, round uint64) []Event {
+// A CATASTROPHIC path — the fuel-air explosion, the round cooking off on
+// the rail — belongs to a direct hit, not to a fragment. A 20 mm HEI shell
+// is a small explosive charge arriving intact; a warhead fragment is spent
+// metal, and a modern round's casing is built to survive exactly that (the
+// whole point of insensitive munitions). Keeping fragments out of these
+// rolls is also what preserves the non-binary promise the fringe tests
+// encode: a near miss wounds a jet that still flies, however many rays it
+// throws, while a hit can end the fight where the shooter can see it.
+func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, slot uint64, tick uint64, round uint64) []Event {
 	var events []Event
 	damage := body.Damage
 	chance := func(p float64, salt uint64) bool {
 		return roll(seed, slot, tick, round, salt) < p*severity
+	}
+	catastrophe := func(p float64, salt uint64) bool {
+		return direct && roll(seed, slot, tick, round, salt) < p
 	}
 	switch part.Kind {
 	case Structure:
@@ -66,7 +79,10 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 		}
 		if part.Wet {
 			damage.Leak += weep * severity
-			if chance(flash, 4) {
+			if catastrophe(rupture, 12) {
+				blow(body, seed, slot, tick)
+				events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
+			} else if chance(flash, 4) {
 				ignite(body, seed, slot, tick)
 				events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 			}
@@ -88,9 +104,8 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 		}
 	case Tank:
 		damage.Leak += seep * severity
-		if chance(detonate, 10) {
-			ignite(body, seed, slot, tick)
-			body.Condition.Fuse = math.Min(body.Condition.Fuse, 0.3) // HEI in the vapour space: the fire IS the explosion
+		if catastrophe(detonate, 10) {
+			blow(body, seed, slot, tick)
 			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 		} else if chance(torch, 6) {
 			ignite(body, seed, slot, tick)
@@ -100,6 +115,17 @@ func strike(body *Body, part *Part, severity float64, seed uint64, slot uint64, 
 		if chance(mortal, 7) && !body.Condition.Killed {
 			body.Condition.Killed = true
 			events = append(events, Event{Kind: "pilot", Engine: -1, Surface: -1})
+		}
+	case Ordnance:
+		// A round only cooks off if it is still on the rail: Stores is the
+		// attached mask the host keeps in step with the flight model, so a
+		// jet that has fired everything presents empty air here.
+		if part.Index < 0 || part.Index >= 64 || body.Stores&(1<<uint(part.Index)) == 0 {
+			break
+		}
+		if catastrophe(cookoff*part.Warhead/10, 13) {
+			blow(body, seed, slot, tick)
+			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 		}
 	case Gear:
 		damage.Gear[part.Index] = math.Min(1, damage.Gear[part.Index]+wheel*severity)

@@ -274,7 +274,7 @@ func TestGearShot(t *testing.T) {
 	if hit < 0 || body.Parts[hit].Kind != Gear {
 		t.Fatalf("the ray up into the left leg missed the gear capsule: part %d", hit)
 	}
-	events := strike(body, &body.Parts[hit], 1, 7, 3, 1, 1)
+	events := strike(body, &body.Parts[hit], 1, true, 7, 3, 1, 1)
 	if body.Damage.Gear[1] <= 0 {
 		t.Fatalf("the gear hit dealt nothing: %v", body.Damage.Gear)
 	}

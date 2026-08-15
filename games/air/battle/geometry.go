@@ -26,6 +26,7 @@ const (
 	Cockpit          // the pilot
 	Tank             // the fuel tank
 	Gear             // a landing-gear leg (nose, left, right)
+	Ordnance         // a live round on a station: hittable only while attached
 )
 
 // Part is one capsule of hit geometry in the target's body frame.
@@ -35,9 +36,10 @@ type Part struct {
 	Surface int // owning surface (Structure), else -1
 	A, B    flight.Vec3
 	Radius  float64
-	Root    bool // innermost element of its surface: actuator territory
-	Wet     bool // inboard wing element: fuel inside
-	Flapped bool // the element carries a control surface
+	Root    bool    // innermost element of its surface: actuator territory
+	Wet     bool    // inboard wing element: fuel inside
+	Flapped bool    // the element carries a control surface
+	Warhead float64 // Ordnance: kg of high explosive in the round
 }
 
 // Parts builds the hit geometry for an airframe.
@@ -95,6 +97,24 @@ func Parts(a *flight.Airframe) []Part {
 	parts = append(parts, Part{Kind: Cockpit, Index: 0, Surface: -1, A: a.Cockpit, B: a.Cockpit, Radius: 0.7})
 	parts = append(parts, Part{Kind: Tank, Index: 0, Surface: -1,
 		A: a.Tank.Subtract(flight.Vec3{X: 1.8}), B: a.Tank.Add(flight.Vec3{X: 1.8}), Radius: 0.8})
+	// Live rounds on the stations. Every catalog entry with a warhead gets a
+	// capsule; whether it is actually THERE is Body.Stores at strike time, so
+	// a jet that has shot its rack presents empty rails and stops being a
+	// cook-off target.
+	for si := range a.Stores {
+		if a.Stores[si].Warhead <= 0 {
+			continue
+		}
+		parts = append(parts, Part{
+			Kind:    Ordnance,
+			Index:   si,
+			Surface: -1,
+			A:       a.Stores[si].Position.Subtract(flight.Vec3{X: 1.4}),
+			B:       a.Stores[si].Position.Add(flight.Vec3{X: 1.4}),
+			Radius:  0.35,
+			Warhead: a.Stores[si].Warhead,
+		})
+	}
 	for gi, leg := range [3]flight.Strut{a.Gear.Nose, a.Gear.Left, a.Gear.Right} {
 		parts = append(parts, Part{Kind: Gear, Index: gi, Surface: -1,
 			A: leg.Attach, B: leg.Attach.Add(flight.Vec3{Y: -1.2}), Radius: 0.3}) // the bay and the leg below it: hittable stowed too — doors are no armour

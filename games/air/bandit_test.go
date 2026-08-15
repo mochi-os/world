@@ -57,7 +57,7 @@ func TestBanditBvr(t *testing.T) {
 		player.State.Encode(words)
 		b.Mirror(words, false, true)
 		b.Menace(nil)
-		_, _, launch := b.Step()
+		_, _, launch, _ := b.Step()
 		if b.craft.emitter == 2 && stt == 0 {
 			stt = tick
 		}
@@ -89,7 +89,7 @@ func TestBanditBvr(t *testing.T) {
 		player.State.Encode(words)
 		b.Mirror(words, false, true)
 		b.Menace(stub(0)) // Midcourse
-		if _, _, launch := b.Step(); launch {
+		if _, _, launch, _ := b.Step(); launch {
 			t.Fatal("a second round left the rail with the first still in midcourse: the look discipline is not reading the client's report")
 		}
 	}
@@ -99,7 +99,7 @@ func TestBanditBvr(t *testing.T) {
 		player.State.Encode(words)
 		b.Mirror(words, false, true)
 		b.Menace(stub(2)) // Pitbull: the supporter is free
-		_, _, second = b.Step()
+		_, _, second, _ = b.Step()
 	}
 	if !second {
 		t.Fatal("no follow-up shot after the client reported pitbull")

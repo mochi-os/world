@@ -147,7 +147,7 @@ func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity fligh
 		if depth >= through || severity < spent {
 			break
 		}
-		events = append(events, strike(body, &body.Parts[part], severity, seed, uint64(r.Shooter), r.Born, r.Index*uint64(through)+uint64(depth))...)
+		events = append(events, strike(body, &body.Parts[part], severity, true, seed, uint64(r.Shooter), r.Born, r.Index*uint64(through)+uint64(depth))...)
 		severity *= penetration
 	}
 	events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: 1})

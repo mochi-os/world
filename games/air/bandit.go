@@ -147,7 +147,14 @@ func (b *Bandit) Menace(words []float64) {
 
 // Step advances the bandit one 60 Hz frame: think, fly four substeps, and
 // report the trigger and any flare drop.
-func (b *Bandit) Step() (fire bool, flare bool, launch bool) {
+// Step advances the brain one frame and reports what left the aircraft:
+// the trigger, a countermeasure dispense, an AMRAAM, and a HEATER. The
+// heater was missing until 2026-08-15 — the brain fired 9Ms into its own
+// arena, where the only target was a mirror of the player that the client
+// never sees, so a single-player bandit could not threaten the pilot with a
+// heat-seeker at all. Every launch the brain makes now crosses the boundary
+// and the client flies the round.
+func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool) {
 	b.tick++
 	// The single-player bandit drives think() directly rather than through
 	// instance.Step, so it owns the per-tick arbiter allowance reset (#256)
@@ -163,6 +170,9 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool) {
 		if event["kind"] == "fox3" {
 			launch = true
 		}
+		if event["kind"] == "missile" {
+			heater = true
+		}
 	}
 	b.arena.events = b.arena.events[:0]
 	for substep := 0; substep < 4; substep++ {
@@ -171,7 +181,7 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool) {
 	b.craft.flared += 1.0 / 60
 	b.craft.clouded += 1.0 / 60
 	b.craft.release += 1.0 / 60
-	return b.craft.latest.Fire, flare, launch
+	return b.craft.latest.Fire, flare, launch, heater
 }
 
 // State exposes the bandit's flight state for the client to render.

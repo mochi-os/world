@@ -39,6 +39,7 @@ type Body struct {
 	Parts     []Part
 	Damage    *flight.DamageState
 	Condition *Condition
+	Stores    uint64 // attached-station bitmask (bit i = Airframe.Stores[i]), kept in step with the flight model by the host: an unset bit is an empty rail, and a round that is not there cannot cook off
 }
 
 // Event reports a notable outcome for presentation and scoring. Kind is one
@@ -60,6 +61,9 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 	damage := body.Damage
 	step := 1 / rate
 	condition.Damaged += step
+	if model != nil {
+		body.Stores = model.Attached() // a real aircraft's rails are the model's; a standalone hulk's host sets the mask itself
+	}
 
 	// Engine fires: feed on fuel, starve without it. The drill is either the
 	// per-engine cutoff (Inputs.Secure — the real NATOPS 15.1 answer, which
@@ -118,9 +122,35 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 		}
 		if normal > ultimate*strength && weaker >= 0 && shed(body, weaker) {
 			events = append(events, Event{Kind: "shed", Engine: -1, Surface: weaker})
+			// Break-up: a wing leaving at high dynamic pressure does not
+			// start a spin, it takes the aircraft apart — the asymmetric
+			// load arrives faster than any structure can carry it. Below
+			// the threshold the jet departs and falls, which is the older
+			// behaviour and still the right one at low speed.
+			if model.Cas() > breakup {
+				blow(body, seed, slot, tick)
+				events = append(events, Event{Kind: "explode", Engine: -1, Surface: -1})
+			}
 		}
 	}
 	return events
+}
+
+// breakup is the calibrated airspeed above which shedding a wing tears the
+// airframe apart rather than merely spinning it: 180 m/s is ~350 knots, the
+// speed band a turning fight lives in.
+const breakup = 180.0
+
+// blow is the CATASTROPHIC kill: the fuel-air explosion, or a warhead
+// cooking off on the rail. It is the same fuel fire ignite() starts, with
+// the fuse cut to a fraction of a second — one path to the explosion, one
+// set of events, and the hosts already consume it. A kill the shooter
+// cannot see is a kill that does not read, and before this nearly every
+// gun kill hid behind ten to thirty seconds of burning.
+func blow(body *Body, seed uint64, slot uint64, tick uint64) {
+	ignite(body, seed, slot, tick)
+	body.Condition.Burning = true
+	body.Condition.Fuse = math.Min(body.Condition.Fuse, 0.3)
 }
 
 // ignite starts the unsuppressable fuel fire with a deterministic fuse.

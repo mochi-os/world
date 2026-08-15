@@ -111,7 +111,7 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	if fleet[0].used {
 		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
 	}
-	fire, flare, launch := bandit.Step()
+	fire, flare, launch, heater := bandit.Step()
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
 	send(back[:], arguments[0])
@@ -124,6 +124,9 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	}
 	if launch {
 		flags |= 4 // an AMRAAM left the rail this frame: the client owns the round from here
+	}
+	if heater {
+		flags |= 64 // a 9M left the rail: the client flies it, exactly as it flies the AMRAAM
 	}
 	flags |= bandit.Emitter() << 3 // bits 3-4: the radar state the player's RWR reads
 	if bandit.Locked() {

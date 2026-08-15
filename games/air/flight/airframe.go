@@ -106,6 +106,7 @@ type Store struct {
 	Mass     float64             // kg while attached (dry mass for tanks)
 	Area     float64             // m² flat plate while attached
 	Fuel     float64             // kg usable capacity; 0 = dry store
+	Warhead  float64             // kg of high explosive aboard; 0 = inert (a rail, a pylon, a tank). A hit here can cook the round off — which is why a loaded jet is a more explosive target than a Winchester one, and why crews jettison stores when they are hit.
 	Limit    struct{ Roll bool } // FCS restrictions while attached — Roll: the store engages R-LIM (NATOPS 2.8.2.8, wing-pylon tanks and air-to-ground stores)
 }
 

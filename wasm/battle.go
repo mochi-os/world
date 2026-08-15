@@ -68,6 +68,7 @@ func battles() map[string]any {
 	arsenal = make([]float64, 64)
 	return map[string]any{
 		"hulk":     js.FuncOf(rig),
+		"racks":    js.FuncOf(racks), // NOT "stores": every table here merges into ONE flat export map, and main.go already owns that name for the ownship's store mask — a collision would silently replace it
 		"volley":   js.FuncOf(volley),
 		"fly":      js.FuncOf(fly),
 		"blast":    js.FuncOf(blast),
@@ -89,7 +90,24 @@ func rig(this js.Value, arguments []js.Value) any {
 	h.damage = flight.DamageState{}
 	h.condition = battle.Condition{Damager: -1}
 	h.body = battle.Body{Airframe: airframe, Parts: battle.Parts(airframe), Damage: &h.damage, Condition: &h.condition}
+	if len(arguments) > 2 {
+		h.body.Stores = uint64(arguments[2].Float()) // the rig may declare the rack it starts with; battle.stores keeps it in step
+	}
 	h.used = true
+	return true
+}
+
+// stores sets a hulk's attached-station mask (bit i = Airframe.Stores[i]).
+// A real aircraft's rails come from its flight model inside Advance; a hulk
+// has no model, so the client pushes the bandit's mask whenever a round
+// leaves the rail — without it a hulk reads as fully loaded forever and its
+// empty rails would keep cooking off.
+func racks(this js.Value, arguments []js.Value) any {
+	index := arguments[0].Int()
+	if index < 0 || index >= hulks || !fleet[index].used {
+		return false
+	}
+	fleet[index].body.Stores = uint64(arguments[1].Float())
 	return true
 }
 

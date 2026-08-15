@@ -89,6 +89,11 @@ func (m *Model) SetWorld(w World) { m.World = w }
 
 // Step advances the simulation exactly Dt. Pure given (State, in,
 // Environment, World): no I/O, clock, randomness, or allocation.
+// Attached reports the attached-station bitmask (bit i = Airframe.Stores[i]).
+// battle reads it to know which rounds are still on the rails and can cook
+// off; the flight core itself needs no getter, so it exists for that.
+func (m *Model) Attached() uint64 { return m.stores }
+
 // Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]):
 // firing a missile clears its bit, dropping the station's mass and drag.
 // Fuel-bearing entries extend the fuel system on the transition: a tank
