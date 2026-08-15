@@ -177,6 +177,15 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool) {
 // State exposes the bandit's flight state for the client to render.
 func (b *Bandit) State() *flight.State { return &b.craft.model.State }
 
+// Instruments is the bandit's own instrument tail — the same five words the
+// player's flight frame carries after its state (alpha, beta, load factor,
+// Mach, calibrated airspeed) — so the client can record the bandit's
+// telemetry from the indices it already uses for the ownship (#33 debrief).
+func (b *Bandit) Instruments() (alpha, beta, nz, mach, cas float64) {
+	m := b.craft.model
+	return m.Alpha(), m.Beta(), m.Nz(), m.Mach(), m.Cas()
+}
+
 // Mode is the doctrine state the brain last chose (#212 flight recorder, and
 // the #206 human-fight diagnostic). Empty for a drone with no brain.
 func (b *Bandit) Mode() string {

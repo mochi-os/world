@@ -25,7 +25,7 @@ import (
 var (
 	bandit *air.Bandit
 	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive)
-	back   [flight.Size]float64     // bandit state out
+	back   [flight.Size + 5]float64 // bandit state out, plus the instrument tail (alpha, beta, nz, mach, cas) at the ownship's own indices
 	shots  [64]float64              // up to eight rounds in the air, eight words each: position, velocity, shooter, phase
 )
 
@@ -112,7 +112,8 @@ func banditStep(this js.Value, arguments []js.Value) any {
 		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
 	}
 	fire, flare, launch := bandit.Step()
-	bandit.State().Encode(back[:])
+	bandit.State().Encode(back[:flight.Size])
+	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
 	send(back[:], arguments[0])
 	flags := 0
 	if fire {
