@@ -273,22 +273,23 @@ func TestLadderDuel(t *testing.T) {
 			if missiles {
 				// Two fights of daylight in the chaotic missile arm.
 				//
-				// KNOWN RED as of 2026-08-15, superhuman v ace 4-9: counting
-				// the shoot-shoot-look pair (bot.go) took away a saturation
-				// attack the machine leaned on. The gate had always described
-				// the rule in prose — a pair inside a second, then the third
-				// waits three — but the test re-armed off every launch, so
-				// the pair was the whole rack: an ace put six rounds into one
-				// second at 2.5 km and missed with all of them. Enforcing it
-				// is right, and a bandit now shoots believably at a player;
-				// what it costs is this pairing, while fights resolve faster
-				// (mean time to kill 88 s to 55 s).
+				// This read RED from 2026-08-15 (superhuman v ace 4-9), when
+				// counting the shoot-shoot-look pair took away a saturation
+				// attack the machine leaned on, and was earned back on
+				// 2026-08-16 at 5-4 WITHOUT restoring the stream — the pair
+				// rule is untouched and TestPairDiscipline still reads two.
 				//
-				// The slack STAYS at two. Passing on the current numbers
-				// would need five, which is not slack, it is switching the
-				// check off — and the inversion it exists to catch is real.
-				// The machine converting on disciplined pairs is the tuning
-				// that earns it back; until then this reads red on purpose.
+				// What it turned out to be was not heater employment at all.
+				// The machine's rounds already arrived three times as often as
+				// the ace's; it was losing the GUN fight 6-1 inside the
+				// missiles arm, having spent 5.0 s of every fight defending
+				// against rounds that were never going to reach it and 0.86 s
+				// in a launch envelope of its own. Volume was buying the ace
+				// suppression rather than kills. Two measured changes in
+				// bot.go: discipline no longer narrows the launch nose gate
+				// inside the seeker's own acquisition cone, and the instructor
+				// tiers no longer break for a round they can see has already
+				// been beaten (see `beaten`).
 				slack = 2
 			}
 			if losses > wins+slack {

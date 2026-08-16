@@ -253,7 +253,18 @@ func standard() tactics {
 	t.low.near, t.low.far, t.low.tail, t.low.rise = -30, -140, 0.85, 0.2
 	t.plan.deficit = 400
 	t.lead.closure, t.lead.floor, t.lead.angle, t.lead.hold = 2.0, 600, 1.3, 100
-	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0.06
+	// step 0.06 -> 0 (#37, measured 2026-08-16). The nose gate was TIGHTENED by
+	// discipline: 0.93 for the instructor tiers against 0.87 for a rookie —
+	// 21.6 degrees where the seeker's own acquisition cone is 30
+	// (missile_cone). So the better the pilot, the more shots it refused
+	// INSIDE the cone its weapon can actually take, and the machine starved:
+	// 0.86 s per fight in a legal launch envelope against the ace's 2.83, with
+	// the nose gate the lone blocker for 17 s of every fight and range never
+	// binding once. Discipline still earns its keep on the clause above it —
+	// rear aspect, closer range — which is where shot quality lives, because
+	// the flare roll is graded on ASPECT and not on how precisely the shooter
+	// was pointed at release.
+	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0
 	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
 	t.sandwich.span, t.sandwich.nose, t.sandwich.weight, t.sandwich.reach = 2200, 0.92, 0.3, 10000
 	t.support.span, t.support.share, t.support.engaged = 6000, 0.9, 2200 // share 0.75 -> 0.9 (2026-08-10 sweep): defer to a mate a little sooner, so the pair stops both-committing to the same target and trading two jets for one — section deaths fell 11% at flat kills across 80 seeds
@@ -666,6 +677,26 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 }
 
+// beaten reports a round this pilot can see has already lost: seduced onto a
+// flare, or gone ballistic with its lock broken. Its fuse stays live, so it is
+// not harmless — but it is no longer STEERING, and abandoning the fight for it
+// costs more than it saves.
+//
+// Measured 2026-08-16 (#37). The machine treats every round inside 4,500 m as
+// a reason to break, and the ace throws forty of them a fight at a 10 percent
+// arrival rate. That bought the ace something better than kills: the machine
+// spent 5.0 s of every fight defending against rounds that were never going to
+// reach it, and 0.86 s in a launch envelope of its own — then lost the gun
+// fight it had been kept out of position for, 6-1. Volume was suppressing
+// judgement.
+//
+// Only the instructor tiers get this. Watching a seeker go for the flare and
+// reading that you are safe is a trained skill; the rookie sees a missile and
+// breaks, which is authentic and is most of why the low tiers get gunned.
+func beaten(b *brain, m *missile) bool {
+	return b.skill.library >= 3 && (m.loose || m.blind > 0)
+}
+
 // decide refreshes the picture and picks the maneuver. Runs at the skill's cadence.
 func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b := a.brain
@@ -971,7 +1002,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if !b.noticed[m.number] && distance < 500+1000*b.skill.discipline {
 			b.noticed[m.number] = true // the corner of the eye, late
 		}
-		if b.noticed[m.number] && distance < 4500 {
+		if b.noticed[m.number] && distance < 4500 && !beaten(b, m) {
 			threatened, inbound = true, direction
 			break
 		}
