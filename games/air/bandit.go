@@ -121,13 +121,21 @@ func (b *Bandit) Mirror(words []float64, firing bool, alive bool) {
 }
 
 // Menace declares every missile in the air, eight words each: position,
-// velocity, shooter (0 the player, 1 the bandit), and phase (-1 a heater,
-// otherwise the radar round's guidance phase). The client is the source of
-// truth for rounds in single player — it flies them — and the stubs built
-// here are exactly what the brain reads everywhere else: the evade logic
-// wants inbound positions, the defence wants phase >= Active radar rounds
-// targeting the bandit, and the shoot-look-shoot discipline wants the
-// bandit's own rounds' phases. Rebuilt every frame, so nothing accumulates.
+// velocity, shooter (0 the player, 1 the bandit), and phase (-1 a live
+// heater, -2 a heater already BEATEN, otherwise the radar round's guidance
+// phase). The client is the source of truth for rounds in single player — it
+// flies them — and the stubs built here are exactly what the brain reads
+// everywhere else: the evade logic wants inbound positions, the defence wants
+// phase >= Active radar rounds targeting the bandit, and the shoot-look-shoot
+// discipline wants the bandit's own rounds' phases. Rebuilt every frame, so
+// nothing accumulates.
+//
+// The -2 sentinel exists because the stubs were built with `loose` and `blind`
+// left at their zero values, and `beaten` (bot.go) reads exactly those two —
+// so the instructor tiers' refusal to abandon a fight for a round that has
+// already lost was dead in single player, the one place a human sees it. The
+// client tracks both flags itself, identically to the server. A client that
+// never sends -2 degrades to the old behaviour rather than misbehaving.
 func (b *Bandit) Menace(words []float64) {
 	b.arena.flying = b.arena.flying[:0]
 	for at := 0; at+8 <= len(words); at += 8 {
@@ -140,6 +148,8 @@ func (b *Bandit) Menace(words []float64) {
 			velocity: flight.Vec3{X: words[at+3], Y: words[at+4], Z: words[at+5]}}
 		if phase := int(words[at+7]); phase >= 0 {
 			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity}
+		} else if phase <= -2 {
+			m.loose = true // seduced onto a flare, or gimballed off and gone ballistic
 		}
 		b.arena.flying = append(b.arena.flying, m)
 	}
