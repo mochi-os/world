@@ -2075,7 +2075,17 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 		// tracking shot fired from stand-off range.
 		cued = forming < 70 || (c.latest.Fire && forming < 220)
 	case b.skill.library >= 3:
-		cued = span < 900 && forming < 45 // the planform cue, at gun range
+		// The planform cue, at gun range — plus the tracers, which this tier
+		// was alone in not having (#38, measured 2026-08-16). The rule below
+		// gives a PILOT a dodge whenever he is fired on from inside 160, and
+		// the machine one from inside 220, but the ace's cue read the aim
+		// solution only: it waited for 45 m, about four degrees at gun range,
+		// and ignored `Fire` entirely. So the best human tier was the least
+		// responsive to being shot at, which is backwards. Pinned at its own
+		// six by a scripted attacker the ace died in all six seeds — three of
+		// them inside 2.2 s, on fire by 1.9 — where the machine survived half
+		// of them and never let the attacker inside 380 m.
+		cued = (span < 900 && forming < 45) || (c.latest.Fire && forming < 160)
 	default:
 		cued = c.latest.Fire && forming < 160 // the pilot needs tracers already past
 	}
