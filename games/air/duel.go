@@ -381,6 +381,24 @@ var stances = map[string]posture{
 	"finish":  {2.2, 0.4, 0.4, 1.6},
 }
 
+// husband grades how hard a jet must nurse its energy: 1 while the engines
+// are healthy, falling to 0 at the limp threshold where the fight is over
+// anyway. Thrust is what refills the energy a turn spends, so a jet that has
+// lost half of it cannot spend at the same rate — it must keep more speed in
+// hand and want less of the fight. Between full thrust and the cliff the
+// brain used to change NOTHING: measured 2026-08-15, an ace with one engine
+// completely dead still pressed its attack 98.4% of the time. This is the
+// graded middle that band was missing.
+//
+// It cannot arise bot-versus-bot — a bot that takes engine damage there dies
+// within moments, zero occurrences in 686,175 measured bot-ticks — so this
+// only ever changes a fight against a PLAYER, who wounds a bandit and takes
+// a minute to finish it. Which is exactly the fight it was built for.
+func husband(me *flight.State) float64 {
+	thrust := 1 - (me.Damage.Engine[0]+me.Damage.Engine[1])/2
+	return clamp((thrust-0.35)/0.55, 0, 1) // 0 at the limp threshold, 1 by 0.90
+}
+
 // judge re-decides the posture. Trend, not instantaneous geometry: the
 // signals are whether the pursuit is actually gaining (nearing), how long
 // since the trigger last had a shot worth taking (chanced), and his energy
@@ -460,6 +478,8 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	case slow && b.skill.library >= 3 && finishing && !wounding:
 		b.finished = tick
 		next = "convert"
+	case slow && b.skill.library >= 3 && husband(me) < 0.5:
+		next = "convert" // hurt: a beaten opponent is still worth converting, but FINISH spends everything and the engines cannot refill it
 	case slow && b.skill.library >= 3 && (finishing || b.finished == 0 || tick-b.finished > 3600):
 		next = "finish"
 	case threatened:
@@ -633,7 +653,16 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			// real rather than seed luck. All gates hold, including the two
 			// that reject over-eager tracking (the drone ladder's
 			// monotonicity and TestConvert).
-			score += appraise(&sim.State, hisP, hisV, pace, stances[b.intent], &b.skill, b.ring)
+			// Nursed weights: the wounded jet values the energy it cannot
+			// rebuild and discounts the offence it cannot sustain. The
+			// stance is otherwise unchanged, so this bends the same
+			// doctrine rather than adding a second one.
+			stance := stances[b.intent]
+			if nurse := husband(&a.model.State); nurse < 1 {
+				stance.energy *= 1 + 2.0*(1-nurse)
+				stance.offence *= 0.4 + 0.6*nurse
+			}
+			score += appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring)
 			samples++
 		}
 	}
