@@ -271,17 +271,24 @@ func TestLadderDuel(t *testing.T) {
 			// three for the chaotic missile arm.
 			slack := 1
 			if missiles {
-				// Two fights of daylight in the chaotic missile arm. It went
-				// to three briefly on 2026-08-15, when the first form of the
-				// catastrophic-kill work tipped this pairing 5-7 to 5-8 — not
-				// by making the machine worse but by making fights RESOLVE,
-				// the mean time to kill falling 146 s to 88 s and the
-				// no-results with it, so the fights that had been timing out
-				// split one further to the ace. Reshaping that work to the
-				// realistic form (a small certainty radius, catastrophes
-				// rolled by fragments at long odds) put the tally back to 5-7
-				// AND kept the faster kills, so the slack came back to two:
-				// a gate is only worth what it still catches.
+				// Two fights of daylight in the chaotic missile arm.
+				//
+				// KNOWN RED as of 2026-08-15, superhuman v ace 4-9: counting
+				// the shoot-shoot-look pair (bot.go) took away a saturation
+				// attack the machine leaned on. The gate had always described
+				// the rule in prose — a pair inside a second, then the third
+				// waits three — but the test re-armed off every launch, so
+				// the pair was the whole rack: an ace put six rounds into one
+				// second at 2.5 km and missed with all of them. Enforcing it
+				// is right, and a bandit now shoots believably at a player;
+				// what it costs is this pairing, while fights resolve faster
+				// (mean time to kill 88 s to 55 s).
+				//
+				// The slack STAYS at two. Passing on the current numbers
+				// would need five, which is not slack, it is switching the
+				// check off — and the inversion it exists to catch is real.
+				// The machine converting on disciplined pairs is the tuning
+				// that earns it back; until then this reads red on purpose.
 				slack = 2
 			}
 			if losses > wins+slack {

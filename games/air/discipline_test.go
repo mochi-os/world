@@ -1,6 +1,7 @@
 package air
 
 import (
+	"fmt"
 	"testing"
 
 	"world/game"
@@ -102,5 +103,71 @@ func TestWrapFloor(t *testing.T) {
 	}
 	if w := made.(*instance).environment.Wrap; w != 250000 {
 		t.Fatalf("hostile wrap accepted: %v", w)
+	}
+}
+
+// TestPairDiscipline holds the BOT's shoot-shoot-look rule, the one the
+// launch gate has always described in prose: a pair may go inside a second,
+// because two rounds beat one flare programme, and the third then waits
+// three seconds for the look. The code counted nothing — `tick-launched <
+// 60` re-armed off each launch, so the pair became the rack — and it went
+// unseen because single-player heater launches never reached a client and
+// bot-versus-bot only ever measured rounds spent per fight, never the
+// interval between them. Measured when they became visible: an ace put six
+// rounds into one second at 2.5 km and missed with every one, which is the
+// exact failure the rule exists to prevent.
+func TestPairDiscipline(t *testing.T) {
+	heavy(t)
+	worst, fights := 0, 0
+	var quick int // third-or-later rounds that followed inside the look
+	for _, level := range []string{"pilot", "ace", "superhuman"} {
+		for seed := uint64(1); seed <= 6; seed++ {
+			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("pair%s%d", level, seed),
+				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+				Parameters: map[string]any{"missiles": true, "weapons": "fox2",
+					"bots": map[string]any{level: 1.0, "pilot": 1.0}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := made.(*instance)
+			fights++
+			shots := map[int][]uint64{} // launch ticks per shooter
+			for tick := uint64(0); tick < 60*180; tick++ {
+				i.events = i.events[:0]
+				i.Step(tick, nil)
+				for _, e := range i.events {
+					if e["kind"] != "missile" {
+						continue
+					}
+					slot, _ := e["slot"].(int)
+					shots[slot] = append(shots[slot], tick)
+				}
+			}
+			for _, ticks := range shots {
+				for n := range ticks {
+					// How many rounds fell inside the second before this one?
+					window := 1
+					for k := n - 1; k >= 0 && ticks[n]-ticks[k] < 60; k-- {
+						window++
+					}
+					if window > worst {
+						worst = window
+					}
+					// A third round must wait the look out, not ride the pair.
+					if n >= 2 && ticks[n]-ticks[n-2] < 180 {
+						quick++
+					}
+				}
+			}
+			i.Close()
+		}
+	}
+	fmt.Printf("pair discipline: %d fights | most rounds inside one second %d | third-or-later rounds inside the look %d\n",
+		fights, worst, quick)
+	if worst > 2 {
+		t.Errorf("%d rounds left the rails inside one second: the pair is not counted, and a stream this dense saturates any flare defence", worst)
+	}
+	if quick > 0 {
+		t.Errorf("%d rounds followed their pair without waiting the three-second look", quick)
 	}
 }

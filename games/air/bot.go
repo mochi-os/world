@@ -422,6 +422,7 @@ type brain struct {
 	glimpsed  uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
 	flanked   float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
 	launched  uint64     // tick of the last missile away (#253): shoot-shoot-look — the quick pair is doctrine, the volley is not
+	paired    int        // rounds already away in the CURRENT pair; the look resets it. Without a count, `paired` below re-armed off every launch and the pair became the whole rack
 	dodge     uint64     // tick the commanded evasion ends; steer overrides the aim out-of-plane until then
 	magazine  int        // rounds remaining, mirrored from the craft each tick: a pilot reads the counter
 	sampled   uint64     // tick of the stored orbit sample
@@ -627,8 +628,19 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		// and six missiles in one stream saturate any flare defence — the
 		// ace lost the missiles ladder 0-6 to the pilot, dead at t=10 with
 		// four still flying.
-		paired := b.launched != 0 && tick-b.launched < 60
+		// A PAIR is two rounds, and the count is what makes it so. This read
+		// `tick-b.launched < 60` alone, and every launch reset b.launched —
+		// so one second after the second round the gate re-armed, and again
+		// after the third, for as long as the brain kept asking. Measured
+		// 2026-08-15, the moment single-player heaters became visible: an ace
+		// put its whole rack of six into one second at 2.5 km and missed with
+		// all of them. The look below is what resets the count, which is the
+		// doctrine this comment always described.
 		looked := elapsed(tick, b.launched, 180)
+		if looked {
+			b.paired = 0
+		}
+		paired := b.launched != 0 && tick-b.launched < 60 && b.paired < 2
 		if i.missiles && i.free() && b.missiles > 0 && (paired || looked) {
 			// Missile shot discipline (#141): the seeker head has no IFF — it
 			// locks the best heat source in the cone whoever owns it. Checked
@@ -638,6 +650,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
 				if i.launch(slot, a) && !i.cheat.ammunition {
 					b.missiles--
+					b.paired++
 					b.launched = tick
 					a.model.Stores(armed(b.missiles))
 				}
