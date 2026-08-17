@@ -194,7 +194,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		broke := 0           // seeds where the bandit ever broke contact past 4 km
 		total, switches, slow := 0, 0, 0
 		energyGap, speedSum := 0.0, 0.0
-		for seed := uint64(1); seed <= 6; seed++ {
+		for seed := uint64(1); seed <= 24; seed++ {
 			g := New()
 			made, err := g.Create(game.Session{Identifier: "doctrine", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 				Parameters: map[string]any{"missiles": false, "bots": map[string]any{level: 1.0}}})
@@ -292,7 +292,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			list = append(list, entry{mode, n})
 		}
 		sort.Slice(list, func(a, b int) bool { return list[a].ticks > list[b].ticks })
-		fmt.Printf("\n=== %s under a crude tail-chase (6 seeds, 60 s each) ===\n", level)
+		fmt.Printf("\n=== %s under a crude tail-chase (24 seeds, 60 s each) ===\n", level)
 		fmt.Printf("  OUTCOME: killed the attacker in %d of 6 | shot down in %d | broke contact past 4 km in %d\n", downed, lost, broke)
 		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | CONVERTED to the attacker's rear quarter %.1f%%\n",
 			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest,
@@ -326,8 +326,16 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			// would only have hidden that.
 			//
 			// The share stays printed above, where it belongs: diagnostic.
+			// TWENTY-FOUR seeds, raised from six on 2026-08-17. An
+			// outcome gate on six is decided by single events: this read
+			// green on 2026-08-16 because the ace killed its attacker in
+			// exactly one seed, and at 24 it kills in NONE and is shot down
+			// in 21. The pass was a fluke, not a defence. The claim this
+			// gate exists to test — that the tier offers no threat and no
+			// escape — is true, and belongs to the play-scorer work, not
+			// here.
 			if downed == 0 && broke == 0 {
-				t.Errorf("ace was shot down in %d of 6 and never killed its attacker or broke contact: no threat and no escape", lost)
+				t.Errorf("ace was shot down in %d of 24 and never killed its attacker or broke contact: no threat and no escape", lost)
 			}
 		}
 	}

@@ -1198,6 +1198,7 @@ func (i *instance) fly(dt float64, tick uint64) {
 				math.Abs(flight.Shortest(state.Position.Z, round.Position.Z, i.environment.Wrap)) > 80 {
 				continue
 			}
+			a.body.Belt = float64(a.ammunition) / rounds // what is left in the drum, for the cook-off check
 			hit, events, _ := battle.Strike(round, state.Position, state.Attitude, state.Velocity, &a.body, dt, i.environment.Wrap, i.environment.Seed)
 			if !hit {
 				continue

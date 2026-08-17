@@ -20,13 +20,14 @@ import (
 
 // Part kinds.
 const (
-	Structure = iota // a surface element
-	Fuselage         // a body station
-	Turbine          // an engine
-	Cockpit          // the pilot
-	Tank             // the fuel tank
-	Gear             // a landing-gear leg (nose, left, right)
-	Ordnance         // a live round on a station: hittable only while attached
+	Structure  = iota // a surface element
+	Fuselage          // a body station
+	Turbine           // an engine
+	Cockpit           // the pilot
+	Tank              // the fuel tank
+	Gear              // a landing-gear leg (nose, left, right)
+	Ordnance          // a live round on a station: hittable only while attached
+	Ammunition        // the gun's own belt: the drum ahead of the cockpit
 )
 
 // Part is one capsule of hit geometry in the target's body frame.
@@ -95,6 +96,13 @@ func Parts(a *flight.Airframe) []Part {
 		})
 	}
 	parts = append(parts, Part{Kind: Cockpit, Index: 0, Surface: -1, A: a.Cockpit, B: a.Cockpit, Radius: 0.7})
+	// The gun's belt. On this airframe the M61 and its drum sit in the nose
+	// ahead of the cockpit, which is exactly where a front-quarter burst lands —
+	// and a full drum is 578 rounds of high explosive. Whether there is anything
+	// left to cook off is Body.Belt at strike time, so a jet that has shot dry
+	// stops being a target here, the same way an empty rail does.
+	parts = append(parts, Part{Kind: Ammunition, Index: 0, Surface: -1,
+		A: a.Cockpit.Add(flight.Vec3{X: 0.8}), B: a.Cockpit.Add(flight.Vec3{X: 2.4}), Radius: 0.45})
 	parts = append(parts, Part{Kind: Tank, Index: 0, Surface: -1,
 		A: a.Tank.Subtract(flight.Vec3{X: 1.8}), B: a.Tank.Add(flight.Vec3{X: 1.8}), Radius: 0.8})
 	// Live rounds on the stations. Every catalog entry with a warhead gets a

@@ -16,8 +16,15 @@ const (
 	reach       = 1500  // m, useful gun range (tracer-burnout class)
 	dispersion  = 0.003 // rad, one-sigma round scatter (M61 spec: 80% inside 8 mil)
 	penetration = 0.45  // severity retained through each part pierced (#144)
-	through     = 3     // parts one round can reach
+	through     = 3     // parts one round can reach at full striking speed
 	spent       = 0.15  // severity below which the round has nothing left
+	// A 20 mm round is a SHELL, not a slug: the M56 and PGU-28 this model is
+	// built around are high-explosive incendiary with a point-detonating fuze,
+	// so the burst does not care how fast the shell arrived. What the striking
+	// speed buys is DEPTH — a fast shell punches through the skin and functions
+	// against a spar or a fuel cell, a slow one bursts on the surface.
+	striking = 700.0 // m/s at which a shell still reaches everything it would at the muzzle
+	graze    = 250.0 // and below this it functions on the skin and goes no further
 )
 
 // Muzzle is the M61 barrel speed, exported for the fire-control solutions
@@ -76,9 +83,31 @@ type Round struct {
 	Age      float64
 }
 
-// Life is how long a round stays dangerous, seconds. 2 s at ~1,100 m/s
-// closing speeds spans the old 1,500 m reach with margin for lofted shots.
-const Life = 2.0
+// Depth is how many parts a shell reaches, from its striking speed. One is
+// always guaranteed: a high-explosive round that arrives at all functions on
+// what it touches. Beyond that it is momentum that carries the shell inward.
+func Depth(speed float64) int {
+	if speed >= striking {
+		return through
+	}
+	if speed <= graze {
+		return 1
+	}
+	reach := 1 + int(float64(through-1)*(speed-graze)/(striking-graze)+0.5)
+	if reach > through {
+		reach = through
+	}
+	return reach
+}
+
+// Life is how long a round stays dangerous, seconds. Raised from 2 s to 4 on
+// 2026-08-17: the shell's damage does not decay with speed, so cutting it off
+// while it was still doing 650 m/s was an arbitrary wall a pilot could feel —
+// he could see the pipper on a target his rounds silently could not reach. Four
+// seconds carries it past 2.5 km, beyond any range where the lead solution is
+// worth taking, and the depth model above is what makes a long shot weak rather
+// than the round vanishing.
+const Life = 4.0
 
 // Volley spawns one burst's rounds from the shooter with the same
 // deterministic Gaussian dispersion the instant model rolled.
@@ -143,11 +172,16 @@ func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity fligh
 	impact := origin.Add(direction.Scale(along[0]))
 	var events []Event
 	severity := 1.0
-	for depth, part := range chain {
-		if depth >= through || severity < spent {
+	// The fuze functions whatever the speed, so the first part always takes the
+	// full burst; the shell's remaining momentum decides how much further in it
+	// gets. Scaling SEVERITY with impact energy instead would have modelled a
+	// solid shot, which is not what this gun fires.
+	depth := Depth(r.Velocity.Subtract(velocity).Length())
+	for reached, part := range chain {
+		if reached >= depth || severity < spent {
 			break
 		}
-		events = append(events, strike(body, &body.Parts[part], severity, true, seed, uint64(r.Shooter), r.Born, r.Index*uint64(through)+uint64(depth))...)
+		events = append(events, strike(body, &body.Parts[part], severity, true, seed, uint64(r.Shooter), r.Born, r.Index*uint64(through)+uint64(reached))...)
 		severity *= penetration
 	}
 	events = append(events, Event{Kind: "hit", Engine: -1, Surface: -1, Count: 1})

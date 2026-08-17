@@ -485,3 +485,122 @@ func TestShedElements(t *testing.T) {
 		t.Error("the shed reached element 3 — that is the INBOARD half, and the panel the client hides is only the outboard one")
 	}
 }
+
+// TestShellDepth: a 20 mm round is a high-explosive shell with a point-
+// detonating fuze, not a solid slug. The burst does not care how fast it
+// arrived — so severity must NOT be scaled by impact energy — but the momentum
+// left in it decides how far in it functions: a fast shell reaches a spar or a
+// fuel cell, a slow one bursts on the skin.
+func TestShellDepth(t *testing.T) {
+	if got := Depth(Muzzle); got != through {
+		t.Errorf("a shell striking at muzzle speed reached %d parts, want %d", got, through)
+	}
+	if got := Depth(striking); got != through {
+		t.Errorf("a shell at the full-depth threshold reached %d parts, want %d", got, through)
+	}
+	if got := Depth(graze); got != 1 {
+		t.Errorf("a shell down to grazing speed reached %d parts, want 1: it still bursts, but on the skin", got)
+	}
+	if got := Depth(50); got != 1 {
+		t.Errorf("a nearly spent shell reached %d parts, want 1 — a fuze that functions always functions on something", got)
+	}
+	// Monotone in between, and never zero: an HE round that arrives always hurts.
+	last := 0
+	for speed := 0.0; speed <= 1200; speed += 25 {
+		got := Depth(speed)
+		if got < 1 {
+			t.Fatalf("a shell at %.0f m/s reached nothing at all", speed)
+		}
+		if got > through {
+			t.Fatalf("a shell at %.0f m/s reached %d parts, past the %d-part limit", speed, got, through)
+		}
+		if got < last {
+			t.Fatalf("depth fell from %d to %d as speed rose to %.0f m/s", last, got, speed)
+		}
+		last = got
+	}
+	if Depth(500) <= Depth(300) {
+		t.Error("a faster shell must reach further in than a slower one")
+	}
+}
+
+// TestShellLife: the round's damage does not decay with speed, so its life is
+// a cost cap rather than a lethality one — and it used to cut a shell off while
+// it was still doing 650 m/s, inside ranges where the pipper was still offering
+// a solution.
+func TestShellLife(t *testing.T) {
+	environment := flight.Environment{Seed: 1, Wrap: 250000}
+	_ = environment
+	// How far a round gets before Life expires, from a jet at a fighting speed.
+	round := Round{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: Muzzle + 240}}
+	flown := 0.0
+	for step := 0; step < 10000; step++ {
+		before := round.Position
+		if Fly(&round, 1.0/60) {
+			break
+		}
+		flown += round.Position.Subtract(before).Length()
+	}
+	if flown < 2500 {
+		t.Errorf("a shell fired at a fighting speed reached only %.0f m before expiring: the pipper offers solutions further than that", flown)
+	}
+	if round.Velocity.Length() > Muzzle {
+		t.Errorf("the round ended faster (%.0f m/s) than it started: drag is not being applied", round.Velocity.Length())
+	}
+}
+
+// TestAmmunitionCookoff: the gun's belt is 578 rounds of high explosive sitting
+// in the nose ahead of the cockpit, which is where a front-quarter burst lands.
+// A hit on it can set it off — and a jet that has fired everything presents
+// nothing to set off, the same way an empty rail does.
+func TestAmmunitionCookoff(t *testing.T) {
+	drum := -1
+	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe)}
+	for i, part := range body.Parts {
+		if part.Kind == Ammunition {
+			if drum >= 0 {
+				t.Fatal("more than one ammunition part: the drum is one volume")
+			}
+			drum = i
+		}
+	}
+	if drum < 0 {
+		t.Fatal("no ammunition part in the hit geometry: the belt cannot be hit at all")
+	}
+	// Ahead of the cockpit, where the M61 lives on this airframe.
+	if body.Parts[drum].A.X <= fa18c.Airframe.Cockpit.X {
+		t.Errorf("the drum sits at x=%.1f, not forward of the cockpit at x=%.1f",
+			body.Parts[drum].A.X, fa18c.Airframe.Cockpit.X)
+	}
+
+	// A full drum cooks off sometimes; an empty one never does. Run the roll
+	// across many seeds, since it is a chance and not a certainty.
+	blown := func(belt float64) int {
+		count := 0
+		for seed := uint64(0); seed < 400; seed++ {
+			damage := flight.DamageState{}
+			condition := Condition{Damager: -1}
+			victim := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe),
+				Damage: &damage, Condition: &condition, Belt: belt}
+			strike(victim, &victim.Parts[drum], 1.0, true, seed, 1, 0, 0)
+			if condition.Killed || condition.Burning {
+				count++
+			}
+		}
+		return count
+	}
+	full, empty, half := blown(1.0), blown(0.0), blown(0.5)
+	if empty != 0 {
+		t.Errorf("an empty drum cooked off %d times in 400: there is nothing in it to go off", empty)
+	}
+	if full == 0 {
+		t.Error("a full drum never cooked off in 400 hits: 578 high-explosive rounds should be a hazard")
+	}
+	if full <= half {
+		t.Errorf("a full drum (%d/400) was no more dangerous than a half-empty one (%d/400): the belt must scale it", full, half)
+	}
+	// And it must be a chance, not a certainty — a hit on the nose is not a kill.
+	if full > 200 {
+		t.Errorf("a full drum cooked off %d times in 400: that is a death sentence, not a hazard", full)
+	}
+}

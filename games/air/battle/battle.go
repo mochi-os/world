@@ -39,7 +39,8 @@ type Body struct {
 	Parts     []Part
 	Damage    *flight.DamageState
 	Condition *Condition
-	Stores    uint64 // attached-station bitmask (bit i = Airframe.Stores[i]), kept in step with the flight model by the host: an unset bit is an empty rail, and a round that is not there cannot cook off
+	Belt      float64 // rounds left in the gun as a fraction of a full drum, kept in step by the host: nothing left, nothing to cook off
+	Stores    uint64  // attached-station bitmask (bit i = Airframe.Stores[i]), kept in step with the flight model by the host: an unset bit is an empty rail, and a round that is not there cannot cook off
 }
 
 // Event reports a notable outcome for presentation and scoring. Kind is one

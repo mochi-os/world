@@ -31,6 +31,7 @@ const (
 	torch     = 0.08 // chance a tank hit lights the fuel
 	detonate  = 0.06 // chance a tank hit simply blows the jet up: HEI in the vapour space — the historical flamer, and the variance that makes some kills three rounds and some forty. Doubled from 0.03 (2026-08-15) with the same reasoning that added `rupture` below: a kill the shooter cannot SEE is a kill that does not read, and the fuel-fire fuse hid most of them behind twenty seconds of burning
 	rupture   = 0.04 // chance a WET-WING hit blows the jet up: the wing tanks are vapour space too, and a round through one had no catastrophic path at all — only the slow `flash` fire. Lower than the fuselage tank's: less ullage, more structure in the way
+	belt      = 5.8  // kg of high explosive in a full 578-round drum, at ~10 g of filler a shell: a real cook-off hazard, and rather less than a heater's 9.4
 	cookoff   = 0.22 // chance per kg of warhead ÷ 10 that a hit on a live round detonates it — a 9.4 kg heater ~21%, a 22 kg AMRAAM ~48%. This is why crews jettison stores when they are hit, and it makes a loaded bandit a visibly more explosive target than one that has shot its rack
 	splinter  = 0.18 // a FRAGMENT's share of a direct hit's catastrophic odds. A warhead splinter is spent metal against a casing built to survive it, and a tank's vapour space is a smaller target for it — but the answer is not zero, which is how a jet comes apart at six to ten metres. Ten rays a burst compound: at this share a fringe blast rarely blows a jet up, and the rate test holds the band
 	flash     = 0.05 // chance a wet-wing hit lights the fuel
@@ -129,6 +130,20 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 			break
 		}
 		if catastrophe(cookoff*part.Warhead/10, 13) {
+			blow(body, seed, slot, tick)
+			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
+		}
+	case Ammunition:
+		// The gun's own belt, and the same logic as a store on the rail: a hit
+		// on high explosive can set it off, and a jet that has fired everything
+		// presents nothing to set off. Scaled by what is actually left, so a
+		// bandit who has emptied his drum is a less explosive target than one
+		// who has not fired a shot — the mirror of the stores behaviour, and a
+		// reason to press an opponent who is still full.
+		if body.Belt <= 0 {
+			break
+		}
+		if catastrophe(cookoff*belt*body.Belt/10, 14) {
 			blow(body, seed, slot, tick)
 			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 		}
