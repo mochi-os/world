@@ -101,6 +101,67 @@ func pursue(me, foe *flight.State) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "fire": true}
 }
 
+// chaser adds the second human failing the LIMIT note asks for: this pilot
+// loses sight of a bandit that goes far enough off his nose, and the harder he
+// is pulling the sooner it happens — a head cannot turn under g. While the
+// tally is gone he flies the line he last saw and does not shoot, until the
+// bandit reappears in front of him.
+//
+// Measured 2026-08-17: without it nothing escapes this attacker, so no play a
+// defender can choose reduces the threat, the scorer's threat term is flat
+// across every candidate, and the harness cannot tell a bot that chooses badly
+// from one with no good choice. `pursue` is left perfect on purpose — two other
+// suites use it as a fixture rather than as a defence benchmark.
+type chaser struct {
+	lost    int         // times the tally went, for the probe
+	blew    int         // ticks spent riding an overshoot through the pass
+	closest float64     // and the fastest he ever arrived, m/s of closure
+	widest  float64     // and the furthest off his nose the bandit ever got
+	blind   uint64      // ticks of lost tally remaining, 0 = he has him
+	where   flight.Vec3 // where the bandit was when he lost him
+	heading flight.Vec3 // and where he was going
+}
+
+func (c *chaser) fly(me, foe *flight.State, tick uint64) map[string]any {
+	toward := foe.Position.Subtract(me.Position)
+	span := math.Max(toward.Length(), 1)
+	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+	off := math.Acos(clamp(toward.Scale(1/span).Dot(nose), -1, 1)) * 57.3
+	// A bubble canopy gives most of a sphere with head movement, but only
+	// while the neck is free: 130 degrees relaxed, down to 70 under a hard pull.
+	reach := 130 - 60*clamp((me.Fcs.Demand-1)/6, 0, 1)
+	if off > c.widest {
+		c.widest = off
+	}
+	if c.blind == 0 && off > reach {
+		c.lost++
+		c.blind, c.where, c.heading = 90, foe.Position, foe.Velocity // ~1.5 s before he even starts looking
+	}
+	if c.blind > 0 {
+		c.blind--
+		// Back in front of him and no longer pulling blind: he has the tally again.
+		if c.blind == 0 || off < 45 {
+			c.blind = 0
+			return pursue(me, foe)
+		}
+		ghost := *foe
+		ghost.Position = c.where.Add(c.heading.Scale(float64(90-c.blind) / 60))
+		ghost.Velocity = c.heading
+		data := pursue(me, &ghost) // the line he last saw, flown on faith
+		data["fire"] = false       // and no shooting at something he cannot see
+		return data
+	}
+	// Did the other human failing — arriving too fast to stop — ever fire?
+	rel := me.Velocity.Subtract(foe.Velocity)
+	if closing := rel.Dot(toward.Scale(1 / span)); closing > c.closest {
+		c.closest = closing
+	}
+	if closing := rel.Dot(toward.Scale(1 / span)); span < 400 && closing > 70 {
+		c.blew++
+	}
+	return pursue(me, foe)
+}
+
 // geometry reports the attacker's position in the bandit's world: range, the
 // attacker's angle off the bandit's tail (0 = dead six), and each side's
 // specific energy height.
@@ -158,9 +219,10 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			place(i, bot, 0, -600) // attacker behind the bandit
 			me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
 			previousMode := ""
+			hunter := &chaser{}
 			away := false                                 // this seed ever broke contact past 4 km
 			for tick := uint64(0); tick < 60*60; tick++ { // one simulated minute
-				data := pursue(me, foe)
+				data := hunter.fly(me, foe, tick)
 				i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 				if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
 					i.aircraft[0].model == nil || i.aircraft[bot].model == nil {

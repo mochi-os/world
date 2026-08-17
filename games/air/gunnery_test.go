@@ -290,6 +290,27 @@ func TestLadderDuel(t *testing.T) {
 				// inside the seeker's own acquisition cone, and the instructor
 				// tiers no longer break for a round they can see has already
 				// been beaten (see `beaten`).
+				//
+				// 2026-08-17, the WEAPON was fixed and this survived it at 6-8.
+				// A pilot fired twelve 9Ms across two fights for no hits: every
+				// flare drop got its own full decoy roll, and a bandit
+				// dispensing continuously stacked up to ten of them in front of
+				// one round. Two changes in air.go's pursue — the chance now
+				// HALVES with each flare the round has already seen through, and
+				// a seduced seeker gets one attempt to re-acquire if the target
+				// is still inside its gimbal. Arrival went 9.3% and 15.0% to
+				// 17.4% and 25.0%, which is where the real AIM-9M sits, and
+				// no-results here fell from 7 to 2 because fights now resolve.
+				//
+				// A flare MAGAZINE was measured and rejected. Bots carry
+				// infinite countermeasures, which is wrong, but 60 of them
+				// inverted BOTH this gate (6-9) and the BVR top rung (3-3 to
+				// 1-5) — chaff rides the same mixed programme, so a magazine
+				// reaches the radar path too. The decay above bounds cumulative
+				// seduction however many flares are dropped, so the magazine
+				// bought almost no extra Pk for two broken ladders. See the task
+				// list: it wants the bots' countermeasure doctrine retuned
+				// alongside it, not a bare counter.
 				slack = 2
 			}
 			if losses > wins+slack {

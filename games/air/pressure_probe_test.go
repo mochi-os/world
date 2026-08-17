@@ -37,6 +37,8 @@ func TestPressureTimeline(t *testing.T) {
 
 	for _, level := range []string{"ace", "superhuman"} {
 		fmt.Printf("\n=== %s pinned at its six, 6 seeds ===\n", level)
+		posture, weight, plays := map[string]int{}, map[string]float64{}, map[string]int{}
+		pinned, loafing := 0, 0
 		var wrecked, first []float64 // seconds to thrust<0.35, and to the first engine damage at all
 		trackedBefore, totalBefore := 0, 0
 		trackedAfter, totalAfter := 0, 0
@@ -63,10 +65,11 @@ func TestPressureTimeline(t *testing.T) {
 			place(i, bot, 0, -600)
 			me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
 
+			hunter := &chaser{}
 			hurt, dead, burning := -1.0, -1.0, -1.0
 			ended, why := -1.0, "survived the minute"
 			for tick := uint64(0); tick < 60*60; tick++ {
-				data := pursue(me, foe)
+				data := hunter.fly(me, foe, tick)
 				i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 				if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[bot].model == nil || i.aircraft[0].model == nil {
 					ended = float64(tick) / 60
@@ -97,6 +100,25 @@ func TestPressureTimeline(t *testing.T) {
 					fmt.Printf("  seed %d: thrust fell below 0.35 at %5.1f s — attacker %4.0f m, %3.0f deg off the tail, bandit %3.0f kt, mode %s\n",
 						seed, seconds, r, off, foe.Velocity.Length()*1.944, i.aircraft[bot].brain.mode)
 				}
+				// #41: with an attacker inside gun range on its six, which
+				// POSTURE is in force and how much is it discounting the
+				// threat term? The proposed fix assumes a discount; this is
+				// the measurement that confirms or redirects it.
+				if r, _, _, _ := geometry(me, foe); r < 900 {
+					b := i.aircraft[bot].brain
+					w := stances[b.intent]
+					name := b.intent
+					if name == "" {
+						name = "(neutral)"
+					}
+					posture[name]++
+					weight[name] = w.threat
+					pinned++
+					if b.g < 3 {
+						loafing++
+					}
+					plays[b.play]++
+				}
 				if seed == 2 && tick%15 == 0 && tick < 60*4 {
 					rr, oo, _, _ := geometry(me, foe)
 					_, seen := i.aircraft[bot].brain.known[0]
@@ -119,6 +141,7 @@ func TestPressureTimeline(t *testing.T) {
 					}
 				}
 			}
+			fmt.Printf("      attacker lost the tally %d time(s); widest off his nose %.0f deg | overshot %d ticks | fastest arrival %.0f m/s closure\n", hunter.lost, hunter.widest, hunter.blew, hunter.closest)
 			fmt.Printf("  seed %d: %s at %5.1f s | first engine damage %4.1f s | caught fire %5.1f s | thrust<0.35 %5.1f s\n",
 				seed, why, ended, hurt, burning, dead)
 			if dead >= 0 {
@@ -149,5 +172,15 @@ func TestPressureTimeline(t *testing.T) {
 		}
 		fmt.Printf("  pinned in the rear quarter BEFORE the jet was crippled: %.0f%% of %d ticks\n", share(trackedBefore, totalBefore), totalBefore)
 		fmt.Printf("  pinned AFTER: %.0f%% of %d ticks\n", share(trackedAfter, totalAfter), totalAfter)
+		fmt.Printf("  --- #41: with him inside 900 m, %d ticks ---\n", pinned)
+		fmt.Printf("      commanding under 3 g for %.0f%% of them\n", share(loafing, pinned))
+		for name, n := range posture {
+			fmt.Printf("      posture %-10s %5.1f%% of the time | its threat weight %.2f\n", name, share(n, pinned), weight[name])
+		}
+		for name, n := range plays {
+			if share(n, pinned) >= 5 {
+				fmt.Printf("      play    %-10s %5.1f%%\n", name, share(n, pinned))
+			}
+		}
 	}
 }

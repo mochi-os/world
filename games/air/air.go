@@ -451,6 +451,7 @@ type missile struct {
 	life     float64
 	number   uint64       // per-instance launch counter, for deterministic decoys
 	window   bool         // a flare window has been judged (one decoy roll per flare)
+	rejected int          // flares this round has already seen through: a seeker holding a target it has resolved four times is not a fresh coin flip
 	called   bool         // a teammate has called this launch to its victim (#146): one call per round, ever
 	radar    *round.Model // AIM-120 (#27 phase 2c): the shared core flies it; nil for the 9M, which keeps the model above
 }
@@ -1444,12 +1445,23 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				if target.latest.Reheat > 0.05 {
 					decoy *= 0.5 // the burner is the brightest thing in view
 				}
+				// Diminishing returns, not independent coin flips. Every flare
+				// used to get its own full roll, so a jet dispensing
+				// continuously stacked ten of them in front of one round and
+				// drove the chance of arriving to nothing: measured 2026-08-17,
+				// twelve 9Ms fired by a pilot in two fights, seven seduced,
+				// none arriving. A seeker that has already resolved this target
+				// through four flares has demonstrated discrimination, which is
+				// the whole point of the M's counter-countermeasures.
+				decoy *= math.Pow(0.5, float64(m.rejected))
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
 					m.lure = target.model.State.Position.Add(flight.Vec3{Y: -30})
 					m.blind = 1.5
 					tracking = false
 					m.sight, _ = i.bearing(m.position, m.lure) // the seeker is ON the flare now: re-reference the track, or the aim-point swap reads as an LOS-rate spike and breaks the lock at the seduction instant
 					i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})
+				} else {
+					m.rejected++
 				}
 			}
 		} else {
@@ -1508,7 +1520,22 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			aim = m.lure
 			mark = &aim
 			if m.blind <= 0 {
-				m.loose = true // a swallowed flare is terminal: the seeker stares at the burnt-out decoy and never re-acquires (9M-realistic) — ballistic from here, fuse still live
+				// The flare has burnt out. A seduced seeker gets ONE chance to
+				// find the aircraft again, and only if it is still inside the
+				// gimbal cone: improved counter-countermeasures are the M's
+				// defining feature over the L, and treating one flare as
+				// permanently terminal under-modelled the weapon. Failing that,
+				// ballistic from here with the fuse still live.
+				m.loose = true
+				if target != nil && target.alive {
+					sight, _ := i.bearing(m.position, target.model.State.Position)
+					if sight.Dot(m.velocity.Normalize()) > missile_gimbal &&
+						battle.Roll(i.environment.Seed, m.number, tick, 53) < flare_reject {
+						m.loose, m.blind, m.window = false, 0, false
+						m.sight = sight
+						m.rejected++
+					}
+				}
 			}
 		}
 
