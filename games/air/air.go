@@ -458,9 +458,12 @@ type missile struct {
 // wreck is a pilot-dead or ejected airframe that keeps flying until it hits
 // something or burns out; purely spectacle, no further scoring.
 type wreck struct {
-	model *flight.Model
-	burn  [2]float64
-	life  float64
+	model    *flight.Model
+	burn     [2]float64
+	life     float64
+	throttle float64 // the levers as the pilot left them: friction-held, and nobody moves them now
+	reheat   float64
+	lean     float64 // a small standing roll: no airframe is rigged perfectly, and a stick-free jet spirals rather than gliding flat
 }
 
 type instance struct {
@@ -1074,7 +1077,13 @@ func (i *instance) raise(slot int, event battle.Event) {
 func (i *instance) down(slot int, a *craft, reason string) {
 	i.events = append(i.events, map[string]any{"kind": reason, "slot": slot, "by": credit(a)})
 	i.kill(slot, credit(a)) // while the model still exists: the kill event carries its position
-	i.wrecks = append(i.wrecks, &wreck{model: a.model, burn: a.condition.Fire, life: derelict})
+	// The stick is spring-centred, so it returns to neutral and the FCS holds
+	// attitude; the THROTTLE is friction-held and stays exactly where he left
+	// it. Zeroing both spooled every wreck to idle, which is the one thing
+	// that does not happen — an unattended jet flies on at cruise power.
+	i.wrecks = append(i.wrecks, &wreck{model: a.model, burn: a.condition.Fire, life: derelict,
+		throttle: a.latest.Throttle, reheat: a.latest.Reheat,
+		lean: 0.10 * (2*battle.Roll(i.environment.Seed, uint64(slot), 71) - 1)})
 	a.model = nil
 }
 
@@ -1084,14 +1093,14 @@ func (i *instance) eject(slot int, a *craft) {
 	i.down(slot, a, "eject")
 }
 
-// drift flies the wrecks: neutral controls, idle throttle, burning until
-// they hit the sea or burn out.
+// drift flies the wrecks: stick free, the throttle as the pilot left it, and a
+// small standing roll, burning until they hit the sea or burn out.
 func (i *instance) drift(dt float64) {
 	keep := i.wrecks[:0]
 	for _, w := range i.wrecks {
 		w.life -= dt
 		for substep := 0; substep < 4; substep++ {
-			w.model.Step(flight.Inputs{})
+			w.model.Step(flight.Inputs{Throttle: w.throttle, Reheat: w.reheat, Lean: w.lean})
 		}
 		state := &w.model.State
 		if w.life <= 0 || state.Position.Y <= sea || state.Gear.Contact >= 0 {

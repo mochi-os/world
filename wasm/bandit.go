@@ -36,6 +36,7 @@ func bandits() map[string]any {
 		"bandit_mirror": js.FuncOf(banditMirror),
 		"bandit_menace": js.FuncOf(banditMenace),
 		"bandit_step":   js.FuncOf(banditStep),
+		"bandit_coast":  js.FuncOf(banditCoast),
 		"bandit_mode":   js.FuncOf(banditMode),
 	}
 }
@@ -104,6 +105,22 @@ func banditMenace(this js.Value, arguments []js.Value) any {
 
 // banditStep advances one 60 Hz frame and writes the bandit's encoded state
 // into the given buffer. Returns flags: bit 1 firing, bit 2 flare dropped.
+// banditCoast flies the DEAD bandit one frame and returns its state: no
+// thinking, the levers held, and the caller's standing roll.
+func banditCoast(this js.Value, arguments []js.Value) any {
+	if bandit == nil {
+		return -1
+	}
+	if fleet[0].used {
+		bandit.Wound(fleet[0].damage, fleet[0].condition)
+	}
+	bandit.Coast(arguments[0].Float())
+	bandit.State().Encode(back[:flight.Size])
+	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
+	send(back[:], arguments[1])
+	return 0
+}
+
 func banditStep(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return -1

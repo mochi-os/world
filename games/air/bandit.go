@@ -155,6 +155,23 @@ func (b *Bandit) Menace(words []float64) {
 	}
 }
 
+// Coast flies a dead bandit for one frame: no thinking, the stick free so the
+// FCS holds attitude, the throttle as the pilot left it because a friction
+// lever does not move itself, and a small standing roll so the jet spirals
+// instead of gliding flat. The same rule the server's wrecks fly under.
+//
+// This replaces a scripted descent in the client that held one speed and one
+// angle for as long as it took to reach the water — measured at a constant
+// 233 kt down a 26.6 degree line, wings level, for 79 s.
+func (b *Bandit) Coast(lean float64) {
+	b.tick++
+	held := flight.Inputs{Throttle: b.craft.latest.Throttle, Reheat: b.craft.latest.Reheat, Lean: lean}
+	b.craft.latest = held
+	for substep := 0; substep < 4; substep++ {
+		b.craft.model.Step(held)
+	}
+}
+
 // Step advances the bandit one 60 Hz frame: think, fly four substeps, and
 // report the trigger and any flare drop.
 // Step advances the brain one frame and reports what left the aircraft:
