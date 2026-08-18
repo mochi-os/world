@@ -128,7 +128,7 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	if fleet[0].used {
 		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
 	}
-	fire, flare, launch, heater := bandit.Step()
+	fire, flare, launch, heater, chaff := bandit.Step()
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
 	send(back[:], arguments[0])
@@ -144,6 +144,9 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	}
 	if heater {
 		flags |= 64 // a 9M left the rail: the client flies it, exactly as it flies the AMRAAM
+	}
+	if chaff {
+		flags |= 128 // a chaff bloom (#43): the client stamps the target's chaff window for the player's AMRAAM, without a flare
 	}
 	flags |= bandit.Emitter() << 3 // bits 3-4: the radar state the player's RWR reads
 	if bandit.Locked() {

@@ -424,6 +424,8 @@ type brain struct {
 	shoot     bool       // guns solution may be attempted this period
 	loose     bool       // one-shot missile request, consumed by think()
 	drop      bool       // one-shot flare request
+	bloom     bool       // one-shot chaff request (#43): the split programme spends the chaff magazine against a radar round and the flare magazine against a heater
+	dispensed int        // countermeasures requested against the current threat episode: the programme's own count, reset when the threat clears
 	offset    [2]float64 // this period's aim wander components
 	bursting  uint64     // consecutive ticks of trigger: the burst governor (#206)
 	walked    float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
@@ -671,10 +673,24 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 	if b.drop {
 		b.drop = false
-		a.flared = 0
-		a.cloud = a.model.State.Position // the mixed program (#29): bots inherit chaff through their flare discipline
-		a.clouded = 0
-		i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
+		if a.flares > 0 || i.cheat.ammunition {
+			if !i.cheat.ammunition {
+				a.flares--
+			}
+			a.flared = 0
+			i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
+		}
+	}
+	if b.bloom {
+		b.bloom = false
+		if a.chaff > 0 || i.cheat.ammunition {
+			if !i.cheat.ammunition {
+				a.chaff--
+			}
+			a.cloud = a.model.State.Position
+			a.clouded = 0
+			i.events = append(i.events, map[string]any{"kind": "chaff", "slot": slot})
+		}
 	}
 }
 
@@ -963,7 +979,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// sighted, the skill's reaction delay runs as before: flares, cold
 	// engines, and an orthogonal break. Trumps everything but the floor.
 	inbound := flight.Vec3{}
-	threatened := false
+	threatened, radar := false, false // and whether the round that threatens is a radar missile: the split programme (#43) spends chaff on it and flares on a heater
 	if len(b.judged) > 64 { // rounds despawn and numbers only grow: reset rather than leak (a live round re-rolls once, harmlessly)
 		b.noticed, b.judged = nil, nil
 	}
@@ -1026,7 +1042,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.noticed[m.number] = true // the corner of the eye, late
 		}
 		if b.noticed[m.number] && distance < 4500 && !beaten(b, m) {
-			threatened, inbound = true, direction
+			threatened, inbound, radar = true, direction, m.radar != nil
 			break
 		}
 	}
@@ -1044,12 +1060,31 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			b.aim = side.Subtract(inbound.Scale(0.4)).Normalize() // break across the seeker, away from it
 			b.reheat = 0                                          // burner doubles the decoy's job
 			b.throttle = 1
-			b.drop = a.flared > 0.9 // re-flare through the evade
+			// A PROGRAMME per defended round (#43), not a stream. This used to
+			// re-flare every 0.9 s for as long as the threat lasted — nine to
+			// twenty flares per missile, fifty-seven in one fight — which was
+			// only affordable because the dispenser was bottomless, and was
+			// worth little past the fourth: a seeker that has seen through a
+			// flare halves its odds of taking the next (air.go pursue), so the
+			// value is in the first few, dispensed close together while the
+			// round is still deciding. Four at half-second spacing on
+			// sighting, two more if it is still coming four seconds on, and
+			// the rest of the magazine is kept for the next one. Flares only:
+			// dispensing chaff with every flare, and flares with every chaff,
+			// was the coupling that let a flare magazine reach the BVR ladder.
+			// A radar round's countermeasures belong to hunt.go's defence, which
+			// knows the seeker's phase and blooms only where a cloud can take
+			// it; the flares here would be spent on a round they cannot touch.
+			if !radar && a.flared > 0.5 && (b.dispensed < 4 || (float64(tick-b.alert) > 240 && b.dispensed < 6)) {
+				b.drop = true
+				b.dispensed++
+			}
 			i.guard(b, me, corner(a.model))
 			return
 		}
 	} else {
 		b.alert = 0
+		b.dispensed = 0
 	}
 
 	// Doctrine flares: an enemy assessed on my six inside the 9M envelope and
@@ -1064,8 +1099,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		for _, s := range b.surveyed() {
 			t := b.known[s]
 			direction, distance := i.bearing(me.Position, t.position)
-			if distance > 3000 {
-				continue
+			if distance > 2600 || a.flares <= flare_load/3 {
+				continue // outside the rear-aspect heater's reach, or into the last third of the magazine, which is kept for rounds actually seen (#43)
 			}
 			body := me.Attitude.Unrotate(direction)
 			if body.X > -0.2 {

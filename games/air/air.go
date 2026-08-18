@@ -104,6 +104,8 @@ const (
 	missile_n      = 3.5    // the proportional-navigation constant
 	flare_window   = 0.8    // s after a flare drop in which it can decoy
 	flare_reject   = 0.55   // the 9M's counter-countermeasures: flares work this fraction as often
+	flare_load     = 40     // flares carried per life, every dispenser: the legacy Hornet's two ALE-47 buckets hold 60 cartridges between them, loaded here for the air-to-air fight (#43) — the bots' was bottomless before this
+	chaff_load     = 20     // and the chaff share of those 60: a mid-course defence the notch does most of the work for, so the smaller half of the load
 )
 
 type Air struct{}
@@ -322,8 +324,10 @@ type craft struct {
 	ejected    bool        // eject edge consumed this life
 	wait       float64     // seconds until respawn (air mode)
 	flared     float64     // sim seconds since the last flare drop (large when none)
+	flares     int         // flares left this life (#43): the dispenser is a magazine now, for bots as it always was for the client
 	cloud      flight.Vec3 // where the last chaff bloomed (#29): the mixed program drops chaff with every flare
 	clouded    float64     // sim seconds since that bloom (large when none)
+	chaff      int         // chaff cartridges left this life (#43): its own magazine, so a flare programme no longer rations the radar defence and vice versa
 	loud       bool        // the jammer is RADIATING this tick (#31): armed (latest.Jammer) and painted by a threat
 	team       string      // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
@@ -435,6 +439,7 @@ func (a *craft) arm() {
 	}
 	a.release = 1e9
 	a.ejected = false
+	a.flares, a.chaff = flare_load, chaff_load
 }
 
 type missile struct {
@@ -900,13 +905,27 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			// reliable-broadcast flare storm. Bots bypass this path entirely
 			// (their own discipline in bot.go), so their behaviour is untouched.
 			if in.Flare && !previous.Flare && a.alive && a.flared > 0.5 {
-				a.flared = 0
 				// The mixed program (#29): every dispense is a flare AND a
-				// chaff bloom — one magazine, both effects, and the round
-				// package's doppler gate decides whether the chaff matters.
-				a.cloud = a.model.State.Position
-				a.clouded = 0
-				i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
+				// chaff bloom — one key, both effects, and the round package's
+				// doppler gate decides whether the chaff matters. Each comes
+				// from its own magazine (#43), counted here rather than
+				// trusted to the client: a magazine that runs out stops that
+				// half of the programme and the other half keeps working.
+				if a.flares > 0 || i.cheat.ammunition {
+					a.flared = 0
+					if !i.cheat.ammunition {
+						a.flares--
+					}
+					i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
+				}
+				if a.chaff > 0 || i.cheat.ammunition {
+					a.cloud = a.model.State.Position
+					a.clouded = 0
+					if !i.cheat.ammunition {
+						a.chaff--
+					}
+					i.events = append(i.events, map[string]any{"kind": "chaff", "slot": slot})
+				}
 			}
 			if in.Missile && !previous.Missile && a.alive && i.missiles && i.free() && a.missiles > 0 && a.release > 1.0 {
 				if i.launch(slot, a) {
@@ -1379,7 +1398,9 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	// the round package's doppler gate decides — in the notch it seduces,
 	// out of it the velocity gate rejects it, exactly as briefed.
 	if truth != nil && target.clouded < round.Window {
-		m.radar.Distract(target.cloud, *truth)
+		if m.radar.Distract(target.cloud, *truth) {
+			i.events = append(i.events, map[string]any{"kind": "seduce", "slot": m.target}) // the seeker took the cloud (#43): the chaff programme's own measure
+		}
 	}
 	m.radar.Beacon = target.loud && target.alive // home-on-jam (#31): the radiating defender is a beacon, and the round takes the angle it is given
 	alive, fired, burst := m.radar.Advance(dt, support, truth)

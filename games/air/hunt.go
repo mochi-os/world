@@ -439,10 +439,12 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b := a.brain
 	var threat *missile
 	span := math.MaxFloat64
+	inbound := 0 // radar rounds active against me: the ones behind the nearest each want their share of the chaff (#43)
 	for _, m := range i.flying {
 		if m.radar == nil || m.target != slot || m.radar.Phase < round.Active {
 			continue
 		}
+		inbound++
 		if _, d := i.bearing(a.model.State.Position, m.position); d < span {
 			span, threat = d, m
 		}
@@ -475,8 +477,8 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 		b.g = clamp(b.skill.pull*0.9, 2, 7.5)
 		b.throttle, b.reheat = 1, 1
 		b.mode = "drag"
-		if a.flared > 0.8 {
-			b.drop = true
+		if a.clouded > 0.8 && a.chaff > 5*(inbound-1) {
+			b.bloom = true // chaff, against a radar round: the split programme (#43) no longer spends flares here
 		}
 		return true
 	}
@@ -504,8 +506,21 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b.g = 4.5
 	b.throttle, b.reheat = 1, 0
 	b.mode = "notch"
-	if a.flared > 1.4 {
-		b.drop = true // the steady program: a fresh bloom inside the notch window
+	// The steady program, priced now that the magazine is real (#43): a
+	// bloom is worth dispensing only where the seeker can take it — outside
+	// its Resolve range (inside it the skin return owns the cell whatever
+	// the beam), and while the jet is actually in the notch — and never
+	// into the five cartridges each OTHER round already in the air will
+	// want: a lone round may have the whole twenty, the first of a ripple
+	// gets its share. Blooming every 1.4 s all the way to impact spent sixty
+	// of sixty in every BVR seed measured and left nothing for the rounds
+	// that followed; a flat five a round starved a lone defence instead. The
+	// 1.4 s cadence itself stays: re-seducing only as the seeker's Hold
+	// expires (2.5 s) was measured and rejected — the top rung went 0-6 on
+	// the half-second gaps with no fresh cloud offered.
+	radial := math.Abs(a.model.State.Velocity.Dot(line))
+	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
+		b.bloom = true
 	}
 	if b.skill.machine {
 		b.jam = span > guard_quiet // armed while spoofable, quiet at the terminal call

@@ -328,3 +328,92 @@ func TestFlounderWide(t *testing.T) {
 	}
 	fmt.Printf("wide flounder: ace killed it %d/36 | rounds landed %d\n", kills, landed)
 }
+
+// TestDispenseProbe counts what each tier spends from its two magazines and
+// what the rounds against it did, on the missiles ladder and the BVR rung that
+// moved when the magazines landed (#43).
+func TestDispenseProbe(t *testing.T) {
+	probe(t)
+	type book struct {
+		flares, chaff, left, kept, decoyed, seduced, hit int
+	}
+	for _, arm := range []string{"missiles", "bvr"} {
+		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+			strong, weak := pair[0], pair[1]
+			tally := map[string]*book{strong: {}, weak: {}}
+			for seed := uint64(1); seed <= 6; seed++ {
+				var made game.Instance
+				var err error
+				if arm == "bvr" {
+					made, err = (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("dispense%s%s%d", arm, strong, seed), Game: "air", Mode: "joust", Seed: seed,
+						Parameters: map[string]any{"missiles": true, "start": "bvr", "bots": map[string]any{strong: 1.0, weak: 1.0}}})
+				} else {
+					made, err = New().Create(game.Session{Identifier: fmt.Sprintf("dispense%s%s%d", arm, strong, seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+						Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{strong: 1.0, weak: 1.0}}})
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				i := made.(*instance)
+				who := map[int]string{}
+				for _, s := range i.slots() {
+					a := i.aircraft[s]
+					if a == nil || a.brain == nil {
+						continue
+					}
+					name := weak
+					if a.brain.skill.library == skills[strong].library && a.brain.skill.wander == skills[strong].wander {
+						name = strong
+					}
+					who[s] = name
+				}
+				length := uint64(60 * 240)
+				if arm == "bvr" {
+					length = 60 * 600
+				}
+				for tick := uint64(0); tick < length; tick++ {
+					i.events = i.events[:0]
+					i.Step(tick, nil)
+					for _, e := range i.events {
+						slot, _ := e["slot"].(int)
+						name, ok := who[slot]
+						if !ok {
+							continue
+						}
+						switch e["kind"] {
+						case "flare":
+							tally[name].flares++
+						case "chaff":
+							tally[name].chaff++
+						case "decoy":
+							tally[name].decoyed++
+						case "seduce":
+							tally[name].seduced++
+						}
+					}
+					dead := false
+					for s := range who {
+						if a := i.aircraft[s]; a == nil || a.model == nil || !a.alive {
+							dead = true
+						}
+					}
+					if dead {
+						break
+					}
+				}
+				for s, name := range who {
+					if a := i.aircraft[s]; a != nil {
+						tally[name].left += a.flares
+						tally[name].kept += a.chaff
+					}
+				}
+				i.Close()
+			}
+			for _, name := range []string{strong, weak} {
+				b := tally[name]
+				fmt.Printf("%-8s %-11s flares %3d (%.1f/fight, %2d left/fight) | chaff %3d (%.1f/fight, %2d left/fight) | heaters decoyed %d | radar seekers seduced %d\n",
+					arm, name, b.flares, float64(b.flares)/6, b.left/6, b.chaff, float64(b.chaff)/6, b.kept/6, b.decoyed, b.seduced)
+			}
+		}
+	}
+}

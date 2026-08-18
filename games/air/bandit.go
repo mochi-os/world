@@ -173,15 +173,14 @@ func (b *Bandit) Coast(lean float64) {
 }
 
 // Step advances the bandit one 60 Hz frame: think, fly four substeps, and
-// report the trigger and any flare drop.
 // Step advances the brain one frame and reports what left the aircraft:
-// the trigger, a countermeasure dispense, an AMRAAM, and a HEATER. The
+// the trigger, a flare, an AMRAAM, a HEATER, and a chaff bloom. The
 // heater was missing until 2026-08-15 — the brain fired 9Ms into its own
 // arena, where the only target was a mirror of the player that the client
 // never sees, so a single-player bandit could not threaten the pilot with a
 // heat-seeker at all. Every launch the brain makes now crosses the boundary
 // and the client flies the round.
-func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool) {
+func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff bool) {
 	b.tick++
 	// The single-player bandit drives think() directly rather than through
 	// instance.Step, so it owns the per-tick arbiter allowance reset (#256)
@@ -193,6 +192,9 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool) {
 	for _, event := range b.arena.events {
 		if event["kind"] == "flare" {
 			flare = true
+		}
+		if event["kind"] == "chaff" {
+			chaff = true // its own magazine and its own bloom (#43): the client stamps the chaff window without a flare
 		}
 		if event["kind"] == "fox3" {
 			launch = true
@@ -208,7 +210,7 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool) {
 	b.craft.flared += 1.0 / 60
 	b.craft.clouded += 1.0 / 60
 	b.craft.release += 1.0 / 60
-	return b.craft.latest.Fire, flare, launch, heater
+	return b.craft.latest.Fire, flare, launch, heater, chaff
 }
 
 // State exposes the bandit's flight state for the client to render.
