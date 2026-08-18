@@ -445,6 +445,7 @@ type brain struct {
 	chanced   uint64      // last tick the trigger had a shot worth its price — the stalemate detector's clock
 	struck    uint64      // last tick a round of mine hit anyone — the signal that a conversion is actually wounding
 	finished  uint64      // tick a finish was evicted for not wounding — its re-entry cooldown
+	promise   float64     // the winning rehearsal's mean OFFENCE at the last re-plan (0..1): how much of the best line available is a gun solution
 	countered uint64      // tick of the last counter-fire shot: one round per threat episode
 	nearing   float64     // closure EMA, m/s: is the pursuit actually gaining
 	spanned   float64     // last range, for the closure trend
@@ -518,7 +519,7 @@ func (b *brain) reborn() {
 	b.aimed, b.closing = 0, 0
 	b.turning, b.turned = 0, 0
 	b.told, b.tallied = -1, -1
-	b.play, b.until = "", 0
+	b.play, b.until, b.promise = "", 0, 0
 	b.prey = nil
 	b.known = map[int]*track{}
 }

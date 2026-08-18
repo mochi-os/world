@@ -430,7 +430,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 		// an opponent suddenly beaten, whose recovery is bought back at
 		// twenty metres a second.
 		urgent := (threatened && b.intent != "deny") ||
-			(b.skill.library >= 3 && b.intent != "finish" && prey.velocity.Length() < 170 && distance < 2200)
+			(b.skill.library >= 3 && b.intent != "finish" && (prey.velocity.Length() < 170 && distance < 2200 || b.promise > 0.6))
 		if !urgent {
 			return
 		}
@@ -444,6 +444,29 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	him := prey.velocity.Length()
 	his := him*him/2 + 9.81*prey.position.Y
 	slow := him < 170 && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
+	// FINISH on OPPORTUNITY (2026-08-18): the arbiter already knows when a
+	// kill is reachable — a winning line whose rehearsal spends most of its
+	// instants ON the gun solution (mean offence above 0.6) is a saddle
+	// held, not hoped for — and that signal was thrown away. Measured in
+	// gun duels: the ace sat at 600-760 m behind the pilot with lines
+	// scoring 0.85-0.99 for SEVENTY seconds, in CONVERT — and the
+	// starvation clock, which counts shots worth their price, then sent it
+	// into RESET from a target it was saddled on (seed 1: promise 0.88-0.97
+	// for the whole reset; seed 3 likewise). The `slow` claim needs a fifth
+	// of energy in hand because it spends against a floater that may take a
+	// minute to die; a held solution is spent in seconds, so this claims on
+	// PARITY — but never from below the skill's own speed floor, and never
+	// below the deck. Every FINISH guard below still applies: the wounding
+	// eviction and its cooldown treat an opportunity that lands nothing
+	// exactly as a floater that will not die. Judged on kills over 48 seeds
+	// of the guns arm: ace v pilot 11-3 to 14-3, superhuman v ace 8-4 to
+	// 13-3; the missile and BVR ladders unmoved; the flounder 16 to 15 of
+	// 36. The 1.2 margin here instead of parity gave the top pairing
+	// nothing (2-2 at sixteen seeds, the baseline), because the fights it
+	// unlocks are rate fights at equal energy — both jets at 640 kt on the
+	// same circle, neither able to close, until one of them commits.
+	opportune := b.skill.library >= 3 && b.promise > 0.6 && distance < 1500 && mine >= his && speed > b.skill.floor && me.Position.Y > 600
+	slow = slow || opportune
 	starving := tick-b.chanced > 2700 && b.nearing < 12 // 45 s without a shot worth its price, and the range is not coming down
 	// FINISH must also be WORKING. Deny and reset each carry an exit; this
 	// one had none, and its entry condition is the OPPONENT's state, which
@@ -510,7 +533,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 // appraise scores one instant of a rehearsed future. Positive is a fight
 // being won: his tail toward my pointed nose inside the gun band. Negative is
 // a fight being lost: his nose behind my tail, or the sea arriving.
-func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit) float64 {
+func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit) (float64, float64) {
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
 	lhat := los.Scale(1 / r)
@@ -596,22 +619,24 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	if sk.library >= 3 && r < 70 {
 		score -= 8 * clamp((70-r)/56, 0, 1) // 0 at 70 m, -8 at the 14 m kill radius
 	}
-	return score
+	return score, offence
 }
 
 // rehearse flies one candidate law forward through the real flight model —
 // the same airframe, FCS, and executor imperfections the live bot flies —
 // against the opponent's evolved track, and returns the MEAN score over the
-// sampled instants. Every instant counts alike: see the sampling comment
-// below for why the old terminal weighting was measured out.
-func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon int) float64 {
+// sampled instants, and beside it the mean of the raw offence term alone (the
+// intent layer reads that as brain.promise: how much of the line is a gun
+// solution, unweighted by posture). Every instant counts alike: see the
+// sampling comment below for why the old terminal weighting was measured out.
+func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon int) (float64, float64) {
 	sim.State = a.model.State
 	sim.State.Damage = sim.State.Damage.Copy() // the struct copy shares Element/Jam with the LIVE jet; a damage-writing Step would corrupt it mid-fight
 	shadow := *b                               // the executor's scalar state rides along; maps are untouched
 	shadow.shoot = false
 	pace := corner(a.model)
 	age := float64(tick-prey.when) / 60
-	score, samples := 0.0, 0.0
+	score, offence, samples := 0.0, 0.0, 0.0
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
 		hisP, hisV := evolve(prey, age+t)
@@ -632,7 +657,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			}
 		}
 		if sim.State.Position.Y < 120 {
-			return -100 // flew it into the sea: veto, whatever else it bought
+			return -100, 0 // flew it into the sea: veto, whatever else it bought
 		}
 		if k%30 == 0 || k == horizon {
 			// Every sampled instant counts alike. The old curve rose from
@@ -662,11 +687,13 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				stance.energy *= 1 + 2.0*(1-nurse)
 				stance.offence *= 0.4 + 0.6*nurse
 			}
-			score += appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring)
+			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring)
+			score += one
+			offence += guns
 			samples++
 		}
 	}
-	return score / samples
+	return score / samples, offence / samples
 }
 
 // allowance is how many bots may rehearse in one tick. Two is comfortably
@@ -675,18 +702,20 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 // which is what turned a healthy median into multi-second stalls.
 const allowance = 2
 
-// choose runs the candidate rehearsal and returns the winning play. Extracted
+// choose runs the candidate rehearsal and returns the winning play and its
+// mean offence — the raw gun-solution share of the line about to be flown,
+// which judge() reads as an opportunity (see brain.promise). Extracted
 // from duel (#256) so the fidelity experiment can ask the SAME selector for an
 // answer at each fidelity from one live state, rather than measuring a copy of
 // the loop — and so the eventual per-tick rehearsal budget has one place to
 // live.
-func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey *track, tick uint64, distance float64, scores map[string]float64) string {
+func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey *track, tick uint64, distance float64, scores map[string]float64) (string, float64) {
 	// The horizon must outlive the manoeuvres it judges — in REAL seconds,
 	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
 	// for the top tiers, enough for a reversal's payoff to show through the
 	// point-progress term without quadrupling the rehearsal budget.
 	base := 60*2 + 30*b.skill.library
-	best, top, n := b.play, math.Inf(-1), 0
+	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
 	for _, p := range plays {
 		if p.tier > b.skill.library {
 			continue
@@ -698,7 +727,7 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		if p.span > 0 && int(p.span*60) > horizon {
 			horizon = int(p.span * 60)
 		}
-		score := i.rehearse(a, b, sim, p, prey, tick, horizon)
+		score, guns := i.rehearse(a, b, sim, p, prey, tick, horizon)
 		// Selection noise is the skill's wander: the ace nearly argmaxes,
 		// the novice sometimes picks the second-best line and flies it well.
 		score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
@@ -716,11 +745,11 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 			scores[p.name] = score
 		}
 		if score > top {
-			best, top = p.name, score
+			best, top, promise = p.name, score, guns
 		}
 		n++
 	}
-	return best
+	return best, promise
 }
 
 // duel is the teamless fight brain: rehearse, commit, fly. Replaces the mode
@@ -784,7 +813,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		} else {
 			i.rehearsals++
 			sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
-			b.play = i.choose(slot, a, b, sim, prey, tick, distance, nil)
+			b.play, b.promise = i.choose(slot, a, b, sim, prey, tick, distance, nil)
 			b.picked = tick
 			b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s at the top — the machine included, whose edge is reflex and precision, not strategy churn
 		}

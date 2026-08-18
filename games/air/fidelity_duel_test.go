@@ -76,9 +76,9 @@ func TestFidelityDuel(t *testing.T) {
 				sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
 				honest := map[string]float64{}
 				rehearsal = full
-				truth := i.choose(slot, a, b, sim, b.prey, tick, b.distance, honest)
+				truth, _ := i.choose(slot, a, b, sim, b.prey, tick, b.distance, honest)
 				rehearsal = both
-				got := i.choose(slot, a, b, sim, b.prey, tick, b.distance, map[string]float64{})
+				got, _ := i.choose(slot, a, b, sim, b.prey, tick, b.distance, map[string]float64{})
 				rehearsal = live
 				r := results[band(b.distance)]
 				r.seen++

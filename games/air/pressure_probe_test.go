@@ -1,5 +1,7 @@
-// Mochi world: TEMPORARY probe — what actually happens to a bot pinned at its
-// own six by the scripted attacker, second by second?
+// Mochi world: measurement probes for the human-pressure harness — what a bot
+// actually does, second by second, with a scripted attacker behind it; whether
+// the position can be won at all; and how good the arbiter's best line looks
+// when it is saddled. Set AIR_PRESSURE=1 to run any of them.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
@@ -9,178 +11,320 @@ package air
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"sort"
+	"strconv"
 	"testing"
 
 	"world/game"
+	"world/games/air/flight"
 )
 
-// TestPressureTimeline answers the question task #38 turns on. The gate says
-// an ace held at gun parameters for 71% of a minute by a crude scripted
-// attacker is not credible. The battery also shows that ace spending 45% of
-// the fight in `limp`, which is not a choice the planner makes freely — it
-// needs thrust below 0.35 or a live fire, so the jet is genuinely wrecked.
-//
-// Two readings fit that, and they call for opposite fixes: either the bot is
-// shot to pieces early and everything after is a cripple being chased (in
-// which case the gate is measuring how hard the scripted attacker is to shake,
-// not the defender's skill), or the damage comes late and the tracking has
-// some other cause the whole minute.
-//
-// So: print the timeline. When do the engines go, what is the range and angle
-// off at that moment, and what was the bot doing before it.
-func TestPressureTimeline(t *testing.T) {
+// probe gates the measurement harnesses: they print, they do not assert, and
+// the doctrine battery has no use for their minutes.
+func probe(t *testing.T) {
+	t.Helper()
 	if os.Getenv("AIR_PRESSURE") == "" {
 		t.Skip("measurement harness: set AIR_PRESSURE=1 to run")
 	}
 	heavy(t)
+}
 
-	for _, level := range []string{"ace", "superhuman"} {
-		fmt.Printf("\n=== %s pinned at its six, 6 seeds ===\n", level)
-		posture, weight, plays := map[string]int{}, map[string]float64{}, map[string]int{}
-		pinned, loafing := 0, 0
-		var wrecked, first []float64 // seconds to thrust<0.35, and to the first engine damage at all
-		trackedBefore, totalBefore := 0, 0
-		trackedAfter, totalAfter := 0, 0
-		for seed := uint64(1); seed <= 6; seed++ {
+// TestPressureProbe traces ONE seed of the human-pressure harness: what the
+// ace chose at every re-plan, how the candidates ranked, and the geometry
+// each second. AIR_PROBE_SEED selects the seed, AIR_PROBE_START the
+// attacker's starting range in metres, AIR_PROBE_LENGTH the seconds flown.
+//
+// It is what found the harness's 600 m start to be an execution (2026-08-18):
+// 17 of 24 seeds ended inside 2.3 s, before the bandit's second decision.
+func TestPressureProbe(t *testing.T) {
+	probe(t)
+	seed := uint64(2)
+	if s := os.Getenv("AIR_PROBE_SEED"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			seed = uint64(n)
+		}
+	}
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "probe", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+		t.Fatal(err)
+	}
+	bot := -1
+	for slot, a := range i.aircraft {
+		if a != nil && a.brain != nil {
+			bot = slot
+		}
+	}
+	start := -600.0
+	if v := os.Getenv("AIR_PROBE_START"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			start = -float64(n)
+		}
+	}
+	place(i, bot, 0, start)
+	me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
+	hunter := &chaser{}
+	b := i.aircraft[bot].brain
+	fmt.Printf("seed %d\n", seed)
+	length := uint64(60)
+	if v := os.Getenv("AIR_PROBE_LENGTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			length = uint64(n)
+		}
+	}
+	for tick := uint64(0); tick < 60*length; tick++ {
+		data := hunter.fly(me, foe, tick)
+		i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
+		if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
+			fmt.Printf("t=%.1f END attacker alive=%v bandit alive=%v bandit kills=%d\n", float64(tick)/60, i.aircraft[0].alive, i.aircraft[bot].alive, i.aircraft[bot].kills)
+			break
+		}
+		r, off, mine, his := geometry(me, foe)
+		toward := foe.Position.Subtract(me.Position)
+		nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+		offNose := math.Acos(clamp(toward.Scale(1/r).Dot(nose), -1, 1)) * 57.3
+		if b.picked == tick && b.prey != nil {
+			scores := map[string]float64{}
+			sim := flight.New(i.aircraft[bot].model.Airframe, i.aircraft[bot].model.Environment, i.aircraft[bot].model.World)
+			i.choose(bot, i.aircraft[bot], b, sim, b.prey, tick, b.distance, scores)
+			type e struct {
+				n string
+				s float64
+			}
+			list := []e{}
+			for n, s := range scores {
+				list = append(list, e{n, s})
+			}
+			sort.Slice(list, func(a, c int) bool { return list[a].s > list[c].s })
+			fmt.Printf("  t=%5.1f PLAN %-8s intent=%-8s |", float64(tick)/60, b.play, b.intent)
+			for k, x := range list {
+				if k >= 6 {
+					break
+				}
+				fmt.Printf(" %s %.2f", x.n, x.s)
+			}
+			fmt.Println()
+		}
+		if tick%60 == 0 {
+			bnose := foe.Attitude.Rotate(flight.Vec3{X: 1})
+			myOff := math.Acos(clamp(toward.Scale(-1/r).Dot(bnose), -1, 1)) * 57.3
+			atkThrust := 1 - (me.Damage.Engine[0]+me.Damage.Engine[1])/2
+			fmt.Printf("t=%5.1f %-7s %-7s g=%.1f spd=%3.0fkt alt=%4.0f aim=%3.0f fired=%3d pace=%3.0fkt fpa=%+3.0f aimLOS=%3.0f noseAim=%3.0f thr=%.1f ring=%s | r=%4.0f atkAlt=%4.0f offTail=%3.0f offNose=%3.0f atkG=%.1f atkSpd=%3.0fkt atkThr=%.2f egap=%+5.0f thrust=%.2f\n",
+				float64(tick)/60, b.mode, b.intent, b.g, foe.Velocity.Length()*1.944, foe.Position.Y, myOff, i.aircraft[bot].spent, corner(i.aircraft[bot].model)*1.944, math.Asin(clamp(foe.Velocity.Y/math.Max(foe.Velocity.Length(), 1), -1, 1))*57.3, math.Acos(clamp(toward.Scale(-1/r).Dot(b.aim), -1, 1))*57.3, math.Acos(clamp(bnose.Dot(b.aim), -1, 1))*57.3, b.throttle, ringText(b.ring), r, me.Position.Y, off, offNose, me.Fcs.Demand, me.Velocity.Length()*1.944, atkThrust, his-mine,
+				1-(foe.Damage.Engine[0]+foe.Damage.Engine[1])/2)
+		}
+	}
+	fmt.Printf("chaser: lost tally %d, blew %d ticks, closest %.0f m/s, widest %.0f deg\n", hunter.lost, hunter.blew, hunter.closest, hunter.widest)
+}
+
+func ringText(o orbit) string {
+	if !o.valid {
+		return "-"
+	}
+	return fmt.Sprintf("R%.0f/nY%+.1f/w%.2f", o.radius, o.normal.Y, o.omega)
+}
+
+// TestPressureOracle asks whether the position the human-pressure harness
+// starts from can be won AT ALL: the bandit's seat is flown by the same crude
+// script as the attacker (pursue), and the run reports how often each side
+// held the other's rear quarter. If a novice script converts where the ace
+// does not, the doctrine is worse than the crudest thing that could sit in
+// its seat.
+func TestPressureOracle(t *testing.T) {
+	probe(t)
+	converted, tracked, total, killed, died := 0, 0, 0, 0, 0
+	for seed := uint64(1); seed <= 24; seed++ {
+		g := New()
+		made, err := g.Create(game.Session{Identifier: "oracle", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+			Parameters: map[string]any{"missiles": false}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		for slot := 0; slot < 2; slot++ {
+			if _, err := i.Join(game.Player{Identity: "", Name: "p", Slot: slot}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		place(i, 1, 0, -1200) // attacker (0) behind the "bandit" (1)
+		me, foe := &i.aircraft[0].model.State, &i.aircraft[1].model.State
+		hunter, defender := &chaser{}, &chaser{}
+		for tick := uint64(0); tick < 120*60; tick++ {
+			i.Step(tick, map[int][]game.Input{0: {{Data: hunter.fly(me, foe, tick)}}, 1: {{Data: defender.fly(foe, me, tick)}}})
+			if !i.aircraft[0].alive || !i.aircraft[1].alive || i.aircraft[0].model == nil || i.aircraft[1].model == nil {
+				if !i.aircraft[0].alive {
+					killed++
+				}
+				if !i.aircraft[1].alive {
+					died++
+				}
+				break
+			}
+			total++
+			if r, off, _, _ := geometry(me, foe); r < 900 && off < 45 {
+				tracked++
+			}
+			if r, off, _, _ := geometry(foe, me); r < 900 && off < 45 {
+				converted++
+			}
+		}
+	}
+	fmt.Printf("oracle (pursue in the bandit's seat, 24 seeds, 120 s, from 1,200 m): attacker down %d | bandit down %d | bandit tracked %.1f%% | bandit CONVERTED %.1f%%\n",
+		killed, died, 100*float64(tracked)/math.Max(1, float64(total)), 100*float64(converted)/math.Max(1, float64(total)))
+}
+
+// TestPromiseProbe: the distribution of the winning rehearsal's mean offence
+// (brain.promise) across ace-v-pilot gun duels, so the FINISH-on-opportunity
+// threshold is chosen from data rather than taste. Measured 2026-08-18: 410 of
+// ~530 re-plans under 0.05, a tail of ~90 from 0.15 up, and 22 at 0.95+ — a
+// saddle held for the whole rehearsal. Also what showed the ace holding a
+// 0.9-0.99 line at 600-760 m for seventy seconds without firing (seed 1).
+func TestPromiseProbe(t *testing.T) {
+	probe(t)
+	buckets := map[int]int{}
+	for seed := uint64(1); seed <= 4; seed++ {
+		g := New()
+		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("promise%d", seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+			Parameters: map[string]any{"missiles": false, "weapons": "guns", "bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		var top *craft
+		for _, slot := range i.slots() {
+			c := i.aircraft[slot]
+			if c != nil && c.brain != nil && c.brain.skill.library == skills["ace"].library && c.brain.skill.wander == skills["ace"].wander {
+				top = c
+			}
+		}
+		last := uint64(0)
+		for tick := uint64(0); tick < 60*240; tick++ {
+			i.Step(tick, nil)
+			if top.model == nil || !top.alive {
+				break
+			}
+			if top.brain.picked != last && top.brain.prey != nil {
+				last = top.brain.picked
+				buckets[int(math.Floor(top.brain.promise*20))]++
+				if top.brain.promise > 0.15 {
+					fmt.Printf("seed %d t=%.1f promise %.2f play %s intent %s distance %.0f fired %d shoot %v tracking %v spd %.0fkt\n", seed, float64(tick)/60, top.brain.promise, top.brain.play, top.brain.intent, top.brain.distance, top.spent, top.brain.shoot, top.brain.tracking, top.model.State.Velocity.Length()*1.944)
+				}
+			}
+		}
+	}
+	keys := []int{}
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	for _, k := range keys {
+		fmt.Printf("  promise %+.2f..: %d\n", float64(k)/20, buckets[k])
+	}
+}
+
+// TestGunLadderWide is TestLadderDuel's guns arm over 48 seeds instead of 16:
+// with nine to twelve no-results in sixteen, that arm turns on four to seven
+// decisive fights and moves by two on seed luck alone, which is not enough to
+// judge a doctrine change by. This is the wider sample for that judgement.
+func TestGunLadderWide(t *testing.T) {
+	probe(t)
+	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+		strong, weak := pair[0], pair[1]
+		wins, losses, draws := 0, 0, 0
+		for seed := uint64(1); seed <= 48; seed++ {
 			g := New()
-			made, err := g.Create(game.Session{Identifier: "pressure", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-				Parameters: map[string]any{"missiles": false, "bots": map[string]any{level: 1.0}}})
+			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("wide%s%d", strong, seed),
+				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+				Parameters: map[string]any{"missiles": false, "weapons": "guns", "bots": map[string]any{strong: 1.0, weak: 1.0}}})
 			if err != nil {
 				t.Fatal(err)
 			}
 			i := made.(*instance)
-			if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
-				t.Fatal(err)
-			}
-			bot := -1
-			for slot, a := range i.aircraft {
-				if a != nil && a.brain != nil {
-					bot = slot
+			var top, low *craft
+			for _, slot := range i.slots() {
+				c := i.aircraft[slot]
+				if c == nil || c.brain == nil {
+					continue
 				}
-			}
-			if bot < 0 {
-				t.Fatal("no bot in the session")
-			}
-			place(i, bot, 0, -600)
-			me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
-
-			hunter := &chaser{}
-			hurt, dead, burning := -1.0, -1.0, -1.0
-			ended, why := -1.0, "survived the minute"
-			for tick := uint64(0); tick < 60*60; tick++ {
-				data := hunter.fly(me, foe, tick)
-				i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
-				if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[bot].model == nil || i.aircraft[0].model == nil {
-					ended = float64(tick) / 60
-					switch {
-					case i.aircraft[bot].model == nil || !i.aircraft[bot].alive:
-						why = "the BANDIT died"
-					default:
-						altitude := -1.0
-						if i.aircraft[0].model != nil {
-							altitude = i.aircraft[0].model.State.Position.Y
-						}
-						why = fmt.Sprintf("the ATTACKER died (altitude %.0f m, bot fired %d rounds, bot credited %d kills)",
-							altitude, rounds-i.aircraft[bot].ammunition, i.aircraft[bot].kills)
-					}
-					break
-				}
-				seconds := float64(tick) / 60
-				if i.aircraft[bot].condition.Burning && burning < 0 {
-					burning = seconds
-				}
-				thrust := 1 - (foe.Damage.Engine[0]+foe.Damage.Engine[1])/2
-				if hurt < 0 && thrust < 0.999 {
-					hurt = seconds
-				}
-				if dead < 0 && thrust < 0.35 {
-					dead = seconds
-					r, off, _, _ := geometry(me, foe)
-					fmt.Printf("  seed %d: thrust fell below 0.35 at %5.1f s — attacker %4.0f m, %3.0f deg off the tail, bandit %3.0f kt, mode %s\n",
-						seed, seconds, r, off, foe.Velocity.Length()*1.944, i.aircraft[bot].brain.mode)
-				}
-				// #41: with an attacker inside gun range on its six, which
-				// POSTURE is in force and how much is it discounting the
-				// threat term? The proposed fix assumes a discount; this is
-				// the measurement that confirms or redirects it.
-				if r, _, _, _ := geometry(me, foe); r < 900 {
-					b := i.aircraft[bot].brain
-					w := stances[b.intent]
-					name := b.intent
-					if name == "" {
-						name = "(neutral)"
-					}
-					posture[name]++
-					weight[name] = w.threat
-					pinned++
-					if b.g < 3 {
-						loafing++
-					}
-					plays[b.play]++
-				}
-				if seed == 2 && tick%15 == 0 && tick < 60*4 {
-					rr, oo, _, _ := geometry(me, foe)
-					_, seen := i.aircraft[bot].brain.known[0]
-					fmt.Printf("      t=%4.2fs mode=%-8s g=%.1f %3.0f kt | attacker %4.0f m %3.0f deg off tail | engines %.2f/%.2f fire=%v | knows=%v | menace=%d glimpsed=%d dodge=%d\n",
-						seconds, i.aircraft[bot].brain.mode, i.aircraft[bot].brain.g, foe.Velocity.Length()*1.944,
-						rr, oo, foe.Damage.Engine[0], foe.Damage.Engine[1], i.aircraft[bot].condition.Burning,
-						seen, i.aircraft[bot].brain.menace, i.aircraft[bot].brain.glimpsed, i.aircraft[bot].brain.dodge)
-				}
-				r, off, _, _ := geometry(me, foe)
-				pinned := r < 900 && off < 45
-				if dead < 0 {
-					totalBefore++
-					if pinned {
-						trackedBefore++
-					}
+				if c.brain.skill.library == skills[strong].library && c.brain.skill.wander == skills[strong].wander {
+					top = c
 				} else {
-					totalAfter++
-					if pinned {
-						trackedAfter++
-					}
+					low = c
 				}
 			}
-			fmt.Printf("      attacker lost the tally %d time(s); widest off his nose %.0f deg | overshot %d ticks | fastest arrival %.0f m/s closure\n", hunter.lost, hunter.widest, hunter.blew, hunter.closest)
-			fmt.Printf("  seed %d: %s at %5.1f s | first engine damage %4.1f s | caught fire %5.1f s | thrust<0.35 %5.1f s\n",
-				seed, why, ended, hurt, burning, dead)
-			if dead >= 0 {
-				wrecked = append(wrecked, dead)
+			done := false
+			for tick := uint64(0); tick < 60*240 && !done; tick++ {
+				i.Step(tick, nil)
+				switch {
+				case low.model == nil || !low.alive:
+					wins++
+					done = true
+				case top.model == nil || !top.alive:
+					losses++
+					done = true
+				}
 			}
-			if hurt >= 0 {
-				first = append(first, hurt)
+			if !done {
+				draws++
 			}
-			i.Close()
 		}
-		mean := func(v []float64) float64 {
-			if len(v) == 0 {
-				return -1
-			}
-			sum := 0.0
-			for _, x := range v {
-				sum += x
-			}
-			return sum / float64(len(v))
+		fmt.Printf("wide guns %-11s vs %-7s  won %d  lost %d  no result %d  (of 48)\n", strong, weak, wins, losses, draws)
+	}
+}
+
+// TestFlounderWide is TestFlounder's ace row over 36 seeds instead of 12, for
+// the same reason as the wide gun ladder: a kill count near five in twelve
+// moves by three on seed luck.
+func TestFlounderWide(t *testing.T) {
+	probe(t)
+	kills, landed := 0, 0
+	for seed := uint64(1); seed <= 36; seed++ {
+		g := New()
+		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("flounderwide%d", seed),
+			Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+		if err != nil {
+			t.Fatal(err)
 		}
-		fmt.Printf("  crippled in %d of 6 seeds, mean %.1f s | first engine damage at mean %.1f s\n",
-			len(wrecked), mean(wrecked), mean(first))
-		share := func(a, b int) float64 {
-			if b == 0 {
-				return 0
+		i := made.(*instance)
+		if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+			t.Fatal(err)
+		}
+		bot := -1
+		for slot, a := range i.aircraft {
+			if a != nil && a.brain != nil {
+				bot = slot
 			}
-			return 100 * float64(a) / float64(b)
 		}
-		fmt.Printf("  pinned in the rear quarter BEFORE the jet was crippled: %.0f%% of %d ticks\n", share(trackedBefore, totalBefore), totalBefore)
-		fmt.Printf("  pinned AFTER: %.0f%% of %d ticks\n", share(trackedAfter, totalAfter), totalAfter)
-		fmt.Printf("  --- #41: with him inside 900 m, %d ticks ---\n", pinned)
-		fmt.Printf("      commanding under 3 g for %.0f%% of them\n", share(loafing, pinned))
-		for name, n := range posture {
-			fmt.Printf("      posture %-10s %5.1f%% of the time | its threat weight %.2f\n", name, share(n, pinned), weight[name])
-		}
-		for name, n := range plays {
-			if share(n, pinned) >= 5 {
-				fmt.Printf("      play    %-10s %5.1f%%\n", name, share(n, pinned))
+		place(i, 0, bot, 1800)
+		me := &i.aircraft[0].model.State
+		for tick := uint64(0); tick < 60*180; tick++ {
+			i.events = i.events[:0]
+			i.Step(tick, map[int][]game.Input{0: {{Sequence: 1, Data: flounder(me, &i.aircraft[bot].model.State, tick)}}})
+			for _, e := range i.events {
+				if e["kind"] == "hit" && e["slot"] != bot {
+					count, _ := e["count"].(int)
+					landed += count
+				}
+			}
+			human := i.aircraft[0]
+			if human.model == nil || !human.alive {
+				if human.condition.Damager >= 0 {
+					kills++
+				}
+				break
+			}
+			if b := i.aircraft[bot]; b.model == nil || !b.alive {
+				break
 			}
 		}
 	}
+	fmt.Printf("wide flounder: ace killed it %d/36 | rounds landed %d\n", kills, landed)
 }

@@ -206,7 +206,15 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 				t.Fatal(err)
 			}
 			// Find the bot and place the attacker where the report starts:
-			// already converted to its six, 600 m back, co-speed.
+			// converted to its six, co-speed, the pipper not yet on. 1,200 m
+			// back, NOT the 600 m this harness ran at until 2026-08-18: at 600
+			// m the attacker's held trigger is a boresight burst on a
+			// co-speed target, and the shell model answers it before the
+			// bandit's second decision — measured, 17 of 24 seeds ended
+			// inside 2.3 s, five of them inside 1.1 s, and every doctrine
+			// statistic this harness printed was the tale of a jet crippled
+			// in its first second. A "couple of turns in" is the position
+			// before the pipper is on, not after the burst has landed.
 			bot := -1
 			for slot, a := range i.aircraft {
 				if a != nil && a.brain != nil {
@@ -216,12 +224,12 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			if bot < 0 {
 				t.Fatal("no bot in the session")
 			}
-			place(i, bot, 0, -600) // attacker behind the bandit
+			place(i, bot, 0, -1200) // attacker behind the bandit
 			me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
 			previousMode := ""
 			hunter := &chaser{}
-			away := false                                 // this seed ever broke contact past 4 km
-			for tick := uint64(0); tick < 60*60; tick++ { // one simulated minute
+			away := false                                  // this seed ever broke contact past 4 km
+			for tick := uint64(0); tick < 120*60; tick++ { // two simulated minutes: from 1,200 m the first pass takes forty seconds to arrive
 				data := hunter.fly(me, foe, tick)
 				i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 				if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
@@ -292,7 +300,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			list = append(list, entry{mode, n})
 		}
 		sort.Slice(list, func(a, b int) bool { return list[a].ticks > list[b].ticks })
-		fmt.Printf("\n=== %s under a crude tail-chase (24 seeds, 60 s each) ===\n", level)
+		fmt.Printf("\n=== %s under a crude tail-chase (24 seeds, 120 s each, from 1,200 m) ===\n", level)
 		fmt.Printf("  OUTCOME: killed the attacker in %d of 24 | shot down in %d | broke contact past 4 km in %d\n", downed, lost, broke)
 		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | CONVERTED to the attacker's rear quarter %.1f%%\n",
 			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest,
@@ -329,11 +337,16 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			// TWENTY-FOUR seeds, raised from six on 2026-08-17. An
 			// outcome gate on six is decided by single events: this read
 			// green on 2026-08-16 because the ace killed its attacker in
-			// exactly one seed, and at 24 it kills in NONE and is shot down
-			// in 21. The pass was a fluke, not a defence. The claim this
-			// gate exists to test — that the tier offers no threat and no
-			// escape — is true, and belongs to the play-scorer work, not
-			// here.
+			// exactly one seed, and at 24 it killed in NONE and was shot down
+			// in 21 — from 600 m, where the fights were one-second
+			// executions and the number measured the shell, not the
+			// doctrine. From 1,200 m (2026-08-18) the same 24 seeds are
+			// two-minute fights the ace survives, and it still neither
+			// kills nor breaks: it converts, claims FINISH, and arrives at
+			// every pass with twice the attacker's speed and its nose 80
+			// degrees off — 150 s against a 200 kt target without a round
+			// fired. THAT is the claim this gate exists to test, and it is
+			// true, and it belongs to the play-scorer work, not here.
 			if downed == 0 && broke == 0 {
 				t.Errorf("ace was shot down in %d of 24 and never killed its attacker or broke contact: no threat and no escape", lost)
 			}

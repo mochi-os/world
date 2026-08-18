@@ -71,7 +71,7 @@ func TestFidelity(t *testing.T) {
 					rehearsal = level
 					table := map[string]float64{}
 					start := time.Now()
-					got := i.choose(slot, a, b, sim, b.prey, tick, b.distance, table)
+					got, _ := i.choose(slot, a, b, sim, b.prey, tick, b.distance, table)
 					spent := time.Since(start)
 					rehearsal = live
 					r := results[level]
