@@ -293,7 +293,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		}
 		sort.Slice(list, func(a, b int) bool { return list[a].ticks > list[b].ticks })
 		fmt.Printf("\n=== %s under a crude tail-chase (24 seeds, 60 s each) ===\n", level)
-		fmt.Printf("  OUTCOME: killed the attacker in %d of 6 | shot down in %d | broke contact past 4 km in %d\n", downed, lost, broke)
+		fmt.Printf("  OUTCOME: killed the attacker in %d of 24 | shot down in %d | broke contact past 4 km in %d\n", downed, lost, broke)
 		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | CONVERTED to the attacker's rear quarter %.1f%%\n",
 			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest,
 			100*float64(converted)/math.Max(1, float64(total)))

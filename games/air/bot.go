@@ -677,6 +677,28 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 }
 
+// rationed decides whether a jet past its burner bingo must still go dry.
+//
+// It yields to a real chance: a slow opponent close aboard is what the reserve
+// was being saved FOR, and a jet that will not spend it there flies home with
+// fuel and no kill. The test is the same "slow and close" FINISH uses, so the
+// bot may accelerate into exactly the shot its posture is waiting for.
+//
+// Measured against a human 2026-08-17 (recording 01a010a1...): the ace crossed
+// the threshold at t=250 s and never got burner back, because fuel only falls.
+// It spent 100+ seconds at 266-367 kt while the player cruised at 430-465, sat
+// at 6.4-7.2 km and never closed — read by the pilot, correctly, as making no
+// attempt. At t=330 the player WAS slow (232 kt) and close (1,396 m), the shot
+// the whole posture waits for, and the ace could not take it: at 262 kt it was
+// below its own energy floor, so FINISH refused to commit a slow jet, which is
+// right. The ration is what had made it slow.
+//
+// NOTE the doctrine batteries cannot exercise this: a bandit burns about
+// 4.2 kg/s, so the threshold is 327 s away, and their fights run 98-178 s.
+func rationed(prey *track, distance float64) bool {
+	return prey == nil || prey.velocity.Length() >= 170 || distance >= 2200
+}
+
 // beaten reports a round this pilot can see has already lost: seduced onto a
 // flare, or gone ballistic with its lock broken. Its fuse stays live, so it is
 // not harmless — but it is no longer STEERING, and abandoning the fight for it
@@ -2176,7 +2198,9 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 			b.shoot, b.loose = false, false
 			b.safed = "hold-missile"
 		} else if a.model.State.Fuel < 1361 {
-			b.reheat = 0
+			if rationed(b.prey, b.distance) {
+				b.reheat = 0
+			}
 		}
 	}
 
