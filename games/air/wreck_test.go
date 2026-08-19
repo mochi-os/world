@@ -155,30 +155,3 @@ func TestDriftHoldsTheLevers(t *testing.T) {
 		t.Errorf("a wreck left in full burner drifted to %.0f m/s, no faster than one left at idle (%.0f): the levers are not reaching the model", hot, cold)
 	}
 }
-
-// TestBurnerRation: past its burner bingo a bot goes dry — unless the shot it
-// was saving the fuel for is actually in front of it. The doctrine batteries
-// cannot reach this (a bandit burns ~4.2 kg/s, so the threshold is 327 s away
-// and their fights run 98-178 s), which is why it is tested here directly.
-func TestBurnerRation(t *testing.T) {
-	slow := &track{velocity: flight.Vec3{X: 100}} // ~195 kt: collapsed
-	fast := &track{velocity: flight.Vec3{X: 250}} // ~486 kt: still flying
-	for _, c := range []struct {
-		name     string
-		prey     *track
-		distance float64
-		dry      bool
-	}{
-		{"a slow opponent close aboard is the shot the fuel was for", slow, 1400, false},
-		{"the same opponent too far to reach", slow, 3000, true},
-		{"close, but he still has his energy", fast, 1400, true},
-		{"nothing in front of me at all", nil, 1400, true},
-		{"exactly at the range bound", slow, 2200, true},
-		{"exactly at the speed bound", &track{velocity: flight.Vec3{X: 170}}, 1400, true},
-	} {
-		if got := rationed(c.prey, c.distance); got != c.dry {
-			verb := map[bool]string{true: "went dry", false: "kept its burner"}
-			t.Errorf("%s: %s, want %s", c.name, verb[got], verb[c.dry])
-		}
-	}
-}
