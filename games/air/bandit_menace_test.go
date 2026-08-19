@@ -28,7 +28,7 @@ func menace(position, velocity flight.Vec3, shooter int, phase float64) []float6
 // abandon a fight for a defeated round was dead in the one place a human ever
 // sees it.
 func TestMenaceBeaten(t *testing.T) {
-	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2")
+	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0)
 	position, velocity := flight.Vec3{X: 1000}, flight.Vec3{X: -300}
 
 	for _, c := range []struct {
@@ -78,7 +78,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 	// The machine tier: no sighting roll and no reaction delay, so the response
 	// is deterministic and the test measures doctrine rather than dice.
 	evading := func(phase float64) bool {
-		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2")
+		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2", 0)
 		bandit.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 
 		environment := flight.Environment{Seed: 1, Wrap: 250000}

@@ -417,3 +417,48 @@ func TestDispenseProbe(t *testing.T) {
 		}
 	}
 }
+
+// TestSeamProbe: does an ace-v-ace BVR joust merge, across seeds and loads —
+// the seam test's seed 11 stopped merging on the full-internal load.
+func TestSeamProbe(t *testing.T) {
+	probe(t)
+	for _, pounds := range []float64{6000, 10800} {
+		merged, resolved, never := 0, 0, 0
+		for seed := uint64(1); seed <= 12; seed++ {
+			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("seamprobe%d", seed), Game: "air", Mode: "joust", Seed: seed,
+				Parameters: map[string]any{"missiles": true, "start": "bvr", "fuel": pounds, "bots": map[string]any{"ace": 2.0}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := made.(*instance)
+			bots := []*craft{}
+			for _, s := range i.slots() {
+				if a := i.aircraft[s]; a != nil && a.bot {
+					bots = append(bots, a)
+				}
+			}
+			closest, done := math.MaxFloat64, false
+			for tick := uint64(0); tick < 60*480; tick++ {
+				i.Step(tick, nil)
+				if bots[0].model == nil || bots[1].model == nil || !bots[0].alive || !bots[1].alive {
+					done = true
+					break
+				}
+				if span := i.span(bots[0].model, bots[1].model); span < closest {
+					closest = span
+				}
+			}
+			switch {
+			case done:
+				resolved++
+			case closest <= 2000:
+				merged++
+			default:
+				never++
+				fmt.Printf("  %.0f lb seed %d never closed: %.0f m\n", pounds, seed, closest)
+			}
+			i.Close()
+		}
+		fmt.Printf("seam probe %5.0f lb: resolved %d, merged %d, never closed %d (of 12)\n", pounds, resolved, merged, never)
+	}
+}

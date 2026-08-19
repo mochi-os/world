@@ -50,7 +50,7 @@ const (
 	// SEA and be perfectly happy.
 	sea      = 3      // world y at which flight ends
 	speed    = 220    // spawn airspeed
-	fuel     = 2722.0 // default spawn fuel load, kg (~6,000 lb — the session may choose otherwise)
+	fuel     = 4900.0 // default spawn fuel load, kg: full internal (~10,800 lb), the same load the client's presets and the multiplayer creator default to since 2026-08-18 — the session may choose otherwise. Was 2,722 kg (6,000 lb) until then; every doctrine baseline recorded before that date was measured on the lighter jet
 	pause    = 5.0    // seconds from death to respawn (air mode)
 	rounds   = 578    // M61 magazine per life
 	rate     = 100.0  // rounds per second (6,000 rpm)

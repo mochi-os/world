@@ -25,6 +25,7 @@ type Bandit struct {
 	arena *instance
 	craft *craft
 	tick  uint64
+	tank  float64 // spawn fuel, kg: the player's own load, so the single-player joust is fought on equal tanks
 }
 
 // NewBandit builds the harness. Unknown levels fly as ace. The bandit
@@ -54,7 +55,7 @@ type Bandit struct {
 // AMRAAM employment, crank, and the radar-round defence — in single player,
 // the same brain path the server flies. "" preserves the older callers:
 // fox2 when the player can fire missiles, guns otherwise.
-func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string) *Bandit {
+func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string, tank float64) *Bandit {
 	if weapons == "" {
 		if missiles {
 			weapons = "fox2"
@@ -74,11 +75,15 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9,
 		bot: true, brain: thought, lock: -1, loadout: bots_loadout(weapons)}
 	fighter.arm()
+	if tank <= 0 {
+		tank = fuel // the server's default load; the client passes the player's own so the joust is fought on equal tanks
+	}
 	return &Bandit{
 		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night,
 			missiles: missiles || weapons == "open", weapons: weapons,
 			aircraft: map[int]*craft{0: mirror, 1: fighter}},
 		craft: fighter,
+		tank:  tank,
 	}
 }
 
@@ -102,7 +107,7 @@ func (b *Bandit) Spawn(position, velocity flight.Vec3) {
 	// carrier. The merge-entry power stays deliberately high: excess thrust on
 	// a trimmed attitude just accelerates, it does not porpoise.
 	s := &b.craft.model.State
-	*s = flight.Level(b.craft.model, position, velocity, velocity.Length(), fuel)
+	*s = flight.Level(b.craft.model, position, velocity, velocity.Length(), b.tank)
 	s.Engine[0] = flight.EngineState{Spool: 0.9}
 	s.Engine[1] = flight.EngineState{Spool: 0.9}
 	b.craft.arm()

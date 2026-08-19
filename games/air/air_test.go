@@ -1711,7 +1711,7 @@ func TestBotSpiral(t *testing.T) {
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
-	b := NewBandit("ace", 9, 250000, "", false, false, "") // guns-only, like the client joust
+	b := NewBandit("ace", 9, 250000, "", false, false, "", 0) // guns-only, like the client joust
 	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}

@@ -19,7 +19,7 @@ import (
 // (zero alpha), which handed the single player's gun target the same
 // porpoise armour the Level sign fix removed everywhere else.
 func TestBanditSpawnTrimmed(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "")
+	b := NewBandit("ace", 1, 250000, "", false, false, "", 0)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	s := &b.craft.model.State
 	v := s.Attitude.Unrotate(s.Velocity)
@@ -40,7 +40,7 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 // round reports (Menace stubs) gate the shoot-look-shoot discipline exactly
 // as the server's own flying list does. The guns class stays byte-inert.
 func TestBanditBvr(t *testing.T) {
-	b := NewBandit("ace", 3, 250000, "", false, true, "open")
+	b := NewBandit("ace", 3, 250000, "", false, true, "open", 0)
 	if b.craft.amraams == 0 {
 		t.Fatal("open-class bandit spawned without AMRAAMs")
 	}
@@ -106,7 +106,7 @@ func TestBanditBvr(t *testing.T) {
 	}
 
 	// The guns class: today's exact joust, nothing radiates.
-	quiet := NewBandit("ace", 3, 250000, "", false, false, "guns")
+	quiet := NewBandit("ace", 3, 250000, "", false, false, "guns", 0)
 	quiet.Spawn(flight.Vec3{X: 8000, Y: 3000}, flight.Vec3{X: -272})
 	for tick := 0; tick < 60*5; tick++ {
 		player.State.Encode(words)

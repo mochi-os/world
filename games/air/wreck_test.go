@@ -23,7 +23,7 @@ func bank(s *flight.State) float64 {
 // coast flies a dead bandit for the given seconds and reports where it got to.
 func coast(t *testing.T, throttle, reheat, lean float64, seconds int) (speed, rolled, fell float64) {
 	t.Helper()
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns")
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0)
 	b.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 	b.craft.latest = flight.Inputs{Throttle: throttle, Reheat: reheat}
 	high := b.State().Position.Y
@@ -75,7 +75,7 @@ func TestCoastSpirals(t *testing.T) {
 // ONE descent angle for as long as it took to reach the water. Whatever the
 // model does, it must not do that.
 func TestCoastVaries(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns")
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0)
 	b.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 	b.craft.latest = flight.Inputs{Throttle: 0.7}
 	var speeds []float64

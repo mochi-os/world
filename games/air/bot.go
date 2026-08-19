@@ -711,7 +711,9 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 // right. The ration is what had made it slow.
 //
 // NOTE the doctrine batteries cannot exercise this: a bandit burns about
-// 4.2 kg/s, so the threshold is 327 s away, and their fights run 98-178 s.
+// 4.2 kg/s, so from the full-internal spawn the threshold is some 840 s away
+// (it was 327 s on the 6,000 lb load the batteries flew until 2026-08-18),
+// and their fights run 98-178 s.
 func rationed(prey *track, distance float64) bool {
 	return prey == nil || prey.velocity.Length() >= 170 || distance >= 2200
 }
