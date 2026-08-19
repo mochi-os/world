@@ -1274,6 +1274,7 @@ func TestBotPress(t *testing.T) {
 		}}})
 	i := made.(*instance)
 	ace, prey := i.aircraft[99], i.aircraft[98]
+	ace.ammunition = 0 // the gun opens out to the control zone's rim now (#49), and a drone parked dead ahead at 700 m is dead in a second; this is a test of the advantage clock, not the kill
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	forward := flight.Vec3{X: 220}
 	for tick := uint64(0); tick < 450; tick++ {
@@ -1300,6 +1301,7 @@ func TestBotPress(t *testing.T) {
 	// finishing pilot legitimately takes is the CROSSING: the bore sweeping
 	// fast through the solution, priced on where the sweep bottoms so the
 	// rounds arrive as it crosses.
+	ace.ammunition = rounds // the trigger wager below needs a loaded gun
 	rig := func(walked float64, at uint64) bool {
 		aloft(ace, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 400, Z: 35}), forward)

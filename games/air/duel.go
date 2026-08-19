@@ -148,6 +148,13 @@ var plays = []play{
 			if m.closure > goal+50 {
 				o.brake = 1
 			}
+			// ...and BURN for the gap when he is running (#49): MIL alone held
+			// this play 620-640 m behind a target in full burner, opening at
+			// 3-10 m/s, for the four seconds a 4-7 degree track lasted. Behind
+			// him the plume is hidden from the seeker that matters.
+			if speed < m.velocity.Length()+goal-30 {
+				o.reheat = 1
+			}
 		} else if m.distance < 1500 {
 			o.throttle = clamp(1-(m.closure-40)/200, 0.35, 1)
 			o.reheat = 0

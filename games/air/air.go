@@ -1259,6 +1259,53 @@ func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) 
 	return flight.Vec3{X: dx / distance, Y: dy / distance, Z: dz / distance}, distance
 }
 
+// plume is the heat a seeker sees from this jet's tailpipes: the ACHIEVED
+// reheat, not the commanded lever. The two agree on the server, but a
+// single-player bandit knows the human only through the mirrored flight
+// state, whose inputs carry nothing — reading the lever there made the
+// pilot's burner invisible to the seeker that hunts him.
+func plume(c *craft) float64 {
+	if c == nil || c.model == nil {
+		return 0
+	}
+	lit := 0.0
+	for _, engine := range c.model.State.Engine {
+		lit = math.Max(lit, engine.Reheat)
+	}
+	return clamp(lit, 0, 1)
+}
+
+// zoned is the heater ladder's verdict on the shot the brain wants (#48):
+// Heat() flies the round from the rail — off the jet's VELOCITY, not its
+// nose — against the track's present turn and burner, with the seeker's
+// gimbal and track-rate ceiling, and says whether it arrives from here. The
+// crude gate before it (rear aspect, inside 2,600 m, nose within 30°) passed
+// beam shots at 700 m whose line-of-sight rate saturated the seeker on its
+// first armed frame, and high-alpha shots whose round left the rail 40-50°
+// off the target — six of six in the recorded fight broke lock at 0.5 s.
+// The disciplined tiers fire only inside the no-escape rung; the rest take
+// any shot the seeker can fly.
+func (i *instance) zoned(a *craft, b *brain, distance float64) bool {
+	if b.prey == nil || b.target < 0 || a.model == nil {
+		return false
+	}
+	me := &a.model.State
+	lit := 0.0
+	if t := i.aircraft[b.target]; t != nil {
+		lit = plume(t)
+	}
+	zone := Heat(round.Target{Position: me.Position, Velocity: me.Velocity},
+		round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
+		b.prey.swing, lit, i.environment.Wrap)
+	if distance <= zone.Minimum {
+		return false
+	}
+	if b.skill.discipline >= 0.7 {
+		return distance <= zone.Escape
+	}
+	return distance <= zone.Max
+}
+
 // acquire returns the slot the seeker head would lock right now: the nearest
 // living craft inside the cone and the aspect-weighted range — team-blind,
 // exactly like the hardware (an AIM-9 sees tailpipes, not sides).
@@ -1282,7 +1329,7 @@ func (i *instance) acquire(slot int, a *craft) int {
 		// source (no lock, no launch), and it makes the afterburner a
 		// beacon both sides can choose to hide: the run-in at MIL is
 		// concealment, for bots and the human alike.
-		floor := 0.15 + 0.35*clamp(b.latest.Reheat, 0, 1)
+		floor := 0.15 + 0.35*plume(b)
 		if distance > missile_range*(floor+(1-floor)*math.Max(0, tail)) {
 			continue
 		}

@@ -2037,8 +2037,19 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if direction.Dot(nose) > 0.94 && tail > 0.2 {
 			b.mode = "saddle"
 			b.g = math.Min(b.g, 4)                        // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
-			b.throttle = clamp(0.7-closure*0.006, 0.2, 1) // match his speed, sit in the zone
+			// Match his speed with a closing bias, and BURN for it when he is
+			// running away (#49): this law held 0.76 MIL, no reheat, 620-640
+			// m behind a target in full burner, opening at 3-10 m/s, for the
+			// four seconds the tracking solution lasted — then watched him
+			// accelerate away from 1.1 km in saddle. The bias is the slow
+			// saddle's (duel.go): close gently from behind, never blow
+			// through; the burner lights when the deficit is real.
+			want := prey.velocity.Length() + clamp((distance-b.tactics.press.gap)*0.12, -25, 60)
+			b.throttle = clamp(0.55+(want-speed)*0.012, 0.2, 1)
 			b.reheat = 0
+			if speed < want-30 {
+				b.reheat = 1
+			}
 			if closure > 90 && b.skill.library >= 3 {
 				b.brake = 1
 			}
@@ -2176,8 +2187,10 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// the envelope and a cold one only close aboard. The instructor tiers run
 	// the approach at MIL when pointed in and fast enough to afford it; the
 	// low tiers keep advertising, which is authentic and is how they die.
+	// Behind him (tail > 0.5) the plume is hidden from the seeker that
+	// matters — his looks forward — so the saddle's burner (#49) stands.
 	if b.skill.library >= 3 && i.missiles && b.prey != nil && distance < 3500 &&
-		nose.Dot(direction) > 0.2 && speed > pace*0.85 {
+		nose.Dot(direction) > 0.2 && speed > pace*0.85 && tail < 0.5 {
 		b.reheat = 0
 	}
 
@@ -2194,7 +2207,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	if b.missiles > 0 && b.shoot && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail && distance < b.tactics.missile.span)) {
 		margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
 		limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) * (b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
-		if distance < limit && nose.Dot(direction) > margin {
+		if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {
 			b.loose = true
 		}
 	}
@@ -2449,9 +2462,18 @@ func (b *brain) pipper(m *flight.Model, tick uint64) (direction flight.Vec3, mis
 // waiting for it has zero value and the snapshot is worth its low odds —
 // which is exactly how a human treats the same picture.
 func (b *brain) solution(m *flight.Model, tick uint64) bool {
-	if b.distance > b.skill.open {
+	// The opening range is a SOFT edge (#49): inside it the wager stands on
+	// its own; out to the control zone's rim (open*1.4, where the saddle and
+	// press already track) the price climbs, threefold at the rim, so only a
+	// converged tracking solution is worth a burst from there. A hard cut at
+	// the number refused a 4-7 degree track held for four seconds at 620-640
+	// m — twenty to forty metres outside the ace's 600 — while its throttle
+	// law could not close the gap, and the only rounds it fired all fight
+	// went out as the target broke at 6 g.
+	if b.distance > b.skill.open*1.4 {
 		return false
 	}
+	stretch := 1 + 2*clamp((b.distance-b.skill.open)/(0.4*b.skill.open), 0, 1)
 	_, miss, span, horizon := b.pipper(m, tick)
 	// The chance the stream centre passes within the airframe's reach of
 	// him: P(|N(miss, sigma)| < reach). The widths must be the REAL ones —
@@ -2518,7 +2540,7 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	// pilot's own scatter, and halving the price just opened fire at 700 m
 	// on two-percent shots — measured dumping the whole belt on the
 	// approach to a straight-and-level offerer.
-	price := b.skill.trigger * (1.6 - 0.6*clamp(float64(b.magazine)/float64(rounds), 0, 1))
+	price := b.skill.trigger * (1.6 - 0.6*clamp(float64(b.magazine)/float64(rounds), 0, 1)) * stretch
 	if chance > price {
 		b.chanced = tick
 		return true
