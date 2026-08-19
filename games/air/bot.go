@@ -958,7 +958,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// engines, and an orthogonal break. Trumps everything but the floor.
 	inbound := flight.Vec3{}
 	threatened, radar := false, false // and whether the round that threatens is a radar missile: the split programme (#43) spends chaff on it and flares on a heater
-	if len(b.judged) > 64 { // rounds despawn and numbers only grow: reset rather than leak (a live round re-rolls once, harmlessly)
+	if len(b.judged) > 64 {           // rounds despawn and numbers only grow: reset rather than leak (a live round re-rolls once, harmlessly)
 		b.noticed, b.judged = nil, nil
 	}
 	for _, m := range i.flying {
@@ -2036,7 +2036,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.aim, _ = i.bearing(me.Position, lead)
 		if direction.Dot(nose) > 0.94 && tail > 0.2 {
 			b.mode = "saddle"
-			b.g = math.Min(b.g, 4)                        // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
+			b.g = math.Min(b.g, 4) // tracking is a 2 g business: staying far off the g-limiter keeps the demand out of the boundary-trim regime (#131), whose faster integration rattles fine corrections
 			// Match his speed with a closing bias, and BURN for it when he is
 			// running away (#49): this law held 0.76 MIL, no reheat, 620-640
 			// m behind a target in full burner, opening at 3-10 m/s, for the
@@ -2346,16 +2346,39 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	// prevents stays prevented. Wander applies AFTER: a novice's pipper
 	// still wanders.
 	// The commanded evasion (#251): while the dodge stands, the stick flies
-	// an out-of-plane weave — aperiodic (two incommensurate frequencies) so
-	// a patient shooter cannot time it — and the gun track yields. This is
-	// the manoeuvre the round-flight model has priced since real time of
-	// flight landed: rounds resolve on arrival, and a defender who moves
-	// during their flight is not where they were aimed.
+	// an out-of-plane pull and the gun track yields. This is the manoeuvre
+	// the round-flight model has priced since real time of flight landed:
+	// rounds resolve on arrival, and a defender who moves during their
+	// flight is not where they were aimed.
+	//
+	// ONE direction, HELD for the window (#46). This was a weave of two
+	// sinusoids with periods of 0.55 and 0.83 s — shorter than the airframe
+	// takes to roll and load — so the jet never displaced: the machine, which
+	// re-cues every tick and so dodged continuously, jittered at 2-4 g along
+	// a dead-straight line with no aim wander to break it, and a scripted
+	// novice's held trigger killed it from 1,200 m dead astern in 2.2 s on
+	// eight of twenty-four harness seeds (the ace's 0.4 s delay and its
+	// wander made the same weave survivable). A jink that beats a stream is a
+	// committed pull for the rounds' time of flight; the window's own stamp
+	// picks the quadrant, so successive dodges go different ways and a
+	// patient shooter still cannot time it.
 	if tick < b.dodge {
-		side := aim.Cross(flight.Vec3{Y: 1}).Normalize()
-		rise := side.Cross(aim).Normalize()
-		phase := float64(tick)
-		aim = aim.Add(side.Scale(0.5 * math.Sin(phase/8))).Add(rise.Scale(0.45 * math.Cos(phase/5.3))).Normalize()
+		// The pull goes where the lift already points — the jet loads in a
+		// third of a second there, where any other direction costs a roll
+		// first and the window is over before the g arrives — and every
+		// second window rolls ninety degrees one way or the other, so the
+		// displacement changes plane.
+		up := s.Attitude.Rotate(flight.Vec3{Y: 1})
+		lift := up.Subtract(aim.Scale(up.Dot(aim))).Normalize()
+		side := aim.Cross(lift).Normalize()
+		switch (b.dodge / 15) % 4 {
+		case 1:
+			aim = aim.Add(side.Scale(0.5)).Normalize()
+		case 3:
+			aim = aim.Subtract(side.Scale(0.5)).Normalize()
+		default:
+			aim = aim.Add(lift.Scale(0.5)).Normalize()
+		}
 		want = math.Max(want, b.skill.pull*0.9)
 	}
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 && tick >= b.dodge {

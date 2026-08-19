@@ -1,5 +1,7 @@
-// Mochi world: the BVR ladder's two upper rungs over twelve seeds instead of
-// six — the six-seed rungs move by two on seed luck (#43). AIR_PRESSURE=1.
+// Mochi world: the BVR ladder's two upper rungs over twenty-four seeds
+// instead of six, and the missile ladder over forty-eight instead of sixteen
+// — the narrow rungs move by two on seed luck (#43, #46). These carry the
+// gates and run in every doctrine sweep.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
@@ -16,11 +18,8 @@ import (
 )
 
 func TestBvrWide(t *testing.T) {
-	if os.Getenv("AIR_PRESSURE") == "" {
-		t.Skip("measurement harness: set AIR_PRESSURE=1 to run")
-	}
-	heavy(t)
-	seeds := uint64(12)
+	wide(t)
+	seeds := uint64(24)
 	if v := os.Getenv("AIR_BVR_SEEDS"); v != "" {
 		fmt.Sscanf(v, "%d", &seeds)
 	}
@@ -75,15 +74,20 @@ func TestBvrWide(t *testing.T) {
 			i.Close()
 		}
 		fmt.Printf("bvr wide %-11s v %-7s %d-%d, %d no result | AMRAAMs spent %d of %d\n", strong, weak, wins, losses, draws, spent, 8*seeds)
+		// THE GATE (#46): symmetric competent BVR neutralises, so order is
+		// not demanded of these rungs — but losing them beyond the seed
+		// band is. Twenty-four seeds move by about two; the six-seed rung
+		// read 3-3 while twenty-four read 10-13. Measured 2026-08-19 on the
+		// full-internal jet: 12-11 / 13-11.
+		if seeds >= 24 && losses > wins+3 {
+			t.Errorf("bvr wide: %s lost to %s %d-%d over %d seeds: the rung is inverted", strong, weak, losses, wins, seeds)
+		}
 	}
 }
 
 // TestMissileLadderWide is TestLadderDuel's missiles arm over 48 seeds.
 func TestMissileLadderWide(t *testing.T) {
-	if os.Getenv("AIR_PRESSURE") == "" {
-		t.Skip("measurement harness: set AIR_PRESSURE=1 to run")
-	}
-	heavy(t)
+	wide(t)
 	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
 		strong, weak := pair[0], pair[1]
 		wins, losses, draws := 0, 0, 0
@@ -126,5 +130,11 @@ func TestMissileLadderWide(t *testing.T) {
 			i.Close()
 		}
 		fmt.Printf("wide missiles %-11s vs %-7s  won %d  lost %d  no result %d  (of 48)\n", strong, weak, wins, losses, draws)
+		// THE GATE (#46): the chaotic arm, four fights of daylight at this
+		// width (sixteen seeds read 5-7 on a rung forty-eight read 20-18).
+		// Measured 2026-08-19 on the full-internal jet: 27-16 / 26-16.
+		if losses > wins+4 {
+			t.Errorf("wide missiles: %s lost to %s %d-%d over 48 seeds: the ladder is inverted", strong, weak, losses, wins)
+		}
 	}
 }

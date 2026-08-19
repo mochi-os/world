@@ -31,6 +31,16 @@ func probe(t *testing.T) {
 	heavy(t)
 }
 
+// wide marks the forty-eight / twenty-four / thirty-six seed instruments
+// that carry the doctrine GATES (#46): they run in every doctrine sweep
+// (AIR_DOCTRINE=1), not only under the measurement flag. The sixteen- and
+// six-seed batteries stay as the quick read; at those widths the upper
+// rungs moved by two on seed luck and an inversion passed unseen.
+func wide(t *testing.T) {
+	t.Helper()
+	heavy(t)
+}
+
 // TestPressureProbe traces ONE seed of the human-pressure harness: what the
 // ace chose at every re-plan, how the candidates ranked, and the geometry
 // each second. AIR_PROBE_SEED selects the seed, AIR_PROBE_START the
@@ -234,7 +244,7 @@ func TestPromiseProbe(t *testing.T) {
 // decisive fights and moves by two on seed luck alone, which is not enough to
 // judge a doctrine change by. This is the wider sample for that judgement.
 func TestGunLadderWide(t *testing.T) {
-	probe(t)
+	wide(t)
 	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
 		strong, weak := pair[0], pair[1]
 		wins, losses, draws := 0, 0, 0
@@ -276,6 +286,13 @@ func TestGunLadderWide(t *testing.T) {
 			}
 		}
 		fmt.Printf("wide guns %-11s vs %-7s  won %d  lost %d  no result %d  (of 48)\n", strong, weak, wins, losses, draws)
+		// THE GATE (#46): order, with the seed band this width earns. At
+		// sixteen seeds the rungs moved by two on seed luck and a 1-1 / 5-2
+		// sweep passed while 48 seeds read 6-2 / 17-8; at forty-eight the
+		// band is about three. Measured 2026-08-19: 12-3 / 15-10.
+		if losses > wins+3 {
+			t.Errorf("wide guns: %s lost to %s %d-%d over 48 seeds: the ladder is inverted", strong, weak, losses, wins)
+		}
 	}
 }
 
@@ -283,7 +300,7 @@ func TestGunLadderWide(t *testing.T) {
 // the same reason as the wide gun ladder: a kill count near five in twelve
 // moves by three on seed luck.
 func TestFlounderWide(t *testing.T) {
-	probe(t)
+	wide(t)
 	kills, landed := 0, 0
 	for seed := uint64(1); seed <= 36; seed++ {
 		g := New()
@@ -327,6 +344,13 @@ func TestFlounderWide(t *testing.T) {
 		}
 	}
 	fmt.Printf("wide flounder: ace killed it %d/36 | rounds landed %d\n", kills, landed)
+	// THE GATE (#46): the ace must still finish the floundering human profile
+	// in a reasonable share of fights — twelve seeds moved by three on seed
+	// luck; thirty-six read 14-17 across the 2026-08 tunings. A quarter is
+	// the floor.
+	if kills < 9 {
+		t.Errorf("wide flounder: the ace killed the floundering profile in only %d of 36 fights", kills)
+	}
 }
 
 // TestDispenseProbe counts what each tier spends from its two magazines and
