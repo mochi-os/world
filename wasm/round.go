@@ -26,6 +26,10 @@
 // 6-8 target position, 9-11 target velocity, 12 wrap. Output words:
 // 0 aero, 1 max, 2 escape, 3 minimum, 4 seconds-to-active preview.
 //
+// heater_ladder (#47) is the AIM-9M's zone in the same shape: input words
+// 0-11 as above, 12-14 the target's present acceleration, 15 the target's
+// afterburner (0..1), 16 wrap. Output words as round_ladder's.
+//
 // round_distract input words: 0 slot, 1-3 bloom position, 4-6 truth
 // position, 7-9 truth velocity. Returns whether the seduction took — the
 // core's doppler gate decides (#29).
@@ -37,6 +41,7 @@ import (
 	"math"
 	"syscall/js"
 
+	"world/games/air"
 	"world/games/air/flight"
 	"world/games/air/round"
 )
@@ -45,11 +50,12 @@ var flying [32]*round.Model
 var quiver []float64 // round buffer scratch
 
 func rounds() map[string]any {
-	quiver = make([]float64, 16)
+	quiver = make([]float64, 17)
 	return map[string]any{
-		"round_launch": js.FuncOf(round_launch),
-		"round_step":   js.FuncOf(round_step),
+		"round_launch":   js.FuncOf(round_launch),
+		"round_step":     js.FuncOf(round_step),
 		"round_ladder":   js.FuncOf(round_ladder),
+		"heater_ladder":  js.FuncOf(heater_ladder),
 		"round_distract": js.FuncOf(round_distract),
 		"round_drop":     js.FuncOf(round_drop),
 	}
@@ -136,6 +142,19 @@ func round_ladder(this js.Value, arguments []js.Value) any {
 		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
 		round.Target{Position: vec(quiver, 6), Velocity: vec(quiver, 9)},
 		quiver[12],
+	)
+	out := quiver[:5]
+	out[0], out[1], out[2], out[3], out[4] = zone.Aero, zone.Max, zone.Escape, zone.Minimum, zone.Active
+	send(out, arguments[1])
+	return nil
+}
+
+func heater_ladder(this js.Value, arguments []js.Value) any {
+	receive(arguments[0], quiver[:17])
+	zone := air.Heat(
+		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
+		round.Target{Position: vec(quiver, 6), Velocity: vec(quiver, 9)},
+		vec(quiver, 12), quiver[15], quiver[16],
 	)
 	out := quiver[:5]
 	out[0], out[1], out[2], out[3], out[4] = zone.Aero, zone.Max, zone.Escape, zone.Minimum, zone.Active
