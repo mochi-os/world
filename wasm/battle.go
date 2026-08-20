@@ -263,6 +263,8 @@ func blast(this js.Value, arguments []js.Value) any {
 	copy(selector[13:17], arsenal[7:11])
 	body, position, attitude := aim(selector[:])
 	if body == nil {
+		out := [2]float64{0, 0}
+		send(out[:], arguments[1]) // an unresolved target must still write the output: a stale buffer read as the previous blast's verdict
 		return 0
 	}
 	point := flight.Vec3{X: arsenal[1], Y: arsenal[2], Z: arsenal[3]}
@@ -293,6 +295,9 @@ func progress(this js.Value, arguments []js.Value) any {
 	if arsenal[2] != 0 { // mission reset: everything pristine
 		airborne = airborne[:0]
 		condition = battle.Condition{Damager: -1}
+		if model != nil {
+			model.State.Damage = flight.DamageState{} // the ownship's flight damage too: "pristine" excluded it, which only a full remount cleared
+		}
 		for i := range fleet {
 			if fleet[i].used {
 				fleet[i].damage = flight.DamageState{}
