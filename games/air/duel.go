@@ -558,7 +558,41 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	near := clamp((2500-r)/1500, 0, 1)
 	offence := clamp(rear, 0, 1) * clamp(point, 0, 1) * clamp(point, 0, 1) * band
 	threat := clamp(-rear, 0, 1) * clamp(-ahead, 0, 1) * near
-	energy := 0.25*clamp((speed-0.8*pace)/pace, -1, 0.5) + 0.1*clamp((s.Position.Y-800)/2200, 0, 1)
+	// The head-on trade (#45, and #1's suspicion): threat above prices him
+	// BEHIND me, so a mutual nose-on pass scored zero danger — and once the
+	// energy terms stopped propping up the extending plays, the arbiter
+	// discovered that jousting guns at the merge wins coin flips: mean time
+	// to kill fell to ten seconds, the heater probe read zero launches and
+	// zero seconds in any envelope, and every kill was a gun kill on the
+	// first pass. His velocity on me while he is ahead of my path, close, is
+	// the mutual-kill geometry — lead-turning OFF the line has to outscore
+	// riding it in.
+	joust := clamp(-rear, 0, 1) * clamp(ahead, 0, 1) * clamp((1400-r)/900, 0, 1)
+	// NO pursuit term, and the far field stays flat — both were measured and
+	// refuted (#45). The old absolute energy reward had quietly been the
+	// approach motor (burner plays beat lazy ones at range), and without it
+	// a harmless straight-line target beyond 2.5 km is pursued lazily: the
+	// headless probe measured the bandit orbiting one at 3-4 km while every
+	// active-opponent instrument read record conversion. Every hand remedy
+	// broke BVR, where standing off IS the discipline: a velocity-toward-him
+	// chase term inverted the top rung 5-17 at quarter weight (it prices the
+	// crank's deliberate nose-offset as laziness) and 8-14 with a far-field
+	// penalty zeroed inside 1,500 m. Conditioning pursuit pressure on the
+	// weapons context is past what these hand terms can express; the
+	// passive-pursuit residual is recorded in #45 and belongs to #42.
+	// Energy is a CONSTRAINT, not a currency (#45). It rewarded speed and
+	// altitude on every comparison, so any play that slowed was out-voted by
+	// one that did not — twelve levers were measured against that gradient
+	// and twelve were refuted, while the ace flew every pass 150 kt too fast
+	// to convert. What energy actually buys is safety from HIM: being slow
+	// only matters if he holds the margin to punish it. So the blend below
+	// carries no energy reward at all; instead a penalty switches on when I
+	// am below fighting speed AND he has the energy edge to use it — at full
+	// starvation against a full edge it cancels a perfect gun solution,
+	// which is the veto the old reward could never be without inverting a
+	// ladder (slowing near a spent opponent now costs NOTHING, which is the
+	// corner fight the catalogue could never price).
+	hungry := clamp((0.85*pace-speed)/(0.35*pace), 0, 1)
 	// The chase gradient: outside the gun band the geometry terms flatten to
 	// zero and a short rehearsal barely moves the range, so without this the
 	// choice at 3 km is decided by the selection noise while the target sails
@@ -593,8 +627,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// that reads well is a hypothesis, not evidence. Pulling a bot back from
 	// the far field wants a term that is zero inside weapons range, not a
 	// bigger multiplier on one that applies everywhere.
-	score := w.offence*offence - 1.3*w.threat*threat + w.energy*energy - r/12000 +
-		sk.energy*w.energy*0.4*edge +
+	score := w.offence*offence - 1.3*w.threat*threat - 0.8*w.threat*joust - w.energy*hungry*clamp(edge*-1, 0, 1) - r/12000 +
 		sk.geometry*0.25*standing*clamp((2500-r)/1500, 0, 1) +
 		w.closing*0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
 		w.offence*0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band

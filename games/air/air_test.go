@@ -713,6 +713,7 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 				deaths += a.deaths
 			}
 		}
+		i.Close() // return this arm's share of the server-wide bot budget: without it the leak starved every seed past ~17 of bots entirely, and both section gates measured budget contention, not doctrine (#50)
 		return i.score["red"], deaths
 	}
 	if n, err := strconv.Atoi(os.Getenv("AIR_SWEEP")); err == nil && n > 0 {

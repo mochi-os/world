@@ -901,28 +901,42 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			i.events = append(i.events, map[string]any{"kind": "call", "slot": slot, "call": "break", "direction": side, "target": menacing[danger]})
 		}
 	}
+	// The radio INFORMS; it does not order a lone transit past enemies I am
+	// not tracking (#50). A heard-only contact used to be selectable at any
+	// range, and in a furball the mate's calls kept refreshing it — so a bot
+	// with a picture of its own would still cross the map chasing a rumour
+	// and die with its mate seven kilometres away. Measured on the honest
+	// 40-seed section harness: deficit 25 -> 10 deaths, and the section's
+	// kill deficit inverted. The second pass is the wing's legitimate case
+	// (TestTeamsRadio): when the rumour is ALL there is, committing to the
+	// mate's called fight is how the pair enters it together.
 	best, cost := -1, math.MaxFloat64
-	for _, s := range b.surveyed() {
-		t := b.known[s]
-		_, distance := i.bearing(me.Position, t.position)
-		weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
-		if _, found := menacing[s]; found && distance < b.tactics.sandwich.reach {
-			weight *= b.tactics.sandwich.weight // the radio warns at any range; the RESCUE priority stops where a lonely transit to a stale fight begins (#144)
-		}
-		if c := i.aircraft[s]; c != nil && c.alive && c.model != nil {
-			// The wounded bird (#144): a contact trailing fire, fuel, or
-			// pieces pulls the eye — finish what is already dying. Smoke and
-			// vapor read at any range the contact is visible at.
-			if c.condition.Burning || c.condition.Fire[0] > 0 || c.condition.Fire[1] > 0 ||
-				c.model.State.Damage.Loss > 0 || c.model.State.Damage.Leak > 0.5 {
-				weight *= b.tactics.wounded.weight
+	for pass := 0; pass < 2 && best < 0; pass++ {
+		for _, s := range b.surveyed() {
+			t := b.known[s]
+			_, distance := i.bearing(me.Position, t.position)
+			if pass == 0 && t.heard && distance > b.tactics.support.span {
+				continue
 			}
-		}
-		if s == b.target {
-			weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
-		}
-		if weight < cost {
-			best, cost = s, weight
+			weight := distance * (1 + b.tactics.crowd.weight*float64(attackers[s]))
+			if _, found := menacing[s]; found && distance < b.tactics.sandwich.reach {
+				weight *= b.tactics.sandwich.weight // the radio warns at any range; the RESCUE priority stops where a lonely transit to a stale fight begins (#144)
+			}
+			if c := i.aircraft[s]; c != nil && c.alive && c.model != nil {
+				// The wounded bird (#144): a contact trailing fire, fuel, or
+				// pieces pulls the eye — finish what is already dying. Smoke and
+				// vapor read at any range the contact is visible at.
+				if c.condition.Burning || c.condition.Fire[0] > 0 || c.condition.Fire[1] > 0 ||
+					c.model.State.Damage.Loss > 0 || c.model.State.Damage.Leak > 0.5 {
+					weight *= b.tactics.wounded.weight
+				}
+			}
+			if s == b.target {
+				weight *= 0.7 // hysteresis: the current target holds unless beaten by 30%
+			}
+			if weight < cost {
+				best, cost = s, weight
+			}
 		}
 	}
 	b.target = best
