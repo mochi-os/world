@@ -67,12 +67,12 @@ var (
 func battles() map[string]any {
 	arsenal = make([]float64, 64)
 	return map[string]any{
-		"hulk":     js.FuncOf(rig),
-		"racks":    js.FuncOf(racks), // NOT "stores": every table here merges into ONE flat export map, and main.go already owns that name for the ownship's store mask — a collision would silently replace it
-		"volley":   js.FuncOf(volley),
-		"fly":      js.FuncOf(fly),
-		"blast":    js.FuncOf(blast),
-		"progress": js.FuncOf(progress),
+		"hulk":     guard(rig),
+		"racks":    guard(racks), // NOT "stores": every table here merges into ONE flat export map, and main.go already owns that name for the ownship's store mask — a collision would silently replace it
+		"volley":   guard(volley),
+		"fly":      guard(fly),
+		"blast":    guard(blast),
+		"progress": guard(progress),
 	}
 }
 

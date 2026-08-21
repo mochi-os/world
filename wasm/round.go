@@ -52,12 +52,12 @@ var quiver []float64 // round buffer scratch
 func rounds() map[string]any {
 	quiver = make([]float64, 17)
 	return map[string]any{
-		"round_launch":   js.FuncOf(round_launch),
-		"round_step":     js.FuncOf(round_step),
-		"round_ladder":   js.FuncOf(round_ladder),
-		"heater_ladder":  js.FuncOf(heater_ladder),
-		"round_distract": js.FuncOf(round_distract),
-		"round_drop":     js.FuncOf(round_drop),
+		"round_launch":   guard(round_launch),
+		"round_step":     guard(round_step),
+		"round_ladder":   guard(round_ladder),
+		"heater_ladder":  guard(heater_ladder),
+		"round_distract": guard(round_distract),
+		"round_drop":     guard(round_drop),
 	}
 }
 

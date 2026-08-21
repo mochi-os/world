@@ -29,6 +29,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"runtime/debug"
 	"syscall/js"
 
 	"world/games/air/aircraft"
@@ -58,19 +59,19 @@ var (
 
 func main() {
 	exports := map[string]any{
-		"version":  js.FuncOf(version),
-		"init":     js.FuncOf(initialize),
-		"set":      js.FuncOf(set),
-		"get":      js.FuncOf(get),
-		"frame":    js.FuncOf(frame),
-		"mark":     js.FuncOf(mark),
-		"ack":      js.FuncOf(ack),
-		"level":    js.FuncOf(level),
-		"stores":   js.FuncOf(stores),
-		"catalog":  js.FuncOf(catalog),
-		"gust":     js.FuncOf(gust),
-		"approach": js.FuncOf(approach),
-		"clear":    js.FuncOf(clear),
+		"version":  guard(version),
+		"init":     guard(initialize),
+		"set":      guard(set),
+		"get":      guard(get),
+		"frame":    guard(frame),
+		"mark":     guard(mark),
+		"ack":      guard(ack),
+		"level":    guard(level),
+		"stores":   guard(stores),
+		"catalog":  guard(catalog),
+		"gust":     guard(gust),
+		"approach": guard(approach),
+		"clear":    guard(clear),
 	}
 	for name, export := range battles() {
 		exports[name] = export
@@ -83,6 +84,22 @@ func main() {
 	}
 	js.Global().Set("air_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
+}
+
+// guard wraps an export so a panic fails that one call instead of killing
+// the whole program: the stack reaches the console, the call returns the
+// panic message, and the core keeps serving.
+func guard(export func(js.Value, []js.Value) any) js.Func {
+	return js.FuncOf(func(this js.Value, arguments []js.Value) (result any) {
+		defer func() {
+			if fault := recover(); fault != nil {
+				println("air_flight panic:", fmt.Sprint(fault))
+				debug.PrintStack()
+				result = fmt.Sprint("panic: ", fault)
+			}
+		}()
+		return export(this, arguments)
+	})
 }
 
 func version(js.Value, []js.Value) any { return flight.Version }
@@ -114,26 +131,34 @@ func initialize(this js.Value, arguments []js.Value) any {
 	}
 	model = flight.New(airframe, payload.Environment, payload.World)
 	rings = [ring]slot{}
-	if len(bytes) == 0 {
-		bytes = make([]byte, (flight.Size+extra)*8)
-	}
 	return ""
+}
+
+// scratch returns the shared boundary buffer grown to hold count bytes.
+// Sizing on demand means no export depends on another having run first.
+func scratch(count int) []byte {
+	if len(bytes) < count {
+		bytes = make([]byte, count)
+	}
+	return bytes[:count]
 }
 
 // receive copies a JS Uint8Array into a float64 slice.
 func receive(view js.Value, floats []float64) {
-	js.CopyBytesToGo(bytes[:len(floats)*8], view)
+	buffer := scratch(len(floats) * 8)
+	js.CopyBytesToGo(buffer, view)
 	for i := range floats {
-		floats[i] = math.Float64frombits(binary.LittleEndian.Uint64(bytes[i*8:]))
+		floats[i] = math.Float64frombits(binary.LittleEndian.Uint64(buffer[i*8:]))
 	}
 }
 
 // send copies a float64 slice into a JS Uint8Array.
 func send(floats []float64, view js.Value) {
+	buffer := scratch(len(floats) * 8)
 	for i, f := range floats {
-		binary.LittleEndian.PutUint64(bytes[i*8:], math.Float64bits(f))
+		binary.LittleEndian.PutUint64(buffer[i*8:], math.Float64bits(f))
 	}
-	js.CopyBytesToJS(view, bytes[:len(floats)*8])
+	js.CopyBytesToJS(view, buffer)
 }
 
 func set(this js.Value, arguments []js.Value) any {

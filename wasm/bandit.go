@@ -31,13 +31,13 @@ var (
 
 func bandits() map[string]any {
 	return map[string]any{
-		"bandit_init":   js.FuncOf(banditInitialize),
-		"bandit_place":  js.FuncOf(banditPlace),
-		"bandit_mirror": js.FuncOf(banditMirror),
-		"bandit_menace": js.FuncOf(banditMenace),
-		"bandit_step":   js.FuncOf(banditStep),
-		"bandit_coast":  js.FuncOf(banditCoast),
-		"bandit_mode":   js.FuncOf(banditMode),
+		"bandit_init":   guard(banditInitialize),
+		"bandit_place":  guard(banditPlace),
+		"bandit_mirror": guard(banditMirror),
+		"bandit_menace": guard(banditMenace),
+		"bandit_step":   guard(banditStep),
+		"bandit_coast":  guard(banditCoast),
+		"bandit_mode":   guard(banditMode),
 	}
 }
 
