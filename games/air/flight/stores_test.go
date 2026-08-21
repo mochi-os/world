@@ -156,10 +156,8 @@ func TestExternalEncode(t *testing.T) {
 	}
 }
 
-// TestTankJettisonShare: a PART-FULL tank departs with its share of the fuel
-// (#42). The old clamp only bit when the remainder exceeded the new capacity,
-// so punching a part-full tank kept every kilogram — shedding the mass and
-// drag for free. Proportional is exact: attached tanks drain in step.
+// TestTankJettisonShare: a PART-FULL tank departs with its proportional share
+// of the external fuel (#42) - exact, because attached tanks drain in step.
 func TestTankJettisonShare(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	all := Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")

@@ -50,16 +50,10 @@ func session_run(s *session, g game.Game) {
 			}
 			connected := 0
 			for slot, p := range s.players {
-				// Application-level liveness: QUIC never idles out a ghost
-				// (the browser ACKs our snapshot stream even when the tab is
-				// hidden or the game's script is dead), but a live client
-				// streams inputs every frame. Fifteen silent seconds means
-				// the pilot is gone. Remove them OUTRIGHT here rather than
-				// nil-ing the link and waiting for the reader's leave: a
-				// timed-out JOIN has no reader (#176), so a nil-link entry
-				// lingered forever, holding its slot and counting against
-				// capacity. delete during range is safe; a later duplicate
-				// leave from a real reader is a no-op (session_remove guards).
+				// Application-level liveness: QUIC never idles out a ghost (a hidden tab
+				// still ACKs), but a live client streams inputs every frame. Remove
+				// outright rather than nil-ing the link - a timed-out join has no reader
+				// (#176) - and a later duplicate leave is a no-op.
 				if p.link == nil || (!p.seen.IsZero() && time.Since(p.seen) > 15*time.Second) {
 					session_remove(s, slot)
 					continue
@@ -89,11 +83,8 @@ func session_run(s *session, g game.Game) {
 					return
 				}
 			}
-			// Withdrawn offers close here: only this goroutine may end a
-			// session, so the stale sweeper (sessions_stale_manager) and the
-			// lobby handler FLAG, and the tick loop ACTS. The flagging used
-			// to happen right here, every tick, under the global write lock;
-			// see sessions_stale for what that cost.
+			// Withdrawn offers close here: only this goroutine may end a session, so the
+			// stale sweeper and the lobby handler FLAG and the tick loop ACTS.
 			sessions_lock.RLock()
 			gone := s.withdrawn
 			sessions_lock.RUnlock()
@@ -210,9 +201,8 @@ func session_chat(s *session, o order) {
 }
 
 // after reports whether input sequence a is newer than b under uint32
-// wraparound (serial-number arithmetic, RFC 1982): int32(a-b) > 0 stays
-// correct across the 2^32 rollover a multi-year session would eventually
-// reach, where a plain a > b comparison stops advancing acknowledgements.
+// wraparound (serial-number arithmetic, RFC 1982): a plain a > b stops
+// advancing acknowledgements across the 2^32 rollover.
 func after(a, b uint32) bool { return int32(a-b) > 0 }
 
 // session_remove drops a player: closes any link, tells the game, deletes the
@@ -245,11 +235,9 @@ func session_join(s *session, o order) answer {
 	if len(s.players) >= s.spec.Capacity {
 		return answer{err: errors.New("full")}
 	}
-	// The lowest slot free of BOTH a player and anything the game placed
-	// itself (game.Occupancy — air's practice bots). The bound is the
-	// capacity plus whatever the game holds, so a full house of bots cannot
-	// make this spin: every step either finds a free slot or passes one that
-	// is genuinely taken.
+	// The lowest slot free of BOTH a player and anything the game placed itself
+	// (game.Occupancy - air's practice bots). Bounded by capacity plus what the
+	// game holds, so a full house of bots cannot make this spin.
 	held, _ := s.instance.(game.Occupancy)
 	slot := 0
 	for s.players[slot] != nil || (held != nil && held.Occupied(slot)) {

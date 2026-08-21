@@ -4,12 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The SP joust opponent: the SAME brain the server flies for multiplayer
-// bots, wrapped around a private two-craft arena — the player's mirrored
-// state at slot 0, the bandit at slot 1. The client owns the real player
-// model, weapons, and damage; this harness owns only the bandit's flying and
-// its trigger/flare decisions. Compiled into the browser wasm boundary, so
-// the joust ace IS the multiplayer ace, bit for bit.
+// The SP joust opponent: the SAME brain the server flies, wrapped around a
+// private two-craft arena (mirrored player at slot 0, bandit at slot 1). The
+// client owns the player model, weapons, and damage; this owns the bandit.
 
 package air
 
@@ -28,33 +25,9 @@ type Bandit struct {
 	tank  float64 // spawn fuel, kg: the player's own load, so the single-player joust is fought on equal tanks
 }
 
-// NewBandit builds the harness. Unknown levels fly as ace. The bandit
-// fires no missiles of its own (the client's joust is a guns fight today), but
-// `missiles` says whether the PLAYER can, which is what the bandit's defensive
-// doctrine reacts to: pre-emptive flaring is insurance against a shot it cannot
-// see coming, and buys nothing in a guns fight (#211). The visibility model
-// still applies — sky and night must match the mission.
-// The bots' world is SEA LEVEL ONLY, deliberately (2026-07-29). flight.World
-// carries Fields (island height, coast outline, paved strips) and a Carrier,
-// and none of it is populated here: every bot flies against a flat sea.
-//
-// That is accurate on the maps we ship. Midway's island tops out at 3.5 m, the
-// runway at ~5 m and the tallest mast at ~12 m, while the brain's own recovery
-// floor works in 400-900 m margins - so modelling the relief would move nothing
-// it can measure. What the flat model costs is avoidance of VERTICAL clutter
-// (masts, the carrier superstructure), and that is covered on the consequence
-// side instead: the client tests the bandit against the same terrain, buildings,
-// masts and deck the player is tested against, so a bot that hits one dies.
-//
-// Revisit when a map with real relief lands. The tell is a bot holding a level
-// break straight into rising ground - the floor will read its height above the
-// SEA and be perfectly happy.
-// weapons is the match's weapons class, exactly as a server session carries
-// it (settled 2026-08-13: bots arm to the class, same equipment as humans).
-// "open" arms the bandit with the BVR fit and wakes hunt.go — radar,
-// AMRAAM employment, crank, and the radar-round defence — in single player,
-// the same brain path the server flies. "" preserves the older callers:
-// fox2 when the player can fire missiles, guns otherwise.
+// NewBandit builds the harness. Unknown levels fly as ace. `missiles` says
+// whether the PLAYER can shoot, which the bandit's defensive doctrine reacts to
+// (#211); `weapons` is the match's class, and "open" wakes the BVR brain.
 func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string, tank float64) *Bandit {
 	if weapons == "" {
 		if missiles {
@@ -98,14 +71,9 @@ func (b *Bandit) Place(words []float64) {
 // Spawn places the bandit fresh: trimmed on the velocity, engines spooled,
 // clean airframe — the client's joust merge entry and every respawn.
 func (b *Bandit) Spawn(position, velocity flight.Vec3) {
-	// Level, not a hand-rolled literal. The literal flew nose-on-velocity —
-	// zero alpha — so every bandit spawned a few degrees off trim and rode the
-	// barely-damped phugoid: the same porpoise the Level sign fix removed from
-	// server spawns, and the same accidental gun-target armour, aimed at the
-	// single player. The literal's zero-value gear field was also live-looking
-	// (catapult 0, stroke 0, wire 0), inert only because this arena carries no
-	// carrier. The merge-entry power stays deliberately high: excess thrust on
-	// a trimmed attitude just accelerates, it does not porpoise.
+	// Level, not a hand-rolled literal: a nose-on-velocity spawn carries zero
+	// alpha, sits off trim, and rides the barely-damped phugoid - accidental
+	// gun-target armour.
 	s := &b.craft.model.State
 	*s = flight.Level(b.craft.model, position, velocity, velocity.Length(), b.tank)
 	s.Engine[0] = flight.EngineState{Spool: 0.9}
@@ -126,21 +94,8 @@ func (b *Bandit) Mirror(words []float64, firing bool, alive bool) {
 }
 
 // Menace declares every missile in the air, eight words each: position,
-// velocity, shooter (0 the player, 1 the bandit), and phase (-1 a live
-// heater, -2 a heater already BEATEN, otherwise the radar round's guidance
-// phase). The client is the source of truth for rounds in single player — it
-// flies them — and the stubs built here are exactly what the brain reads
-// everywhere else: the evade logic wants inbound positions, the defence wants
-// phase >= Active radar rounds targeting the bandit, and the shoot-look-shoot
-// discipline wants the bandit's own rounds' phases. Rebuilt every frame, so
-// nothing accumulates.
-//
-// The -2 sentinel exists because the stubs were built with `loose` and `blind`
-// left at their zero values, and `beaten` (bot.go) reads exactly those two —
-// so the instructor tiers' refusal to abandon a fight for a round that has
-// already lost was dead in single player, the one place a human sees it. The
-// client tracks both flags itself, identically to the server. A client that
-// never sends -2 degrades to the old behaviour rather than misbehaving.
+// velocity, shooter (0 player, 1 bandit), phase (-1 live heater, -2 already
+// beaten, else the radar round's guidance phase). Rebuilt every frame.
 func (b *Bandit) Menace(words []float64) {
 	b.arena.flying = b.arena.flying[:0]
 	for at := 0; at+8 <= len(words); at += 8 {
@@ -160,14 +115,9 @@ func (b *Bandit) Menace(words []float64) {
 	}
 }
 
-// Coast flies a dead bandit for one frame: no thinking, the stick free so the
-// FCS holds attitude, the throttle as the pilot left it because a friction
-// lever does not move itself, and a small standing roll so the jet spirals
-// instead of gliding flat. The same rule the server's wrecks fly under.
-//
-// This replaces a scripted descent in the client that held one speed and one
-// angle for as long as it took to reach the water — measured at a constant
-// 233 kt down a 26.6 degree line, wings level, for 79 s.
+// Coast flies a dead bandit for one frame: no thinking, stick free so the FCS
+// holds attitude, throttle as the pilot left it, and a small standing roll so
+// the jet spirals instead of gliding flat. The server's wrecks fly the same.
 func (b *Bandit) Coast(lean float64) {
 	b.tick++
 	held := flight.Inputs{Throttle: b.craft.latest.Throttle, Reheat: b.craft.latest.Reheat, Lean: lean}
@@ -177,21 +127,13 @@ func (b *Bandit) Coast(lean float64) {
 	}
 }
 
-// Step advances the bandit one 60 Hz frame: think, fly four substeps, and
-// Step advances the brain one frame and reports what left the aircraft:
-// the trigger, a flare, an AMRAAM, a HEATER, and a chaff bloom. The
-// heater was missing until 2026-08-15 — the brain fired 9Ms into its own
-// arena, where the only target was a mirror of the player that the client
-// never sees, so a single-player bandit could not threaten the pilot with a
-// heat-seeker at all. Every launch the brain makes now crosses the boundary
-// and the client flies the round.
+// Step advances the bandit one 60 Hz frame and reports what left the aircraft:
+// the trigger, a flare, an AMRAAM, a heater, and a chaff bloom. The client
+// flies every round the brain launches.
 func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff bool) {
 	b.tick++
 	// The single-player bandit drives think() directly rather than through
-	// instance.Step, so it owns the per-tick arbiter allowance reset (#256)
-	// too. Without it the counter only ever climbed: the bandit re-planned
-	// twice, deferred for the rest of the mission, and flew straight —
-	// TestBandit's pursuit invariant caught it before it shipped.
+	// instance.Step, so it owns the per-tick arbiter allowance reset (#256).
 	b.arena.rehearsals = 0
 	b.arena.think(1, b.craft, b.tick)
 	for _, event := range b.arena.events {
@@ -239,11 +181,9 @@ func (b *Bandit) Mode() string {
 	return b.craft.brain.mode
 }
 
-// Wound mirrors the client's damage authority into the harness: the wasm
-// battle hulk owns the bandit's damage and fires, and copying them here is
-// what lets the brain fly wounded (#130) — and the flight model fly the
-// honest degraded dynamics — in single-player, exactly as they do on the
-// server where damage lives in the real model.
+// Wound mirrors the client's damage authority into the harness: the wasm battle
+// hulk owns the bandit's damage, and copying it here is what lets the brain fly
+// wounded (#130) on the honest degraded dynamics.
 func (b *Bandit) Wound(damage flight.DamageState, condition battle.Condition) {
 	b.craft.model.State.Damage = damage
 	b.craft.condition = condition

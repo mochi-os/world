@@ -15,48 +15,10 @@ import (
 	"world/games/air/flight"
 )
 
-// The human-fight diagnostic (#206). The doctrine was tuned and validated
-// bot-versus-bot, where both sides fly the same law and the same discipline.
-// A human reported guns-killing the ACE from a couple of turns in, never
-// feeling threatened — a result no bot-versus-bot sweep can express.
-//
-// This harness stands in for that human: a scripted attacker that simply
-// converts to the bandit's six and stays there (lead pursuit, energy managed
-// by holding a working speed), which is what a novice does once they know to
-// pull lead. It is deliberately CRUDE — no gunnery, no yo-yos, no gun-solution
-// discipline. If the ace cannot shake an attacker this simple, the defensive
-// doctrine is the problem, not the human's skill.
-//
-// The trace is the point: a replay shows what the bot DID, but the mode
-// histogram shows what it CHOSE, and the two answer different questions.
-//
-// LIMIT OF THIS HARNESS, found while fixing #206: the scripted attacker is a
-// PERFECT pursuer — it never overshoots, never loses sight, never has to break
-// off to shoot. Nothing escapes that, and no real pilot faces it, so the
-// tracked-in-rear-quarter share saturates near 60-70 % however good the
-// defence is. The number is a useful FLOOR (a bot that cannot be tracked by
-// this thing is genuinely evasive) but a poor ceiling. The honest measures of
-// the #206 defect are the ones that did move: decision churn and energy state.
-// A future revision should give the attacker human failings — an overshoot
-// when closure is high, a lost tally under g — before treating the tracked
-// share as a target to optimise.
-//
-// FIRST RESULTS (2026-07-27, 6 seeds x 60 s, guns-only, attacker starting at
-// the bandit's six 600 m back):
-//
-//	                    tracked in rear quarter   switches/s   mean speed   energy gap
-//	  veteran                    49 %                0.3        429 kt        -81 m
-//	  ace                        67 %                0.5        363 kt       -271 m
-//
-// Neither ever broke past 4 km. The ace is measurably EASIER to sit behind
-// than the veteran, which inverts the skill ladder, and the trace rules out
-// the obvious explanation: both DO select the defensive library (defense
-// ~50 %, spiral, drag, reverse), so this is not a bot that fails to notice a
-// threat. The defensive maneuvers simply do not generate separation, and the
-// ace's faster decision cadence (8 ticks against the veteran's 12) churns
-// modes ~70 % more often while ending up slower and further down on energy —
-// the shape of a jet that keeps starting maneuvers and never finishes one.
-// The fix belongs in commitment/energy discipline, not in threat detection.
+// The human-fight diagnostic (#206): a scripted attacker that converts to the
+// bandit's six and stays there, standing in for a human result no
+// bot-versus-bot sweep can express. LIMIT: it is a near-perfect pursuer, so the
+// tracked-share number is a useful floor and a poor ceiling.
 
 // pursue flies the crude attacker: point at the bandit's projected six with
 // enough lead to close, hold ~350 kt (the sustained corner band), and pull.
@@ -66,13 +28,9 @@ func pursue(me, foe *flight.State) map[string]any {
 	if range_ < 1 {
 		return map[string]any{}
 	}
-	// Aim for a point behind the bandit — the classic novice's "get on his
-	// tail" rather than a proper lead-pursuit gun solution.
-	// The human failing the LIMIT note demands before the tracked-share gate
-	// can be honest: a novice arriving with high closure at short range cannot
-	// stop it — he blows through. Unload and ride the overshoot straight
-	// through the pass. No state is needed: geometry ends it by itself, since
-	// once he is past, the closure goes negative and the condition releases.
+	// Aim for a point behind the bandit - the novice's "get on his tail". A novice
+	// arriving with high closure at short range blows through: unload and ride the
+	// overshoot. No state needed; negative closure releases the condition.
 	rel := me.Velocity.Subtract(foe.Velocity)
 	if closing := rel.Dot(toward.Scale(1 / range_)); range_ < 400 && closing > 70 {
 		return map[string]any{"pitch": 0.1, "roll": 0.0, "throttle": 0.85, "fire": false}
@@ -101,17 +59,9 @@ func pursue(me, foe *flight.State) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "fire": true}
 }
 
-// chaser adds the second human failing the LIMIT note asks for: this pilot
-// loses sight of a bandit that goes far enough off his nose, and the harder he
-// is pulling the sooner it happens — a head cannot turn under g. While the
-// tally is gone he flies the line he last saw and does not shoot, until the
-// bandit reappears in front of him.
-//
-// Measured 2026-08-17: without it nothing escapes this attacker, so no play a
-// defender can choose reduces the threat, the scorer's threat term is flat
-// across every candidate, and the harness cannot tell a bot that chooses badly
-// from one with no good choice. `pursue` is left perfect on purpose — two other
-// suites use it as a fixture rather than as a defence benchmark.
+// chaser adds the human failings pursue lacks: he loses sight of a bandit far
+// enough off his nose, sooner the harder he is pulling, and flies the line he
+// last saw without shooting. pursue stays perfect - two suites fixture it.
 type chaser struct {
 	lost    int         // times the tally went, for the probe
 	blew    int         // ticks spent riding an overshoot through the pass
@@ -205,16 +155,9 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
 				t.Fatal(err)
 			}
-			// Find the bot and place the attacker where the report starts:
-			// converted to its six, co-speed, the pipper not yet on. 1,200 m
-			// back, NOT the 600 m this harness ran at until 2026-08-18: at 600
-			// m the attacker's held trigger is a boresight burst on a
-			// co-speed target, and the shell model answers it before the
-			// bandit's second decision — measured, 17 of 24 seeds ended
-			// inside 2.3 s, five of them inside 1.1 s, and every doctrine
-			// statistic this harness printed was the tale of a jet crippled
-			// in its first second. A "couple of turns in" is the position
-			// before the pipper is on, not after the burst has landed.
+			// Place the attacker converted to the bot's six, co-speed, pipper not yet
+			// on. 1,200 m, not 600: at 600 the attacker's held trigger is a boresight
+			// burst that ends most seeds before the bandit's second decision.
 			bot := -1
 			for slot, a := range i.aircraft {
 				if a != nil && a.brain != nil {
@@ -270,17 +213,9 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 					slow++
 				}
 			}
-			// Book the outcome from the SCORING, not from who stopped flying.
-			// The attacker is a crude script and flies itself into the sea
-			// often enough to matter: in seed 1 it died at 21.4 s with the bot
-			// having fired not one round, so "the attacker died" credits the
-			// ace with a kill it had no part in. `kills` is the game's own
-			// attribution and cannot be earned by the other side's mistake.
-			//
-			// (The old code read `i.aircraft[0].kills` — the ATTACKER's tally,
-			// the wrong side — and read it below a `break` that had already
-			// fired on the death tick, so "killed n/6" could only ever be 0
-			// while the bandit was in fact dying in every seed.)
+			// Book the outcome from the SCORING, not from who stopped flying: the crude
+			// attacker flies itself into the sea often enough to matter, and `kills` is
+			// attribution that cannot be earned by the other side's mistake.
 			if i.aircraft[bot].kills > 0 {
 				downed++
 			}
@@ -317,36 +252,10 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		}
 		fmt.Println()
 		if level == "ace" { // re-enabled 2026-08-11: the attacker now overshoots (see pursue), which is the failing the LIMIT note required before this share could be judged
-			// The report's claim, made falsifiable: this tier offers NO THREAT
-			// AND NO ESCAPE. So the gate asks for one or the other, as an
-			// outcome — a kill or a break past 4 km, in any of the six seeds.
-			//
-			// It used to gate the tracked SHARE at 50%, and that share cannot
-			// carry a gate (measured 2026-08-16, #38). The window begins with
-			// the attacker already at dead six 600 m, so it starts at 100%,
-			// and it ends when someone dies, so the denominator depends on the
-			// outcome. Giving the ace the tracer cue it was missing (flinch)
-			// turned a seed from "shot down at 54.8 s" into "killed the
-			// attacker at 21.4 s" — a strict improvement — and the share got
-			// WORSE, 71% to 83%, because winning early removed thirty seconds
-			// of less-pinned flying from the denominator. A number that
-			// rewards dying sooner cannot judge this. Raising the threshold
-			// would only have hidden that.
-			//
-			// The share stays printed above, where it belongs: diagnostic.
-			// TWENTY-FOUR seeds, raised from six on 2026-08-17. An
-			// outcome gate on six is decided by single events: this read
-			// green on 2026-08-16 because the ace killed its attacker in
-			// exactly one seed, and at 24 it killed in NONE and was shot down
-			// in 21 — from 600 m, where the fights were one-second
-			// executions and the number measured the shell, not the
-			// doctrine. From 1,200 m (2026-08-18) the same 24 seeds are
-			// two-minute fights the ace survives, and it still neither
-			// kills nor breaks: it converts, claims FINISH, and arrives at
-			// every pass with twice the attacker's speed and its nose 80
-			// degrees off — 150 s against a 200 kt target without a round
-			// fired. THAT is the claim this gate exists to test, and it is
-			// true, and it belongs to the play-scorer work, not here.
+			// The claim, made falsifiable: this tier offers NO THREAT AND NO ESCAPE, so
+			// the gate asks for one or the other as an OUTCOME. The tracked share cannot
+			// carry a gate - winning early shortens the denominator, so it rewards dying
+			// sooner. Twenty-four seeds: an outcome gate on six is decided by one event.
 			if downed == 0 && broke == 0 {
 				t.Errorf("ace was shot down in %d of 24 and never killed its attacker or broke contact: no threat and no escape", lost)
 			}

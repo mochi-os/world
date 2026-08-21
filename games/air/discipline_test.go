@@ -106,16 +106,8 @@ func TestWrapFloor(t *testing.T) {
 	}
 }
 
-// TestPairDiscipline holds the BOT's shoot-shoot-look rule, the one the
-// launch gate has always described in prose: a pair may go inside a second,
-// because two rounds beat one flare programme, and the third then waits
-// three seconds for the look. The code counted nothing — `tick-launched <
-// 60` re-armed off each launch, so the pair became the rack — and it went
-// unseen because single-player heater launches never reached a client and
-// bot-versus-bot only ever measured rounds spent per fight, never the
-// interval between them. Measured when they became visible: an ace put six
-// rounds into one second at 2.5 km and missed with every one, which is the
-// exact failure the rule exists to prevent.
+// TestPairDiscipline holds the BOT's shoot-shoot-look rule: a pair may go
+// inside a second, and the third round then waits three seconds for the look.
 func TestPairDiscipline(t *testing.T) {
 	heavy(t)
 	worst, fights := 0, 0

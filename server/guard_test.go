@@ -77,9 +77,7 @@ func TestGuardPassesThrough(t *testing.T) {
 }
 
 // TestSessionPanicIsContained: a game module that panics mid-tick must end ONLY
-// its own session. Before the guard this killed the process, taking every other
-// match on the host with it — which is what made a one-line divide-by-zero in
-// the air snapshot a whole-server outage.
+// its own session, leaving every other match on the host running.
 func TestSessionPanicIsContained(t *testing.T) {
 	faulty := &faultyInstance{after: 2}
 	healthy := &countingInstance{}

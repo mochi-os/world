@@ -18,11 +18,8 @@ const (
 	penetration = 0.45  // severity retained through each part pierced (#144)
 	through     = 3     // parts one round can reach at full striking speed
 	spent       = 0.15  // severity below which the round has nothing left
-	// A 20 mm round is a SHELL, not a slug: the M56 and PGU-28 this model is
-	// built around are high-explosive incendiary with a point-detonating fuze,
-	// so the burst does not care how fast the shell arrived. What the striking
-	// speed buys is DEPTH — a fast shell punches through the skin and functions
-	// against a spar or a fuel cell, a slow one bursts on the surface.
+	// A 20 mm round is a SHELL, not a slug: the burst does not care how fast it
+	// arrived. What the striking speed buys is DEPTH.
 	striking = 700.0 // m/s at which a shell still reaches everything it would at the muzzle
 	graze    = 250.0 // and below this it functions on the skin and goes no further
 )
@@ -32,13 +29,9 @@ const (
 // gunnery here.
 const Muzzle = 1050.0 // m/s
 
-// Length is the round's drag length at sea level: quadratic drag makes the
-// speed decay exponentially with DISTANCE, v(x) = v0*exp(-x/Length), which
-// fits the published M56/PGU-28 tables (about 1,050 m/s at the barrel, about
-// 700 m/s and 1.16 s at a thousand metres). The length stretches with
-// altitude as the air thins — a high fight genuinely shoots further, which
-// is real and which the no-drag model hid by shooting infinitely far
-// everywhere.
+// Length is the round's drag length at sea level: v(x) = v0*exp(-x/Length),
+// fitted to the published M56/PGU-28 tables (1,050 m/s at the barrel, 700 m/s
+// at a thousand metres). It stretches with altitude as the air thins.
 const Length = 2600.0 // m
 
 // stretched is the drag length at an altitude, on an 8.5 km density scale.
@@ -71,9 +64,7 @@ const ImpactPoints = 8
 
 // Round is one 20 mm round in flight: real position, real velocity, no
 // knowledge of any target. Rounds RESOLVE ON ARRIVAL against wherever the
-// target actually is by then — the old Burst judged the whole flight in the
-// target-relative frame at the trigger, which auto-led every shooter and made
-// manoeuvre-during-flight (the real last-ditch guns defence) impossible.
+// target actually is by then, so manoeuvre during flight is a real defence.
 type Round struct {
 	Position flight.Vec3
 	Velocity flight.Vec3
@@ -100,13 +91,9 @@ func Depth(speed float64) int {
 	return reach
 }
 
-// Life is how long a round stays dangerous, seconds. Raised from 2 s to 4 on
-// 2026-08-17: the shell's damage does not decay with speed, so cutting it off
-// while it was still doing 650 m/s was an arbitrary wall a pilot could feel —
-// he could see the pipper on a target his rounds silently could not reach. Four
-// seconds carries it past 2.5 km, beyond any range where the lead solution is
-// worth taking, and the depth model above is what makes a long shot weak rather
-// than the round vanishing.
+// Life is how long a round stays dangerous, seconds. Damage does not decay with
+// speed, so this is a cost cap, not a lethality one: four seconds carries it
+// past 2.5 km, beyond any worthwhile lead solution.
 const Life = 4.0
 
 // Volley spawns one burst's rounds from the shooter with the same
@@ -147,11 +134,10 @@ func Fly(r *Round, dt float64) bool {
 	return r.Age > Life || r.Position.Y < 0
 }
 
-// Strike tests one round's NEXT step of dt against a body posed at position
-// with attitude, moving at velocity — the segment is judged in the target's
-// frame at THIS tick, which is what makes a jink after the trigger a real
-// defence. On a hit the damage cascade applies exactly as the instant model's
-// did, and the round is spent. The impact point is in the target's body frame.
+// Strike tests one round's next step of dt against a body posed at position
+// with attitude - judged in the target's frame at THIS tick, which is what
+// makes a jink after the trigger a real defence. The impact point is in the
+// body frame.
 func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, wrap float64, seed uint64) (bool, []Event, flight.Vec3) {
 	relative := flight.Vec3{
 		X: flight.Shortest(position.X, r.Position.X, wrap),

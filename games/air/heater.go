@@ -5,21 +5,9 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // The heater's dynamic launch zone, the way the AMRAAM has one in
-// round/ladder.go: no fitted table, the model IS the table. Each rung flies
-// the same round pursue() flies — Mk 36 boost, base and induced drag,
-// proportional navigation under the airframe's fading g limit, a seeker with
-// a gimbal cone and a track-rate ceiling, the fuse — against a virtual target
-// at a trial range along today's line of sight, and bisects the outermost
-// range at which the round still arrives. The no-escape rung's break is the
-// beam, the heater's own escape, not the AMRAAM's tail-on run.
-//
-// Built for the cockpit's SHOOT cue (#47): on the real jet the Sidewinder's
-// SHOOT exists only with a radar lock, because only the radar knows range,
-// and it says the target sits inside the computed zone for this aspect,
-// altitude and closure. Ours said "tone" and lit on beam shots at 1.8 km
-// that the seeker's 20 deg/s ceiling could not follow — six of six broke lock
-// in the recorded fight. Flying the seeker's own rules here is what makes a
-// beam shot read as outside the zone rather than as SHOOT.
+// round/ladder.go: no fitted table - each rung flies the same round pursue()
+// flies against a virtual target and bisects the outermost arriving range. The
+// no-escape rung's break is the beam, not the AMRAAM's tail-on run.
 
 package air
 
@@ -30,30 +18,20 @@ import (
 	"world/games/air/round"
 )
 
-// Heat computes the AIM-9M zone for a shooter against a target, in the same
-// shape as the AMRAAM's so one cue reads both: Aero and Max are the outermost
-// range at which the round arrives against the target flying on as now — his
-// present turn included, which is what makes a shot at a hard-turning beam
-// target read honestly (the heater has no supersonic-arrival distinction, so
-// the two coincide); Escape is the range inside which it arrives even if he
-// breaks 7.5 g into the beam at launch; Minimum is the fuse arming plus the turn-in
-// floor. Active is unused: the seeker is live from the rail. `swing` is the
-// target's present acceleration, m/s²; zero flies him straight. `lit` is his
-// afterburner (0..1): the seeker's acquisition reach is the plume's, and the
-// zone is capped at what the seeker can lock at this aspect — the kinematics
-// alone carry the round to twelve kilometres, but a cue that draws a staff
-// the seeker cannot fill is the old lie in a longer form.
+// Heat computes the AIM-9M zone for a shooter against a target, in the AMRAAM's
+// shape: Aero and Max coincide (outermost arriving range against the target
+// flying on as now), Escape assumes he breaks 7.5 g into the beam, Minimum is
+// fuse arming plus turn-in, Active is unused. swing is his present acceleration
+// (m/s2, zero flies him straight); lit is his afterburner (0..1), which sets
+// the seeker's acquisition reach and caps the zone.
 func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, wrap float64) round.Zone {
 	sight := shortest(shooter.Position, target.Position, wrap)
 	distance := math.Max(sight.Length(), 1)
 	direction := sight.Scale(1 / distance)
 
-	// One flight at a virtual launch range: the target starts there along
-	// TODAY's line of sight with today's velocity, and either flies on or
-	// bends 7.5 g away from the shooter until it points down the line. The
-	// round leaves the rail as launch() builds it and steps as pursue()
-	// steps it, without flares (the zone cannot know them) and without the
-	// live seeker's acquisition roll (the tone the cockpit already has).
+	// One flight at a virtual launch range: the target starts there along today's
+	// line of sight and either flies on or bends 7.5 g away. No flares (the zone
+	// cannot know them) and no seeker acquisition roll.
 	arrives := func(trial float64, breaking bool) bool {
 		const dt = 1.0 / 60
 		virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
@@ -137,14 +115,9 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 			if speed := virtual.Velocity.Length(); speed > 1 {
 				heading := virtual.Velocity.Scale(1 / speed)
 				if breaking {
-					// The heater's real escape is not the tail-on run the AMRAAM's
-					// ladder assumes — this round has the legs for that anywhere
-					// it can acquire, and the rung read equal to Rmax at every
-					// aspect when it tried. It is the BEAM: square the missile's
-					// line of sight at 7.5 g, re-squared as the line rotates, so
-					// the endgame hands the seeker more line-of-sight rate than
-					// its 20 deg/s ceiling can follow. The side is the one his
-					// present turn already favours, if he has one.
+					// The heater's escape is the BEAM, not the AMRAAM's tail-on run: square
+					// the missile's line of sight at 7.5 g, re-squared as it rotates, so the
+					// endgame outruns the seeker's 20 deg/s ceiling.
 					line := shortest(m.position, virtual.Position, wrap).Normalize()
 					side := flight.Vec3{Y: 1}.Cross(line).Normalize()
 					if side.Dot(swing) < 0 || (swing.Length() < 1 && side.Dot(heading) < 0) {
@@ -206,18 +179,9 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	if zone.Escape > zone.Max {
 		zone.Escape = zone.Max
 	}
-	// Expect Escape to equal Max at most aspects: the seeker's 5 km reach sits
-	// well inside the round's kinematic reach (twenty seconds at 600-800 m/s),
-	// and a 35 g round leads a 7.5 g beam with its line-of-sight rate two
-	// hundredths of a radian a second below the ceiling — measured across the
-	// three aspects and the twelve recorded launches, the beam escape buys
-	// nothing inside acquisition range. The rung is kept because it is the
-	// right question; the answer this model gives is that a 9M fired with
-	// tone and a radar lock inside its zone is a shot to be defended with
-	// flares, not flown away from — so the cue flashes rather than holds.
-	// The floor: what the geometry closes while the fuse arms, plus room
-	// to turn the round onto the target — the same shape as the AMRAAM's,
-	// scaled to a round that arms in 0.6 s rather than several.
+	// Escape equals Max at most aspects: the seeker's reach sits well inside the
+	// round's kinematic reach, so the beam escape buys nothing inside acquisition
+	// range. The floor is the closure while the fuse arms, plus turn-in room.
 	closing := shooter.Velocity.Subtract(target.Velocity).Dot(direction)
 	if closing < 0 {
 		closing = 0

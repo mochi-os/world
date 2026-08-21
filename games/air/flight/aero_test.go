@@ -107,11 +107,8 @@ func TestStall(t *testing.T) {
 	}
 }
 
-// TestRelaxed: the airframe carries RELAXED static stability (the real
-// Hornet answer — the FCS is the stabilizer). Bare, the jet may diverge
-// slowly but must remain hand-flyable: from trim with a pitch kick it
-// neither departs nor runs away within four seconds — time enough for a
-// pilot (or the FCS) to correct.
+// TestRelaxed: the airframe is relaxed-stability (the FCS is the stabilizer).
+// Bare, it may diverge slowly but must stay hand-flyable for four seconds.
 func TestRelaxed(t *testing.T) {
 	m := calm()
 	m.Direct = true

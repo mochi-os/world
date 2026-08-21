@@ -4,11 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Newton iteration for steady glide trim: unknowns (pitch attitude,
-// symmetric stabilator, flight-path angle) zeroing the in-plane
-// accelerations and the pitch moment. A converging bare-airframe trim is
-// the first proof the aerodynamic signs are right (doc §15.1); the headless
-// tool and the mode tests both start from it.
+// Newton iteration for steady glide trim: unknowns (pitch attitude, symmetric
+// stabilator, flight-path angle) zeroing the in-plane accelerations and the
+// pitch moment (doc 15.1).
 
 package flight
 
@@ -105,10 +103,8 @@ func Atmosphere(altitude float64, env Environment) Air {
 }
 
 // Level composes a steady level-flight state at a position, horizontal
-// direction, and true airspeed — the shared spawn helper: server spawns,
-// client resets, and tests all start from the same trim. The alpha and
-// throttle come from the static solution, so the FCS takes over without a
-// transient.
+// direction and true airspeed - the shared spawn helper for server spawns,
+// client resets and tests. Alpha and throttle come from the static solution.
 func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64) State {
 	m.State.Fuel = fuel
 	m.weigh()
@@ -126,13 +122,8 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	dry, _ := m.Thrust(speed, position.Y)
 	spool := clamp(drag*q*m.Airframe.Reference.Area/math.Max(dry, 1), 0.1, 1)
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
-	// Axis(side, +angle) pitches the nose UP by angle. The sign here was
-	// inverted for a long time (every spawn opened at MINUS the trimmed alpha:
-	// a -1.4 g bunt and a phugoid the UA law barely damps), and because the
-	// porpoising shielded bots from gunfire, fixing it changed combat balance —
-	// the damage tests and the section doctrine were recalibrated for the
-	// trimmed world when it was corrected (2026-07-25; the investigation record
-	// is in the git history of this comment).
+	// Axis(side, +angle) pitches the nose UP by angle. Inverting this sign spawns
+	// every jet at minus the trimmed alpha: a -1.4 g bunt and a phugoid.
 	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
@@ -149,32 +140,17 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	return s
 }
 
-// Approach composes a steady on-speed descent at a position, horizontal
-// direction, and flight-path angle (radians, negative descending), returning
-// the trimmed state and the throttle that holds it — the landing-configuration
-// sibling of Level, and the shared source of approach trim for spawns, client
-// resets, and tests.
-//
-// An AoA-referenced approach fixes ALPHA, not speed: on-speed is a wing
-// condition, so the speed follows from the weight. That is why the answer must
-// come from the core — a hand-carried spawn speed silently goes stale the
-// moment the airframe, the droop schedule, or the PA law moves under it, and
-// the aircraft then spawns off-trim (the carrier landing start balloon).
-//
-// The trim cannot be found by flying it: holding alpha leaves the speed mode
-// neutrally stable, so a powered approach wanders on a long, barely-damped
-// phugoid with no settled path to measure (which is exactly why the real jet
-// carries an approach power compensator). It is solved statically instead.
+// Approach composes a steady on-speed descent (path in radians, negative
+// descending), returning the trimmed state and the throttle that holds it.
+// Alpha is fixed and the speed follows from weight, so it is solved statically.
 func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float64) (State, float64) {
 	m.State.Fuel = fuel
 	m.weigh()
 	alpha := m.Airframe.Control.Onspeed
 
-	// Newton on (speed, stabilator, throttle) with alpha and the flight path
-	// held: the three residuals are the in-plane accelerations and the pitch
-	// moment, as in Glide. Solving for the stabilator matters — it carries the
-	// download that balances the droop's nose-down moment, and a trim computed
-	// without it is wrong in lift AND drag.
+	// Newton on (speed, stabilator, throttle) with alpha and the flight path held;
+	// residuals as in Glide. The stabilator must be solved: it carries the
+	// download balancing the droop's nose-down moment, in lift and drag.
 	speed, stabilator, throttle := 70.0, -0.02, 0.2
 	for iteration := 0; iteration < 80; iteration++ {
 		r1, r2, r3 := m.approaching(speed, position.Y, alpha, stabilator, throttle, path)

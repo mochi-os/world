@@ -15,16 +15,9 @@ import (
 	"world/game"
 )
 
-// TestWoundedBand measures the question task #29 turns on. The brain's only
-// thrust-driven behaviour is a CLIFF: below 0.35 of its thrust it limps —
-// stops pressing, drops its prey, runs. Above that nothing changes. So the
-// proposed graded middle is only worth building if aircraft actually spend
-// meaningful time in the band between, badly hurt and still fighting.
-//
-// It samples every living bot every tick through real two-way duels (the
-// richest source of damage in the suite) and reports where the thrust
-// fraction sits, plus what the bot was DOING there — pressing an attack, or
-// already defensive of its own accord.
+// TestWoundedBand measures how much time bots spend badly hurt and still
+// fighting. The brain's only thrust-driven behaviour is a cliff at 0.35 thrust:
+// below it the bot limps, above it nothing changes.
 func TestWoundedBand(t *testing.T) {
 	if os.Getenv("AIR_WOUNDED") == "" {
 		t.Skip("measurement harness: set AIR_WOUNDED=1 to run")
@@ -120,13 +113,10 @@ func TestWoundedBand(t *testing.T) {
 		hurtFights, fights, longest)
 }
 
-// TestWoundedBehaviour asks the decisive question directly. The band never
-// arises bot-versus-bot — a bot that takes engine damage dies moments later
-// — but it demonstrably arises against a HUMAN, who wounds and then takes
-// two minutes to finish (the 2026-08-15 joust: a bandit at half thrust for
-// 115 s). So the wound is injected here rather than waited for, and the
-// question is what the brain does with it: does a jet with one engine gone
-// keep pressing an attack as though nothing happened?
+// TestWoundedBehaviour injects the wound rather than waiting for it: the band
+// never arises bot-versus-bot, only against a human who wounds and takes
+// minutes to finish. The question is whether a jet with one engine gone keeps
+// pressing.
 func TestWoundedBehaviour(t *testing.T) {
 	if os.Getenv("AIR_WOUNDED") == "" {
 		t.Skip("measurement harness: set AIR_WOUNDED=1 to run")

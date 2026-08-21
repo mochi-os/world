@@ -18,18 +18,10 @@ import (
 	"golang.org/x/net/netutil"
 )
 
-// Whole-request deadlines for every public HTTP listener this server runs — the
-// lobby and the ACME responder. ReadHeaderTimeout alone leaves the BODY read
-// unbounded, so a slow-trickle POST (headers in time, then one byte every few
-// seconds) parks a socket, goroutine and decoder indefinitely: the body-size
-// caps on the handlers bound bytes, never duration, and the per-host limiter
-// only counts COMPLETED requests, so stalled ones never register. ReadTimeout
-// is the one that closes it; a legitimate client sends its tiny request in
-// milliseconds.
-//
-// Shared rather than written out per listener because they did drift — the
-// responder carried only the header deadline while the lobby had all four, and
-// nothing made the difference visible at either site.
+// Whole-request deadlines shared by every public HTTP listener.
+// ReadHeaderTimeout alone leaves the BODY read unbounded: the handlers' size
+// caps bound bytes, not duration, and the per-host limiter counts only
+// completed requests.
 const (
 	TIMEOUT_HEADER = 10 * time.Second
 	TIMEOUT_READ   = 15 * time.Second
@@ -38,20 +30,14 @@ const (
 )
 
 // CONNECTIONS_MAXIMUM caps how many connections either public listener holds
-// open at once. The deadlines above bound how long a single connection can
-// occupy a goroutine; they do not bound how many connections there are, so a
-// client opening sockets faster than they expire still exhausts the process.
-// Shared by both listeners for the same reason the deadlines are: the two
-// drifted once already, and nothing made the difference visible at either site.
+// open at once. The deadlines bound how long one connection occupies a
+// goroutine, not how many exist. Shared by both listeners.
 const CONNECTIONS_MAXIMUM = 512
 
 // listener_limit caps accepted connections. Excess connections wait in the
-// kernel's accept queue rather than being refused, so a burst is delayed
-// rather than dropped, and the cap is released as connections close.
-//
-// The maximum is a parameter rather than read from the constant so the
-// behaviour can be asserted at a testable size; both callers pass
-// CONNECTIONS_MAXIMUM.
+// kernel's accept queue rather than being refused, and the cap is released as
+// connections close. maximum is a parameter so a test can assert at a small
+// size.
 func listener_limit(listener net.Listener, maximum int) net.Listener {
 	return netutil.LimitListener(listener, maximum)
 }
@@ -73,11 +59,9 @@ func lobby_start(fatal chan<- error) error {
 		WriteTimeout:      TIMEOUT_WRITE,
 		IdleTimeout:       TIMEOUT_IDLE,
 	}
-	// Bind SYNCHRONOUSLY so a taken port or bad address is a fatal startup
-	// error, not a healthy-looking process that never serves (#175): the
-	// listener was detached in a goroutine that only warn()ed, so systemd
-	// saw a live process and never restarted it. Serve() then blocks in the
-	// background and reports its terminal error to fatal.
+	// Bind SYNCHRONOUSLY so a taken port or bad address is a fatal startup error
+	// rather than a live process that never serves (#175). Serve() then blocks in
+	// the background and reports its terminal error to fatal.
 	listener, err := net.Listen("tcp", address)
 	if err != nil {
 		return fmt.Errorf("lobby listen %s: %w", address, err)
@@ -174,13 +158,8 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "request"})
 			return
 		}
-		// Everything a creator sends that comes back out of the public
-		// listing goes through clean(), exactly like Name and Pilot below:
-		// Mode used to pass through RAW (control characters and newlines
-		// reached every client's match-list poll, and a near-64 KB mode
-		// string was repeated in every listing), and Label was byte-sliced,
-		// which both kept control characters and could split a multi-byte
-		// rune at the boundary.
+		// Everything a creator sends that comes back out of the public listing goes
+		// through clean() - control characters stripped, the cap counted in runes.
 		request.Mode = clean(request.Mode, 32)
 		request.Label = clean(request.Label, 64)
 		// One offer at a time: a new match replaces whatever this pilot was
@@ -235,12 +214,9 @@ func lobby_withdraw(w http.ResponseWriter, r *http.Request) {
 	lobby_respond(w, http.StatusOK, map[string]any{"withdrawn": sessions_withdraw(clean(request.Pilot, 64))})
 }
 
-// The server-wide lobby chat (#84): one ring of recent lines for players
-// browsing the match list — where "what shall we fly?" happens. Plain HTTP
-// polling beside the other lobby calls: the audience has no game connection
-// yet. Lines are either player chat ({name, text}) or STRUCTURED system
-// events ({event, name, label}) the client renders in its own language —
-// baked English sentences would defeat every locale.
+// The server-wide lobby chat (#84): one ring of recent lines, polled over plain
+// HTTP since the audience has no game connection yet. A line is player chat
+// ({name, text}) or a system event ({event, name, label}) the client localises.
 var (
 	chat_lines    []map[string]any
 	chat_sequence uint64
@@ -346,27 +322,18 @@ func lobby_voice(r *http.Request) bool {
 	return lobby_permit(says, r, ini_int("limits", "chats", 20))
 }
 
-// lobby_retire rate-limits offer withdrawal per client address. Withdrawing is
-// unauthenticated by design — the pilot token is the whole credential — so the
-// endpoint needs a budget of its own like every other write here. Leaving the
-// page or joining a match withdraws once, so nothing legitimate comes near the
-// default; exceeding it merely leaves an offer to lapse on the grace timer.
+// lobby_retire rate-limits offer withdrawal per client address: withdrawing is
+// unauthenticated, so it needs a budget like every other write here. Exceeding
+// it only leaves an offer to lapse on the grace timer.
 var retires = map[string][]time.Time{}
 
 func lobby_retire(r *http.Request) bool {
 	return lobby_permit(retires, r, ini_int("limits", "withdraws", 30))
 }
 
-// lobby_browse rate-limits the match-list read. Every WRITE here had a budget
-// and the READ had none, which is the wrong way round for the one endpoint
-// that returns a body proportional to the whole server and sets
-// Access-Control-Allow-Origin: *: any page a visitor loads could drive their
-// browser at it, and the reply is many times the size of the request.
-//
-// The budget is the loosest of the four because this poll doubles as the offer
-// heartbeat (#77) — a player sitting on the match list polls every few seconds
-// for as long as they are there, so the limit has to sit well above a steady
-// human poll while still refusing a flood.
+// lobby_browse rate-limits the match-list read: it returns a body proportional
+// to the whole server and answers every origin. The loosest of the four
+// budgets, because this poll doubles as the offer heartbeat (#77).
 var browses = map[string][]time.Time{}
 
 func lobby_browse(r *http.Request) bool {
@@ -402,9 +369,8 @@ func lobby_permit(table map[string][]time.Time, r *http.Request, limit int) bool
 	return true
 }
 
-// transport_origin is the server's advertised base URL. This is the address a
-// player pastes or picks in a join page — the /play path is a protocol detail
-// the client adds when it opens the WebTransport session.
+// transport_origin is the server's advertised base URL - what a player pastes
+// or picks in a join page. The client adds the /play path itself.
 func transport_origin() string {
 	address := ini_string("transport", "address", "")
 	if address == "" {

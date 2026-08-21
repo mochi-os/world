@@ -74,28 +74,18 @@ func (m *Model) Mach() float64 {
 	return m.State.Velocity.Subtract(m.gust).Length() / air(m.State.Position.Y, m.Environment).Sound
 }
 
-// Cas returns calibrated airspeed — what the ADC feeds the HUD box: the
-// compressible pitot equations against the standard sea-level references,
-// with the Rayleigh branch behind the normal shock above Mach 1 (#133; it
-// read as plain EAS before, understating up to ~20 kt fast and high).
-// The pitot reads the AIR, not the ground (#44): parked on the catapult in
-// 25 kt over the deck the box shows ~25 — and only the component down the
-// probe's own axis: taxi a circle on the deck and the indication swings with
-// the nose, tailwind reading near zero, exactly as a pitot must. In flight
-// the relative wind sits within a few degrees of the nose, so the projection
-// and the magnitude coincide; every airspeed instrument downstream (carriage
-// limits, release envelope) is air-relative with it.
+// Cas returns calibrated airspeed from the compressible pitot equations, with
+// the Rayleigh branch behind the normal shock above Mach 1. The pitot reads the
+// AIR along the probe axis, not the ground: on deck it shows the wind.
 func (m *Model) Cas() float64 {
 	relative := m.State.Velocity.Subtract(m.gust)
 	speed := relative.Length()
 	if speed < 0.01 {
 		return 0
 	}
-	// A pitot's total-pressure recovery is FLAT across its working cone
-	// (~25 deg — the stagnation point rides the lip), then collapses: high
-	// AoA in the fight regime must NOT sag the box, but a tailwind on deck
-	// (180 deg off the probe) reads nothing. Cosine alone penalized from
-	// the first degree — 9% low at 25 alpha, 23% at 40.
+	// A pitot's total-pressure recovery is FLAT across its working cone (~25°),
+	// then collapses. Cosine alone penalizes from the first degree - 9% low at 25°
+	// alpha, 23% at 40.
 	along := relative.Dot(m.State.Attitude.Rotate(Vec3{X: 1})) / speed
 	cone := math.Cos(25 * math.Pi / 180)
 	recovery := 1.0

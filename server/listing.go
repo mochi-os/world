@@ -1,26 +1,16 @@
-// Mochi world: public listing — pushing this server's status to a co-located
+// Mochi world: public listing - pushing this server's status to a co-located
 // Mochi server for the network-wide join list (#14).
 //
-// A LISTED world server runs beside a Mochi server on the same machine and
-// pushes its status over that server's local world socket: name, advertised
-// address, flight version, and per-service player counts. The Mochi server
-// gossips the listing to the network; players discover it on their own
-// server's join page. A private server simply never pushes — no Mochi server
-// needed, nothing announced, joined by URL exactly as before. Listing is
-// discovery, never capability: a listed and an unlisted server are
-// protocol-identical once connected.
-//
-// Only the latest state matters. Pushes go on change (debounced to one a
-// minute) and on a ten-minute idle floor that doubles as the liveness
-// signal — the Mochi side expires a listing three floors after the last
-// refresh. A failed push is dropped, not queued: the next change or floor
-// tick carries the current truth, and the game must never degrade because
-// its listing endpoint is down.
+// A listed server pushes name, address, flight version and player counts over
+// the Mochi server's local world socket; a private server never pushes. Listing
+// is discovery, never capability. Pushes go on change (debounced) and on an
+// idle floor that doubles as the liveness signal; a failed push is dropped, not
+// queued.
 //
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 package main
 

@@ -30,10 +30,8 @@ func TestLevel(t *testing.T) {
 	if nz := m.State.Fcs.Normal; math.Abs(nz-1) > 0.3 {
 		t.Fatalf("load factor %.2f three seconds after spawn", nz)
 	}
-	// The composed attitude must CARRY the solved alpha. The tolerances above
-	// are loose enough to pass while the spawn sat at minus the trimmed alpha
-	// (the inverted-sign bug, fixed 2026-07-25): a -1.4 g bunt at every spawn
-	// and a phugoid that shielded bots from gunfire for whole matches.
+	// The composed attitude must carry the solved alpha; the tolerances above pass
+	// even with the spawn at minus the trimmed alpha.
 	spawn := Level(New(Fighter, Environment{Wrap: 250000}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)
 	if held := alpha(spawn.Attitude.Unrotate(spawn.Velocity)); held < 0 {
 		t.Fatalf("spawn alpha %.3f° is negative — the trim attitude is inverted", held*180/math.Pi)
@@ -49,9 +47,7 @@ func TestLevel(t *testing.T) {
 }
 
 // TestApproach: the approach spawn helper produces a trimmed on-speed descent
-// the PA law holds hands-off. This is the regression the carrier landing start
-// lacked — its trim was carried as hand-measured constants in the client, so a
-// core change silently left the spawn ballooning off the glideslope.
+// the PA law holds hands-off, so no caller carries hand-measured trim.
 func TestApproach(t *testing.T) {
 	for _, slope := range []float64{-3.5, -4.0} {
 		path := slope * math.Pi / 180

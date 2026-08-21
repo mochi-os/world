@@ -18,36 +18,10 @@ const (
 	fragments = 10   // fragment rays thrown across the fringe
 )
 
-// Warhead classes: the radii above are the AIM-9M's 9.4 kg annular blast.
-// Callers pass the class; Blast keeps the 9M as its default so every
-// existing call is unchanged.
-//
-// This radius is a CERTAINTY, not the published figure. The ~10 m credited
-// to a 9M-class round is a probability contour — the distance within which
-// a fighter-sized target is likely to take mission-killing damage — while
-// `lethal` here means destroyed outright with no roll. Blast overpressure
-// alone only breaks an airframe within a very few metres of a 9 kg
-// warhead; past that it is fragments, and whether a fragment finds a spar,
-// a tank, an engine or just skin is chance. So the certainty radius sits
-// where destruction really is near-certain (5.5 m), and the frequent,
-// VISIBLE explosions come from the stochastic paths in the fragment band
-// instead — a splinter into the vapour space or a warhead on the rail.
-// That is also how real aircraft blow up at six to ten metres, and it is
-// what leaves the graded middle the fringe tests guard: wounded and
-// flying, sometimes burning down, occasionally coming apart.
-//
-// Radar is the AIM-120's 22 kg blast-fragmentation warhead, a DIRECTED
-// design built for exactly this endgame — a high-closure pass where the
-// round has metres, not a stern chase where it has seconds. Its class is
-// now simply the charge scaling: the cube root of 22 over 9.4 is 1.33, and
-// 1.4 allows a little for the directed pattern. That is the physically
-// honest number, and it becomes usable only once the base radius means
-// what it says — the class used to be 2.0 because the multiplier was
-// carrying the heater's conservatism, which inflated the fragment envelope
-// to 24 m as a side effect. A well-flown BVR shot stays lethal because our
-// terminal geometry passes a defending fighter at 6-10 m: inside the
-// fragment band, where the stochastic paths live even when the burst is
-// outside the certainty radius.
+// Warhead classes scale the radii above, which are the AIM-9M's 9.4 kg annular
+// blast. `lethal` is a CERTAINTY radius, not the published ~10 m probability
+// contour; the fragment band supplies the rest. Radar is the 22 kg charge
+// scaling.
 const (
 	Heater = 1.0 // AIM-9M, 9.4 kg — the reference, 5.5 m lethal / 12 m fringe
 	Radar  = 1.4 // AIM-120C, 22 kg directed fragmentation — 7.7 m lethal / 16.8 m fringe

@@ -11,12 +11,9 @@ import (
 	"testing"
 )
 
-// TestPAFlip: entering powered approach must not TOUCH the flight path — the
-// pilot decelerating through ~250 KCAS in the turn to final crosses the PA
-// threshold mid-bank, and the deck wing-leveler (which must live on the deck
-// alone) used to snap the jet from 52 degrees of bank toward wings-level at
-// 1.5 rad/s the moment the law flipped: an uncommanded roll at exactly the
-// place a pattern is flown.
+// TestPAFlip: entering powered approach must not touch the flight path. The
+// deck wing-leveler must live on the deck alone - airborne it snaps the jet
+// toward wings-level the moment the law flips, mid-bank in the turn to final.
 func TestPAFlip(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 145, Fighter.Mass.Fuel*0.4)

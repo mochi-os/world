@@ -6,11 +6,10 @@
 
 //go:build js && wasm
 
-// The SP joust opponent across the wasm boundary: the same air.Bandit
-// brain-and-airframe harness the server flies for multiplayer bots. The
-// client mirrors the player's state in, steps the bandit, and reads its
-// encoded state back out — one crossing per rendered frame, same buffer
-// conventions as the flight exports.
+// The SP joust opponent across the wasm boundary: the same air.Bandit harness
+// the server flies for multiplayer bots. The client mirrors the player's state
+// in, steps the bandit, and reads its encoded state back - one crossing per
+// frame.
 
 package main
 

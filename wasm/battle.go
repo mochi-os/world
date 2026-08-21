@@ -6,28 +6,24 @@
 
 //go:build js && wasm
 
-// Single-player damage runs the SAME battle package the multiplayer server
-// runs natively: the client is the local authority against the AI, and the
-// ownship's wounds are judged by byte-identical Go either way. Hulks are
-// model-less target bodies for the AI aircraft (the bandit, neutral
-// traffic); the ownship's body binds straight into the flight model's
-// damage state, so hits change the aero on the next step.
+// Single-player damage runs the SAME battle package the multiplayer server runs
+// natively. Hulks are model-less target bodies for the AI aircraft; the
+// ownship's body binds into the flight model's damage state, so hits change the
+// aero.
 //
-// burst input words: 0 target (-1 ownship, else hulk), 1-3 shooter
-// position, 4-6 forward, 7-9 up, 10-12 target position, 13-16 target
-// attitude (hulk targets; the ownship poses from its model), 17 rounds,
-// 18 shooter identity, 19 tick, 20-22 shooter velocity, 23-25 target
-// velocity (hulk targets; the ownship's comes from its model).
-// Output: 0 hits, 1 event mask.
+// burst input words: 0 target (-1 ownship, else hulk), 1-3 shooter position,
+// 4-6 forward, 7-9 up, 10-12 target position, 13-16 target attitude (hulk
+// targets; the ownship poses from its model), 17 rounds, 18 shooter identity,
+// 19 tick, 20-22 shooter velocity, 23-25 target velocity (hulk targets; the
+// ownship's comes from its model). Output: 0 hits, 1 event mask.
 //
-// blast input words: 0 target, 1-3 burst point, 4-6 target position,
-// 7-10 attitude, 11 shooter identity, 12 tick. Output: 0 kill, 1 mask.
+// blast input words: 0 target, 1-3 burst point, 4-6 target position, 7-10
+// attitude, 11 shooter identity, 12 tick. Output: 0 kill, 1 mask.
 //
 // progress input words: 0 ownship throttle, 1 tick, 2 reset (1 clears all
-// battle state on mission start). Output: 0-5 ownship (fire left, fire
-// right, burning, killed, event mask, leak), then 8 words per hulk:
-// fire left, fire right, burning, killed, event mask, thrust loss,
-// wing loss, element total.
+// battle state on mission start). Output: 0-5 ownship (fire left, fire right,
+// burning, killed, event mask, leak), then 8 words per hulk: fire left, fire
+// right, burning, killed, event mask, thrust loss, wing loss, element total.
 package main
 
 import (
@@ -97,11 +93,9 @@ func rig(this js.Value, arguments []js.Value) any {
 	return true
 }
 
-// stores sets a hulk's attached-station mask (bit i = Airframe.Stores[i]).
-// A real aircraft's rails come from its flight model inside Advance; a hulk
-// has no model, so the client pushes the bandit's mask whenever a round
-// leaves the rail — without it a hulk reads as fully loaded forever and its
-// empty rails would keep cooking off.
+// stores sets a hulk's attached-station mask (bit i = Airframe.Stores[i]). A
+// hulk has no flight model to derive rails from, so the client pushes the
+// bandit's mask as rounds leave; without it the empty rails keep cooking off.
 func racks(this js.Value, arguments []js.Value) any {
 	index := arguments[0].Int()
 	if index < 0 || index >= hulks || !fleet[index].used {

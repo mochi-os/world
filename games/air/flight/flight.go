@@ -18,19 +18,9 @@ import (
 	"math"
 )
 
-// Version identifies the model's behaviour and state layout. It travels in
-// the multiplayer join payload; hosts on different versions disable
-// prediction rather than mispredict. Bump on ANY behavioural change.
-// Reset to 1 as the clean public baseline before the first deployment
-// (#106) — it distinguishes deployed generations, not dev iterations.
-// 2: the 2026-07-21 recalibration generation — kinematic-feedforward C* law
-// (pegs the 7.5 g limiter), steeper slat schedule and wing vortex share,
-// intake rolloff to M1.6, 16° flyaway datum, and the K 0.14 + polar-break
-// drag fit. A version-1 client predicting against a version-2 server
-// diverges everywhere the model changed, which is everywhere it matters.
-// 3: the stores generation (#17) — the full fitment catalog with fixtures,
-// per-station missiles and external tanks, external fuel as a new encoded
-// tail word (Size 113 to 114), and external-before-internal burn order.
+// Version identifies the model's behaviour and state layout. It travels in the
+// multiplayer join payload; hosts on different versions disable prediction
+// rather than mispredict. Bump on ANY behavioural change.
 const Version = 3
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
@@ -59,19 +49,14 @@ func Shortest(a float64, b float64, size float64) float64 {
 		return d
 	}
 	half := size / 2
-	// Loop-free: the iterative normalization ran ~|d|/size iterations, and a
-	// hostile tiny wrap turned the first Step into ~1e12 of them — a permanent
-	// session-goroutine hang. Round gives the identical answer in one step
-	// (for |d| ≤ 1.5·size it is the same single add or subtract).
+	// Loop-free: the iterative normalization ran ~|d|/size iterations, so a tiny
+	// wrap hung the session goroutine. Round is the identical answer.
 	if d > half || d < -half {
 		d -= size * math.Round(d/size)
 	}
 	return d
 }
 
-// Fighter is the airframe the package's own tests fly; the test bootstrap
-// (bootstrap_test.go, package flight_test) wires it to the reference dataset
-// in fighter_test.go — a fixed F/A-18F-class airframe kept out of the
-// shipping catalogue. Hosts never read it — they resolve airframes through
-// the aircraft catalogue and pass them to New.
+// Fighter is the airframe the package's own tests fly, wired by the test
+// bootstrap. Hosts resolve airframes through the aircraft catalogue instead.
 var Fighter *Airframe

@@ -1,9 +1,7 @@
 package flight
 
-// Performance-envelope anchors: the model trimmed/settled at published
-// F/A-18C reference points, so every future tuning round has regression
-// teeth instead of feel-tests. Tolerances are generous — this is an anchor,
-// not a certification.
+// Performance-envelope anchors: the model trimmed at published F/A-18C
+// reference points. Tolerances are generous - anchors, not a certification.
 
 import (
 	"fmt"
@@ -13,12 +11,9 @@ import (
 	"testing"
 )
 
-// settle flies the PA law hands-off at a fixed condition with a slow
-// autothrottle holding the vertical speed near zero, and returns the
-// settled speed and alpha — the model's own on-speed point.
 // settle sweeps fixed throttle settings in the landing configuration and
-// returns the time-averaged speed and alpha of the level-est run — open loop,
-// so no autothrottle can pump the phugoid; averaging over the tail washes it out.
+// returns the time-averaged speed and alpha of the level-est run - open loop,
+// so nothing can pump the phugoid; averaging over the tail washes it out.
 func settle(t *testing.T, fuel float64) (float64, float64) {
 	bestVy, bestSpeed, bestAlpha := 1e9, 0.0, 0.0
 	for throttle := 0.20; throttle <= 0.64; throttle += 0.01 {
@@ -101,13 +96,9 @@ func TestFlyawayCapture(t *testing.T) {
 	}
 }
 
-// TestFlyawayProfile: a REAL catapult shot, hands off, sampling attitude,
-// flight path, alpha and speed through the flyaway. Measurement only — set
-// AIR_FLYAWAY=1 to run, AIR_FLYAWAY_DATUM=<degrees> to sweep the capture
-// datum. The reference is the legacy Hornet's catapult longitudinal trim,
-// read off the weight board: 16° up to 44,000 lb, 17° to 48,000, then 19°.
-// Nose position is not flight path — the difference is alpha — so the trim
-// figure is compared against PITCH here, never against the climb angle.
+// TestFlyawayProfile: a real catapult shot, hands off. Measurement only - set
+// AIR_FLYAWAY=1, AIR_FLYAWAY_DATUM=<degrees> to sweep. The trim-board reference
+// (16° to 44,000 lb, 17° to 48,000, then 19°) is PITCH, not path.
 func TestFlyawayProfile(t *testing.T) {
 	if os.Getenv("AIR_FLYAWAY") == "" {
 		t.Skip("measurement probe: set AIR_FLYAWAY=1")
@@ -190,15 +181,10 @@ func TestStaticThrust(t *testing.T) {
 	}
 }
 
-// ---- Energy anchors (AIR_ENERGY=1) ----------------------------------------
-// The three public reference points for "is the jet's energy right": level
-// top speed, level acceleration, and sustained turn rate, each measured under
-// a closed-loop altitude hold so thrust goes into speed rather than climb.
-// Measurement only, no gates. Clean F/A-18C anchors: M1.7-1.8 near 36,000 ft
-// (brochure, firm); roughly M1.0 on the deck (commonly cited); sustained turn
-// ~18°/s low / ~13°/s at 15,000 ft (community EM-chart numbers — the firm
-// source is the NFM-200 performance charts). Fuel is frozen (Cheat.Fuel) so
-// mass stays constant through a run.
+// ---- Energy anchors (AIR_ENERGY=1) ---------------------------------------
+// Level top speed, level acceleration and sustained turn rate under an altitude
+// hold. Measurement only. Clean F/A-18C: M1.7-1.8 near 36,000 ft, ~M1.0 on the
+// deck, sustained ~18°/s low and ~13°/s at 15,000 ft.
 
 // leveler is a PI altitude hold on the pitch stick: the altitude error
 // commands a vertical speed, and the integral supplies the steady pull a
@@ -279,11 +265,8 @@ func TestAcceleration(t *testing.T) {
 }
 
 // excess measures specific excess power at one speed/load point: trim level,
-// roll steep so the lift vector stays near the horizon, servo the pull to the
-// target load factor, and read the energy-height rate over a two-second
-// window — short enough that the state stays near the target while it drifts.
-// Returns the power (m/s), the load factor actually achieved (the alpha or g
-// limiter may cap the pull), and the mean true airspeed over the window.
+// roll steep so the lift vector stays near the horizon, servo the pull, and
+// read the energy-height rate over two seconds. The pull may be limiter-capped.
 func excess(altitude float64, target float64, load float64) (float64, float64, float64) {
 	m := energy()
 	ratio := math.Sqrt(1.225 / air(altitude, m.Environment).Density)
@@ -314,12 +297,9 @@ func excess(altitude float64, target float64, load float64) (float64, float64, f
 	return (height() - start) / (window / 240), normal / window, speed / window
 }
 
-// TestSustainedTurn: the EM-chart quantity, measured directly. For each
-// speed, sweep the load factor and sample specific excess power; the Ps = 0
-// crossing is the sustained g, and the sustained turn rate follows from it.
-// A speed whose power is still positive at the highest pull the jet gives is
-// lift- or g-limited rather than thrust-limited — the sustained rate there
-// is the rate at that maximum pull.
+// TestSustainedTurn: sweep load factor at each speed and sample specific excess
+// power; the Ps = 0 crossing is the sustained g. A speed still positive at max
+// pull is lift- or g-limited, and takes the rate at that pull.
 func TestSustainedTurn(t *testing.T) {
 	if os.Getenv("AIR_ENERGY") == "" {
 		t.Skip("measurement probe: set AIR_ENERGY=1")
@@ -403,12 +383,8 @@ func TestPullProbe(t *testing.T) {
 	}
 }
 
-// TestPull: full aft stick at 450 KCAS must PEG the limiter. Regression
-// teeth for the never-pegs-7.5 fix (the C* fixed-point droop, the
-// zero-referenced carefree caps, the missing kinematic feedforward, and the
-// trim-rate bottleneck each parked pulls at 5.5-7.2 g). Generous bounds:
-// ≥7.3 g within 2.5 s, still pegged at 4 s, never past 7.65 (the overstress
-// ledger opens at 7.5).
+// TestPull: full aft stick at 450 KCAS must PEG the limiter - >=7.3 g within
+// 2.5 s, still pegged at 4 s, never past 7.65 (the overstress ledger is 7.5).
 func TestPull(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 450/1.94384*1.015, 2500)
@@ -433,10 +409,8 @@ func TestPull(t *testing.T) {
 }
 
 // loaded builds a synthetic state at one body alpha and speed in the UA
-// manoeuvring configuration (slats and AUTO flaps at their scheduled angles,
-// stabilator as given), evaluates the aero pass alone, and returns wind-axis
-// lift and drag coefficients plus the pitch moment about the CG. The engine
-// state is empty so thrust cannot contaminate the lift axis.
+// manoeuvring configuration, evaluates the aero pass alone, and returns
+// wind-axis CL/CD plus pitch moment. Engine state is empty: no thrust in lift.
 func loaded(m *Model, angle float64, speed float64, stabilator float64) (float64, float64, float64) {
 	local := air(1000, m.Environment)
 	pressure := 0.5 * local.Density * speed * speed
@@ -463,11 +437,9 @@ func loaded(m *Model, angle float64, speed float64, stabilator float64) (float64
 	return lift, drag, forces.Moment.Z
 }
 
-// TestLift (AIR_LIFT=1): the whole-airframe lift curve in the manoeuvring
-// configuration, free and TRIMMED — the stabilator bisected to zero pitching
-// moment per point, which is the lift that actually buys turn rate. The
-// corner anchor: 7.5 g at ~330-360 KCAS at mid weight needs usable trimmed
-// CL of about 1.4-1.55 by ~20° alpha, smooth.
+// TestLift (AIR_LIFT=1): the whole-airframe lift curve, free and TRIMMED
+// (stabilator bisected to zero pitching moment). Corner anchor: 7.5 g at
+// ~330-360 KCAS needs trimmed CL about 1.4-1.55 by ~20° alpha.
 func TestLift(t *testing.T) {
 	if os.Getenv("AIR_LIFT") == "" {
 		t.Skip("measurement probe: set AIR_LIFT=1")
@@ -525,11 +497,8 @@ func TestPush(t *testing.T) {
 }
 
 // TestCarriageDrag: the store catalog's flat-plate areas and masses, flown.
-// Specific excess power at 450 KCAS on the deck, wings level, full reheat —
-// clean, the six-single AMRAAM fit, and the ten-round twin fit, tankless so
-// the comparison is pure carriage at equal fuel. The bands pin the catalog
-// against silent drag regressions: they fail if a fitment's area is zeroed
-// or a catalog append doubles one.
+// Specific excess power at 450 KCAS on the deck - clean, six singles, ten
+// twins, tankless at equal fuel. The bands catch a zeroed or doubled area.
 func TestCarriageDrag(t *testing.T) {
 	point := func(bits uint64) float64 {
 		m := energy()
@@ -559,13 +528,9 @@ func TestCarriageDrag(t *testing.T) {
 	if !(clean > singles && singles > twins) {
 		t.Fatalf("carriage does not order: clean %.1f, singles %.1f, twins %.1f", clean, singles, twins)
 	}
-	// Measured 2026-08-11: clean 278.7, singles cost 64.5, twins cost 99.7 —
-	// roughly 40% mass, 45% flat plate, the rest induced. The bands are wide
-	// enough for aerodynamic retuning and tight enough that a zeroed area or
-	// a doubled append trips them. The per-round area (0.05 m²) follows the
-	// catalog's installed-drag convention shared with the AIM-9 rounds since
-	// the loadout model landed; re-scaling that convention re-prices the
-	// calibrated bot fits and belongs to the flight-model work.
+	// Measured: clean 278.7, singles cost 64.5, twins 99.7. The per-round area
+	// (0.05 m²) follows the catalog's installed-drag convention shared with the
+	// AIM-9 rounds; re-scaling it re-prices the calibrated bot fits.
 	if cost := clean - singles; cost < 35 || cost > 95 {
 		t.Fatalf("six-single carriage cost %.1f m/s outside the flown band", cost)
 	}

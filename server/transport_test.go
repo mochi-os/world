@@ -186,12 +186,9 @@ func air_position(message map[string]any) ([]float64, bool) {
 	return position, true
 }
 
-// TestAir joins an air session and expects the authoritative aircraft
-// to fly: consecutive snapshots must show the spawn position advancing.
-// The open furball mode flies a lone jet immediately (a joust would hold
-// the first joiner frozen in the waiting room). Receiving snapshots at
-// all doubles as the oversized-datagram guard: SendDatagram drops frames
-// past the MTU silently, so wire growth reads as zero snapshots here.
+// TestAir joins an air session and expects consecutive snapshots to show the
+// jet advancing; furball flies a lone jet immediately where a joust would not.
+// Receiving no snapshots also means the datagram outgrew the MTU.
 func TestAir(t *testing.T) {
 	s, err := sessions_create("air", "furball", "test flight", 4, nil)
 	if err != nil {
@@ -236,11 +233,10 @@ func TestAir(t *testing.T) {
 	}
 }
 
-// TestPair joins two players and expects each to appear in the other's
-// poses — the headless stand-in for the two-browser test, and the guard
-// this suite keeps against snapshot datagrams outgrowing the QUIC MTU
-// (SendDatagram drops oversized frames silently). Poses ride their own
-// datagram as 35-byte records with the slot in byte 0, self first.
+// TestPair joins two players and expects each in the other's poses - also the
+// guard against snapshot datagrams outgrowing the QUIC MTU, which SendDatagram
+// drops silently. Poses ride their own datagram: 35-byte records, slot in byte
+// 0.
 func TestPair(t *testing.T) {
 	s, err := sessions_create("air", "joust", "pair test", 4, nil)
 	if err != nil {
@@ -451,10 +447,8 @@ func TestLobbyChat(t *testing.T) {
 	}
 }
 
-// TestStaleOffer pins the sweep that retires abandoned offers — now on its
-// own 1 Hz clock (sessions_stale_manager) rather than every session tick, so
-// this drives one sweep synchronously and checks every category: only an
-// unjoined, impermanent, past-grace offer is flagged.
+// TestStaleOffer drives one sweep synchronously and checks every category: only
+// an unjoined, impermanent, past-grace offer is flagged.
 func TestStaleOffer(t *testing.T) {
 	past := time.Now().Add(-2 * OFFER_GRACE)
 	stale := time.Now().Add(-2 * ORPHAN_GRACE)
@@ -463,11 +457,9 @@ func TestStaleOffer(t *testing.T) {
 		{identifier: "stale-fresh", owner: "b", offered: time.Now(), created: time.Now()},
 		{identifier: "stale-joined", owner: "c", offered: past, joined: true, created: stale},
 		{identifier: "stale-permanent", owner: "d", offered: past, permanent: true, created: stale},
-		// An ownerless session is not the OWNER rule's business however old it
-		// is — that rule is about a creator who stopped heartbeating, and this
-		// one never had a creator to lose. It is reaped instead by the orphan
-		// rule below, on age since creation, so that omitting "pilot" cannot
-		// buy a longer life than supplying it (the DoS this pins).
+		// An ownerless session is not the OWNER rule's business however old it is;
+		// the orphan rule reaps it on age since creation, so omitting "pilot" cannot
+		// buy a longer life than supplying it.
 		{identifier: "stale-ownerless", offered: past, created: time.Now()},
 	}
 	orphan := &session{identifier: "stale-orphan", offered: past, created: stale}
@@ -502,12 +494,9 @@ func TestStaleOffer(t *testing.T) {
 	}
 }
 
-// TestListingRulesCopied pins the creation-time copy of the advertised rules
-// (#21): spec.Parameters is the same map object the game instance holds, so
-// the listing must carry a snapshot, not a live read. A game (or anyone
-// holding the request map) mutating parameters after Create must not change
-// what the lobby advertises — and above all must not be able to RACE it,
-// which the companion race exercise below drives under -race.
+// TestListingRulesCopied (#21): spec.Parameters is the same map object the game
+// instance holds, so the listing must carry a creation-time snapshot. Mutating
+// parameters after Create must not change or race what the lobby advertises.
 func TestListingRulesCopied(t *testing.T) {
 	parameters := map[string]any{
 		"missiles": true,
@@ -552,10 +541,8 @@ func TestListingRulesCopied(t *testing.T) {
 		t.Error("creator-internal parameters leaked into the listing")
 	}
 
-	// The race the copy exists to prevent: hammer writes into the shared map
-	// while the lobby lists. Run under -race this fails on the pre-copy code
-	// (sessions_list read spec.Parameters live) and passes now, because the
-	// listing no longer touches the map at all.
+	// The race the copy exists to prevent: hammer writes into the shared map while
+	// the lobby lists. Meaningful only under -race.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -570,10 +557,7 @@ func TestListingRulesCopied(t *testing.T) {
 }
 
 // TestCreateSanitizes pins the input hygiene of the open lobby: everything a
-// creator sends that comes back out of the public listing goes through
-// clean(). Mode used to pass through raw and Label was byte-sliced — control
-// characters reached every client's match-list poll, and the slice could
-// split a multi-byte rune at byte 64, emitting invalid UTF-8.
+// creator sends that comes back out of the public listing goes through clean().
 func TestCreateSanitizes(t *testing.T) {
 	// Label: 63 ASCII bytes then a multi-byte rune, so a byte slice at 64
 	// would cut the rune in half; plus control characters that must vanish.
@@ -707,11 +691,9 @@ func TestWithdrawBudget(t *testing.T) {
 	}
 }
 
-// TestOfferPrivacy pins that the pilot token stays private. It is the whole
-// credential /withdraw and the heartbeat accept, and the lobby answers every
-// origin, so a match list carrying it would let any reader — a web page
-// included — retire anybody's offer. The listing reports only whether an offer
-// belongs to the CALLER, matched against the token they already hold.
+// TestOfferPrivacy pins that the pilot token stays private: it is the
+// credential for /withdraw and the lobby answers every origin. The listing
+// reports only whether an offer belongs to the CALLER.
 func TestOfferPrivacy(t *testing.T) {
 	const alpha, bravo = "alpha-pilot-token", "bravo-pilot-token"
 

@@ -16,12 +16,9 @@ import (
 	"world/games/air/flight"
 )
 
-// TestFidelityDuel measures surrogate agreement where the LADDER is judged:
-// the two-bot guns duel, bucketed by range. TestFidelity samples an ace
-// furball, which averages the merge in with cruising and repositioning; the
-// ladder's known gap — ace-vs-pilot resolves 1-1 at full fidelity and 0-0 at
-// stock — lives close in, so this instrument reports the same agreement and
-// regret numbers PER RANGE BAND. Diagnostic, not gated: the printout is the
+// TestFidelityDuel measures surrogate agreement per RANGE BAND in the two-bot
+// guns duel, where the ladder is judged - TestFidelity's ace furball averages
+// the merge in with cruising. Diagnostic, not gated: the printout is the
 // product.
 func TestFidelityDuel(t *testing.T) {
 	heavy(t)

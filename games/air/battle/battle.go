@@ -4,13 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The battle package DECIDES damage — hits, fires, shedding, pilot fate —
-// and writes the results into flight.DamageState for the flight core to
-// apply. One implementation serves the multiplayer server natively and the
-// single-player client through wasm, so damage is byte-identical wherever
-// it is judged. Everything is deterministic: randomness comes only from the
-// splitmix hash over (seed, slot, tick, counter); there is no clock and no
-// math/rand anywhere in this package.
+// The battle package DECIDES damage - hits, fires, shedding, pilot fate - and
+// writes it into flight.DamageState. It serves the server natively and the
+// client through wasm, so it is fully deterministic: no clock, no math/rand.
 
 package battle
 
@@ -74,13 +70,9 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 			continue
 		}
 		fed := throttle > 0.1 && !(i < len(secure) && secure[i])
-		// A burning engine is a DEAD engine (2026-08-01): the fire drill
-		// extinguishes by shutdown — fuel off — and nothing relights a fire-
-		// damaged turbine in flight. Before this, an extinguished fire handed
-		// most of the engine back, so a bandit could soak fire after fire and
-		// keep fighting; now the first fire costs the engine for the flight,
-		// the second makes a glider, and what the drill saves is the AIRFRAME:
-		// an unfought fire still burns through to the fuel.
+		// A burning engine is a DEAD engine: the fire drill extinguishes by shutdown,
+		// and nothing relights a fire-damaged turbine in flight. What the drill saves
+		// is the AIRFRAME - an unfought fire reaches the fuel.
 		damage.Engine[i] = 1
 		if fed {
 			condition.Fire[i] += 0.05 * step
@@ -123,11 +115,8 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 		}
 		if normal > ultimate*strength && weaker >= 0 && shed(body, weaker) {
 			events = append(events, Event{Kind: "shed", Engine: -1, Surface: weaker})
-			// Break-up: a wing leaving at high dynamic pressure does not
-			// start a spin, it takes the aircraft apart — the asymmetric
-			// load arrives faster than any structure can carry it. Below
-			// the threshold the jet departs and falls, which is the older
-			// behaviour and still the right one at low speed.
+			// Break-up: a wing leaving at high dynamic pressure takes the aircraft apart
+			// rather than starting a spin. Below the threshold it departs and falls.
 			if model.Cas() > breakup {
 				blow(body, seed, slot, tick)
 				events = append(events, Event{Kind: "explode", Engine: -1, Surface: -1})
@@ -142,12 +131,9 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 // speed band a turning fight lives in.
 const breakup = 180.0
 
-// blow is the CATASTROPHIC kill: the fuel-air explosion, or a warhead
-// cooking off on the rail. It is the same fuel fire ignite() starts, with
-// the fuse cut to a fraction of a second — one path to the explosion, one
-// set of events, and the hosts already consume it. A kill the shooter
-// cannot see is a kill that does not read, and before this nearly every
-// gun kill hid behind ten to thirty seconds of burning.
+// blow is the CATASTROPHIC kill: the fuel-air explosion, or a warhead cooking
+// off on the rail. It is ignite()'s fuel fire with the fuse cut to a fraction
+// of a second, so there is one path to the explosion and one set of events.
 func blow(body *Body, seed uint64, slot uint64, tick uint64) {
 	ignite(body, seed, slot, tick)
 	body.Condition.Burning = true
@@ -191,11 +177,9 @@ func weakest(body *Body) (int, float64) {
 	return surface, health
 }
 
-// shed tears off the outboard half of a wing: the elements go, drag rises,
-// the CG walks toward the surviving wing, and the mass leaves. Reports
-// whether anything was actually left to tear — a severed spar keeps the
-// failure condition true forever, and re-shedding a stump every tick piled
-// up phantom drag and mass (#144).
+// shed tears off the outboard half of a wing: elements go, drag rises, the CG
+// walks, mass leaves. Reports whether anything was left to tear - re-shedding a
+// stump every tick piles up phantom drag and mass (#144).
 func shed(body *Body, surface int) bool {
 	s := &body.Airframe.Surfaces[surface]
 	base := 0

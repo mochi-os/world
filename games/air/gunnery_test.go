@@ -17,24 +17,9 @@ import (
 	"world/games/air/flight"
 )
 
-// TestGunnery is the instrument the 2026-08-05 superhuman post-mortem showed
-// was missing. Every other gate measures whether the bot KILLS, which folds
-// twenty variables into one number and takes a hundred seconds a seed to
-// answer. This one measures the two links in the chain that actually broke:
-//
-//	OPPORTUNITY  how often the bot is in a position where a shot exists at all
-//	             (the target inside gun range and reachable by its nose)
-//	CONVERSION   of those, how often it is ON the led solution
-//	ACCURACY     of the rounds it fires, how close they pass to the target
-//
-// A bot that chooses offensive plays for the whole fight and never fires is
-// indistinguishable, on a kill count, from a bot that never tries. Here it
-// reads as opportunity high, conversion nil — which is exactly what the human
-// fight measured, and what no existing gate could see.
-//
-// The target is the scripted evade(): corner-ish speed, a hard level turn
-// reversed every six seconds, breaking harder with a threat close behind. It
-// never attacks, so every number below is the bot's own doing.
+// TestGunnery measures the gun chain per tier against the scripted evade()
+// target: OPPORTUNITY (a shot exists at all), CONVERSION (on the led solution),
+// ACCURACY (how close the fired rounds pass). A kill count hides all three.
 func TestGunnery(t *testing.T) {
 	heavy(t)
 	for _, level := range []string{"pilot", "ace", "superhuman"} {
@@ -138,17 +123,8 @@ func TestGunnery(t *testing.T) {
 			t.Errorf("%s never got inside 900 m of a scripted turner in 90 s — the harness or the pursuit is broken", level)
 		}
 		if level != "pilot" {
-			// The floor is 3%, re-based 2026-08-08. It was 4%, fitted before
-			// the rolling reduction (NATOPS 11.1.7) took a fifth of the g
-			// ceiling with lateral stick; a jet that tracks with less g
-			// tracks less well, and the ace settled at 3.46%. That is the
-			// flight model being more honest, not the bot being worse — its
-			// rounds still land (88% on target) and it still kills the
-			// offerer 11 of 12. The floor exists to catch the CATASTROPHE
-			// this instrument was built for — 0.4%, a bot that points at him
-			// and never aims — and 3% still catches it with room to spare.
-			// Damping the roll to buy the old number back was tried and
-			// rejected: see bot.go's note, it inverted the ladder.
+			// The floor catches the catastrophe this instrument exists for - a bot that
+			// points and never aims (0.4%) - not tier tuning; the ace sits at 3.46%.
 			if share := 100 * float64(solved) / math.Max(float64(opportunity), 1); share < 3 {
 				t.Errorf("%s is on a firing solution for %.2f%% of its in-range time — it points at him without ever aiming (floor 3%%)", level, share)
 			}
@@ -159,13 +135,9 @@ func TestGunnery(t *testing.T) {
 	}
 }
 
-// TestLadderDuel is the honest test of lethality: each tier against the one
-// below it, guns only, to the kill. Every other instrument scores the bot
-// against a target that does not fight back — a compliant drone, a scripted
-// turner, a straight-and-level offerer — and the 2026-08-05 human fight
-// showed how far that can diverge from a two-way engagement, where the bot
-// must defend and attack at once. A tier that cannot beat the one below it
-// is not more lethal, whatever the single-sided instruments say.
+// TestLadderDuel is the two-way lethality test: each tier against the one below
+// it, guns only, to the kill. Every other instrument scores the bot against a
+// target that does not fight back.
 func TestLadderDuel(t *testing.T) {
 	heavy(t)
 	for _, missiles := range []bool{false, true} {
@@ -177,12 +149,8 @@ func TestLadderDuel(t *testing.T) {
 			strong, weak := pair[0], pair[1]
 			wins, losses, draws := 0, 0, 0
 			var times []float64
-			// SIXTEEN seeds, not eight (2026-08-08). Two-way fights are chaotic,
-			// missile fights especially: at n=8 this arm read 0-3 against the
-			// pilot while the same pairing over 24 seeds runs 5-4 FORWARD —
-			// the gate was measuring its own sample size. The surrogate
-			// rollout (#256) made the whole battery ~45x cheaper, so the
-			// sample is now affordable rather than aspirational.
+			// Sixteen seeds: two-way missile fights are chaotic - at n=8 this arm read
+			// 0-3 while the same pairing over 24 seeds ran 5-4 forward.
 			for seed := uint64(1); seed <= 16; seed++ {
 				g := New()
 				made, err := g.Create(game.Session{Identifier: fmt.Sprintf("ladder%s%s%d", arm, strong, seed),
@@ -238,79 +206,13 @@ func TestLadderDuel(t *testing.T) {
 			}
 			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
 				arm, strong, weak, wins, losses, draws, mean)
-			// HISTORY. 2026-08-05, before the probability trigger, the pipper
-			// takeover, and the intent layer: won 0, lost 0 on both pairs —
-			// bots never killed each other with guns at all, while every
-			// single-sided instrument read healthy. 2026-08-06, after: fights
-			// resolve when one side catches the other slow (ace-pilot trades a
-			// kill each way around 110 s), the machine no longer loses the top
-			// pairing (it was drowning itself under FINISH, then dying in a
-			// commitment-locked CONVERT), and two competent equals who no
-			// longer get caught fight four honest minutes to a draw — each
-			// denies the other's solution and neither takes objectively bad
-			// shots, which is what equal BFM looks like.
-			//
-			// The gate is inversion only, deliberately: a gate on "the better
-			// tier must win" would sit red on honest draws and stop being read.
-			// If exploitation work ever makes the upper tier convert reliably,
-			// tighten this to demand a majority.
-			// The missiles arm allows a two-fight edge at n=16 (its history
-			// demanded a hard gate: the arm's first run found free-aspect
-			// six-round volleys ruling the merge, ace 0-6 to the pilot's
-			// paced pairs at 2 km — fixed by plume-conditioned acquisition
-			// (#255), a cold nose locks only close aboard, after which the
-			// arm reads 0-1 / 3-0 forward. A strict inversion gate on eight
-			// chaotic fights would flap on single-seed noise; a 0-6 regime
-			// still fails loudly.)
-			// A single fight is never an inversion. These pairings resolve
-			// only when one side catches the other slow, so a typical arm is
-			// mostly draws with a handful of kills — and at n=16 a lone loss
-			// among fifteen draws trips a strict gate under EITHER fidelity
-			// (measured, full model included). The gate must fire on a
-			// regime, not on one seed: two fights of daylight for guns,
-			// three for the chaotic missile arm.
+			// The gate is inversion only: these pairings mostly draw, so "the better
+			// tier must win" would sit red on honest fights. It must fire on a regime,
+			// not one seed - two fights of daylight, three for the chaotic missile arm.
 			slack := 1
 			if missiles {
-				// Two fights of daylight in the chaotic missile arm.
-				//
-				// This read RED from 2026-08-15 (superhuman v ace 4-9), when
-				// counting the shoot-shoot-look pair took away a saturation
-				// attack the machine leaned on, and was earned back on
-				// 2026-08-16 at 5-4 WITHOUT restoring the stream — the pair
-				// rule is untouched and TestPairDiscipline still reads two.
-				//
-				// What it turned out to be was not heater employment at all.
-				// The machine's rounds already arrived three times as often as
-				// the ace's; it was losing the GUN fight 6-1 inside the
-				// missiles arm, having spent 5.0 s of every fight defending
-				// against rounds that were never going to reach it and 0.86 s
-				// in a launch envelope of its own. Volume was buying the ace
-				// suppression rather than kills. Two measured changes in
-				// bot.go: discipline no longer narrows the launch nose gate
-				// inside the seeker's own acquisition cone, and the instructor
-				// tiers no longer break for a round they can see has already
-				// been beaten (see `beaten`).
-				//
-				// 2026-08-17, the WEAPON was fixed and this survived it at 6-8.
-				// A pilot fired twelve 9Ms across two fights for no hits: every
-				// flare drop got its own full decoy roll, and a bandit
-				// dispensing continuously stacked up to ten of them in front of
-				// one round. Two changes in air.go's pursue — the chance now
-				// HALVES with each flare the round has already seen through, and
-				// a seduced seeker gets one attempt to re-acquire if the target
-				// is still inside its gimbal. Arrival went 9.3% and 15.0% to
-				// 17.4% and 25.0%, which is where the real AIM-9M sits, and
-				// no-results here fell from 7 to 2 because fights now resolve.
-				//
-				// A flare MAGAZINE was measured and rejected. Bots carry
-				// infinite countermeasures, which is wrong, but 60 of them
-				// inverted BOTH this gate (6-9) and the BVR top rung (3-3 to
-				// 1-5) — chaff rides the same mixed programme, so a magazine
-				// reaches the radar path too. The decay above bounds cumulative
-				// seduction however many flares are dropped, so the magazine
-				// bought almost no extra Pk for two broken ladders. See the task
-				// list: it wants the bots' countermeasure doctrine retuned
-				// alongside it, not a bare counter.
+				// Two fights of daylight in the chaotic missile arm. A flare magazine was
+				// measured and rejected: it inverted this gate and the BVR top rung.
 				slack = 2
 			}
 			if losses > wins+slack {
@@ -321,14 +223,9 @@ func TestLadderDuel(t *testing.T) {
 	}
 }
 
-// flounder drives the scripted target that reproduces the profile the user
-// actually presented in the 2026-08-06 fight (recording 019fd794...): 50-110
-// m/s, 20-38 degrees alpha for two-thirds of the fight, keyboard-shaped
-// inputs — full-aft pitch camping the limiter in bursts, quantised rolls, a
-// hard break when the bandit closes, and novice gunnery when the nose happens
-// on. Every fighting-speed instrument scored the bots healthy while THIS
-// profile took the superhuman 174 seconds and cost it hits; the fight no
-// instrument covers is always the one that matters.
+// flounder drives the scripted target reproducing a keyboard pilot's recorded
+// profile: 50-110 m/s, 20-38 degrees alpha for two-thirds of the fight, bursts
+// of full-aft pitch, quantised rolls, a hard break when the bandit closes.
 func flounder(me, foe *flight.State, tick uint64) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	r := math.Max(toward.Length(), 1)
@@ -355,31 +252,18 @@ func flounder(me, foe *flight.State, tick uint64) map[string]any {
 		wantBank = turn * 1.25 // he is behind and close: break harder
 		pitch = 1.0
 	}
-	// A wide bank deadband, because a keyboard pilot TAPS the roll key to set
-	// bank and then leaves it alone (#215 recalibration): a tight band made
-	// the script hold full lateral stick through the whole turn, and once the
-	// rolling reduction landed (NATOPS 11.1.7) that cost it a fifth of its g
-	// — the float turned into a clean 260 m/s cruise with no high alpha at
-	// all, which is nothing like the pilot it is supposed to imitate.
-	// Positive stick rolls RIGHT, which is NEGATIVE bank in the
-	// atan2(right.Y, up.Y) convention the whole codebase reads (see compose).
-	// This was inverted, so the script never converged on its commanded bank:
-	// it rolled continuously through inverted and split-S'd into the sea.
-	// The old calibration matched the pilot's numbers with that bug in place,
-	// which is the danger of fitting an instrument to an output instead of
-	// checking what it does.
+	// A wide bank deadband, because a keyboard pilot taps the roll key to set bank
+	// and then leaves it alone; a tight band holds full lateral stick and the
+	// rolling reduction then costs a fifth of the g. Positive stick rolls RIGHT,
+	// which is NEGATIVE bank in the atan2(right.Y, up.Y) convention.
 	if wantBank-bank > 0.4 {
 		roll = -1
 	} else if wantBank-bank < -0.4 {
 		roll = 1
 	}
-	// The recovery rolls level FIRST, then pulls. Doing both at once is what
-	// a panicking novice does and it no longer works: the rolling reduction
-	// (NATOPS 11.1.7) takes a fifth of the g ceiling with lateral stick, so a
-	// full-aft pull held through a full-deflection roll mushes into the water
-	// — which is exactly what happened, silently, the moment that law landed.
-	// The script flew itself into the sea at 20.6 s in every seed with NOBODY
-	// having hit it, and TestFlounder counted that as a kill and went green.
+	// The recovery rolls level FIRST, then pulls: the rolling reduction (NATOPS
+	// 11.1.7) takes a fifth of the g ceiling with lateral stick, so a full-aft
+	// pull through a full-deflection roll mushes into the water.
 	if me.Position.Y < 1600 && me.Velocity.Y < 0 {
 		if math.Abs(bank) > 0.3 {
 			roll = clamp(bank*2, -1, 1) // toward wings level, in the same sign convention
@@ -394,16 +278,10 @@ func flounder(me, foe *flight.State, tick uint64) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 0.95, "fire": fire}
 }
 
-// jinker drives the scripted target the aiming measurement predicts is
-// unhittable (#215, 2026-08-11): a FAST, erratic evader. The flounder is the
-// slow high-alpha limiter-camper; this is its opposite — military power,
-// full-deflection keyboard rolls whose direction flips on an IRREGULAR clock,
-// hard pulls through each break and a deliberate unload across each reversal.
-// The point of the irregularity is jerk: the ace's aim error against the
-// (smooth) superhuman was 1.7 m and against the sloppier pilot bot never came
-// below 69.9 m, so the tracking failure is specifically against unsteady
-// motion — and a human actively jinking is unsteadier than any bot. If bots
-// cannot land rounds on this profile, evasion is a cheat code for players.
+// jinker drives the fast, erratic evader - the flounder's opposite: military
+// power, full-deflection rolls flipping on an irregular clock, hard pulls
+// through each break, unloaded across each reversal. The irregularity is the
+// point.
 func jinker(me, foe *flight.State, tick uint64) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	r := math.Max(toward.Length(), 1)
@@ -467,17 +345,9 @@ func jinker(me, foe *flight.State, tick uint64) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "fire": fire}
 }
 
-// TestJink measures whether the bots can hit an actively evading human.
-// The gated quantity is ROUNDS LANDED, not kills: against real evasion a
-// kill is a rare binary event that one seed swings, but rounds landed is
-// the continuous gunnery truth underneath and moves smoothly when doctrine
-// changes. Kills stay reported. The gate holds the ends only — a
-// disciplined tier landing fewer rounds than the pilot across a full
-// twelve-seed block is a real regression; the ace-versus-machine middle is
-// reported, because the machine spends fewer rounds per kill (measured at
-// arming, 2026-08-14: pilot 48 landed, ace 234, superhuman 180, with 1/3/4
-// kills) and demanding round-count order would punish exactly that
-// efficiency. Fatals on the script drowning itself, like the flounder.
+// TestJink measures whether the bots can hit an actively evading human. The
+// gated quantity is ROUNDS LANDED, not kills: kills are rare binary events one
+// seed swings. Only the ends are gated; the middle is reported.
 func TestJink(t *testing.T) {
 	heavy(t)
 	floor := map[string]int{}
@@ -565,18 +435,15 @@ func TestJink(t *testing.T) {
 // (its target is parity with the user, judged elsewhere).
 func TestFlounder(t *testing.T) {
 	heavy(t)
-	// Twelve seeds (2026-08-13, was six): the kill counts sit near zero, so
-	// per-seed noise dominated any six-seed read — variants measured a day
-	// apart flipped tiers between 0/6 and 1/6 on seed luck alone.
+	// Twelve seeds: kill counts sit near zero, so per-seed noise dominates a
+	// six-seed read.
 	const flounderSeeds = 12
 	for _, level := range []string{"pilot", "ace", "superhuman"} {
 		var times []float64
 		struck, unresolved, landed, engaged := 0, 0, 0, 0
-		// The conversion diagnosis columns (#215 item 8): how often the bot
-		// FIRES, how often it holds the advantage position (nose on, inside
-		// 900 m), which plays it flies, and how fast it is overtaking while
-		// in range — the floater deficit lives in one of those, and a kill
-		// count alone cannot say which.
+		// The conversion diagnosis columns (#215 item 8): firing rate, time holding
+		// the advantage position (nose on, inside 900 m), plays flown, and closure
+		// while in range.
 		firing, advantage, total := 0, 0, 0
 		closure, closures := 0.0, 0
 		modes := map[string]int{}
@@ -641,12 +508,8 @@ func TestFlounder(t *testing.T) {
 				}
 				human := i.aircraft[0]
 				if human.model == nil || !human.alive {
-					// SHOT DOWN, not drowned. A scripted target that kills
-					// itself makes this whole instrument a green light that
-					// measures nothing — which is precisely what happened
-					// when the rolling-reduction law landed and the script's
-					// recovery stopped working (#215). Nobody noticed,
-					// because the gate PASSED.
+					// SHOT DOWN, not drowned: a scripted target that kills itself turns this
+					// instrument into a green light measuring nothing.
 					if human.condition.Damager < 0 {
 						t.Fatalf("%s seed %d: the flounder flew into the sea at %.1f s with nobody having hit it — the instrument is measuring its own script, not the bot",
 							level, seed, float64(tick)/60)
@@ -699,35 +562,16 @@ func TestFlounder(t *testing.T) {
 		}
 		fmt.Printf("%-11s killed the flounder %d/%d, mean %5.1f s | rounds landed %4d | in gun range %5.1f%% | nose on %4.1f%% | trigger %4.1f%% | closure %+5.1f m/s | hits taken %d | modes %s\n",
 			level, len(times), flounderSeeds, mean, landed, rate(engaged), rate(advantage), rate(firing), overtake, struck, top)
-		// THE GATES, re-based 2026-08-08 against an HONEST script. The old
-		// ones (superhuman 6/6 inside 60 s) were measured while the flounder
-		// flew itself into the sea — the roll sign was inverted, so it rolled
-		// through inverted and split-S'd into the water at 20 s in every
-		// seed with nobody having hit it, and the test counted that as a kill
-		// and went green. With the sign fixed and the profile re-calibrated
-		// against the recording (alpha above 20 deg 66% against the pilot's
-		// 67%, speed mean 104 against 122), NO TIER KILLS IT AT ALL in three
-		// minutes — which is exactly what the real 174-second fight showed
-		// and what #215's conversion-pace item has said all along.
-		//
-		// So the gate measures what is TRUE and would catch a real collapse,
-		// and the kill rate is reported rather than demanded until the
-		// conversion work lands. A gate asserting a kill nobody achieves is
-		// a permanently red light that stops being read; a gate asserting
-		// nothing is worse.
+		// No tier kills the honest flounder in three minutes, which is what the real
+		// 174-second fight showed, so the kill rate is reported rather than gated
+		// until the conversion work lands.
 		if level != "pilot" && engaged == 0 {
 			t.Errorf("%s never closed inside 900 m of the flounder in three minutes — it is not even engaging", level)
 		}
 		if level == "superhuman" && landed == 0 {
-			// KNOWN AND REPORTED, not gated (2026-08-08): the machine sits
-			// inside gun range for 30% of three minutes and lands NOTHING.
-			// That is the real conversion failure against a slow, high-alpha
-			// floater — the same one the 174-second human fight showed with
-			// its single firing pass (#215 item 8) — and it was hidden until
-			// now behind a script that killed itself at 20 s. Following the
-			// ladder's precedent: a gate red for a known, recorded reason
-			// stops being read, so this is loud rather than failing, and it
-			// becomes an assertion the moment the conversion work lands.
+			// Known and reported, not gated: the machine sits inside gun range for 30%
+			// of three minutes and lands nothing. It becomes an assertion when the
+			// conversion work lands.
 			t.Logf("KNOWN (#215): superhuman landed NO rounds on the flounder in three minutes while inside gun range %.1f%% of it — the bot cannot convert against a floater",
 				100*float64(engaged)/float64(flounderSeeds*60*180))
 		}

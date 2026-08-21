@@ -10,26 +10,14 @@ import (
 	"world/games/air/flight"
 )
 
-// TestFidelity is the #256 experiment: does a cheaper rollout choose the same
-// play as the real one, and how much cheaper is it?
-//
-// The comparison is PAIRED — at every decision point in one full-fidelity
-// fight, each variant is asked for its answer from the SAME live state, and
-// the fight then continues on the full-fidelity answer. Running each variant
-// as its own fight would diverge after the first disagreement and compare
-// nothing. choose() is called rather than a copy of the selection loop, so
-// what is measured is what the server would fly.
-//
-// Agreement, not accuracy, is the question: ranking candidates is a far weaker
-// requirement than simulating them. The failure mode is silent, though — the
-// quarter-time bug never looked broken — so it gets measured, not assumed.
+// TestFidelity: does a cheaper rollout pick the same play as the full model,
+// and how much cheaper is it? PAIRED - every variant answers from the same live
+// state and the fight continues on the full answer, or they diverge.
 func TestFidelity(t *testing.T) {
 	heavy(t)
-	// Restore the LIVE setting, not a hard-coded one: an earlier version of
-	// this test put `full` back and every gate that ran after it in the same
-	// binary silently measured the full model instead of the shipped
-	// surrogate — a test harness quietly changing the subject of every later
-	// measurement, which is the same class of fault as the quarter-time bug.
+	// Restore the LIVE setting, not a hard-coded one: `rehearsal` is package
+	// state, so a wrong restore silently re-measures every later gate in the
+	// binary against the wrong model.
 	live := rehearsal
 	defer func() { rehearsal = live }()
 	type tally struct {
@@ -85,12 +73,9 @@ func TestFidelity(t *testing.T) {
 						r.agreed++
 						continue
 					}
-					// REGRET: agreement alone cannot say whether a
-					// disagreement matters. Score the variant's pick with the
-					// FULL model and compare it to the full model's own pick,
-					// normalised by the spread between the best and worst
-					// candidate — a different play the real model rates almost
-					// as highly costs the bot nothing.
+					// REGRET: the variant's pick scored by the FULL model against the full
+					// model's own pick, normalised by the best-worst spread. Agreement alone
+					// cannot rank harm.
 					best, worst := math.Inf(-1), math.Inf(1)
 					for _, v := range honest {
 						best = math.Max(best, v)

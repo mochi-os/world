@@ -5,10 +5,7 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // Two-layer International Standard Atmosphere (troposphere + lower
-// stratosphere), parameterised by the match's sea-level temperature offset
-// and pressure (Environment). Self-contained behind air(h) so a piecewise
-// temperature profile (e.g. the trade-wind inversion) can slot in later
-// without touching callers.
+// stratosphere), parameterised by the match's Environment offsets.
 
 package flight
 

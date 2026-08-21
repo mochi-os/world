@@ -40,21 +40,13 @@ $(bin):
 run1: all
 	$(bin)/mochi-world -f /etc/mochi/world1.conf
 
-# -timeout 30m: the air package's doctrine sweeps run several simulated
-# MINUTES per seed and the whole package now takes ~16 wall-clock minutes, past
-# Go's 600 s default. `make test-quick` is the fast gate; this is the full one.
-# The default suite. The multi-minute BOT DOCTRINE sweeps are opt-in
-# (AIR_DOCTRINE), so a plain run skips ~18 min of behaviour sweeps a server or
-# security change never asked for; the flight golden-trace and everything else
-# still run. TestBattery / TestLethality remain behind their own env knobs.
+# The default suite. The multi-minute bot doctrine sweeps are opt-in
+# (AIR_DOCTRINE), as are TestBattery / TestLethality; everything else runs.
 test:
 	go test ./...
 
 # Vulnerability scanning. Mirrors core's targets and the jobs in
-# .github/workflows/security.yml, so a finding accepted locally is accepted in
-# CI and vice versa. World runs the same public listeners as any other server
-# and had neither gate until its dependencies had drifted several releases
-# behind core's.
+# .github/workflows/security.yml, so local and CI findings agree.
 
 # Reachability-aware: builds the call graph, so a failure is real exposure
 # rather than a version comparison.
@@ -74,11 +66,7 @@ dependency-scan:
 	    --ignorefile /.trivyignore /src
 
 # Report whether the base image tag has moved past the digest the Dockerfile
-# pins. Pinning trades a silent-change risk for a silent-staleness one, so this
-# exists to make the second one a single command rather than a registry lookup
-# nobody remembers to do. Run it when cutting a release; if it differs, bump the
-# digest in the Dockerfile deliberately and let the container scan judge the
-# result.
+# pins. Run when cutting a release; if it differs, bump the digest deliberately.
 base-digest:
 	@ref=$$(sed -n 's/^FROM \([^ ]*\).*/\1/p' Dockerfile | head -1); \
 	image=$${ref%%@*}; pinned=$${ref#*@}; repo=$${image%%:*}; tag=$${image##*:}; \
@@ -163,12 +151,8 @@ $(deb_amd64): $(bin)/mochi-world $(bin)/mochi-world.8
 	sed 's/_VERSION_/$(version)/' build/deb/DEBIAN/control > $(build_linux_amd64)/DEBIAN/control
 	cp -av install/* $(build_linux_amd64)
 	cp -av $(bin)/mochi-world $(build_linux_amd64)/usr/sbin
-	# NO upx: the unit sets MemoryDenyWriteExecute, and a UPX stub needs
-	# writable+executable pages to unpack - the 1.3 deb shipped that pair and
-	# the binary SEGV'd instantly on start, before main, with no output at
-	# all. mochi-server survives the same packing only because ITS unit
-	# carries no MemoryDenyWriteExecute (wazero needs W^X off anyway). The
-	# ~7 MB saved is not worth a sandbox hole or a dead server.
+	# NO upx: the unit sets MemoryDenyWriteExecute and a UPX stub needs W+X pages
+	# to unpack - the packed binary SEGVs before main, with no output.
 	mkdir -p $(build_linux_amd64)/usr/share/man/man8
 	cp $(bin)/mochi-world.8 $(build_linux_amd64)/usr/share/man/man8/
 	dpkg-deb -Zxz -z9 --build --root-owner-group $(build_linux_amd64)
@@ -326,13 +310,9 @@ release:
 	t=$$(date +%s); $(MAKE) release-publish || exit 1; echo ">>> phase publish (reindex + rsync): $$(($$(date +%s)-t))s" | tee -a $(timing); \
 	echo; echo "=== release $(version) timing summary ==="; cat $(timing)
 
-# Remove the release temporaries from /tmp: staging trees, rpmbuild trees, and
-# the packaged artefacts, which release-publish only copies into ../packages.
-# Every path is versioned, so this scrubs all versions, not just the current
-# one. The patterns are disjoint from core's /tmp/mochi-server* — the two
-# releases never clean each other's staging. $(timing) is deliberately kept:
-# fixed name, a few hundred bytes, and the post-release report reads it after
-# this target has run.
+# Remove this release's /tmp staging trees and packages, all versions. The
+# patterns are disjoint from core's /tmp/mochi-server*. $(timing) is kept
+# deliberately - the post-release report reads it after this target runs.
 release-clean:
 	-rm -rf /tmp/mochi-world_* /tmp/mochi-world-*.rpm /tmp/mochi-world-rpmbuild-*
 
@@ -340,12 +320,9 @@ release-clean:
 # branch stages in its own /tmp tree, so -j fans them across cores.
 release-build: deb rpm msi pkg docker
 
-# Publish into the shared packages tree beside core's artefacts. The apt/rpm
-# indexers are core's — they scan the whole pool, so mochi-world joins the
-# same signed repos. Only packages/world/versions.json is written; the
-# per-channel versions.json files are mochi-server's. Never run a core and a
-# world release concurrently: both rsync --delete the same tree (the local
-# ../packages is canonical, so sequential runs are always safe).
+# Publish into the shared packages tree beside core's artefacts; the apt/rpm
+# indexers are core's and scan the whole pool. Writes only
+# packages/world/versions.json. Never run a core and a world release together.
 release-publish:
 	# Not tagged here. This runs before the version bump is committed, so the
 	# tag landed on whatever HEAD happened to be - the commit declaring the

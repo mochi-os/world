@@ -171,6 +171,7 @@ type tactics struct {
 	}
 	missile struct {
 		tail   float64 // disciplined shooters demand at least this aspect
+		relax  float64 // ... opened by this at full target plume (a lit jet halves a flare's pull, so the beam becomes honest)
 		span   float64 // ... inside this range, m
 		margin float64 // nose-on-target gate at zero discipline...
 		step   float64 // ...tightened by this per unit discipline
@@ -264,7 +265,7 @@ func standard() tactics {
 	// rear aspect, closer range — which is where shot quality lives, because
 	// the flare roll is graded on ASPECT and not on how precisely the shooter
 	// was pointed at release.
-	t.missile.tail, t.missile.span, t.missile.margin, t.missile.step = 0.3, 2600, 0.87, 0
+	t.missile.tail, t.missile.relax, t.missile.span, t.missile.margin, t.missile.step = 0.3, 0.55, 2600, 0.87, 0
 	t.missile.base, t.missile.slope, t.missile.floor, t.missile.gain = 0.4, 0.6, 0.45, 0.4
 	t.sandwich.span, t.sandwich.nose, t.sandwich.weight, t.sandwich.reach = 2200, 0.92, 0.3, 10000
 	t.support.span, t.support.share, t.support.engaged = 6000, 0.9, 2200 // share 0.75 -> 0.9 (2026-08-10 sweep): defer to a mate a little sooner, so the pair stops both-committing to the same target and trading two jets for one — section deaths fell 11% at flat kills across 80 seeds
@@ -832,23 +833,11 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 	for _, s := range b.surveyed() { // forget the dead, the departed, and the long-lost
 		t := b.known[s]
-		// 45 s of track memory, up from 15 (2026-07-30): a duelling ace forgot
-		// its ONLY opponent while rebuilding nose-away and fell to a blind
-		// cruise weave at 1.4 km — a pilot who just fought someone does not
-		// forget they exist because they spent fifteen seconds in the blind
-		// cone. A stale track means flying to where he WAS, which is searching;
-		// cruise is giving up. The cloud escape still works — the escapee turns
-		// inside the layer, so the remembered point is wrong on purpose.
-		// Track memory is 15 s in company and 45 s for the LAST man in a duel
-		// (2026-07-30): a duelling ace forgot its only opponent while
-		// rebuilding nose-away and fell to a blind cruise weave at 1.4 km — a
-		// pilot who just fought someone does not forget they exist because of
-		// fifteen seconds in the blind cone. But long memory for EVERY contact
-		// sent section bots chasing stale ghosts away from their pair (six
-		// extra deaths across 40 seeds), so the extension is duel-scoped: the
-		// current target, with nobody else on the board. The cloud escape
-		// still works — the escapee turns inside the layer, so the remembered
-		// point is wrong on purpose.
+		// Track memory is 15 s in company and 45 s for the last man in a duel:
+		// long memory for every contact sends section bots chasing stale ghosts
+		// away from their pair, so the extension is duel-scoped. The cloud
+		// escape still works - the escapee turns inside the layer, so the
+		// remembered point is wrong on purpose.
 		memory := uint64(15 * 60)
 		if s == b.target && len(b.known) == 1 {
 			memory = 45 * 60
@@ -2109,9 +2098,6 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	i.polish(slot, a, tick, speed, pace, nose, direction, distance, tail)
 }
 
-// polish is the shared tail of every fight decision — the g the airframe can
-// actually give, the missile request, the terrain guard, fuel discipline, and
-// the aim wander. Both the section ladder and the duel arbiter end here.
 // flinch is the shot-cue jink's detection (#251): is the attacker LINING UP?
 // The tier ladder is the design: a novice never sees it coming; a pilot reacts
 // only to tracers already past; an ace reads the planform cue — the bore
@@ -2192,6 +2178,9 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 	b.glimpsed = 0
 }
 
+// polish is the shared tail of every fight decision: the g the airframe can
+// actually give, the missile request, the terrain guard, fuel discipline and
+// the aim wander. Both the section ladder and the duel arbiter end here.
 func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, nose, direction flight.Vec3, distance, tail float64) {
 	b := a.brain
 	me := &a.model.State
@@ -2227,9 +2216,16 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// is hidden from the rail that matters — his cone looks forward — so
 	// the saddle's burner (#49) stands; and the defence path has always cut
 	// the burner while a round is actually chasing (it halves the flares).
-	if b.skill.library >= 3 && i.missiles && b.prey != nil && distance < 3500 &&
-		speed > pace*0.85 && tail < 0.5 {
-		b.reheat = 0
+	// (#61): inside the heater span the plume is a NO-ESCAPE shot on me at
+	// any speed — a lit jet extends the shooter's reach past 2.5 km where a
+	// cold one is unreachable beyond ~750 m — so the speed floor holds only
+	// OUTSIDE the span: extend cold-poor, rebuild beyond reach, re-enter.
+	if b.skill.library >= 3 && i.missiles && b.prey != nil && tail < 0.5 {
+		if distance < b.tactics.missile.span {
+			b.reheat = 0
+		} else if distance < 3500 && speed > pace*0.85 {
+			b.reheat = 0
+		}
 	}
 
 	// The aero cap, every tier: never command far past what the wing gives at
@@ -2241,8 +2237,15 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// Missile request: the launch gates with discipline-scaled margin. The
 	// disciplined SAVE their missiles for rear-aspect close shots — the ones
 	// the victim's flare reaction cannot beat — instead of feeding flares at
-	// the merge like everyone's first sortie.
-	if b.missiles > 0 && b.shoot && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail && distance < b.tactics.missile.span)) {
+	// the merge like everyone's first sortie. Against a LIT target both
+	// halves open: a burning plume halves a flare's pull (the seduction
+	// model on both sides), so the demanded aspect relaxes toward the beam,
+	// and a held saddle or press track qualifies as posture without the
+	// gun's close-range shoot flag — the seeker needs the nose, not the
+	// pipper. Cold targets keep the full rear-aspect doctrine untouched.
+	glow := i.glow(b)
+	tracking := b.shoot || (glow > 0.3 && (b.mode == "saddle" || b.mode == "press") && b.prey != nil)
+	if b.missiles > 0 && tracking && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail-b.tactics.missile.relax*glow && distance < b.tactics.missile.span)) {
 		margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
 		limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) * (b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
 		if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {

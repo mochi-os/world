@@ -14,16 +14,9 @@ import (
 	"world/games/air/flight"
 )
 
-// TestDiveRecovery: a bot pointed at the sea pulls out of it. No test covered
-// that at all until a recorded joust found the gap the hard way — the ace rode
-// a 77° nose-down dive from 4100 m into the water over fifteen seconds,
-// rolling continuously and never establishing the pull.
-//
-// This guards the plain invariant, not that incident: with no one to fight,
-// the energy floor engages at once and every tier recovers, so this passes
-// against the code that produced the incident too. Reproducing it needs the
-// threat geometry that had the brain calling for a zoom while the nose was
-// 77° down, which is not yet isolated — see the dive note on #215.
+// TestDiveRecovery: a bot pointed at the sea pulls out of it. This guards the
+// plain invariant, not the recorded incident - with no one to fight the energy
+// floor engages at once, so it passes against the code that produced it too.
 func TestDiveRecovery(t *testing.T) {
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		for _, dive := range []float64{45, 60, 77, 85} {

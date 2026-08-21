@@ -14,10 +14,8 @@ import (
 )
 
 // link is one player's transport connection, independent of the transport
-// beneath it (WebTransport today; a WebSocket fallback would implement the
-// same interface). read blocks for the next whole message; write sends one
-// message reliably (control stream) or unreliably (datagram) and must not
-// block the caller meaningfully; close tears the connection down.
+// beneath it. read blocks for the next whole message; write sends one message
+// reliably (control stream) or unreliably (datagram) and must not block.
 type link interface {
 	read() ([]byte, error)
 	write(bytes []byte, reliable bool)
@@ -36,9 +34,6 @@ func connection_serve(l link) {
 		connection_refuse(l, "unknown")
 		return
 	}
-	// The same sanitizer the lobby chat runs: control characters stripped and
-	// the cap counted in RUNES — the old byte slice could split a multi-byte
-	// sequence, and newlines rode straight into every broadcast event.
 	name := clean(text(message, "name"), 32)
 	if name == "" {
 		name = "pilot"
@@ -75,17 +70,8 @@ func connection_serve(l link) {
 }
 
 // HANDSHAKE_GRACE bounds how long a connection may hold a slot without saying
-// anything. read() blocks on a channel with no deadline, and the slot is
-// reserved by transport_admit BEFORE this runs, so a peer that completes the
-// QUIC handshake and then sends nothing parked a goroutine and a slot forever:
-// the liveness sweep only walks joined players, and the server's own 15 s
-// keepalives stop QUIC idling the connection out. Filling CONNECTIONS_MAXIMUM
-// that way costs an attacker nothing but open sockets.
-//
-// Ten seconds is far longer than a real client needs — it sends its join
-// immediately after the stream opens — and short enough that the slot returns
-// before a flood can accumulate.
-// A var, not a const, only so a test can shorten it.
+// anything: the slot is reserved before the join arrives and the liveness sweep
+// only walks joined players. A var, not a const, so a test can shorten it.
 var HANDSHAKE_GRACE = 10 * time.Second
 
 // connection_join reads and validates the first message.
@@ -198,16 +184,9 @@ func connection_departures(message map[string]any) []game.Departure {
 	return departures
 }
 
-// INPUTS_MAXIMUM caps the samples one frame may carry, the way
-// connection_departures caps stations at nine. A client batches the samples it
-// took since its last frame, so a handful is normal and a long stall might
-// carry a few dozen; sixteen covers a quarter-second gap at 60 Hz.
-//
-// Without a cap the list length was bounded only by the 64 KB frame: a frame of
-// empty CBOR maps decodes to tens of thousands of elements, and each one is
-// retained whole as Input.Data, so a single frame turned into megabytes. The
-// sibling below has always capped, which is what makes this an omission rather
-// than a decision.
+// INPUTS_MAXIMUM caps the samples one frame may carry: sixteen covers a
+// quarter-second gap at 60 Hz. Uncapped, the length is bounded only by the 64
+// KB frame and each element is retained whole as Input.Data.
 const INPUTS_MAXIMUM = 16
 
 // connection_inputs decodes the batched input samples, oldest first.
@@ -227,13 +206,9 @@ func connection_inputs(message map[string]any) []game.Input {
 	return inputs
 }
 
-// connection_first reads the handshake message under HANDSHAKE_GRACE.
-//
-// The read runs on its own goroutine because link.read() cannot be cancelled:
-// closing the link is what releases it (read selects on the closed channel), so
-// the timeout path closes and the reader then returns EOF into a buffered
-// channel nobody is waiting on. Buffered deliberately — an unbuffered send
-// would leak the goroutine that lost the race.
+// connection_first reads the handshake message under HANDSHAKE_GRACE. The read
+// runs on its own goroutine because link.read() cannot be cancelled - closing
+// the link releases it - and the channel is buffered so the loser cannot leak.
 func connection_first(l link) ([]byte, error) {
 	type result struct {
 		bytes []byte

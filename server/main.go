@@ -4,12 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// mochi-world is a standalone realtime game server for the Mochi ecosystem:
-// many simultaneous sessions, each with many players, over WebTransport.
-// It is crash-only — sessions live in memory, nothing durable is stored —
-// and open: anyone may run one, players choose which server to play on, and
-// no Mochi server authentication is involved. Durable concerns (identity,
-// settings, match history, assets) belong to Mochi apps on Mochi servers.
+// mochi-world is a standalone realtime game server: many simultaneous sessions
+// over WebTransport, crash-only (sessions live in memory, nothing is stored)
+// and open (no Mochi authentication). Durable concerns belong to Mochi apps.
 
 package main
 
@@ -33,15 +30,8 @@ var (
 )
 
 // guard runs f and turns a panic into a logged fault instead of a dead process.
-// The server is crash-only by design, but a crash is per-session state: one
-// malformed frame or one arithmetic edge in a game module must not evict every
-// other match on the host.
-//
-// recover() only ever sees panics raised on its OWN goroutine, so every `go`
-// statement reachable from client input needs its own guard — guarding the
-// function that spawns them catches nothing. after runs during recovery to shut
-// the faulted subject down, and is itself guarded so a second panic while
-// cleaning up cannot defeat the first.
+// recover() sees only panics on its OWN goroutine, so every `go` reachable from
+// client input needs its own guard. after runs during recovery, itself guarded.
 func guard(name string, after func(), f func()) {
 	defer func() {
 		fault := recover()
@@ -84,11 +74,9 @@ func main_serve(ready func()) int {
 		warn("startup: %v", err)
 		return 1
 	}
-	// Both listeners bind synchronously and report a terminal serve error to
-	// fatal. A bind failure (taken port, bad address, unreadable cert) is a
-	// non-zero exit so systemd restarts, rather than a live-but-deaf process
-	// (#175). The channel is buffered so a serve goroutine dying during
-	// shutdown never blocks on a main that has already stopped reading.
+	// Both listeners bind synchronously; a bind failure is a non-zero exit so
+	// systemd restarts rather than leaving a live-but-deaf process (#175). The
+	// channel is buffered so a serve goroutine dying during shutdown never blocks.
 	fatal := make(chan error, 2)
 	if err := lobby_start(fatal); err != nil {
 		warn("startup: %v", err)

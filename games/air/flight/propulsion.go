@@ -4,11 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Two F414-class turbofans: spool lag (asymmetric — engines accelerate
-// slower than they decelerate), reheat staging gated on core speed,
-// altitude lapse with ram recovery and an intake rolloff past M1.6, and
-// fuel flow that feeds the mass/CG update. Thrust-to-weight stays below
-// one at combat weight: no supercruise, energy is a budget.
+// Two F414-class turbofans: asymmetric spool lag, reheat staging gated on core
+// speed, altitude lapse with ram recovery and an intake rolloff past M1.6, and
+// fuel flow feeding the mass/CG update. No supercruise.
 
 package flight
 
@@ -105,14 +103,10 @@ func (m *Model) propulsion(s *State, total *Forces, local Air) {
 	}
 }
 
-// burn decrements fuel by the flow the current condition demands. External
-// fuel goes first — the real jet's bleed-air transfer keeps the internal
-// tanks topped while the externals drain — so State.Fuel only falls once
-// State.External is dry. Battle-damage leaks drain the internal tanks
-// regardless: punctures are in the airframe, not the drop tanks.
-// dumping is the fuel jettison rate and its automatic floor (NATOPS 2.2.7):
-// 600-1,000 lb/min from the DUMP switch, terminating on its own at the bingo
-// caution — internal fuel only, and never below the 3,000 lb bingo state.
+// burn decrements fuel by the flow the condition demands. External fuel goes
+// first, so State.Fuel falls only once State.External is dry; damage leaks
+// drain the internal tanks regardless. dumping/dumpfloor are the DUMP switch
+// rate and its bingo-caution floor (NATOPS 2.2.7), internal fuel only.
 const (
 	dumping   = 6.0  // kg/s ≈ 790 lb/min
 	dumpfloor = 1361 // kg = the 3,000 lb bingo caution

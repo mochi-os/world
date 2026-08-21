@@ -6,20 +6,9 @@ import (
 )
 
 // PIO battery: a delayed pure-gain pilot closes a pitch-attitude tracking loop
-// — the classic handling-qualities probe, and the acceptance harness for the
-// low-speed guns-tracking oscillation (first reported after a 220-kt gun
-// solution wallowed in pitch). Baseline defect: the inner rate loop carries
-// only ~40 % surface power below its 20 kPa authority reference, and the phase
-// lag closes through the pilot's delay. A bare authority-cap raise makes it
-// WORSE (bigger low-q deflections drive the actuator rate limit; measured):
-// any fix needs shaped low-q rate damping, tuned against this battery AND the
-// bot battery, since the bots fly the same law. FIXED with the washed-out
-// low-q excess-rate damper in fcs.go (Fcs.Pitchwash): plain damping cleared
-// the tracking band but broke the idle-decel sink arrest - the same q band
-// needs damping for tracking and free g-build for the arrest - and the
-// washout is the discriminator: steady content is forgotten in ~0.8 s, so
-// arrests pass while oscillation is damped whole. Post-fix: 220 kt onset
-// 0.77 -> 1.03 and the whole 220-400 kt curve clears working pilot gain.
+// - the acceptance harness for the low-speed guns-tracking oscillation. A bare
+// authority-cap raise measures WORSE (bigger low-q deflections drive the
+// actuator rate limit); any fix must clear this battery AND the bot one.
 
 type pioResult struct {
 	crossings int     // target re-crossings after first capture

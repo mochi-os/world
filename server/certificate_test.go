@@ -101,17 +101,9 @@ func TestCertificateReload(t *testing.T) {
 	}
 }
 
-// TestResponderDeadlines pins the request deadlines on the ACME responder.
-//
-// The responder answers strangers on port 80 with no rate limiter in front of
-// it, and for a long time carried only ReadHeaderTimeout while the lobby beside
-// it carried all four. ReadHeaderTimeout alone leaves the body read unbounded,
-// which is what lets a slow-trickle request park a socket and goroutine
-// indefinitely.
-//
-// This asserts configuration, not behaviour: the deadlines firing was proven
-// against a real slow-body client when the lobby got them, and both listeners
-// now read the same constants. What this catches is a listener losing one.
+// TestResponderDeadlines pins the request deadlines on the ACME responder, a
+// public listener with no rate limiter. It asserts configuration, not
+// behaviour: what it catches is a listener losing one of the four.
 func TestResponderDeadlines(t *testing.T) {
 	responder := certificate_responder(nil)
 
@@ -140,14 +132,10 @@ func TestResponderDeadlines(t *testing.T) {
 	}
 }
 
-// The deadlines bound how long ONE connection can hold a goroutine; they say
-// nothing about how many connections exist. Both public listeners were
-// therefore still reachable by socket exhaustion after the deadline work, which
-// is what listener_limit closes.
-//
-// This asserts behaviour rather than configuration: a wrapper that returned its
-// argument unchanged would satisfy any structural check, so the test holds the
-// cap and proves the next connection waits for it.
+// The deadlines bound how long ONE connection holds a goroutine, not how many
+// exist; listener_limit is what closes socket exhaustion. This asserts
+// behaviour: a wrapper returning its argument unchanged would satisfy a
+// structural check.
 func TestListenerLimit(t *testing.T) {
 	raw, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

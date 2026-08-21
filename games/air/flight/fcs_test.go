@@ -147,8 +147,7 @@ func TestProSpin(t *testing.T) {
 }
 
 // TestRudderAlphaSchedule: pedal authority GROWS with alpha (#45, NATOPS
-// 2.8.2.8) — half throw low, full available high. The old schedule faded to
-// 10% at 40 deg, the exact opposite.
+// 2.8.2.8) - half throw low, full available high.
 func TestRudderAlphaSchedule(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	var f FcsState
@@ -302,12 +301,9 @@ func TestRollLimitTanks(t *testing.T) {
 	}
 }
 
-// TestRollTaperHighAlpha: roll performance is "essentially constant" above
-// 35° alpha (NATOPS 11.1.8) — the fade tapers to its 35° value and holds
-// there instead of collapsing toward zero (the old fixed 0.08 floor crawled
-// at 9°/s by 40°). Pinned on the schedule directly: the jet cannot SUSTAIN
-// the alphas where the floors differ, so a flown test only sees the pitch-up
-// transient (flight-level high-alpha rolling is TestPedalRollsAtHighAlpha).
+// TestRollTaperHighAlpha: roll performance is "essentially constant" above 35°
+// alpha (NATOPS 11.1.8). Pinned on the schedule directly - the jet cannot
+// SUSTAIN those alphas, so a flown test only sees the pitch-up transient.
 func TestRollTaperHighAlpha(t *testing.T) {
 	at := func(deg float64) float64 { return taper(deg*math.Pi/180, Fighter.Limit.Alpha) }
 	if math.Abs(at(36)-at(45)) > 0.02 {
@@ -321,12 +317,9 @@ func TestRollTaperHighAlpha(t *testing.T) {
 	}
 }
 
-// TestBallisticDeparture: overcooking the vertical is the one departure the
-// FCS does not prevent (NATOPS 11.1.8.1). A botched pull to near-vertical at
-// idle must now wander in yaw and pitch while the airspeed is gone — the old
-// model fell through the same profile perfectly symmetric (worst beta 0.0°,
-// worst yaw 0.0°/s) and flew away as if nothing happened. And it must still
-// fly away: the wander is bounded and dies with returning speed, not a spin.
+// TestBallisticDeparture: overcooking the vertical is the one departure the FCS
+// does not prevent (NATOPS 11.1.8.1). The jet must wander in yaw and pitch with
+// the airspeed gone, and still fly away - bounded, not a spin.
 func TestBallisticDeparture(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel*0.5)

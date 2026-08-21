@@ -10,14 +10,8 @@ import (
 )
 
 // TestMergeRoll: a player must be able to see which way the bandit turns at the
-// merge. A fast COHERENT roll into a hard turn is correct BFM and perfectly
-// readable; what defeats the eye is the sign changing, so this counts roll
-// REVERSALS in the four seconds around the pass rather than roll rate.
-//
-// It exists because this was found by flying, not by testing: the ace averaged
-// two reversals per merge and the user reported it was impossible to call the
-// turn. Causes were a lead turn referenced to the bearing (which sweeps 180
-// degrees as he passes), under-damped roll, and a self-cancelling zoom merge.
+// merge. A fast coherent roll is readable; the sign changing is not, so this
+// counts roll REVERSALS in the four seconds around the pass, not roll rate.
 func TestMergeRoll(t *testing.T) {
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		total, worst := 0.0, 0.0
@@ -45,11 +39,9 @@ func TestMergeRoll(t *testing.T) {
 					closest, closeAt = r, tick
 				}
 			}
-			// A reversal is a SUBSTANTIAL roll in the opposite direction — 15
-			// degrees of bank or more at fighting roll rate. Counting bare
-			// rate-sign alternations scored the wings-levelling wobble after
-			// the pass (a few degrees of rocking at ~30 deg/s) identically to
-			// a genuine direction change, and no reader of the merge would.
+			// A reversal is a substantial roll the other way - 15 degrees of bank or
+			// more. Bare rate-sign alternation counts the wings-levelling wobble after
+			// the pass as a direction change.
 			flips, run, last := 0.0, 0.0, 0.0
 			judge := func() {
 				if math.Abs(run) >= 15 {
@@ -90,14 +82,9 @@ func TestMergeRoll(t *testing.T) {
 		}
 		mean := total / 5
 		fmt.Printf("%-8s merge reversals: mean %.1f  worst %.0f\n", level, mean, worst)
-		// Gated for the top tiers only, BY DECISION (2026-07-29): novice
-		// (measured 1.8 reversals) and pilot (3.0) dither at the merge, and
-		// that is authentic — a novice genuinely cannot pick a plan at the
-		// pass, and the doctrine keeps lower-tier flaws real rather than
-		// sanding them off. The claim this test guards is that a DISCIPLINED
-		// pilot flies a committed, readable lead turn; it is not a promise
-		// that every tier is easy to read. The lower tiers are still printed
-		// so a regression in either direction stays visible.
+		// Gated for the top tiers only: novice and pilot dither at the merge and that
+		// is authentic. The lower tiers are printed so a regression in either
+		// direction stays visible.
 		if mean > 1 && (level == "ace" || level == "superhuman") {
 			t.Errorf("%s reverses its roll %.1f times per merge on average: a player cannot read which way it is turning", level, mean)
 		}

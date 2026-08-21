@@ -12,11 +12,8 @@ import (
 )
 
 // TestFlapsAuto: raising the gear on the climb-out must not strip the takeoff
-// flap. The configuration follows the virtual flap switch — HALF until 180
-// KCAS clean, then AUTO — so the law change and droop retraction arrive where
-// the droop has already faded, not as a lift step at the gear handle. The
-// observable that regressed: the flight-path marker (alpha off the boresight)
-// dropped past the HUD's 10° cage and flashed for seconds after gear-up.
+// flap - the configuration follows the virtual flap switch (HALF until 180 KCAS
+// clean). The observable is alpha pegging the HUD's 10° cage.
 func TestFlapsAuto(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 82, Fighter.Mass.Fuel*0.6)

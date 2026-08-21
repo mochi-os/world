@@ -14,10 +14,6 @@ import (
 	"world/games/air/flight"
 )
 
-// TestBanditSpawnTrimmed: the client bandit spawns ON trim — alpha carried by
-// the attitude, honest gear sentinels — not the old nose-on-velocity literal
-// (zero alpha), which handed the single player's gun target the same
-// porpoise armour the Level sign fix removed everywhere else.
 func TestBanditSpawnTrimmed(t *testing.T) {
 	b := NewBandit("ace", 1, 250000, "", false, false, "", 0)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
@@ -34,11 +30,9 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 	}
 }
 
-// TestBanditBvr: the SP bandit flies the same BVR brain the server does —
-// the open weapons class arms it, its radar acquires the mirrored player
-// far beyond visual range, a DLZ shot leaves the rail, and the client's
-// round reports (Menace stubs) gate the shoot-look-shoot discipline exactly
-// as the server's own flying list does. The guns class stays byte-inert.
+// TestBanditBvr: the SP bandit flies the same BVR brain the server does - the
+// open class arms it, its radar acquires beyond visual range, a DLZ shot leaves
+// the rail, and the guns class stays byte-inert.
 func TestBanditBvr(t *testing.T) {
 	b := NewBandit("ace", 3, 250000, "", false, true, "open", 0)
 	if b.craft.amraams == 0 {

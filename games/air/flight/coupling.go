@@ -4,11 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// What keeps the jet flying and pointing at high alpha: the LEX vortex
-// re-energises the inboard wing (delaying its stall and raising usable
-// lift) and washes over the stabilators and fins, keeping pitch and yaw
-// authority alive deep into the buffet. Modelled as a stall-delay applied
-// to the affected elements, scaled by how hard the LEX is working.
+// The LEX vortex re-energises the inboard wing and washes over the stabilators
+// and fins, keeping pitch and yaw authority alive deep into the buffet.
+// Modelled as a stall-delay scaled by how hard the LEX is working.
 
 package flight
 
@@ -48,12 +46,9 @@ func retention(surface *Surface, index int, lex float64) float64 {
 	return 0
 }
 
-// extended blends the stalled polar toward attached-flow behaviour by the
-// retention weight: the energised boundary layer keeps a fraction of the
-// section lifting on its pre-stall slope. Attached lift is modelled as
-// slope·sinα·cosα (linear at small α, peaking at 45°, bounded), so the
-// blend is smooth everywhere, preserves control-surface authority, and
-// fades naturally with vortex breakdown via the weight.
+// extended blends the stalled polar toward attached flow by the retention
+// weight. Attached lift is slope·sinα·cosα - linear at small α, peaking at 45°,
+// bounded - so the blend is smooth everywhere and fades with the weight.
 func extended(t *Table, a float64, w float64, slope float64) (float64, float64, float64) {
 	cl, cd, cm := t.Sample(a)
 	if w <= 0 {

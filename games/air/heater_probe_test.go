@@ -17,16 +17,9 @@ import (
 	"world/games/air/flight"
 )
 
-// TestHeaterEmployment asks the question task #37 turns on. Counting the
-// shoot-shoot-look pair removed a saturation attack, and the machine lost the
-// missiles ladder with it (superhuman v ace 4-9, gate deliberately red).
-//
-// The first cut of this probe measured shot geometry pooled across both
-// pairings and found the ace throwing rounds away at head-on aspect. That was
-// the PILOT's spray leaking into the pool — an authentic low-tier flaw, not
-// the machine's problem. So this scopes every number to its pairing, and
-// separates the two questions the ladder actually turns on: how well each
-// side's rounds ARRIVE, and whether the fight is decided by heaters at all.
+// TestHeaterEmployment scopes every number to its pairing - pooling lets the
+// pilot's spray contaminate the ace's geometry - and separates how well each
+// side's rounds arrive from whether heaters decide the fight at all.
 func TestHeaterEmployment(t *testing.T) {
 	if os.Getenv("AIR_HEATER") == "" {
 		t.Skip("measurement harness: set AIR_HEATER=1 to run")
@@ -90,11 +83,8 @@ func TestHeaterEmployment(t *testing.T) {
 			burst := map[int]uint64{}  // last tick a warhead went off on this slot
 			blame := map[int]int{}     // and who shot it
 			dead := map[int]bool{}     // deaths already booked
-			// The fight ENDS at the first death, exactly as TestLadderDuel
-			// scores it. Running the full 240 s and pooling every respawn kill
-			// measures spawn-camping as if it were doctrine — the first cut of
-			// this probe did, and every gun victim read as carrying a full
-			// rack because a respawn hands one back.
+			// The fight ENDS at the first death, as TestLadderDuel scores it: pooling
+			// respawn kills measures spawn-camping as if it were doctrine.
 			finished := false
 			for tick := uint64(0); tick < 60*240 && !finished; tick++ {
 				i.Step(tick, nil)

@@ -100,11 +100,9 @@ func TestMask(t *testing.T) {
 	if spent&(bit("rail2")|bit("rail8")) == 0 {
 		t.Fatalf("empty rails departed with their rounds")
 	}
-	// The armed bot standard is the six-round Fox 2 fighter (decided
-	// 2026-08-06): tips plus outboard twins. The brain fires the WHOLE
-	// magazine in SMS order (#253 — a joust is the engagement; rounds saved
-	// at its end are wasted): tips depart first, then the twin-rack rounds,
-	// and the empty launchers stay carried.
+	// The armed bot standard is the six-round Fox 2 fighter: tips plus outboard
+	// twins, fired whole in SMS order - tips first, then the twin-rack rounds,
+	// with the empty launchers still carried.
 	if got := len(stores_rounds(bots_loadout("fox2"))); got != 6 {
 		t.Fatalf("armed bot standard carries %d rounds, want 6", got)
 	}
@@ -397,11 +395,9 @@ func TestFox3Trigger(t *testing.T) {
 	}
 }
 
-// TestChaffServer (#29): the whole defence against a SERVER round — the
-// defender breaks into the beam and dispenses (the mixed program's flare
-// edge), and the missile that was killing them goes stupid; the same
-// geometry without the dispense fuses. The bloom is offered through the
-// same fields the flare edge sets, so this also pins the wiring.
+// TestChaffServer (#29): a defender who beams and dispenses defeats a server
+// round that fuses without the dispense. The bloom is offered through the same
+// fields the flare edge sets, so this pins that wiring too.
 func TestChaffServer(t *testing.T) {
 	fly := func(dispensing bool) float64 {
 		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
@@ -507,12 +503,9 @@ func TestJammerServer(t *testing.T) {
 		t.Fatalf("a disarmed jammer kept radiating")
 	}
 
-	// The toggle is a live decision: a defender who jams on the way in but
-	// goes QUIET at the terminal call — then beams and dispenses — survives;
-	// the one who keeps radiating dies to HOJ (the next case). The support
-	// gate itself is deliberately unobservable from outside while the
-	// beacon guides: jamming trades the denied datalink for the granted
-	// beacon, and this pair is that trade measured end to end.
+	// The toggle is a live decision: a defender who goes quiet at the terminal
+	// call, then beams and dispenses, survives; one that keeps radiating dies to
+	// HOJ. Jamming trades the denied datalink for the granted beacon.
 	i, shooter, target = build()
 	target.latest.Jammer = true
 	if !i.fox3(0, shooter) {

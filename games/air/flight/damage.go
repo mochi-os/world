@@ -4,13 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// DamageState is written by the battle package (hits, fires, shedding) and
-// consumed by the aero/FCS/propulsion/mass loops here. Every field stores
-// LOSS, not effectiveness — the zero value is a pristine jet, so a
-// zero-filled decode buffer needs no fixup. The flight core never decides
-// weapon damage; it only applies it — but it does accumulate the exposures
-// the airframe measures itself: Stress (for the battle package to judge)
-// and Gear overload from hard touchdowns (a pure mechanical threshold).
+// DamageState is written by the battle package and consumed by the aero, FCS,
+// propulsion and mass loops here. Every field stores LOSS, not effectiveness,
+// so the zero value is a pristine jet and a zero-filled decode needs no fixup.
 
 package flight
 
@@ -27,10 +23,8 @@ type DamageState struct {
 }
 
 // Copy returns a DamageState whose slices are the caller's own. A struct
-// assignment of State shares Element and Jam with the source, so a scratch
-// model copied from a live jet writes the live jet's damage through them —
-// any rollout must Copy before it may step. Nil stays nil: a pristine jet,
-// the common case, allocates nothing.
+// assignment of State shares Element and Jam, so a scratch model copied from a
+// live jet writes through to it - any rollout must Copy before it steps.
 func (d DamageState) Copy() DamageState {
 	if d.Element != nil {
 		d.Element = append([]float64(nil), d.Element...)

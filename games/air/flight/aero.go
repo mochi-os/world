@@ -30,16 +30,9 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		return // parked in calm air
 	}
 
-	// Flat plates: configuration drag the element polars cannot see, each an
-	// area in m² (the same convention as Damage.Drag) applied against the
-	// local flow, with the moment of its position. The gear had NO aerodynamic
-	// effect at all before these (dropping it at 350 kt moved nothing — caught
-	// by a pilot in the Case I pattern); the rest follow the same honesty:
-	// the refuelling probe (~5 s stroke; the real ~300 KCAS limit stays
-	// procedural), the arrestor hook (a couple of drag counts — reversed from
-	// "below resolution" once the plate helper made it free), attached wingtip
-	// stores (mass lives in weigh), and a dead engine windmilling/seized —
-	// whose off-centre plate yaws the nose toward the failure, as it should.
+	// Flat plates: configuration drag the element polars cannot see, each an area
+	// in m² (the Damage.Drag convention) applied against the local flow with the
+	// moment of its position; a dead engine's plate is off-centre.
 	{
 		speed := v.Length()
 		dynamic := 0.5 * local.Density * speed * speed
@@ -96,15 +89,9 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		return lex * (health[0] + health[1]) * 0.5
 	}
 
-	// Ground effect: closer than a span, induced flow weakens. Height is above
-	// the surface actually beneath the jet — an elevated airfield or the
-	// CARRIER DECK, not just sea level (#132): sea-referencing gave a raised
-	// strip no cushion at all and the deck none either. The reference steps
-	// abruptly at the round-down (sea to deck, ~19 m) — deliberately unsmoothed:
-	// the real jet crossing the ramp at hook height experiences exactly this
-	// sudden onset (the carrier "ramp burble"), and blending would need a
-	// distance-to-edge query this hot path doesn't otherwise want. The probe is
-	// gated to low altitude so cruise pays nothing.
+	// Ground effect: closer than a span, induced flow weakens. Height is above the
+	// surface actually beneath the jet - an elevated field or the carrier deck,
+	// not sea level. The abrupt step at the round-down is deliberate.
 	beneath := m.World.Sea
 	ceiling := m.World.Sea // the probe gate must clear the world's HIGHEST surface: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
 	for fi := range m.World.Fields {
@@ -124,12 +111,9 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	ratio := 16 * height / a.Reference.Span
 	ground := ratio * ratio / (1 + ratio*ratio)
 
-	// Pass 1: per-surface lift coefficient, sampled exactly as pass 2 will
-	// sample (extension + vortex), so the induced correction is consistent
-	// with the real loading. Wings go first so the wing-on-tail wash exists
-	// before the tail is sampled — a tail evaluated at its RAW angle sits in
-	// phantom stall the washed pass-2 tail never sees, and the disagreement
-	// used to put a violent pitch-up kink at 8-12° alpha.
+	// Pass 1: per-surface lift coefficient, sampled exactly as pass 2 will sample
+	// it. Wings go first so the wing-on-tail wash exists before the tail is
+	// sampled - a raw-angle tail sits in stall pass 2 never sees.
 	wingLift, wingArea := 0.0, 0.0
 	wash := 0.0
 	for _, wings := range []bool{true, false} {
@@ -199,11 +183,9 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	// Pass 2: corrected incidence, force and moment accumulation.
 	for si := range a.Surfaces {
 		surface := &a.Surfaces[si]
-		// Self-consistent one-shot downwash: pass one sampled the polar at
-		// geometric incidence, so the raw CL over-states the loaded wing.
-		// alpha_i = CL1/(pi*AR*e + a) is the closed-form consistent answer in
-		// the linear region (equivalent to iterating CL -> alpha_i -> CL to
-		// convergence) and a sound approximation beyond it.
+		// Self-consistent one-shot downwash: pass one sampled the polar at geometric
+		// incidence, so raw CL over-states the loaded wing. alpha_i = CL1/(pi*AR*e +
+		// a) is the converged answer in closed form.
 		induced := 0.0
 		if surface.Kind != Brake {
 			induced = m.lift[si] / (math.Pi*surface.Ratio*surface.Oswald/math.Max(ground, 0.05) + surface.Slope)
@@ -359,11 +341,9 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 		// the side sign the two rudders' side forces cancel exactly.
 		deflection := s.Fcs.Rudder * -surface.Side
 		if s.Gear.Wow && !m.Direct {
-			// Rudder toe-in: with weight on wheels both trailing edges turn
-			// inboard, and on the canted fins the pair's lateral forces cancel
-			// while the vertical components add — tail downforce, a nose-up
-			// moment assisting takeoff rotation. A pure function of the
-			// encoded Wow state, so prediction replay needs no new state.
+			// Rudder toe-in: on the canted fins both trailing edges inboard cancel
+			// laterally and add vertically - tail downforce, nose-up for rotation. Pure
+			// function of Wow, so replay needs no state.
 			deflection -= m.Airframe.Control.Toe
 		}
 		shift = Effectiveness(e.Flap) * deflection

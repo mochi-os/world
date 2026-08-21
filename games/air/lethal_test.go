@@ -11,19 +11,10 @@ import (
 	"world/games/air/flight"
 )
 
-// TestDroneKill (#219/#215): can each tier finish a COMPLIANT target? Every
-// other metric measures the bots' DEFENCE, and the scripted harness cannot
-// answer this because its attacker never stops attacking — the bot is never
-// handed an easy kill to see whether it takes one. A drone weaves gently and
-// never fights back.
-//
-// The GATE (#215's exit criterion, armed 2026-07-30): lethality must LADDER —
-// kills non-decreasing up the tiers. Pre-retune it inverted (veteran 5/6, ace
-// 2/6, trigger time FALLING as tier rose) because the firing gate was made of
-// aim precision; the retune decoupled the trigger, slowed the ace's decision
-// cadence, and gave the pilot ranges its own aim can serve. Deterministic sim,
-// so the counts are exact, not statistical. (The one-parameter ablations that
-// drove the retune live in #219's and #215's notes.)
+// TestDroneKill (#219/#215): can each tier finish a COMPLIANT target that never
+// fights back? Every other metric measures the bots' defence. The gate is that
+// lethality LADDERS - kills non-decreasing up the tiers. Deterministic sim, so
+// the counts are exact.
 func TestDroneKill(t *testing.T) {
 	heavy(t)
 	const seconds = 180
@@ -60,11 +51,8 @@ func TestDroneKill(t *testing.T) {
 				aliveBefore := prey.alive
 				i.Step(tick, nil)
 				if aliveBefore && !prey.alive && killed < 0 {
-					// The kill check must precede the respawn break: a burst
-					// violent enough to kill and tear the craft down inside
-					// one step — the machine's signature ending — otherwise
-					// reads as a timeout (measured: a 44.3 s gun kill scored
-					// as no result, and the ladder blamed the doctrine).
+					// The kill check must precede the respawn break: a burst that kills and
+					// tears the craft down inside one step otherwise reads as a timeout.
 					killed = float64(tick) / 60
 					kills++
 					times = append(times, killed)
@@ -119,13 +107,8 @@ func TestDroneKill(t *testing.T) {
 			level, kills, tries, mean, 100*float64(advantage)/float64(total), 100*float64(firing)/float64(total), top)
 		ladder[level] = kills
 	}
-	// One kill of slack per pair (2026-07-31): deterministic single
-	// measurements put one-seed margins below resolution — after the gun-live
-	// and burst-discipline work the ladder reads 0/3/6/5 with the ace the
-	// FASTEST killer, and its one-kill deficit to the veteran was immune to a
-	// 40 percent trigger loosening (identical to the digit), so it is
-	// geometry, not the gate. The inversion this guards was 1/3/7/2-class:
-	// still trips.
+	// One kill of slack per pair: deterministic single measurements put one-seed
+	// margins below resolution. The inversion this guards was 1/3/7/2-class.
 	for _, pair := range [][2]string{{"novice", "pilot"}, {"pilot", "ace"}, {"ace", "superhuman"}} {
 		if ladder[pair[1]] < ladder[pair[0]]-1 {
 			t.Errorf("lethality inverts: %s kills %d, %s kills %d — the better pilot converts less", pair[0], ladder[pair[0]], pair[1], ladder[pair[1]])

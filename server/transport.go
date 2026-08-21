@@ -49,12 +49,8 @@ func transport_admit() bool {
 func transport_release() { connections.Add(-1) }
 
 // HOST_CONNECTIONS_MAXIMUM caps how many transport connections ONE address may
-// hold at once. The sliding-minute limiter beside it bounds how fast an address
-// may connect, not how many it keeps — so a single host could hold every one of
-// CONNECTIONS_MAXIMUM open indefinitely and every other player got a 503.
-//
-// Generous on purpose: a household behind one NAT address, or several tabs on
-// one machine, are ordinary. What it stops is one address holding hundreds.
+// hold at once: the sliding-minute limiter bounds connect RATE, not holds.
+// Generous, because a household behind one NAT address is ordinary.
 const HOST_CONNECTIONS_MAXIMUM = 16
 
 var (
@@ -105,13 +101,9 @@ func transport_start(fatal chan<- error) error {
 	mux := http.NewServeMux()
 	server := &webtransport.Server{
 		H3: &http3.Server{Addr: address, TLSConfig: tlsconf, Handler: mux, EnableDatagrams: true,
-			// Without an explicit config, quic-go defaults to a 30 s idle
-			// timeout with keepalives OFF — a client that goes quiet (asset
-			// load, backgrounded tab, GC pause) was silently dropped. The
-			// server pings every 15 s so a quiet-but-alive connection never
-			// idles out; a genuinely dead one still reaps in 60 s. Datagrams
-			// must be re-enabled here: providing a config replaces the one
-			// http3 would otherwise build.
+			// quic-go defaults to a 30 s idle timeout with keepalives OFF, which drops a
+			// client that goes quiet. Datagrams must be re-enabled here: providing a
+			// config replaces the one http3 would otherwise build.
 			QUICConfig: &quic.Config{
 				MaxIdleTimeout:  60 * time.Second,
 				KeepAlivePeriod: 15 * time.Second,
@@ -136,9 +128,8 @@ func transport_start(fatal chan<- error) error {
 		return fmt.Errorf("transport listen %s: %w", address, err)
 	}
 	mux.HandleFunc("/play", func(w http.ResponseWriter, r *http.Request) {
-		// The data plane gets the same per-host sliding-minute limiter the
-		// lobby endpoints have — session and player caps bound the steady
-		// state, but connection CHURN from one address was unthrottled.
+		// The data plane gets the lobby's per-host sliding-minute limiter: session
+		// and player caps bound the steady state, not connection churn.
 		if !lobby_permit(plays, r, 30) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -198,10 +189,9 @@ func transport_serve(session *webtransport.Session) {
 	connection_serve(l)
 }
 
-// wireStream and wireSession are the transport primitives the wire drives,
-// as interfaces (satisfied by *webtransport.Stream / *webtransport.Session) so
-// a test can inject a stream whose Write blocks — the slow-peer case — and
-// prove teardown still completes within a deadline.
+// wireStream and wireSession are the transport primitives the wire drives, as
+// interfaces (satisfied by *webtransport.Stream / *webtransport.Session) so a
+// test can inject a stream whose Write blocks.
 type wireStream interface {
 	io.Reader
 	Write([]byte) (int, error)
@@ -236,13 +226,9 @@ const send_deadline = 5 * time.Second
 
 const frame_most = 65536 // largest accepted message
 
-// frame_deadline bounds the DELIVERY of a frame once it has begun. Silence
-// between frames is legitimate — a quiet player sends nothing for minutes — but
-// a peer that has started a length header, or announced a payload, has
-// committed to finishing it. Without this, two bytes park the reader forever:
-// QUIC's idle timeout watches connection packets, not stream progress, so the
-// server's own keepalives keep the connection healthy while the frame never
-// completes.
+// frame_deadline bounds the DELIVERY of a frame once it has begun; silence
+// between frames is legitimate. QUIC's idle timeout watches connection packets,
+// not stream progress, so two bytes would park the reader forever.
 const frame_deadline = 10 * time.Second
 
 // streams reads length-framed messages off the control stream.
@@ -347,11 +333,9 @@ func (l *wire) writer() {
 	}
 }
 
-// teardown ends the transport once the writer exits — always, via the writer's
-// defer, so the session never leaks. A graceful exit (queue flushed for a
-// normal reason) FINs the stream and gives QUIC a beat to deliver it; a hard
-// exit (send error, or a slow/aborted connection) cancels the write side
-// immediately. Either way the session is closed.
+// teardown ends the transport once the writer exits - always, via the writer's
+// defer. A graceful exit FINs the stream and gives QUIC a beat to deliver it; a
+// hard exit cancels the write side immediately.
 func (l *wire) teardown(graceful bool) {
 	l.close("gone") // set a reason if none yet (send-error path); no-op if already closed
 	if graceful {
@@ -394,12 +378,8 @@ func (l *wire) close(reason string) {
 		l.reason = reason
 		close(l.closed) // readers stop; the writer flushes/aborts, then tears the session down
 		if reason == "slow" {
-			// The connection is irrecoverably slow (its reliable queue
-			// overflowed). Abort the write side NOW so a writer currently
-			// blocked in send() on QUIC flow control unblocks at once instead
-			// of waiting out the write deadline — the whole point is a prompt
-			// teardown, not another drain against a peer that has stopped
-			// reading.
+			// Abort the write side NOW so a writer blocked in send() on QUIC flow
+			// control unblocks at once instead of waiting out the write deadline.
 			l.stream.CancelWrite(0)
 		}
 	})

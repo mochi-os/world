@@ -19,38 +19,25 @@ import (
 	"world/games/air/flight"
 )
 
-// doctrine gates the multi-minute bot-behaviour sweeps: they run several
-// simulated minutes per seed and dominate the air package's ~18 min runtime,
-// so they are OPT-IN rather than opt-out. A plain `go test ./...` — a core or
-// security change touching the world server, CI on an unrelated package —
-// skips them instead of paying for sweeps it never asked for. Run them with
-// `make test-doctrine`, or `AIR_DOCTRINE=1 go test -run TestBotSection ./games/air/`.
-// (TestBattery and TestLethality keep their own AIR_BATTERY / AIR_LETHALITY
-// knobs; the flight-envelope tests stay on testing.Short.)
+// doctrine gates the multi-minute bot-behaviour sweeps: opt-in via AIR_DOCTRINE
+// (`make test-doctrine`), since they dominate the package's ~18 min runtime.
+// TestBattery and TestLethality have their own AIR_BATTERY / AIR_LETHALITY
+// knobs.
 func heavy(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AIR_DOCTRINE") == "" {
 		t.Skip("bot doctrine sweep: set AIR_DOCTRINE=1 (or run `make test-doctrine`)")
 	}
-	// The doctrine tests spawn hundreds of bots across a binary and almost
-	// none Close() their instances, so the server-wide budget
-	// (BOTS_MAXIMUM, returned only by Close) leaks until later sessions
-	// get NO bots at all — a "roster wrong" or a nil-craft panic in
-	// whichever test runs after the pool empties. That failure depends on
-	// which -run set shares the binary, which made it look like phantom
-	// flake for days. Every leaked reservation belongs to a test that has
-	// already finished, so resetting the counter between doctrine tests
-	// is exact, not a fudge.
+	// Doctrine tests discard their instances without Close, and the server-wide
+	// bot budget is returned only by Close - without this reset later sessions get
+	// no bots at all, surfacing as a wrong roster or a nil-craft panic.
 	t.Cleanup(func() { bots_live.Store(0) })
 }
 
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
 	t.Helper()
-	// Practice bots are reserved from a server-wide budget and released by
-	// Close, which the server calls at session end. A test discards its
-	// instance instead, so without this each build would spend budget nothing
-	// gives back and a test standing up several instances would silently get
-	// fewer bots in the later ones.
+	// The bot budget is server-wide and released only by Close, which a test never
+	// calls - reset it so each instance starts with the full budget.
 	bots_live.Store(0)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "test", Game: "air", Mode: mode, Capacity: 16, Seed: 2, Parameters: parameters})
@@ -79,13 +66,9 @@ func place(i *instance, a int, b int, distance float64) {
 	target.Attitude = shooter.Attitude
 }
 
-// chase puts b dead ahead of a along a's FLIGHT PATH, in weapons range — the
-// straight-and-level unaware target a missile shot means. place() puts the
-// target on the BORE, which is where gun rounds go; a missile flies out along
-// the shooter's velocity, and with honest trim the bore sits alpha above the
-// flight path — a bore-placed target starts sin(alpha)·range off the flyout
-// line (~32 m at 700 m), which the old porpoising spawns happened to close
-// and a clean trim does not.
+// chase puts b dead ahead of a along a's FLIGHT PATH, in weapons range - where
+// a missile flies. place() puts the target on the BORE, where gun rounds go;
+// with honest trim the bore sits alpha above the flight path.
 func chase(i *instance, a int, b int, distance float64) {
 	shooter := &i.aircraft[a].model.State
 	target := &i.aircraft[b].model.State
@@ -199,10 +182,8 @@ func TestCheats(t *testing.T) {
 }
 
 // TestCheatMissile: the invulnerability cheat gates the missile warhead
-// (battle.Blast) exactly as it gates guns — a human is spared, a bot is not.
-// TestCheats fires only guns, so without this the Blast guard is untested and
-// could regress silently. The bot case is the control: it proves the missile
-// actually reached the fuse, so the human being unhurt is the guard, not a miss.
+// (battle.Blast) as it gates guns. The bot case is the control - it proves the
+// missile reached the fuse, so the human being unhurt is the guard, not a miss.
 func TestCheatMissile(t *testing.T) {
 	hurt := func(bot bool) bool {
 		g := New()
@@ -373,10 +354,8 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 		t.Fatal(err)
 	}
 	i := made.(*instance)
-	// The two bot slots are DISCOVERED, never assumed (#257): they sit above
-	// the session's capacity so a joining player can never be handed one, so
-	// which numbers they are depends on the session. Hard-coding 98 and 99
-	// here is the same fragility that let joiners overwrite bots for months.
+	// The two bot slots are DISCOVERED, never assumed (#257): they sit above the
+	// session's capacity, so which numbers they are depends on the session.
 	pair := i.slots()
 	if len(pair) != 2 {
 		t.Fatalf("duel wants two bots, got %d", len(pair))
@@ -409,11 +388,9 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 	return -1, splashes, ticks
 }
 
-// TestBotDuel: identical airframes with competent brains legitimately
-// stalemate guns-only 1v1s (that is BFM, not a bug) — the honest claims are
-// that decided duels go to the ACE, never the novice majority, and that a
-// reasonable share decide at all. Slot 99 is the ace (levels fill from slot
-// 99 down in map order).
+// TestBotDuel: identical airframes stalemate guns-only 1v1s legitimately, so
+// the claims are that decided duels go to the ACE (slot 98; levels fill from 99
+// down in map order) and that a reasonable share decide at all.
 func TestBotDuel(t *testing.T) {
 	heavy(t)
 	aces, novices := 0, 0
@@ -733,121 +710,41 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 	return
 }
 
-// TestBotSection (#138): the section tactics must EARN their keep against a
-// weaker, larger enemy — two pilots versus four novices. The claim here is
-// the DEFENSIVE contract only: mutual support keeps the pair alive, so the
-// section arm's deaths come in strictly under the solo control's. Net is
-// deliberately NOT asserted in this scenario: measured (2026-07-16, after
-// realistic lethality and the padlock), a lone wolf farms weak opposition
-// faster than a disciplined section — trading some kill rate for section
-// integrity is the doctrine, not a defect. The offensive claim lives in
-// TestBotSectionEqual, where the enemy is good enough that teamwork must
-// pay both ways.
+// TestBotSection (#138): two pilots versus four novices. Asserts the DEFENSIVE
+// claim only - mutual support keeps the pair alive. Net is not asserted here: a
+// lone wolf farms weak opposition faster, which is the doctrine's trade.
 func TestBotSection(t *testing.T) {
 	heavy(t)
 	t.Parallel()
-	// 14 -> 40 seeds (2026-07-28). The survival edge this asserts strictly is
-	// a 2-5 death margin, and at 14 seeds the run-to-run spread is the same
-	// size as the effect: a steering change that measured BETTER at 40 seeds
-	// (section 10 v solo 8 reversed to a clean pass) failed here at 14 purely
-	// on sample size. Its sibling TestBotSectionEqual was recalibrated for the
-	// same reason; this one needed the seeds rather than a band, because the
-	// defensive claim against WEAKER opposition should hold strictly.
+	// 40 seeds: the survival margin is 2-5 deaths, and at 14 seeds the run-to-run
+	// spread is the size of the effect.
 	_, sectionDeaths, _, soloDeaths, _ := section(t, 40,
 		map[string]any{"pilot": 2.0}, map[string]any{"novice": 4.0})
-	// One death of slack per 40 seeds (2026-07-30), the same treatment as the
-	// equal-opposition sibling and for the same reason: the #215 retune made
-	// every tier individually deadlier (the pilot most of all — it could not
-	// kill at all before), and each such gain narrows the section-versus-solo
-	// gap because kills come easier alone. The strict margin here was one
-	// death at 40 seeds. The failure class this guards — pre-rejoin tactics
-	// dying 8-30 km from the pair — reads as section deaths far EXCEEDING
-	// solo and still trips; a genuine restored edge is the tactics pass's job.
-	// THE BAND (#50, ruled 2026-08-20). Every strict calibration in this
-	// comment's history was measured on a broken harness: section() never
-	// Closed its instances, the bot budget leaked, and every seed past ~17
-	// fought with NO BOTS — so 40-seed claims were ~17-seed data in disguise.
-	// On the honest harness (all seeds live, ~2.4x bloodier) the strict claim
-	// is false: with the radio transit gate in, kills reach parity and the
-	// section still carries a concentration premium — a pair fighting
-	// together in a 2v4 respawn furball draws converging enemies that
-	// scattered solos do not. Measured 2026-08-20: 138v131 here, 147v132
-	// equal-opposition. The band accepts one-eighth of the solo arm's deaths
-	// (12.5%, scaling with harness lethality); the failure class these gates
-	// exist for — pairs dying 8-30 km apart — measured a 25-death excess on
-	// 118 (143v118 before the radio fix) and still trips it.
+	// The band accepts one-eighth of the solo arm's deaths (#50): a pair fighting
+	// together draws converging enemies that scattered solos do not. The failure
+	// class - pairs dying 8-30 km apart - still trips it.
 	if sectionDeaths > soloDeaths+soloDeaths/8 {
 		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
 	}
 }
 
-// TestBotSectionEqual (#144): the same A/B against EQUAL opposition — two
-// pilots versus four pilots. Outnumbered with no skill edge, survival
-// hangs on the section actually working (this is the scenario that caught
-// the pre-rejoin tactics dying 8-30 km from their pair), so the defensive
-// claim is asserted strictly. The offensive claim is a BAND, not a strict
-// inequality (recalibrated 2026-07-25): the old strictly-better-net pass rode
-// the inverted Level spawn — porpoising spawns suppressed gunnery ~3x, and in
-// that low-lethality world the section's net edge was a two-kill margin. With
-// honest trim the measured net difference is a statistical tie at every sweep
-// size (48 seeds: -36 v -35) while the survival edge stays consistent
-// (52 v 55 deaths there) — the doctrine trades kill rate for section
-// integrity, exactly as TestBotSection's comment records. The band still
-// catches the historical failure class: tactics that crater the score while
-// the pair dies apart read as a net deficit far beyond one kill per dozen
-// matches (the pre-recalibration doctrine failed it at 24 seeds: -20 v -14).
+// TestBotSectionEqual (#144): the same A/B against EQUAL opposition, two pilots
+// versus four. Survival is asserted strictly; the offensive claim is a BAND,
+// since the doctrine trades kill rate for section integrity.
 func TestBotSectionEqual(t *testing.T) {
 	heavy(t)
 	t.Parallel()
 	sectionNet, sectionDeaths, soloNet, soloDeaths, sweep := section(t, 40,
 		map[string]any{"pilot": 2.0}, map[string]any{"pilot": 4.0})
-	// One death of slack per 40 seeds (2026-07-30, the #215 skill retune): the
-	// deterministic measurement moved from 34v36 in the section's favour to
-	// 37v36 against it — the same pattern as every individual-BFM improvement
-	// this week, which helps a solo bot more than one splitting attention on
-	// mutual support. The failure class this claim exists for (pre-rejoin
-	// tactics dying 8-30 km from the pair) reads as section deaths far
-	// EXCEEDING solo and still trips. Restoring a genuine survival edge is the
-	// TACTICS pass's job (crowd/support weights), which the retune staging
-	// deliberately left until the skill constants settled.
-	// Slack removed 2026-08-11 with the sequencing tiebreak (87 v 89 — but
-	// see the band note in TestBotSection: every number in this history was
-	// measured on the starved harness). BANDED 2026-08-20 with the same
-	// one-eighth concentration premium, from the honest measurements 147v132
-	// here and 138v131 against novices.
 	if sectionDeaths > soloDeaths+soloDeaths/8 {
-		// A tie passes: the equal-opposition survival edge measures 1-3 deaths
-		// per 24-48 seeds, and a strict inequality at the default sweep is a
-		// coin flip on that margin (it failed 9 v 9 when the store masses
-		// reshuffled per-seed outcomes). The failure class this claim exists
-		// for — the pre-rejoin tactics dying 8-30 km from their pair — reads as
-		// section deaths far EXCEEDING solo, and still trips.
+		// A tie passes: the equal-opposition survival edge is 1-3 deaths per sweep,
+		// so a strict inequality is a coin flip. The failure class - pairs dying 8-30
+		// km apart - reads far larger and still trips.
 		t.Fatalf("mutual support saved nothing: section deaths %d, solo deaths %d", sectionDeaths, soloDeaths)
 	}
-	// The band was widened (sweep/12 -> sweep/5) on 2026-07-29, and the sweep
-	// raised 12 -> 40, for the same reason it was banded in the first place on
-	// 2026-07-25: a change to the SHARED steering layer moved both arms, and the
-	// old band measured the arms' relationship rather than the failure class.
-	// Measured across 40 seeds, before and after the merge fixes (lead turn off
-	// own nose, roll damping 0.45, zoom merge removed):
-	//     baseline  section net -37 deaths 44 | solo net -42 deaths 48
-	//     after     section net -28 deaths 34 | solo net -21 deaths 36
-	// Both arms improved sharply — 13 kills to 21, 92 deaths to 70 — but the
-	// SOLO arm gained far more (+21 net against the section's +9), because the
-	// fixes sharpen individual BFM and section bots spend part of their time on
-	// mutual support. The survival claim above, which is the doctrine's actual
-	// promise, passes comfortably (34 v 36) where at 12 seeds it was a coin
-	// flip. #215 should re-judge this band wholesale rather than inherit it:
-	// it and TestBotSection are now BOTH calibrated around this session's
-	// changes rather than independently derived.
-	// The net band carries the same one-eighth death allowance as the
-	// survival claim above (#50): net is kills minus deaths, so the accepted
-	// concentration premium reappears here arithmetically, and a band that
-	// ignored it double-counted the deaths the ruling admits — measured
-	// 2026-08-20 at net -84 v -66 with kills 63 v 66, a three-kill true
-	// score gap under an 18 net gap. The score half of the failure class
-	// (kills cratering while the pair dies apart) still trips: sweep/5 of
-	// genuine kill deficit remains the ceiling.
+	// The net band carries the same one-eighth death allowance as the survival
+	// claim (#50), since net is kills minus deaths. The ceiling is a sweep/5
+	// genuine kill deficit: the score cratering while the pair dies apart.
 	if tolerance := int(sweep/5) + soloDeaths/8; sectionNet < soloNet-tolerance {
 		t.Fatalf("the section pair netted %d to the solo pair's %d over %d seeds — the tactics are giving away the score for their survival edge", sectionNet, soloNet, sweep)
 	}
@@ -1315,13 +1212,9 @@ func TestBotPress(t *testing.T) {
 		t.Fatalf("advantage lost but press still %d", ace.brain.press)
 	}
 
-	// The trigger is a wager on the chance the stream crosses him (#235),
-	// and a KNOWN 35 m offset at 400 m is a certain miss whatever the
-	// posture — every round lands 35 m away, and the old press.loose knob
-	// that once forced this shot was a hose dressed as aggression. What a
-	// finishing pilot legitimately takes is the CROSSING: the bore sweeping
-	// fast through the solution, priced on where the sweep bottoms so the
-	// rounds arrive as it crosses.
+	// The trigger is a wager on the stream crossing him (#235): a known 35 m
+	// offset at 400 m is a certain miss whatever the posture, but a bore sweeping
+	// fast through the solution is a legitimate snapshot.
 	ace.ammunition = rounds // the trigger wager below needs a loaded gun
 	rig := func(walked float64, at uint64) bool {
 		aloft(ace, base, forward)
@@ -1584,9 +1477,8 @@ func TestTeamsFlavour(t *testing.T) {
 // wounded builds the ace-vs-drone pair used by the wounded-flying tests.
 func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
 	t.Helper()
-	// A TEAMS session: the mode ladder these doctrine probes pin is the
-	// section doctrine now — teamless fights belong to the duel arbiter
-	// (duel.go), instrumented by TestConvert, TestOffence, and TestMergeRoll.
+	// A TEAMS session: the mode ladder these probes pin is the section doctrine;
+	// teamless fights belong to the duel arbiter (duel.go).
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "wounded", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
 		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
@@ -2108,12 +2000,9 @@ func TestEngagement(t *testing.T) {
 func TestBurstWounds(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 	steady := map[string]any{"throttle": 0.85, "fire": true}
-	// Stop at the FIRST wound: the assertion is that damage arrives as
-	// graduated wounds rather than all-or-nothing, and it must hold at the
-	// moment the first rounds land. Judging after a full 0.6 s burst made
-	// the test hostage to the detonation roll (3 percent per tank hit —
-	// the historical flamer, real and intended), which any ballistics
-	// change re-rolls by shifting which round strikes what and when.
+	// Stop at the FIRST wound: judging after a full burst makes the test hostage
+	// to the 3-percent-per-tank-hit detonation roll, which any ballistics change
+	// re-rolls.
 	for tick := 0; tick < 36; tick++ {
 		place(i, 0, 1, 250)
 		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: 1, Data: steady}}})
@@ -2205,10 +2094,9 @@ func TestRespawnPristine(t *testing.T) {
 	}
 }
 
-// TestLethalityBand: a seeded balance gate — from a perfect 300 m tracking
-// position, guns kill within a plausible window: never inside half a second
-// (no one-burst deletions), always within thirty (guns stay lethal). Catches
-// balance regressions from aero or battle edits.
+// TestLethalityBand: a seeded balance gate - from a perfect 300 m tracking
+// position guns kill within a plausible window: never inside half a second,
+// always within thirty.
 func TestLethalityBand(t *testing.T) {
 	heavy(t)
 	for _, seed := range []uint64{2, 5, 9, 11, 17} {
@@ -2254,11 +2142,9 @@ func TestLethalityBand(t *testing.T) {
 	}
 }
 
-// TestMissileEvadingFuse: a hard-turning target saturates the seeker's
-// track-rate ceiling in the terminal frames and the lock breaks — the
-// proximity fuse must stay live regardless and grade the pass at the
-// closest approach. The old tracking-gated fuse silently disarmed with the
-// lock, so an evading bandit absorbed entire magazines untouched.
+// TestMissileEvadingFuse: a hard-turning target saturates the seeker's track
+// rate and the lock breaks - the proximity fuse must stay live regardless and
+// grade the pass at closest approach.
 func TestMissileEvadingFuse(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "evadefuse", Game: "air", Mode: "furball", Capacity: 16, Seed: 3,
@@ -2313,11 +2199,9 @@ func TestMissileEvadingFuse(t *testing.T) {
 	}
 }
 
-// TestSelfPoseDamage: a player's OWN pose — the one the server deliberately
-// puts first in every poses blob — must carry the damage their cockpit needs
-// to annunciate: per-engine fire, the fuel fire, and the fuel leak. The client
-// had no reader for it, so in multiplayer the pilot was the only one in the
-// match who could not see their own jet burning (#40).
+// TestSelfPoseDamage: a player's OWN pose - first in every poses blob - must
+// carry the damage the cockpit annunciates: per-engine fire, fuel fire, and the
+// fuel leak (#40).
 func TestSelfPoseDamage(t *testing.T) {
 	i := build(t, "furball", map[string]any{"missiles": true}, 2)
 	me := i.aircraft[0]
@@ -2395,13 +2279,9 @@ func TestJettisonStrike(t *testing.T) {
 	}
 }
 
-// The rollout's scratch model is seeded by a struct copy of the live jet's
-// state, and DamageState carries two slices — a copy that keeps the backing
-// arrays would let any damage-writing rehearsal step corrupt the flying
-// aircraft mid-fight, from what reads as a read-only simulation. flight.Step
-// happens not to write them today, which is exactly why this needs a test:
-// the safety must be a property of the copy, not a promise about future
-// physics code.
+// The rollout's scratch model is a struct copy of the live jet's state, and
+// DamageState carries slices - a copy sharing the backing arrays would let a
+// rehearsal step corrupt the flying aircraft. The safety must be in the copy.
 func TestRehearsalOwnsItsDamage(t *testing.T) {
 	i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}, 1)
 	bot := -1

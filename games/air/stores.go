@@ -5,10 +5,9 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // The per-station loadout over the airframe's fitment catalog, mirroring the
-// client's shape (game/stores.ts): station 1..9 (port tip to starboard tip)
-// to a fixture id and one store id per fixture point. The server normalizes
-// and clamps every requested loadout — the catalog's numbers live in
-// aircraft/fa18c and the structure here is the authorization matrix.
+// client's shape (game/stores.ts): station 1..9 (port tip to starboard tip) to
+// a fixture id and one store id per fixture point. The catalog lives in
+// aircraft/fa18c.
 
 package air
 
@@ -28,11 +27,9 @@ type slot struct {
 
 type loadout map[string]slot
 
-// stores_fixtures lists the fixtures a station accepts; the first entry is
-// the default. Tips carry the integral rail (locked); cheek stations 4/6
-// (#27) take the LAU-116 ejector — "rail" in this vocabulary. The inboard
-// pylons 3/7 take the twin too — the LAU-115C with a LAU-127 on each side,
-// the dual carriage behind the ten-AMRAAM fit.
+// stores_fixtures lists the fixtures a station accepts; the first entry is the
+// default. Tips carry the integral rail (locked); "rail" on cheek stations 4/6
+// means the LAU-116 ejector, and "twin" is the LAU-115C dual carriage.
 func stores_fixtures(station int) []string {
 	switch station {
 	case 1, 9:
@@ -136,15 +133,9 @@ func stores_strip(lo loadout) loadout {
 }
 
 // stores_grant is the join-time clamp: normalize the request and apply the
-// match's loadout class (#32) — "guns" strips every missile, "fox2" strips
-// the radar missiles and keeps the heaters, "open" strips nothing (magazine
-// depth is priced by the flight model's carriage drag, not by rules). The
-// persisted client choice is never echoed back — the granted loadout is what
-// spawns. A join with NO request (a stale pre-loadout client or a bare test
-// driver) gets the armed wingtips — the calibrated configuration bots fly
-// and exactly what such a client's own model carries. Current clients always
-// send the full nine-station request, so empty means absent, never "asked
-// for a clean jet".
+// match's loadout class (#32). A join with NO request gets the armed wingtips -
+// current clients always send all nine stations, so empty means absent, not
+// "clean jet".
 func stores_grant(raw map[string]any, weapons string) loadout {
 	lo := stores_normalize(raw)
 	if len(raw) == 0 {
@@ -176,13 +167,8 @@ func stores_heaters(lo loadout) loadout {
 }
 
 // shots is the brain's magazine, mirrored from bot.go (mind()/reborn() set
-// b.missiles = 6 — keep in sync or the rack-mask arithmetic in armed() goes
-// negative). The full six-round magazine is deliberate (#253): a joust IS
-// the engagement, so rounds saved at its end are rounds wasted — the
-// discipline that matters is PER-WINDOW, and the launch gates (patience,
-// rear-aspect quality, shoot-shoot-look spacing) already carry it. The ace
-// spends six good shots across a fight; the novice sprays its six early at
-// flare-able geometry. Both are authentic.
+// b.missiles = 6) - keep in sync or the rack-mask arithmetic in armed() goes
+// negative.
 const shots = 6
 
 // tips_loadout is the bare armed wingtips — what a stale pre-loadout client's
@@ -194,16 +180,12 @@ func tips_loadout() loadout {
 	})
 }
 
-// bots_loadout is the server bot's standard: the Fox 2 fighter — six AIM-9Ms
-// on tips and outboard twins (decided 2026-08-06) — when missiles are
-// allowed, clean otherwise.
+// bots_loadout is the server bot's standard: the Fox 2 fighter, six AIM-9Ms on
+// tips and outboard twins when missiles are allowed, clean otherwise.
 func bots_loadout(weapons string) loadout {
-	// Bots arm to the match's weapons class exactly as humans are clamped
-	// by stores_grant — same equipment, same trade-offs (settled 2026-08-13,
-	// air-amraam.md). The fox2 fit is the pinned six-heater configuration
-	// every dogfight battery calibrates against; those suites pin their
-	// weapons class explicitly and the WVR silence sentinel holds them to
-	// it.
+	// Bots arm to the match's weapons class exactly as humans are clamped by
+	// stores_grant. The fox2 fit is what every dogfight battery calibrates
+	// against.
 	switch weapons {
 	case "guns":
 		return stores_normalize(nil)
@@ -258,11 +240,9 @@ func stores_entries(station int, s slot) []string {
 	return out
 }
 
-// stores_rounds lists the missile entries in the SMS priority order
-// (researched 2026-08-05): wingtips first, alternating to the opposite
-// station at the same priority level, starboard seeding, outboard rails
-// before the inboard pylons; twins fire the outer round before the inner.
-// The k-th launch takes rounds[k].
+// stores_rounds lists the missile entries in SMS priority order: wingtips
+// first, alternating to the opposite station at the same level, starboard
+// seeding, outboard rails before inboard pylons; twins fire outer before inner.
 func stores_rounds(lo loadout) []string {
 	var out []string
 	level := func(stations []int) {
@@ -373,12 +353,8 @@ func stores_mask(lo loadout, fired int, expended int) uint64 {
 	return mask
 }
 
-// stores_jettison returns the loadout with a station's departure applied
-// (#18): "stores" empties the mounts and keeps the fixture, "rack" clears the
-// fixture with everything on it. Wingtips (1/9) never jettison — the rails
-// have no ejector.
-// JETTISON_COOLDOWN is the minimum ticks between one jet's jettisons, at the
-// 60 Hz air rate — one second.
+// JETTISON_COOLDOWN is the minimum ticks between one jet's jettisons: one
+// second.
 const JETTISON_COOLDOWN = 60
 
 // stores_occupied reports whether a station actually holds what the request
@@ -397,6 +373,9 @@ func stores_occupied(lo loadout, station int, what string) bool {
 	return false
 }
 
+// stores_jettison clears one station: "stores" empties its mounts and keeps
+// the fixture, "rack" clears the fixture with everything on it. Wingtips
+// (1/9) never jettison - no ejector.
 func stores_jettison(lo loadout, station int, what string) loadout {
 	out := loadout{}
 	for key, value := range lo {
@@ -416,10 +395,8 @@ func stores_jettison(lo loadout, station int, what string) loadout {
 }
 
 // Jettison applies a player's stores departure (#18): removal only, tips
-// protected, live rounds leaving on their racks come off the magazine, and
-// the granted loadout is re-published on the roster so every client
-// re-renders this jet. Runs on the tick goroutine (the server's jettisoner
-// interface), the same ownership as Step.
+// protected, fired rounds come off the magazine, and the granted loadout is
+// re-published on the roster. Runs on the tick goroutine, like Step.
 func (i *instance) Jettison(slot int, departures []game.Departure) {
 	a := i.aircraft[slot]
 	if a == nil || a.loadout == nil || !a.alive {
@@ -430,11 +407,9 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if fired < 0 {
 		fired = 0
 	}
-	// One jettison per second per jet. Every call ends by appending a roster
-	// event, which goes to every player on the reliable channel, and a client
-	// whose reliable queue fills is torn down as "slow" — so an unthrottled
-	// jettison let one player disconnect the whole match. A real drop is a
-	// deliberate act a second apart at most.
+	// One jettison per second per jet: every call appends a roster event to every
+	// player's reliable queue, and a client whose queue fills is torn down as
+	// "slow", so an unthrottled jettison would disconnect the whole match.
 	if last, dropped := i.jettisoned[slot]; dropped && i.stepped-last < JETTISON_COOLDOWN {
 		return
 	}
@@ -476,12 +451,9 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if a.missiles < 0 {
 		a.missiles = 0
 	}
-	// The release envelope (#43, NATOPS figure 4-4 jettison columns: 575
-	// KCAS / Mach 0.95, +1.0 to +2.0 g). A drop outside it is permitted —
-	// the manual limits, it does not inhibit — but the departing store can
-	// strike the airframe on the way out: a deterministic dent (parasitic
-	// drag) and overstress exposure per offending station. MIRRORED in the
-	// client's jettison_stations for the single-player core — keep in sync.
+	// The release envelope (#43, NATOPS figure 4-4: 575 KCAS / Mach 0.95, +1.0 to
+	// +2.0 g). A drop outside it is permitted but dents the airframe per offending
+	// station. Mirrored in the client's jettison_stations - keep in sync.
 	if severity := release_severity(a.model); severity > 0 {
 		struck := math.Min(1, 2*severity)
 		for s := 0; s < changed; s++ {

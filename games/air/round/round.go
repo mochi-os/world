@@ -3,19 +3,10 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Package round is the AIM-120C's flight and guidance core (#27 phase 2):
-// one integrator consumed by the server's missiles, the client's
-// single-player rounds through the wasm, and the launch-zone arithmetic.
-// The numbers come from the public record — the Zaretto AIM-120C-5
-// performance assessment (CFD over declassified references), the US
-// munitions hazard classification's propellant mass — and the acceptance
-// tests in round_test.go pin the model to that record's measured ranges,
-// burnout speeds, loft profiles and turn-capability collapse. Guidance is
-// the real employment shape: command-inertial midcourse toward a datalinked
-// prediction with an energy-buying loft, an active seeker from 18 km, and a
-// proportional-navigation endgame. Seeker countermeasures (chaff, jamming,
-// notching) are deliberately NOT here — defeat is kinematic until the tasks
-// that own them land.
+// Package round is the AIM-120C's flight and guidance core: one integrator
+// shared by the server's missiles, the client's wasm rounds, and the
+// launch-zone arithmetic. Numbers come from the Zaretto AIM-120C-5 assessment;
+// round_test.go pins them.
 package round
 
 import (
@@ -43,18 +34,10 @@ const (
 	Warhead    = 22.0    // kg — blast-fragmentation class, consumed by battle
 )
 
-// Chaff (#29). A bloomed cloud stops within seconds, so a pulse-doppler
-// seeker rejects it on velocity — UNLESS the defender is beaming: with the
-// defender's radial velocity inside the clutter notch, jet and cloud sit in
-// the same range-doppler cell and the gate has nothing to discriminate on.
-// So the seduction is DOPPLER-GATED and deterministic: chaff without the
-// beam does essentially nothing, chaff in the notch takes the seeker every
-// time — do it right and it works, which is the doctrine (beam the threat,
-// then dispense). The deceived seeker flies at the hanging cloud; the hold
-// releases as the round reaches it (or times out), and the normal
-// reacquisition basket decides what happens next — a defender who stayed in
-// the cone and left the notch gets reacquired late, which is chaff buying
-// time and geometry rather than immunity.
+// Chaff (#29). A bloomed cloud stops within seconds, so a pulse-doppler seeker
+// rejects it on velocity unless the defender is beaming: inside the clutter
+// notch, jet and cloud share a range-doppler cell and the gate cannot
+// discriminate.
 const (
 	Notch   = 60.0   // m/s — the defender's radial speed in the seeker's frame must sit inside this
 	Hold    = 2.5    // s — how long the seeker stares at the cloud before the velocity gate shakes it off
@@ -62,16 +45,10 @@ const (
 	Resolve = 2500.0 // m — inside this the seeker RESOLVES the jet from its cloud: the skin return dominates the cell and no bloom seduces, however perfect the beam. Chaff is a mid-game defence (the historical record shows no close-range chaff defeats of active seekers); the endgame belongs to the notch and geometry.
 )
 
-// The jammer (#31). Deception jamming attacks TRACKS — the victim radar's
-// gate is stolen and walked off — so its effects live in the radar and
-// datalink layers, not here. What lives here is the cost: HOME-ON-JAM is a
-// submode of the seeker, and a radiating target is a beacon offering
-// perfect angle at any range — no datalink needed, no notch to hide in, no
-// cloud loud enough to matter. But angle is ALL it offers: no range, no
-// closing velocity, so the round flies degraded pursuit at the noise
-// rather than a lead collision. Burnthrough is the duel's other bound: the
-// skin echo beats the jammer as geometry closes, so inside it the victim
-// radar sees through and jamming is pure liability.
+// The jammer (#31). Track deception lives in the radar and datalink layers;
+// what lives here is home-on-jam: a radiating target gives the seeker perfect
+// angle at any range but no range or closing velocity, so the round flies
+// degraded pursuit.
 const Burnthrough = 9000.0 // m — inside this the echo wins and jamming stops working on the radar
 
 // Guidance phases, in flight order.
@@ -115,14 +92,9 @@ type Model struct {
 	held  float64     // seconds left staring at a chaff cloud (0 = clean)
 }
 
-// Distract offers the seeker a chaff bloom. It takes only when the seeker
-// is looking (Active or Pitbull), not already deceived, and the DEFENDER is
-// in the notch — radial velocity in the seeker's frame inside the clutter
-// gate. A hot or cold target is trivially rejected on doppler, which is why
-// dispensing without the beam is wasted chaff. On seduction the cloud
-// becomes the track: near-stationary, sinking gently, and immune to both
-// datalink correction and the seeker's own truth capture until the hold
-// releases.
+// Distract offers the seeker a chaff bloom, taken only when the seeker is
+// looking, not already deceived, and the defender is in the notch. On seduction
+// the cloud becomes the track until the hold releases.
 func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	if m.Phase != Active && m.Phase != Pitbull {
 		return false
@@ -146,11 +118,10 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	return true
 }
 
-// New launches a round: the shooter's position and velocity (the round
-// separates at aircraft speed; the launch mechanics — rail push or ejector
-// punch — are the caller's, already applied to velocity), and the initial
+// New launches a round from the shooter's position and velocity (launch
+// mechanics are the caller's, already applied to velocity) with an initial
 // target estimate. A nil estimate is a VISUAL shot: the seeker is active
-// immediately and takes whatever it finds.
+// immediately.
 func New(position flight.Vec3, velocity flight.Vec3, estimate *Target, wrap float64) *Model {
 	m := &Model{Position: position, Velocity: velocity, Life: Battery, Fuel: Propellant, Wrap: wrap, Loft: true}
 	if estimate != nil {
@@ -182,11 +153,9 @@ func (m *Model) relative(from flight.Vec3, to flight.Vec3) flight.Vec3 {
 // Range is the distance to the current estimate.
 func (m *Model) Range() float64 { return m.relative(m.Position, m.Estimate).Length() }
 
-// Step advances the round by dt seconds. support carries a fresh datalink
-// estimate when the shooter's radar holds the track this tick (nil when
-// unsupported); truth is the target's actual state for the seeker phases —
-// the caller owns the world. Returns false once the round is spent (battery
-// dead or below the floor); the fuse is the caller's, via Fused.
+// Step advances the round by dt seconds. support is a fresh datalink estimate
+// (nil when unsupported); truth is the target's actual state. Returns false
+// once the round is spent; the fuse is the caller's, via Fused.
 func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	if m.Life <= 0 {
 		return false
@@ -194,17 +163,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	m.Time += dt
 	m.Life -= dt
 
-	// A deceived seeker stares at its cloud: no datalink correction, no
-	// truth capture, until the hold releases. HOW it releases matters. A
-	// timeout is the velocity gate shaking the dispersing cloud off at
-	// range — the seeker returns to its basket and may reacquire (chaff
-	// bought seconds). Reaching the cloud is the overshoot: the round flew
-	// through a target that was never there, the seeker cannot look behind
-	// its own gimbal, and there is no coming back from that — ballistic,
-	// fuse live. Without this, a high-energy round would orbit the stale
-	// point until the departing defender's LOS geometry swung out of the
-	// notch, then legally reacquire and re-attack: the overshoot is what
-	// makes terminal chaff a DEFEAT rather than a two-second inconvenience.
+	// A deceived seeker takes no datalink or truth correction until the hold
+	// releases. A timeout returns it to its basket; reaching the cloud is an
+	// overshoot with no recovery - without it the round orbits and re-attacks.
 	if m.held > 0 {
 		m.held -= dt
 		if m.Range() < 150 {
@@ -234,26 +195,17 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	}
 	forward := m.Velocity.Scale(1 / speed)
 
-	// HOME-ON-JAM (#31): a radiating target is the loudest thing in the sky.
-	// The beacon overrides everything — the chaff hold (no cloud outshines
-	// it), the notch (angle needs no doppler), the datalink (angle needs no
-	// track), even the activation schedule (the jam is receivable at any
-	// range). But angle is ALL it gives: the round flies pursuit at the
-	// noise, no lead, no loft — and the moment the target goes quiet, the
-	// seeker is back to its ordinary rules with whatever geometry the chase
-	// left it. The toggle stays a live decision for the whole flight.
+	// HOME-ON-JAM (#31): the beacon overrides the chaff hold, the notch, the
+	// datalink and the activation schedule, but gives angle only - pursuit, no
+	// lead, no loft. The toggle stays live for the whole flight.
 	if m.Beacon && truth != nil {
 		m.held = 0
 		sight := m.relative(m.Position, truth.Position)
 		reach := sight.Length()
 		unit := sight.Scale(1 / math.Max(reach, 1))
-		// Bearing-only PN: the strobe gives a clean angle RATE, so the round
-		// still leads the turn — what it cannot do without range or closing
-		// velocity is compute a lead-collision point or a loft, and the gain
-		// scales off its own speed rather than the true closure. Dangerous
-		// against anyone not defending hard; a max-performance extension can
-		// still bleed it dry. Naive pure pursuit was tried first and died
-		// every time — a crossing defender outran it as it hairpinned.
+		// Bearing-only PN: the strobe gives an angle RATE, so the round still leads
+		// the turn; without range or closing velocity it cannot compute a
+		// lead-collision point or a loft. Pure pursuit loses a crossing defender.
 		command := unit.Subtract(forward.Scale(unit.Dot(forward))).Scale(speed / steering)
 		if m.sight.Length() > 0.5 {
 			rate := unit.Subtract(m.sight).Scale(1 / dt)
@@ -272,13 +224,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	if m.Phase == Midcourse && m.Range() <= Activation {
 		m.Phase = Active
 	}
-	// The generalised overshoot: an ACTIVE round arriving at a STALE
-	// estimate — no datalink refreshing it, no seeker capture correcting it
-	// — has flown through a point nothing occupies, and the seeker cannot
-	// look behind its gimbal. Without this the round ORBITS the stale point
-	// (a chaff cloud it timed out on, a dead prediction) until something
-	// blunders into the circle. A fresh estimate is different: the target
-	// is genuinely there and the flythrough fuses on proximity.
+	// An ACTIVE round arriving at a STALE estimate has flown through a point
+	// nothing occupies and cannot look behind its gimbal. Without this it orbits
+	// the stale point; a fresh estimate is real and fuses on proximity.
 	if m.Phase == Active && m.Stale > 1 && m.Range() < 150 {
 		m.Phase = Loose
 	}
@@ -286,15 +234,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		sight := m.relative(m.Position, truth.Position)
 		reach := sight.Length()
 		unit := sight.Scale(1 / math.Max(reach, 1))
-		// ACQUISITION respects the clutter notch: a searching seeker cannot
-		// pick up a target with near-zero radial velocity — that return sits
-		// in the rejection gate with the ground and the chaff. An
-		// ESTABLISHED track is different: Pitbull holds through the notch
-		// (ECCM track memory), so beaming alone never breaks a lock here —
-		// deeper notch fidelity is the EW task's, not this file's. The pair
-		// of rules is exactly what makes the doctrine work: chaff steals the
-		// established track, and the released seeker cannot re-acquire a
-		// defender who STAYS in the beam.
+		// Acquisition respects the clutter notch: a searching seeker cannot pick up a
+		// near-zero radial velocity return. An established Pitbull track holds
+		// through the notch, so beaming alone never breaks a lock.
 		if reach <= Activation && unit.Dot(forward) >= Gimbal && math.Abs(truth.Velocity.Dot(unit)) > Notch {
 			// HUSKY: the seeker sees the target and becomes the estimate's
 			// source — datalink no longer matters. PITBULL at terminal range.
@@ -323,15 +265,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 			m.Phase = Loose // the target beat the look cone: ballistic
 			break
 		}
-		// AUGMENTED proportional navigation, N=4. Plain PN nulls the
-		// line-of-sight rate, which is enough against a straight target but
-		// leaves a steady miss against a turning one: the round is always
-		// correcting for a manoeuvre the target has already made, and the
-		// residual grows with the target's acceleration and the square of
-		// the time to go. The augmentation feeds the target's own lateral
-		// acceleration forward at half the navigation gain — the textbook
-		// term, and the difference between a graze and a kill against a
-		// defending fighter.
+		// Augmented proportional navigation, N=4. Plain PN leaves a steady miss
+		// against a turning target; feeding the target's own lateral acceleration
+		// forward at half the navigation gain is the textbook correction.
 		closing := truth.Velocity.Subtract(m.Velocity).Dot(unit) * -1
 		if closing < 0 {
 			closing = 0
@@ -340,13 +276,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		m.sight = unit
 		gain := 4 * math.Max(closing, speed*0.3)
 		command = rate.Scale(gain)
-		// The target's acceleration, estimated over the time the sample
-		// actually spans. The caller may hand the same truth to several
-		// slices (it samples the world once a frame), so dividing a frame's
-		// whole velocity change by a slice would inflate it by the frame's
-		// worth of slices and fly the round on noise. A fighter's own limit
-		// clamps the estimate, and an average across samples keeps a jittery
-		// feed from steering.
+		// Estimate the target's acceleration over the time the sample actually spans:
+		// the caller may hand the same truth to several slices, and dividing by a
+		// slice would inflate it and fly the round on noise.
 		m.since += dt
 		if !m.seen {
 			m.moved, m.seen, m.since = truth.Velocity, true, 0
@@ -439,12 +371,9 @@ func (m *Model) integrate(dt float64, command flight.Vec3, speed float64, forwar
 	return true
 }
 
-// Slice is the round's own integration stride. A guidance loop sampled at a
-// render frame's rate flies a visibly worse missile — at Mach 2.5 a 60 Hz
-// step jumps 17 m between corrections, and the terminal miss grows from
-// metres to tens of metres — so every caller's dt is diced into slices no
-// longer than this. It also makes a flight frame-rate independent, which the
-// server needs and a player deserves.
+// Slice is the round's integration stride: every caller's dt is diced into
+// slices no longer than this. At Mach 2.5 a 60 Hz guidance step jumps 17 m
+// between corrections and the terminal miss grows to tens of metres.
 const Slice = 1.0 / 240
 
 // Advance steps the round across dt at the fixed Slice, checking the fuse on
@@ -452,12 +381,9 @@ const Slice = 1.0 / 240
 // walks straight through the envelope). Returns whether the round lives on,
 // whether the warhead fired, and where it burst.
 func (m *Model) Advance(dt float64, support *Target, truth *Target) (bool, bool, flight.Vec3) {
-	// The caller samples the world once per frame, so the target is FROZEN
-	// across the slices unless we fly it too: at a merge closing 700 m/s a
-	// 20 Hz frame leaves the truth 35 m stale, and the endgame resolves
-	// against a ghost. Each slice advances the target along its own
-	// velocity — straight flight is the best knowledge anyone has inside a
-	// frame — and the same for the datalink's estimate.
+	// The caller samples the world once per frame, so each slice must fly the
+	// target and the datalink estimate along their own velocity: at 700 m/s
+	// closure a 20 Hz frame leaves the truth 35 m stale.
 	var moving, feed *Target
 	if truth != nil {
 		copied := *truth
@@ -485,13 +411,9 @@ func (m *Model) Advance(dt float64, support *Target, truth *Target) (bool, bool,
 	return alive, false, flight.Vec3{}
 }
 
-// Fused reports whether the proximity fuse fires against this truth over the
-// step just taken, and where the burst goes. It solves the CLOSEST APPROACH
-// within the step rather than sampling the endpoint: at Mach 2.5 the round
-// crosses 40 m per 60 Hz frame, so a sampled range walks straight through
-// the fuse envelope and the warhead never speaks — and when it does speak,
-// it must burst where the round actually passed the target, not where the
-// frame happened to land. The burst point is the caller's blast origin.
+// Fused reports whether the proximity fuse fires over the step just taken, and
+// where. It solves the CLOSEST APPROACH within the step: at Mach 2.5 the round
+// crosses 40 m per frame and a sampled range walks through the envelope.
 func (m *Model) Fused(dt float64, truth Target) (bool, flight.Vec3) {
 	if m.Time < Arming {
 		return false, flight.Vec3{}

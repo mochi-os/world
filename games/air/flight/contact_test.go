@@ -83,9 +83,8 @@ func TestTaxi(t *testing.T) {
 		t.Fatalf("throttle does not taxi: %.2f m/s", rolling)
 	}
 	heading := math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X)
-	// 1.5 s of pedal: with realistic LOW-mode taxi authority (22.5°, ~13 m radius)
-	// a longer full-pedal turn arcs the jet off the deck edge before the brake
-	// phase — the old 75° throw turned in a 1.4 m pirouette and never moved.
+	// 1.5 s of pedal: with LOW-mode taxi authority (22.5°, ~13 m radius) a longer
+	// full-pedal turn arcs the jet off the deck before the brake phase.
 	for i := 0; i < 240*3/2; i++ {
 		m.Step(Inputs{Gear: true, Throttle: 0.18, Yaw: 1})
 	}

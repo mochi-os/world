@@ -4,12 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Everything discrete happens here, once per step, outside the RK4
-// derivative: the gear actuator, weight-on-wheels and the touchdown record,
-// the crash probes, catapult attach/fire/advance/detach, and arrestor-wire
-// capture and release. The wire capture sweeps the hook path across the
-// step (derived from velocity — nothing extra in State), so no rollout
-// speed can tunnel through a cable.
+// Everything discrete happens here, once per step, outside the RK4 derivative.
+// The wire capture sweeps the hook path across the step, so no rollout speed
+// can tunnel through a cable.
 
 package flight
 
@@ -25,12 +22,9 @@ func (m *Model) events(in Inputs) {
 		target = 1
 	}
 	s.Gear.Extension += clamp(target-s.Gear.Extension, -Dt/5, Dt/5)
-	// Gear speed limit, 250 KCAS (NATOPS figure 4-2, the same number both
-	// pattern chapters are written around: "below 250 knots lower the gear
-	// and flaps"). Doors and struts in a 400 kt airstream wound the legs
-	// rather than refusing the handle — the thresholds already there blow a
-	// tyre at 0.3 and fold the strut at 0.7, so the consequence follows.
-	// Unlimited before this, which made the gear a free speedbrake (#49).
+	// Gear speed limit, 250 KCAS (NATOPS figure 4-2). Over-speed extension wounds
+	// the legs rather than refusing the handle: the thresholds blow a tyre at 0.3
+	// and fold the strut at 0.7.
 	if s.Gear.Extension > 0.02 && !s.Gear.Wow {
 		if over := m.Cas()*1.9438 - 250; over > 0 {
 			for leg := range s.Damage.Gear {
@@ -162,9 +156,8 @@ func (m *Model) catapult(s *State, in Inputs) {
 			if dx*dx+dz*dz >= capture*capture {
 				continue
 			}
-			// The crew only hook up an ALIGNED aircraft: taxiing across the
-			// shuttle perpendicular used to attach on proximity alone, and
-			// the holdback yanked the jet sideways into the deck crash gates.
+			// The crew only hook up an ALIGNED aircraft: attaching on proximity alone
+			// yanks a crossing jet sideways into the gates.
 			heading := c.Heading + c.Catapults[i].Heading
 			track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 			if forward.X*track.X+forward.Z*track.Z < 0.9 { // within ~25°
@@ -178,11 +171,6 @@ func (m *Model) catapult(s *State, in Inputs) {
 	}
 	cat := &c.Catapults[s.Gear.Catapult]
 	if s.Gear.Stroke <= -3 {
-		// Tension: fire when the jet is straight AND its nose is on the track
-		// line — squaring a crab yaws about the CG and swings the nose off the
-		// line (4.9 m arm), and firing then starts the run with a lateral
-		// yank; the slot spring recentres the castering nose during the hold.
-		// An aligned jet fires the same step it asked to.
 		heading := c.Heading + cat.Heading
 		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 		forward := s.Attitude.Rotate(Vec3{X: 1})
@@ -198,13 +186,9 @@ func (m *Model) catapult(s *State, in Inputs) {
 		}
 		straight := math.Abs(swing) < 0.026 || (math.Abs(swing) < 0.09 && math.Abs(s.Omega.Y) < 0.004)
 		s.Gear.Stroke -= Dt // the tension clock: Stroke decays from -3 while holding
-		// Fire on straightness alone — the nose-offset gate (cross) used to
-		// block convergence-firing and push crabbed jets onto the TIMEOUT
-		// path, and firing crabbed is the one real danger: at speed the tire
-		// slip forces act at deck level and ROLL the jet (a wingtip probe hit
-		// the deck at 30 m into the run). Even the timeout refuses to fire
-		// beyond ~3.4°; the tension equilibrium sits inside that, so it
-		// always fires eventually.
+		// Fire on straightness alone: the nose-offset gate blocked
+		// convergence-firing, and firing crabbed is the real danger - tire slip at
+		// deck level ROLLS the jet. The timeout refuses beyond ~3.4°.
 		_ = cross
 		if straight || (s.Gear.Stroke < -7 && math.Abs(swing) < 0.06) {
 			s.Gear.Stroke = 0
@@ -257,15 +241,9 @@ func (m *Model) wire(s *State, in Inputs) {
 	before := now.Subtract(s.Velocity.Scale(Dt)) // the swept path, derived — nothing stored
 	local := c.local(now, s.Time, m.Environment.Wrap)
 	touching := local.Y >= -1 && local.Y <= 0.15
-	// Hook skip: the damper is sized for a real glideslope sink, and a FLAT
-	// arrival (a flared, floating touch) bounces the point over the wires
-	// instead of driving it through — the hook-skip bolter. Only a gentle
-	// DESCENT bounces: glideslope sink drives the point through and scrapes,
-	// and a hook slung down while the jet climbs away off a bounce is an
-	// in-flight engagement — it takes the wire, hard, as the real one does.
-	// The bounce re-arms while the jet still floats, but not once weight is
-	// on wheels: a settled hook rides the deck and a late wire can still
-	// catch it, exactly like a lucky 4-wire.
+	// Hook skip: a FLAT arrival bounces the point over the wires instead of
+	// driving it through. Only a gentle DESCENT bounces; a climbing jet takes the
+	// wire. The bounce re-arms while floating, but not once weight is on.
 	if touching && !m.scrape && s.Velocity.Y > -1.8 && s.Velocity.Y < 0.5 && !s.Gear.Wow {
 		m.skip = 0.8
 	}

@@ -3,22 +3,14 @@
 doctrine, one constant at a time, scored by the scenario battery
 (games/air/battery_test.go).
 
-For each constant the driver runs the battery at the default and at each
-candidate value (default x the --factors list), compares every metric against
-the baseline (metric names carry their own direction: up_* wants to rise,
-down_* wants to fall), and ranks candidates by the summed normalized
-improvement. Matches parallelize across cores inside the battery; candidates
-run sequentially. Overnight scale comes from --seeds: kill events are rare,
-so anything under ~100 seeds ranks noise (#138 only resolved because deaths
-ran 7:1).
+Each constant runs at its default and at each candidate (default x --factors);
+metric names carry their own direction (up_* rises, down_* falls) and candidates
+rank by summed normalized improvement. Kill events are rare, so anything under
+~100 --seeds ranks noise.
 
-The driver NEVER edits bot.go. Promotion is a human act: a winning number is
-proposed to the doctrine (standard() in games/air/bot.go) only with a
-one-line justification a pilot would recognise, and the ladder tests
-(TestBotLadder, TestBotGunnery, TestBotSection) must stay green after the
-edit — the skill ladder is a constraint the tuning respects. A constant whose
-every candidate scores poorly is the other, more valuable finding: a MISSING
-behaviour, not a wrong number.
+The driver NEVER edits bot.go. Promotion is a human act, and the ladder tests
+(TestBotLadder, TestBotGunnery, TestBotSection) must stay green after the edit.
+A constant whose every candidate scores poorly means a MISSING behaviour.
 
 Usage:
   tools/tactics.py                                   # sweep the default constants
@@ -37,11 +29,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The tunable doctrine, mirroring standard() in games/air/bot.go — name,
-# default, and the reason today's value was picked (shown in the report so
-# the doctrinal-justification guard starts from the incumbent's reason).
-# Integer-valued constants (counts, tick holds) are marked so candidates
-# round to whole numbers and duplicates collapse.
+# The tunable doctrine, mirroring standard() in games/air/bot.go: default, an
+# integer flag (candidates round to whole numbers and duplicates collapse), and
+# the reason today's value was picked, shown in the report.
 CONSTANTS = {
     "drag.pace":       (0.68, False, "below ~2/3 corner a break neither defeats his solution nor keeps the corner"),
     "drag.span":       (720,  False, "inside 900 m an extension hands him the saddle; the break stays mandatory"),

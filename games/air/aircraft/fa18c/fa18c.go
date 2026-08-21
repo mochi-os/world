@@ -77,21 +77,9 @@ func build() *flight.Airframe {
 	a.Wave.Hump = 0.030 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
 	a.Wave.Body = 0.10
 
-	// The full fitment catalog (#17). Bits 0 and 1 stay the wingtip AIM-9Ms —
-	// every count-to-mask mapping and the doctrine-calibrated bot rely on
-	// those indices — and Default arms exactly them, so a bare New flies
-	// today's jet. Fixtures (pylon chains, collapsed to one entry each) and
-	// stores are separate bits: the mask owner attaches a station's fixture
-	// plus the stores on its points, and mutually exclusive fixtures (a
-	// station's single rail versus its twin adapter) are never set together.
-	// Masses: AIM-9M 86 kg; SUU-63 + LAU-7 rail 179 kg; SUU-63 + LAU-115 +
-	// two LAU-7 twin 290 kg; wet SUU-63 136 kg; centerline SUU-62 120 kg;
-	// FPU-8/A 330 gal tank 158 kg dry + 1010 kg JP-5. Drag areas are honest
-	// starting points to be flown out via the vspeeds harness (#17 plan).
-	// Lateral positions from the station buttlines (figure 4-4: 1/9 at
-	// 19.5 ft = 5.94 m, 2/8 at 3.35 m, 3/7 at 2.24 m). The ground-rest
-	// points in Belly below sit wider on purpose: contact must catch where
-	// the DRAWN tip is, and the mesh flies ~5% wide of the real buttline.
+	// The full fitment catalog (#17). Bits 0 and 1 must stay the wingtip AIM-9Ms:
+	// every count-to-mask mapping and the calibrated bot rely on those indices.
+	// Mutually exclusive fixtures (a station's rail versus its twin) never pair.
 	a.Stores = []flight.Store{
 		{Name: "tip1", Station: 1, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: -5.94}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "tip9", Station: 9, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 5.94}, Mass: 86, Area: 0.05, Warhead: 9.4},
@@ -220,12 +208,9 @@ func build() *flight.Airframe {
 		{Position: flight.Vec3{X: -1.4}, Area: 2.7, Plan: 10.0, Drag: 0.09},
 		{Position: flight.Vec3{X: -5.6}, Area: 1.6, Plan: 5.4, Drag: 0.09},
 	}
-	// Undercarriage: track 3.11 m, wheelbase 5.4 m. Stance measured from the
-	// drawn model's DEPLOYED gear (three.js pose of the gear animation at
-	// full extension: wheel bottoms 2.57 m below the render origin; -2.63
-	// with ~0.06 m static compression rests the origin there). The drawn
-	// mains then land within 5 cm of these struts. Stiffness scaled to the
-	// lighter jet at the F's static-compression ratio. Tunable.
+	// Undercarriage: track 3.11 m, wheelbase 5.4 m. Stance measured from the drawn
+	// model's DEPLOYED gear so the drawn mains land within 5 cm of these struts.
+	// Stiffness scaled to the lighter jet at the F's ratio. Tunable.
 	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 75 * math.Pi / 180} // NWS HI 75° (LOW is 22.5°; the speed washout in gear.go stands in for the mode switch)
 	a.Gear.Left = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: -1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Gear.Right = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: 1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}

@@ -96,11 +96,9 @@ func Parts(a *flight.Airframe) []Part {
 		})
 	}
 	parts = append(parts, Part{Kind: Cockpit, Index: 0, Surface: -1, A: a.Cockpit, B: a.Cockpit, Radius: 0.7})
-	// The gun's belt. On this airframe the M61 and its drum sit in the nose
-	// ahead of the cockpit, which is exactly where a front-quarter burst lands —
-	// and a full drum is 578 rounds of high explosive. Whether there is anything
-	// left to cook off is Body.Belt at strike time, so a jet that has shot dry
-	// stops being a target here, the same way an empty rail does.
+	// The gun's belt: the M61 and its drum sit in the nose ahead of the cockpit,
+	// where a front-quarter burst lands. Whether anything is left to cook off is
+	// Body.Belt at strike time.
 	parts = append(parts, Part{Kind: Ammunition, Index: 0, Surface: -1,
 		A: a.Cockpit.Add(flight.Vec3{X: 0.8}), B: a.Cockpit.Add(flight.Vec3{X: 2.4}), Radius: 0.45})
 	parts = append(parts, Part{Kind: Tank, Index: 0, Surface: -1,
@@ -130,14 +128,10 @@ func Parts(a *flight.Airframe) []Part {
 	return parts
 }
 
-// pierce lists every part along the ray, nearest first — a 20 mm SAPHEI
-// round does not stop at the first thing it meets (#144: dead-astern rounds
-// parked in already-dead engines while the fuel and cockpit sat untouched
-// behind them, and the stern kill only ever came from the one fire the
-// victim's own fire drill could put out).
 // pierce returns the parts a ray meets, nearest first, and how far along the
-// ray each was met — the distances are what put a hit flash on the airframe
-// rather than at its centre (#217).
+// ray each was met - a 20 mm SAPHEI round does not stop at the first thing it
+// meets, and the distances put the hit flash on the airframe rather than at its
+// centre.
 func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) ([]int, []float64) {
 	type met struct {
 		part  int

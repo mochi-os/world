@@ -19,11 +19,8 @@ import (
 )
 
 // TestMachineSweep flies the drone scenario the lethality ladder gates on and
-// measures the two quantities the sweep hypothesis rests on: how fast the
-// bore crosses the solution (solution() only prices a crossing above 80 m/s)
-// and how often the arbiter changes its mind. If the accurate opponent model
-// locked the machine onto one line, its crossing rate and its play churn both
-// collapse relative to the ace.
+// measures how fast the bore crosses the solution (solution() only prices a
+// crossing above 80 m/s) and how often the arbiter changes its mind.
 func TestMachineSweep(t *testing.T) {
 	heavy(t)
 	for _, level := range []string{"ace", "superhuman"} {

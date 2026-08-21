@@ -21,12 +21,8 @@ func menace(position, velocity flight.Vec3, shooter int, phase float64) []float6
 }
 
 // TestMenaceBeaten pins the sentinel the single-player wire carries for a
-// heater that has already lost. `beaten` (bot.go) reads `loose`/`blind`, and
-// the client is the only source of those in single player — it flies the
-// player's rounds itself. Before the sentinel existed the stubs were built
-// with both flags at their zero values, so the instructor tiers' refusal to
-// abandon a fight for a defeated round was dead in the one place a human ever
-// sees it.
+// heater that has already lost: the client is the only source of
+// `loose`/`blind` there, and `beaten` (bot.go) reads exactly those two.
 func TestMenaceBeaten(t *testing.T) {
 	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0)
 	position, velocity := flight.Vec3{X: 1000}, flight.Vec3{X: -300}

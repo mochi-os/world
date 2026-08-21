@@ -7,8 +7,8 @@ import (
 )
 
 // The #132 claim check: identical flares onto a sea-level strip and a 500 m
-// plateau strip must land the same way — the cushion follows the FIELD, not
-// sea level. Under the old sea-referencing the plateau had no ground effect.
+// plateau must land the same way - the cushion follows the FIELD, not sea
+// level.
 func TestElevatedFieldCushion(t *testing.T) {
 	flare := func(elevation float64) (float64, float64) {
 		world := World{Sea: 0, Fields: []Field{{Height: elevation, Strips: []Strip{{A: Vec3{X: -3000, Z: 0}, B: Vec3{X: 3000, Z: 0}, Width: 60}}}}}

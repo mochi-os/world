@@ -311,11 +311,9 @@ func level(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// approach places the model on a trimmed on-speed descent — the landing
-// spawn (position x y z, horizontal direction x z, glideslope in DEGREES
-// below the horizon, fuel). Returns the throttle that holds the trim, so the
-// host's own lever starts where the core put the engines instead of carrying
-// its own hand-measured constant.
+// approach places the model on a trimmed on-speed descent - the landing spawn
+// (position x y z, horizontal direction x z, glideslope in DEGREES below the
+// horizon, fuel). Returns the throttle that holds the trim.
 func approach(this js.Value, arguments []js.Value) any {
 	if model == nil {
 		return 0.0

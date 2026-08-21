@@ -1,11 +1,9 @@
-// Mochi world: measurement probes for the human-pressure harness — what a bot
-// actually does, second by second, with a scripted attacker behind it; whether
-// the position can be won at all; and how good the arbiter's best line looks
-// when it is saddled. Set AIR_PRESSURE=1 to run any of them.
+// Mochi world: measurement probes for the human-pressure harness. Set
+// AIR_PRESSURE=1 to run any of them.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 package air
 
@@ -31,23 +29,18 @@ func probe(t *testing.T) {
 	heavy(t)
 }
 
-// wide marks the forty-eight / twenty-four / thirty-six seed instruments
-// that carry the doctrine GATES (#46): they run in every doctrine sweep
-// (AIR_DOCTRINE=1), not only under the measurement flag. The sixteen- and
-// six-seed batteries stay as the quick read; at those widths the upper
-// rungs moved by two on seed luck and an inversion passed unseen.
+// wide marks the wide-seed instruments that carry the doctrine GATES (#46):
+// they run in every doctrine sweep (AIR_DOCTRINE=1), not only under the
+// measurement flag. Narrower batteries moved by two rungs on seed luck.
 func wide(t *testing.T) {
 	t.Helper()
 	heavy(t)
 }
 
-// TestPressureProbe traces ONE seed of the human-pressure harness: what the
-// ace chose at every re-plan, how the candidates ranked, and the geometry
-// each second. AIR_PROBE_SEED selects the seed, AIR_PROBE_START the
-// attacker's starting range in metres, AIR_PROBE_LENGTH the seconds flown.
-//
-// It is what found the harness's 600 m start to be an execution (2026-08-18):
-// 17 of 24 seeds ended inside 2.3 s, before the bandit's second decision.
+// TestPressureProbe traces ONE seed of the human-pressure harness: what the ace
+// chose at every re-plan, how the candidates ranked, and the geometry each
+// second. AIR_PROBE_SEED, AIR_PROBE_START (m) and AIR_PROBE_LENGTH (s) select
+// it.
 func TestPressureProbe(t *testing.T) {
 	probe(t)
 	seed := uint64(2)
@@ -141,12 +134,9 @@ func ringText(o orbit) string {
 	return fmt.Sprintf("R%.0f/nY%+.1f/w%.2f", o.radius, o.normal.Y, o.omega)
 }
 
-// TestPressureOracle asks whether the position the human-pressure harness
-// starts from can be won AT ALL: the bandit's seat is flown by the same crude
-// script as the attacker (pursue), and the run reports how often each side
-// held the other's rear quarter. If a novice script converts where the ace
-// does not, the doctrine is worse than the crudest thing that could sit in
-// its seat.
+// TestPressureOracle asks whether the harness's starting position can be won at
+// all: the bandit's seat is flown by the same crude pursue() script. If it
+// converts where the ace does not, the doctrine is worse than the crude script.
 func TestPressureOracle(t *testing.T) {
 	probe(t)
 	converted, tracked, total, killed, died := 0, 0, 0, 0, 0
@@ -190,12 +180,9 @@ func TestPressureOracle(t *testing.T) {
 		killed, died, 100*float64(tracked)/math.Max(1, float64(total)), 100*float64(converted)/math.Max(1, float64(total)))
 }
 
-// TestPromiseProbe: the distribution of the winning rehearsal's mean offence
-// (brain.promise) across ace-v-pilot gun duels, so the FINISH-on-opportunity
-// threshold is chosen from data rather than taste. Measured 2026-08-18: 410 of
-// ~530 re-plans under 0.05, a tail of ~90 from 0.15 up, and 22 at 0.95+ — a
-// saddle held for the whole rehearsal. Also what showed the ace holding a
-// 0.9-0.99 line at 600-760 m for seventy seconds without firing (seed 1).
+// TestPromiseProbe reports the distribution of the winning rehearsal's mean
+// offence (brain.promise) across ace-v-pilot gun duels, so the FINISH-on-
+// opportunity threshold is chosen from data rather than taste.
 func TestPromiseProbe(t *testing.T) {
 	probe(t)
 	buckets := map[int]int{}
@@ -286,10 +273,8 @@ func TestGunLadderWide(t *testing.T) {
 			}
 		}
 		fmt.Printf("wide guns %-11s vs %-7s  won %d  lost %d  no result %d  (of 48)\n", strong, weak, wins, losses, draws)
-		// THE GATE (#46): order, with the seed band this width earns. At
-		// sixteen seeds the rungs moved by two on seed luck and a 1-1 / 5-2
-		// sweep passed while 48 seeds read 6-2 / 17-8; at forty-eight the
-		// band is about three. Measured 2026-08-19: 12-3 / 15-10.
+		// THE GATE (#46): order, with the band forty-eight seeds earns - about three.
+		// At sixteen seeds an inversion passed unseen.
 		if losses > wins+3 {
 			t.Errorf("wide guns: %s lost to %s %d-%d over 48 seeds: the ladder is inverted", strong, weak, losses, wins)
 		}
@@ -344,10 +329,8 @@ func TestFlounderWide(t *testing.T) {
 		}
 	}
 	fmt.Printf("wide flounder: ace killed it %d/36 | rounds landed %d\n", kills, landed)
-	// THE GATE (#46): the ace must still finish the floundering human profile
-	// in a reasonable share of fights — twelve seeds moved by three on seed
-	// luck; thirty-six read 14-17 across the 2026-08 tunings. A quarter is
-	// the floor.
+	// THE GATE (#46): the ace must finish the floundering profile in a quarter of
+	// fights; twelve seeds moved by three on seed luck, thirty-six read 14-17.
 	if kills < 9 {
 		t.Errorf("wide flounder: the ace killed the floundering profile in only %d of 36 fights", kills)
 	}

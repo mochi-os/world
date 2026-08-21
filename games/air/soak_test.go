@@ -13,13 +13,9 @@ import (
 	"world/game"
 )
 
-// TestSoak measures what a kill COSTS: a scripted attacker with the crude
-// pursuit tracks a gently-weaving drone from its six with the trigger held,
-// through the real rounds, the real pierce chains and the real damage cascade.
-// It exists because the pilot spent 511 of 578 rounds killing one ace and
-// reported the bandit surviving "a huge number of hits" — dead astern is the
-// damage model's most absorbent aspect (the chains spend themselves in the
-// engines), and this is the instrument that says by how much. Diagnostic.
+// TestSoak measures what a kill costs: a scripted attacker guns a weaving drone
+// from its six through the real pierce chains and damage cascade. Dead astern
+// is the damage model's most absorbent aspect. Diagnostic, not a gate.
 func TestSoak(t *testing.T) {
 	heavy(t)
 	for seed := uint64(1); seed <= 6; seed++ {

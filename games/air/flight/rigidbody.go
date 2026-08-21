@@ -26,21 +26,16 @@ type Model struct {
 	Direct      bool    // no augmentation: stick drives surfaces (validation)
 	Gravity     float64 // m/s²; New sets standard, tests may zero it
 
-	// FCS law memory (#203) — unencoded, NOT part of the snapshot: which pitch
-	// law is active (with hysteresis) and the trim-laundering countdown across
-	// law changes. A snapshot restore re-derives them on the next step; the
-	// client core is a corrected predictor, so a one-off re-derivation inside
-	// the hysteresis band is harmless.
+	// FCS law memory - unencoded, NOT part of the snapshot: a restore re-derives
+	// it on the next step, and the client core is a corrected predictor, so one
+	// re-derivation inside the hysteresis band is harmless.
 	pa      bool
 	lawInit bool
 	halfleg bool // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
 	launder float64
 
-	// Deployable and store memory — unencoded for the same reason: the probe
-	// and hook extension slews re-derive within seconds of a snapshot restore,
-	// and the store mask is re-asserted by its owner (the client syncs it every
-	// frame, the server sets it at every launch). Drag this small makes the
-	// predictor's one-off divergence invisible.
+	// Deployable and store memory - unencoded for the same reason: the slews
+	// re-derive within seconds and the mask is re-asserted by its owner.
 	probe    float64 // refuelling probe extension 0..1 (~5 s hydraulic stroke)
 	arrestor float64 // arrestor hook extension 0..1 (~2 s swing); named for the carrier hook() method
 	skip     float64 // hook-bounce time remaining, s: a flat arrival skips the hook over the wires
@@ -87,24 +82,14 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 // SetWorld replaces the world geometry (host re-init).
 func (m *Model) SetWorld(w World) { m.World = w }
 
-// Step advances the simulation exactly Dt. Pure given (State, in,
-// Environment, World): no I/O, clock, randomness, or allocation.
 // Attached reports the attached-station bitmask (bit i = Airframe.Stores[i]).
-// battle reads it to know which rounds are still on the rails and can cook
-// off; the flight core itself needs no getter, so it exists for that.
+// battle reads it to know which rounds are still on the rails.
 func (m *Model) Attached() uint64 { return m.stores }
 
-// Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]):
-// firing a missile clears its bit, dropping the station's mass and drag.
-// Fuel-bearing entries extend the fuel system on the transition: a tank
-// arriving (bit off to on) comes full, adding its capacity to
-// State.External; a tank departing takes its proportional share of the
-// remaining external fuel with it (#42) — exact, not an approximation,
-// because attached tanks drain in step, so every tank always holds the same
-// fraction of its capacity. A clamp alone only bit when the remainder
-// exceeded the new capacity, so a part-full tank jettisoned mid-flight left
-// every kilogram of its fuel behind. Re-asserting an unchanged mask is a
-// no-op, so the owner may sync it idempotently every frame.
+// Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]). A
+// fuel-bearing entry arriving comes full; one departing takes its proportional
+// share of State.External - exact, because attached tanks drain in step.
+// Re-asserting an unchanged mask is a no-op.
 func (m *Model) Stores(mask uint64) {
 	if mask != m.stores {
 		previous := 0.0
@@ -169,11 +154,9 @@ func (m *Model) Step(in Inputs) {
 	m.State.Time += Dt
 }
 
-// shake grades the aerodynamic buffet the airframe is riding: separated-flow
-// roughness building from moderate alpha, weighted by how hard the LEX vortex
-// is working (its burst wake beating on the wing and tails is the Hornet's
-// signature shake), felt in proportion to dynamic pressure. A cue channel for
-// the client's camera — it feeds no force back into the model.
+// shake grades the aerodynamic buffet: separated-flow roughness from moderate
+// alpha, weighted by LEX loading and dynamic pressure. A cue channel for the
+// client's camera - it feeds no force back into the model.
 func (m *Model) shake(local Air) {
 	body := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 	speed := body.Length()
@@ -188,11 +171,9 @@ func (m *Model) shake(local Air) {
 	m.State.Buffet = onset * (0.7 + 0.3*loading(alpha)) * felt
 }
 
-// weigh caches mass, combined CG, and the inertia tensor (and inverse) for
-// the step: empty airframe + fuel point mass at the tank + attached stores
-// (external fuel riding at the attached tanks, split by capacity — the real
-// jet pressurizes all externals together and they drain in step) + damage
-// shift.
+// weigh caches mass, combined CG, and the inertia tensor (and inverse) for the
+// step. External fuel rides at the attached tanks, split by capacity: the real
+// jet pressurizes all externals together and they drain in step.
 func (m *Model) weigh() {
 	a := m.Airframe
 	fuel := m.State.Fuel

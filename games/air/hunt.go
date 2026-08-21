@@ -4,19 +4,10 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// A bot's radar drives the same craft fields a human's client reports —
-// emitter and lock — so the pose wire, the RWR escalation, fox3()'s launch
-// gate, and the datalink in fly_radar all work against bots unchanged; and
-// it feeds the same track table vision feeds (painted, called from the
-// perception scan), because at BVR ranges the radar IS the bot's
-// perception: the canopy ends at twelve kilometres. Everything here is
-// gated on AMRAAMs aboard, and bots arm to the match's weapons class
-// exactly as humans are clamped — so the fox2-pinned dogfight batteries
-// never enter this file, and the WVR calibration holds by configuration,
-// enforced by the silence sentinel in hunt_test.go.
-//
-// The design record lives in claude/plans/air-amraam.md, "Bot BVR
-// decisions" (settled 2026-08-13).
+// A bot's radar drives the same craft fields a human's client reports - emitter
+// and lock - so the pose wire, RWR escalation, fox3() and the datalink work
+// against bots unchanged. Everything here is gated on the match's weapons
+// class, so the fox2-pinned dogfight batteries never enter this file.
 
 package air
 
@@ -27,16 +18,10 @@ import (
 	"world/games/air/round"
 )
 
-// press is the per-level BVR employment character: tuning dials for the BVR
-// battery, deliberately separate from the flight-model and WVR constants.
-// Depth positions the shot between the no-escape rung (0: the target cannot
-// kinematically defeat the round) and the maximum rung (1: it arrives only
-// if he flies on as now) — the novice sprays at maximum, the disciplined
-// tiers wait. Look is the shoot-look-shoot spacing in ticks. Withhold is
-// the emission discipline: hold SEARCH and deny the STT until the commit
-// range, so the defender's RWR reads paint rather than a hard lock until
-// the shot is near. It cannot mean radiating nothing — the radar is how the
-// bot finds the fight at all, and a fighter with its set off is blind.
+// press is the per-level BVR employment character. Depth positions the shot
+// between the no-escape rung (0) and the maximum rung (1). Look is the
+// shoot-look-shoot spacing in ticks. Withhold holds SEARCH and denies the STT
+// until commit range; it never means radiating nothing.
 type press struct {
 	depth    float64
 	look     uint64
@@ -65,11 +50,9 @@ const (
 	radar_seam   = 10000.0 // m: inside this the tuned WVR arbiter owns the flight path and the crank yields
 )
 
-// soar points a horizontal direction with the climb that walks the jet back
-// to the BVR block. Altitude is the DLZ's biggest lever — the round's level
-// range nearly triples between the deck and the block — and a `level()` aim
-// under low g lets the jet sag: measured, a pair sank from 6,100 m to 2,500
-// over one approach and the ladder's every rung collapsed to zero.
+// soar points a horizontal direction with the climb that walks the jet back to
+// the BVR block. Altitude is the DLZ's biggest lever, and a level() aim under
+// low g lets the jet sag until every rung collapses.
 func soar(direction flight.Vec3, altitude float64) flight.Vec3 {
 	d := level(direction)
 	d.Y = clamp((bvraltitude-altitude)/4000, -0.1, 0.35)
@@ -77,16 +60,9 @@ func soar(direction flight.Vec3, altitude float64) flight.Vec3 {
 }
 
 // painted reports whether a bot's own radar holds this contact: radiating,
-// inside the scan cone and reach, and outside the notch — a target holding
-// its radial speed inside the clutter cannot be tracked, which is what
-// makes the beam defeat the whole kill chain rather than just the round.
-// Called from the perception scan as a second way of seeing.
-//
-// Order dependency, deliberate: perception runs inside decide() at the
-// skill's cadence, hunt() runs every tick after it, so the emitter hunt()
-// set last tick is what admits contacts this tick. hunt() defaults to
-// SEARCH whenever the bot is armed and targetless, so acquisition
-// bootstraps rather than deadlocking.
+// inside the scan cone and reach, and outside the notch. Order dependency,
+// deliberate: perception runs inside decide() at the skill's cadence and hunt()
+// every tick after it, so last tick's emitter admits this tick's contacts.
 func (i *instance) painted(a, c *craft) bool {
 	if a.brain == nil || i.weapons != "open" || a.emitter < 1 {
 		return false
@@ -105,25 +81,10 @@ func (i *instance) painted(a, c *craft) bool {
 	return radial > round.Notch
 }
 
-// counterfire is ruling 9 (settled 2026-08-14): a withholding tier being
-// forced defensive takes the one shot it currently has before committing
-// to the notch. The measured alternative was dying with a full rack — the
-// deep tiers' commit range arrives later than an aggressor's first
-// credible shot, and a defending bot never fires (the machine lost the
-// twenty-seed mid-ladder to the ace 7-11 by exactly this, and every
-// opening-depth dial was measured and refuted). The shot is DLZ-judged at
-// the full working envelope — the round arrives if he flies on as now —
-// floored only by the physics, and leaves through the same fox3() as any
-// other; the momentary STT collapses back to search immediately and the
-// round coasts to its own pitbull, exactly as an abandoned track does.
-// Full rack only: the counter-shot exists to stop a bot dying without
-// ever firing, and that is the whole licence — once anything has left the
-// rails, normal doctrine owns the fight. The first form latched once per
-// threat EPISODE, and every fresh inbound round is a fresh episode:
-// sustained duels ping-ponged counter-shots, every pairing spent 45-48 of
-// 48 (the battery's dump gate tripped), the ladder's end pair collapsed
-// 5-1 to 2-2, and the attacker in the defence instrument converted
-// nothing at all — measured 2026-08-14, same day as the ruling.
+// counterfire: a withholding tier forced defensive takes the one shot it has
+// before committing to the notch, since its commit range arrives later than an
+// aggressor's first credible shot. Full rack only - once anything has left the
+// rails, normal doctrine owns the fight.
 func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	b := a.brain
 	if i.weapons != "open" || a.amraams == 0 || !i.free() {
@@ -139,10 +100,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 		return
 	}
 	// The credibility gate: answer only a round that would still arrive
-	// supersonic — the ladder's own kill bar, asked of the threat
-	// mid-flight. Without it the novice's max-range spray bought the
-	// machine's one licensed round for free: the end pairing's draws
-	// tripled while every sprayed husk died six kilometres out anyway.
+	// supersonic, or a max-range spray buys the one licensed round for free.
 	credible := false
 	for _, m := range i.flying {
 		if m.radar == nil || m.target != slot || m.radar.Phase < round.Active {
@@ -190,21 +148,15 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	}
 }
 
-// hunt is the whole of a bot's BVR offence, run every tick from think()
-// between decide and steer: hold the emitter state everyone else reads,
-// take the DLZ-judged shot through the same fox3() a human trigger
-// reaches, and bend the flight path into the crank while an own round
-// wants datalink. There is no arbitrary range rule on the trigger
-// (settled 2026-08-13): release is judged by the ladder at any range, and
-// the only hard floor is Zone.Minimum, which is physics.
+// hunt is a bot's whole BVR offence, run every tick from think() between decide
+// and steer: hold the emitter state, take the DLZ-judged shot through fox3(),
+// and crank while an own round wants datalink. The only range floor is
+// Zone.Minimum.
 func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	b := a.brain
 	if i.defend(slot, a, tick) {
-		// Defence owns the flight path; the radar drops to search (or to
-		// silence with an empty rack) — a beaming defender cannot hold an
-		// STT anyway, and fly_radar lets an abandoned round coast on
-		// memory. Behaviour 3 outranks every offensive overlay, except the
-		// one counter-shot ruling 9 lets leave first.
+		// Defence owns the flight path; the radar drops to search (silence with an
+		// empty rack) - a beaming defender cannot hold an STT anyway.
 		i.counterfire(slot, a, tick)
 		if a.amraams > 0 && i.missiles {
 			a.emitter, a.lock = 1, -1
@@ -214,12 +166,9 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		return
 	}
 	if i.weapons != "open" {
-		// Out of context: a fox2 or guns match never radiates (today's
-		// exact behaviour, and the configuration every dogfight battery
-		// pins). The gate is the EQUIPMENT — the weapons class — not the
-		// rounds remaining: a Winchester bot keeps its radar, its picture,
-		// and its closing doctrine, or the pair goes blind at nineteen
-		// kilometres and the fight never ends (measured in the seam test).
+		// A fox2 or guns match never radiates. The gate is the EQUIPMENT, not the
+		// rounds remaining: a Winchester bot keeps its radar and its picture, or the
+		// pair goes blind and the fight never ends.
 		if a.emitter != 0 {
 			a.emitter, a.lock = 0, -1
 		}
@@ -234,24 +183,18 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	if prey == nil || !prey.alive || prey.model == nil || !hostile(a, prey) {
 		a.emitter, a.lock = 1, -1 // armed and wanting: search — this is what lets painted() bootstrap the first contact
 		if b.contacted > 0 && tick-b.contacted < 10800 {
-			// Investigate the last contact. A mutual defence drops both
-			// radars into each other's notch at once — both pictures go
-			// stale together — and the course a defence ends on points at
-			// the beam, not the fight: holding it, the pair opened from 19
-			// to 48 km and never re-committed (measured). Three minutes of
-			// memory turns shot-defend-recommit into the cycle it should be.
+			// Investigate the last contact: a mutual defence staleness both pictures at
+			// once, and the course a defence ends on points at the beam, not the fight.
+			// Three minutes of memory lets the pair re-commit.
 			to := b.contact.Subtract(a.model.State.Position)
 			if to.Length() > 1 {
 				b.aim = soar(to.Normalize(), a.model.State.Position.Y)
 				b.g = 2
 			}
 		} else if b.mode == "cruise" {
-			// Hold the lane. With nothing known at all, cruise walks every
-			// bot onto the same patrol track — measured in the BVR joust
-			// as a 105 km tail-chase that never closed inside radar reach.
-			// An armed searcher flies the course it is on (the joust
-			// spawns it pointed at the enemy; an open room's wrap brings
-			// contacts to the scan) instead of wandering.
+			// Hold the lane: with nothing known, cruise walks every bot onto the same
+			// patrol track and the joust becomes a tail-chase that never closes. An
+			// armed searcher flies the course it is on.
 			direction := a.model.State.Velocity
 			if direction.Length() > 1 {
 				b.aim = soar(direction.Normalize(), a.model.State.Position.Y)
@@ -299,23 +242,15 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	}
 	spaced := a.release > float64(d.look)/60 && (b.launched == 0 || tick-b.launched > 60)
 	if b.skill.library >= 3 && b.futile >= 2 && span > radar_seam {
-		// The LEARN half of the look: two rounds have already died against
-		// this target's defence, and the ladder cannot see why (its rungs
-		// measure arrival speed, not a 15 m fringe pass against a dragging
-		// tail-chase — the stern marginality the physics deliberately
-		// keeps). Hold what remains for the merge instead of feeding the
-		// same defence the rest of the rack: measured, the machine spent
-		// all four on a dragging novice, fringe-damaged it, and drew.
+		// The LEARN half of the look: two rounds have already died against this
+		// target's defence and the ladder cannot see why, so hold the rest of the
+		// rack for the merge instead of feeding the same defence.
 		spaced = false
 	}
 	if b.skill.library >= 2 {
-		// Shoot-LOOK-shoot: the disciplined tiers watch a round to its
-		// pitbull before committing the next — the look is the whole
-		// point of the spacing. Without it every tier rippled its rack in
-		// the opening exchange (measured: 48 of 48 spent in every battery
-		// pairing) and the fights were decided by whoever went Winchester
-		// more usefully. The novice keeps the ripple: that spray is the
-		// authentic incomplete toolkit.
+		// Shoot-LOOK-shoot: the disciplined tiers watch a round to its pitbull before
+		// committing the next, or every tier ripples its rack in the opening
+		// exchange. The novice keeps the ripple.
 		for _, m := range i.flying {
 			if m.radar != nil && m.shooter == slot && m.radar.Phase < round.Pitbull {
 				spaced = false
@@ -335,22 +270,13 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		}
 	}
 
-	// The crank: while an own round is in midcourse against a target still
-	// beyond the merge seam, offset the nose toward the gimbal edge —
-	// closure drops, the lock survives, and the round keeps its datalink.
-	// The same geometry serves behaviour 4, spike awareness: a disciplined
-	// bot approaching under a hostile STT flies the offset before any
-	// round is in the air, spoiling the shooter's radial while keeping its
-	// own scan on him. Inside the seam the tuned WVR arbiter owns the
-	// flight path and this override yields (a which-system-flies boundary,
-	// not a weapons rule: the trigger above remains live at any range).
+	// The crank: while an own round is in midcourse beyond the merge seam, offset
+	// the nose toward the gimbal edge - closure drops, the lock survives, the
+	// datalink holds. It serves spike awareness too. Inside the seam the WVR
+	// arbiter owns the flight path and this yields; the trigger stays live.
 	if span > radar_seam && b.skill.library >= 2 {
-		// The crank arrives with the pilot's syllabus — the novice keeps
-		// pressing straight after launch, which is both the authentic
-		// incomplete toolkit and what keeps its own geometry honest: a
-		// novice that (wrongly) cranked between its ripple shots crossed
-		// for minutes on end, and the disciplined opponent — correctly
-		// refusing the crossing shot — never fired at all (measured).
+		// The novice does not crank: it keeps pressing straight after launch, which
+		// keeps its own geometry honest as well as its toolkit incomplete.
 		overlay := false
 		for _, m := range i.flying {
 			if m.radar != nil && m.shooter == slot && m.target == target && m.radar.Phase < round.Active {
@@ -383,15 +309,9 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	}
 }
 
-// poise is the per-level defensive execution character: the four dials of
-// the skill model (settled 2026-08-13). The syllabus is knowledge-uniform
-// from the pilot up — beam, dispense, re-square — and execution separates
-// the levels: how late the notch entry comes (the reaction delay rides
-// skill.react), how far off square the beam sits, how often it is
-// re-squared as the line of sight rotates, and how often the whole defence
-// simply fails and reverts to a drag (the seeded lapse). The novice keeps
-// today's incomplete toolkit — drag, stare, panic-dispense — as the
-// baseline.
+// poise is the per-level defensive execution character. The syllabus is
+// knowledge-uniform from the pilot up - beam, dispense, re-square - and only
+// execution separates the levels. The novice never beams.
 type poise struct {
 	tolerance float64 // beam error bound, radians: sampled once per engagement
 	cadence   uint64  // ticks between re-squares; the beam drifts in between
@@ -427,14 +347,9 @@ func chance(seed uint64, slot int, number uint64, salt uint64) float64 {
 }
 
 // defend is behaviour 3: the reaction to an inbound radar round, from the
-// same moment a human's RWR calls MISSILE (the round past its Active call).
-// Returns true while the defence owns the flight path. The pilot-and-up
-// syllabus is beam-then-dispense — radial velocity into the seeker's
-// clutter notch, chaff blooming while inside it — degraded by the four
-// dials; a lapsed engagement, and every novice one, is the drag that loses
-// to the physics. The machine adds the emission trade: jammer armed while
-// the round is far (home-on-jam is survivable when the geometry can still
-// be spoiled), quiet at the terminal call.
+// moment a human's RWR calls MISSILE (the round past Active). Returns true
+// while the defence owns the flight path. Beam then dispense, degraded by the
+// poise dials; the machine also arms its jammer until the terminal call.
 func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b := a.brain
 	var threat *missile
@@ -506,18 +421,10 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b.g = 4.5
 	b.throttle, b.reheat = 1, 0
 	b.mode = "notch"
-	// The steady program, priced now that the magazine is real (#43): a
-	// bloom is worth dispensing only where the seeker can take it — outside
-	// its Resolve range (inside it the skin return owns the cell whatever
-	// the beam), and while the jet is actually in the notch — and never
-	// into the five cartridges each OTHER round already in the air will
-	// want: a lone round may have the whole twenty, the first of a ripple
-	// gets its share. Blooming every 1.4 s all the way to impact spent sixty
-	// of sixty in every BVR seed measured and left nothing for the rounds
-	// that followed; a flat five a round starved a lone defence instead. The
-	// 1.4 s cadence itself stays: re-seducing only as the seeker's Hold
-	// expires (2.5 s) was measured and rejected — the top rung went 0-6 on
-	// the half-second gaps with no fresh cloud offered.
+	// A bloom is worth dispensing only outside the seeker's Resolve range, while
+	// the jet is in the notch, and never into the five cartridges each other
+	// inbound round will want. The 1.4 s cadence is measured: waiting for the
+	// seeker's Hold to expire leaves half-second gaps with no fresh cloud.
 	radial := math.Abs(a.model.State.Velocity.Dot(line))
 	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
 		b.bloom = true

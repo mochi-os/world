@@ -19,9 +19,8 @@ import (
 
 // evade is a competent guns defence, scripted: corner-ish speed, a hard level
 // turn reversed every six seconds, breaking harder with a threat close behind,
-// easing out of the bank to recover the nose when low. It is the OPPOSITE of
-// the compliant drone: a target that manufactures crossing geometry and never
-// hands the attacker a stabilised tail shot.
+// easing the bank to recover the nose when low. It never offers a stable tail
+// shot.
 func evade(me, foe *flight.State, tick uint64) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	r := toward.Length()
@@ -73,13 +72,9 @@ func offer(me *flight.State) map[string]any {
 	}
 }
 
-// TestConvert is the overshoot referendum (#206): the recorded fight where a
-// player deliberately overshot the bandit and flew straight, offering their
-// six — and the bot made no attempt to take it. The attacker presses a real
-// chase long enough to drive the bot defensive, then gives up the fight and
-// flies straight ahead. Conversion is the whole job: the bot must arrive in
-// the attacker's rear quarter, use the gun, and finish. The gates are armed
-// from birth — the old mode ladder measured zero on both.
+// TestConvert is the overshoot referendum (#206): the attacker presses a chase
+// long enough to drive the bot defensive, then flies straight ahead offering
+// its six. The bot must arrive in the rear quarter, use the gun, and finish.
 func TestConvert(t *testing.T) {
 	heavy(t)
 	ladder := map[string]int{}
@@ -162,11 +157,9 @@ func TestConvert(t *testing.T) {
 			t.Errorf("%s holds the attacker's rear quarter for %.1f%% of a handed-over fight — the overshoot goes unpunished", level, pct)
 		}
 		ladder[level] = killed
-		// Kill counts at 12 deterministic seeds carry ±2 of pure reshuffle
-		// resolution (the #225 lesson: bands fitted to single rolls are bands
-		// fitted to noise), so the CONVERSION percentage above is the primary
-		// #206 gate, and the kills are gated on the ladder's shape plus an
-		// ace floor with real slack — the drone ladder's own convention.
+		// Kill counts at 12 deterministic seeds carry about 2 of reshuffle
+		// resolution, so the conversion percentage above is the primary gate and
+		// kills are gated on the ladder's shape plus a floor with slack.
 		floor := map[string]int{"ace": 4, "superhuman": 11}[level]
 		if killed < floor {
 			t.Errorf("%s killed the straight-and-level offerer in %d/12 seeds (floor %d) — the free kill goes untaken", level, killed, floor)
@@ -177,13 +170,11 @@ func TestConvert(t *testing.T) {
 	}
 }
 
-// TestOffence is the #206 instrument: per tier, against a DEFENDING target the
-// bot starts 600 m behind, it separates the two possible offensive deficits —
-// does a firing solution ever exist (geometry), and is it taken when it does
-// (discipline)? "Solution" is scored two ways: a human-standard shot (led miss
-// under 15 m inside 700 m — what the SHOOT cue calls valid) and the bot's own
-// gate (its tolerance at its trigger). Diagnostic: it prints, and its assert
-// is only that the harness itself worked.
+// TestOffence separates the two offensive deficits against a defending target
+// the bot starts 600 m behind: does a firing solution exist (geometry), and is
+// it taken (discipline)? Scored to the human standard (led miss under 15 m
+// inside 700 m) and to the bot's own gate. Diagnostic: it asserts only that it
+// ran.
 func TestOffence(t *testing.T) {
 	heavy(t)
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {

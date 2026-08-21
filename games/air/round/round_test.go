@@ -3,12 +3,10 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The acceptance gates: the model pinned to the public record (the Zaretto
-// AIM-120C-5 assessment's CFD scenarios), bands ±15% around its figures.
-// Kinematic gates run with the battery extended — battery is an employment
-// truth, not a physics one — and the loft gates fly the model's own
-// autopilot against the scenario's launch conditions and intercept point,
-// not the reference's hand-scripted profile.
+// The acceptance gates: the model pinned to the Zaretto AIM-120C-5 assessment's
+// CFD scenarios, bands +/-15%. Kinematic gates run with the battery extended,
+// and the loft gates fly the model's own autopilot, not the reference's
+// profile.
 
 package round
 
@@ -64,12 +62,9 @@ func TestBurnout(t *testing.T) {
 	}
 }
 
-// TestLevelRange: aerodynamic range (launch to decay through Mach 1), level
-// flight — ~65 km from 10 000 m, ~35 km from 5 000 m (the reference states
-// this figure in its scenario 1 notes), and ~22 km from 500 m: density
-// scaling pins the low-altitude ratio near 3× once the high gate holds,
-// which is exactly why the low-altitude LOFT (45 km) doubles the level
-// shot. The low shot goes subsonic within ~45 s.
+// TestLevelRange: aerodynamic range (launch to decay through Mach 1) in level
+// flight. The 5 km figure is the reference's scenario 1; density scaling pins
+// the low-altitude ratio near 3x once the high gate holds.
 func TestLevelRange(t *testing.T) {
 	high, _ := glide(launch(10000, 0.83, false))
 	if high < 55000 || high > 78000 {
@@ -383,19 +378,14 @@ func TestFrameRate(t *testing.T) {
 	}
 }
 
-// TestChaff (#29): the doppler gate is the whole doctrine. A beaming
-// defender's chaff takes the seeker every time; the same bloom from a hot
-// or cold defender is rejected outright; and a seduced seeker that reaches
-// its cloud reacquires a defender who stayed in the cone — chaff buys time
-// and geometry, not immunity.
+// TestChaff (#29): a beaming defender's chaff takes the seeker, a hot or cold
+// defender's is rejected, and a seduced seeker that reaches its cloud
+// reacquires.
 func TestChaff(t *testing.T) {
 	_, sound := atmosphere(6000)
 	launch := func(beaming bool) (*Model, Target) {
-		// Approach HOT to Pitbull — a beaming target cannot be freshly
-		// acquired (the capture gate) — then, for the beaming case, the
-		// defender breaks into the beam as the RWR calls MISSILE, which is
-		// the doctrinal timing. The established track holds through the
-		// notch; only the chaff can steal it.
+		// Approach HOT to Pitbull: a beaming target cannot be freshly acquired. The
+		// established track holds through the notch; only chaff steals it.
 		target := Target{Position: flight.Vec3{X: 14000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
 		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
 		for m.Time < 60 && m.Phase != Pitbull {
@@ -482,12 +472,9 @@ func TestChaffDefeat(t *testing.T) {
 				break
 			}
 			target.Position = target.Position.Add(target.Velocity.Scale(dt))
-			// The break into the beam at the terminal call, then the chaff —
-			// and the beam is FLOWN, not set once: each step the defender
-			// re-squares its velocity to the current line of sight, which is
-			// the real discipline (keep the threat on the wingtip). A
-			// fixed-heading "beam" drifts out of the notch as the geometry
-			// rotates, and the seeker takes the reacquisition it is owed.
+			// The beam is FLOWN, not set once: each step re-squares the defender's
+			// velocity to the current line of sight. A fixed heading drifts out of the
+			// notch as the geometry rotates and the seeker reacquires.
 			if m.Phase == Pitbull {
 				broke = true // the RWR terminal call: break into the beam NOW
 			}
@@ -524,11 +511,9 @@ func TestChaffDefeat(t *testing.T) {
 	}
 }
 
-// TestBeacon (#31): home-on-jam is the jammer's price. A radiating defender
-// flying the full beam-and-chaff defence still dies — the beacon overrides
-// the notch, the cloud, and the datalink — and it guides at ranges the
-// seeker could never reach. Going quiet mid-flight hands the round back to
-// its ordinary rules, so the toggle stays a live decision.
+// TestBeacon (#31): a radiating defender flying the full beam-and-chaff defence
+// still dies, and the beacon guides beyond seeker range. Going quiet mid-flight
+// hands the round back to its ordinary rules.
 func TestBeacon(t *testing.T) {
 	_, sound := atmosphere(6000)
 
@@ -577,12 +562,9 @@ func TestBeacon(t *testing.T) {
 	// beyond the seeker's activation, where an unsupported quiet shot would
 	// coast into nothing.
 	long := func(radiating bool, crossing bool) float64 {
-		// Each case isolates its claim with its own geometry — the seeker's
-		// 18 km basket and 60-degree cone are big enough that a crossing
-		// target eventually wanders into a quiet round's acquisition, so the
-		// control drags instead. The estimate is WRONG (3 km off, no drift)
-		// in both: only the beacon, which needs no track at all, can find
-		// the target.
+		// Each case needs its own geometry: the seeker's 18 km basket and 60-degree
+		// cone would eventually acquire a crossing target, so the control drags. The
+		// estimate is deliberately wrong in both; only the beacon can find it.
 		velocity := flight.Vec3{X: 0.85 * sound} // dragging: run straight away
 		start := flight.Vec3{X: 45000, Y: 8000}
 		if crossing {

@@ -82,15 +82,9 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 	}
 
 	// Bisect the outermost range satisfying a criterion. Goodness shrinks
-	// monotonically with range at the TOP — but not at the bottom: a
-	// shooter whose velocity is off the line of sight (a crank, a beam, a
-	// defensive turn at the moment of assessment) cannot make the turn-in
-	// at point-blank range while a mid-range shot arrives cleanly. The
-	// first version probed only the 2 km floor and declared the whole
-	// ladder empty for exactly that geometry — measured as a cranking bot
-	// whose every rung read zero against a hot target at 73 km, so it
-	// never fired at all. Walk the floor outward past the dead inner band
-	// before bisecting the outer edge.
+	// monotonically with range at the top but not at the bottom - a shooter whose
+	// velocity is off the line of sight cannot make the turn-in at point-blank -
+	// so walk the floor outward past the dead inner band before bisecting.
 	rung := func(good func(float64) bool) float64 {
 		low, high := 2000.0, 150000.0
 		for !good(low) {
@@ -135,13 +129,10 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 	return zone
 }
 
-// Lethal is the defender's credibility judgement on a round already in
-// flight: from its present state — position, energy, fuel, phase — would
-// it still arrive supersonic against a target flying on as now? The same
-// bar Zone.Max sets for a shot not yet taken, asked mid-flight. The model
-// is copied and flown virtually; the caller's round is untouched. A real
-// shot at its Active call passes; a husk gliding in from a max-range
-// spray fails, and answering one wastes the answer.
+// Lethal is the defender's credibility judgement on a round already in flight:
+// from its present state, would it still arrive supersonic against a target
+// flying on as now? The model is copied and flown virtually; the caller's round
+// is untouched.
 func Lethal(m Model, target Target, dt float64) bool {
 	virtual := target
 	closest, mach := math.MaxFloat64, -1.0

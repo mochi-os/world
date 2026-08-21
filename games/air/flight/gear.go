@@ -26,12 +26,9 @@ const (
 	soft_drag = 0.18 // extra rolling coefficient on unpaved ground
 	flat      = 0.12 // extra rolling coefficient of a blown tyre grinding on the rim (#78), scaled by the leg's damage
 	tolerable = 7.0
-	// Gear overspeed exposure per knot-second past the 250 KCAS placard. The
-	// limit is where damage becomes POSSIBLE, not instant: a few knots over for
-	// a while costs nothing you notice (~45 s at 275 kt to blow a tyre), while a
-	// gross 400 kt extension blows one in about eight seconds and folds a leg if
-	// held. An earlier ten-times-harsher rate made a gear-down MIL acceleration
-	// impossible, which is not what the placard means.
+	// Gear overspeed exposure per knot-second past the 250 KCAS placard: the limit
+	// is where damage becomes POSSIBLE, not instant - ~45 s at 275 kt to blow a
+	// tyre, ~8 s at 400 kt and a folded leg if held.
 	gearoverspeed = 0.00025 // m/s: sink the oleo absorbs without harm (the type's carrier-rated ~7.3 with margin shaved for gameplay)
 	overload      = 18.0    // damage per (m/s beyond tolerable)·s while a hard strike lasts (#78): ~9 m/s blows the tyre, ~12 folds the leg
 )
@@ -49,25 +46,17 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 		m.strut(s, &a.Gear.Right, in, down, false, s.Damage.Gear[2], total)
 	}
 	if s.Gear.Wow {
-		// Ground roll stability: planted on the wheels, the tires and gear
-		// resist roll — the contact patches can't scrub sideways freely. A
-		// restoring + damping roll moment that does NOT depend on airspeed, so
-		// the hard low-speed arrest (nose-down pitch unloads the mains and the
-		// flaperon leveler has no air to bite) can't bank away uncontrolled
-		// (#72: the trap banked up to ~15° at the stop, worse at low frame
-		// rates). Damping-dominant; scaled by extension so a gear-up belly has
-		// none.
+		// Ground roll stability: the contact patches cannot scrub sideways, so a
+		// restoring + damping roll moment that does NOT depend on airspeed - the
+		// low-speed arrest has no air for the flaperons. Scaled by extension.
 		up := s.Attitude.Rotate(Vec3{Y: 1})
 		right := s.Attitude.Rotate(Vec3{Z: 1})
 		bank := math.Atan2(right.Y, up.Y)
 		total.Moment = total.Moment.Add(Vec3{X: -(bank*6e5 + s.Omega.X*1.2e6) * down})
 		if s.Gear.Wire >= 0 {
-			// Pitch RATE damping DURING THE ARREST only (wire caught): the hard
-			// wire deceleration yanks the nose down (hook below CG) and the nose
-			// strut rebounds — the pitch oscillated (nose-down, then a nose-up
-			// topple) into a crash at low/variable frame rates (#72). Gated on
-			// the wire so it never resists the hook reaching the deck to catch,
-			// nor a takeoff rotation. Pitch = rotation about the lateral (Z) axis.
+			// Pitch RATE damping DURING THE ARREST only: the wire decelerates through a
+			// hook below the CG and the nose strut rebounds. Gated on the wire so it
+			// never resists hook contact or takeoff rotation.
 			total.Moment = total.Moment.Add(Vec3{Z: -s.Omega.Z * 1.5e6})
 		}
 	}
@@ -89,10 +78,8 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 }
 
 // strut is one landing-gear leg: a spring-damper normal force plus tyre
-// friction, all applied at the wheel's own contact point. harm is the leg's
-// damage (#78): the spring softens and the blown tyre drags, pulls, and
-// loses braking as it grows; past collapse the leg folds and carries
-// nothing (the belly skids inherit the corner).
+// friction at the wheel's own contact point. harm softens the spring and adds
+// blown-tyre drag and pull; past collapse the leg carries nothing.
 func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, harm float64, total *Forces) {
 	if harm > GearCollapse {
 		return
@@ -159,10 +146,8 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	m.apply(s, force, point, total)
 }
 
-// skid is one belly contact point: a stiff structure spring with skid
-// friction — survivable by design; the host judges the arrival.
 // carried reports whether the fuselage belly (the |Z|<3 points) is in ground
-// contact — the jet is riding its belly, so wingtip touches are grinding
+// contact - the jet is riding its belly, so wingtip touches are grinding
 // scrapes, not arrivals.
 func (m *Model) carried(s *State) bool {
 	if s.Velocity.Y < -6 {

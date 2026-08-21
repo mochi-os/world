@@ -13,13 +13,9 @@ import (
 	"world/games/air/flight"
 )
 
-// TestSaddleFinish: a SLOW ace parked in gun parameters behind a compliant
-// target must finish the kill, not leave to refuel its energy ledger. The
-// player handed the ace exactly this (2026-07-30): deliberately overshot, flew
-// straight, and watched it ride a press to 380 m — then starve into rebuild
-// and unload away, because the energy floor only yielded to a close MENACE and
-// a target that is not shooting back raises none. The fight is what the energy
-// was for.
+// TestSaddleFinish: a slow ace parked in gun parameters behind a compliant
+// target must finish the kill, not starve into rebuild and unload away. The
+// energy floor must yield to the shot, not only to a close menace.
 func TestSaddleFinish(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "saddle", Game: "air", Mode: "teams", Capacity: 16, Seed: 5,

@@ -4,11 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The host supplies world geometry as data at model creation — never as
-// callbacks — so the surface query lives inside the core and is identical
-// native and wasm, allocation-free, and correct under prediction replay.
-// Strut/tyre/catapult/wire force models land in phase F (gear.go,
-// carrier.go); this file owns the types and the surface query.
+// The host supplies world geometry as data at model creation - never as
+// callbacks - so the surface query lives inside the core: identical native and
+// wasm, allocation-free, correct under prediction replay.
 
 package flight
 

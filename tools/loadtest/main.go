@@ -1,15 +1,12 @@
 // Air world-server load harness (#81).
 //
-// Opens N real WebTransport clients against a single match, drives 60 Hz input
-// on each, and measures the server's health from the snapshot stream each
-// client receives: the tick-advance rate (must hold ~60/s in wall time — if the
-// server can't step + interest-manage + SEND to N clients inside the 16.7 ms
-// tick it falls behind and this drops) and the snapshot cadence/jitter. This
-// exercises the real receive+send I/O the pure-CPU BenchmarkStep100 can't.
+// Opens N real WebTransport clients against one match, drives 60 Hz input on
+// each, and measures the tick-advance rate (must hold ~60/s in wall time) and
+// snapshot cadence/jitter from the stream each client receives.
 //
 // Run (world1 must be up):
 //
-//	go run ./tools/loadtest -clients 100 -duration 20s
+// go run ./tools/loadtest -clients 100 -duration 20s
 package main
 
 import (

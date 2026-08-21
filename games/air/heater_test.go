@@ -35,11 +35,8 @@ func TestHeatZone(t *testing.T) {
 			t.Errorf("%s: the ladder is out of order: %+v", name, z)
 		}
 	}
-	// The zone is the SEEKER's: a stern shot reaches the full acquisition
-	// range, a beam shot half of it, a cold head-on nose only close aboard —
-	// exactly the ladder acquire() applies to a lock. The kinematics alone
-	// would carry the round to twelve kilometres at every aspect, which is
-	// why the cap exists.
+	// The zone is the SEEKER's, not the kinematics': the acquisition cap is what
+	// orders stern > beam > head-on, the same cap acquire() applies to a lock.
 	if !(tail.Max > beam.Max && beam.Max > head.Max) {
 		t.Errorf("Rmax should order stern > beam > head-on: %.0f / %.0f / %.0f m", tail.Max, beam.Max, head.Max)
 	}
@@ -58,20 +55,10 @@ func TestHeatZone(t *testing.T) {
 	t.Logf("head %+v", head)
 }
 
-// TestHeatRecordedShots replays the twelve launches of the 2026-08-18 joust
-// (recording 01a0175c) through the ladder — the shooter's and target's states
-// at the moment of launch, from the recording. Every one of them broke lock
-// and missed by 17-1,009 m, and the ladder was written expecting to explain
-// that as bad shots. It explained something else: at a fixed 1/60 s step the
-// round ARRIVES on all six of the pilot's beam shots (closest 1 m on the
-// first), and the live rounds broke because the client stepped them per
-// render frame against a target advancing in 1/60 s quanta — the seeker's
-// track-rate check read the quantisation as motion and tripped at exactly
-// the ranges the recording shows (fixed the same night, engine.ts
-// update_missiles). So the honest claims here are: the pilot's shots were
-// inside the zone (they were flyable), the bandit's two head-on shots at
-// t=280 — outside the seeker's cold-nose reach — read as tone only, and its
-// four rear-aspect shots at a level target read as no-escape.
+// TestHeatRecordedShots replays twelve recorded launches through the ladder:
+// the pilot's six beam shots read inside the zone, the two head-on shots
+// outside the seeker's cold-nose reach read as tone only, and four rear-aspect
+// shots read as no-escape.
 func TestHeatRecordedShots(t *testing.T) {
 	type shot struct {
 		name                      string

@@ -1,14 +1,12 @@
 // Mochi world: air resource bounds
 //
-// A session is created by an unauthenticated POST, and a jettison is a frame
-// any connected player may send. Both reached server-wide resources - CPU for
-// practice bots, and every player's reliable queue for the roster broadcast -
-// with no ceiling of their own.
+// Session creation is unauthenticated and jettison is a player-sent frame; both
+// reach server-wide resources and need ceilings of their own.
 //
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 package air
 
@@ -18,9 +16,8 @@ import (
 	"world/game"
 )
 
-// TestBotBudgetIsServerWide — 99 was a PER-SESSION clamp against a 100-session
-// cap, so the machine could be asked for thousands of server-flown aircraft
-// with nobody connected. The reservation is what makes it a server ceiling.
+// TestBotBudgetIsServerWide: the reservation makes the bot cap a server
+// ceiling, not a per-session clamp.
 func TestBotBudgetIsServerWide(t *testing.T) {
 	bots_live.Store(0)
 	defer bots_live.Store(0)
@@ -42,9 +39,8 @@ func TestBotBudgetIsServerWide(t *testing.T) {
 	}
 }
 
-// TestBotBudgetPartialGrant — a session asking for more than is left gets what
-// remains rather than nothing, so a busy server yields emptier practice matches
-// instead of refusing to create them.
+// TestBotBudgetPartialGrant: a busy server yields emptier practice matches
+// rather than refusing to create them.
 func TestBotBudgetPartialGrant(t *testing.T) {
 	bots_live.Store(0)
 	defer bots_live.Store(0)

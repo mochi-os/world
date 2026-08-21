@@ -5,13 +5,8 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // A layered wind field, every layer a pure function of (position, time,
-// environment): stateless (nothing to snapshot or rewind), position
-// correlated (every aircraft feels the same field), and identical native
-// and wasm. Layers: surface mean wind sheared by the open-sea power law,
-// Ekman veer with height, a winds-aloft strengthening, mesoscale variation
-// from very long wavelength components, Dryden-shaped turbulence from a
-// frozen field of sinusoids with low-altitude scaling, and the carrier
-// burble astern of the island.
+// environment): stateless, position correlated (every aircraft feels the same
+// field), and identical native and wasm.
 
 package flight
 
@@ -81,12 +76,9 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 		scale := clamp(h, 50, 533)  // Dryden scale length
 		low := clamp(h/300, 0.4, 1) // near-surface intensity knockdown
 		sigma := env.Turbulence*low + chop
-		// Energy per octave: Kolmogorov 2/3 rolloff below the scale length,
-		// flat above it — long wavelengths carry the energy (the felt bumps
-		// at 0.2-1.5 Hz), short ones only light fast texture. The original
-		// 1/(1+k) weights were INVERTED (most energy at the shortest band —
-		// a 3 Hz buzz at combat speed), unfelt until cloud chop became the
-		// field's first consumer.
+		// Energy per octave: Kolmogorov 2/3 rolloff below the scale length, flat
+		// above it - long wavelengths carry the felt bumps at 0.2-1.5 Hz. Inverting
+		// these weights puts most energy into a 3 Hz buzz.
 		total := 0.0
 		for k := uint64(0); k < gusts; k++ {
 			total += math.Min(math.Pow(2, (float64(k)-3)*2.0/3.0), 1)

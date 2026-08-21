@@ -4,10 +4,6 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The 2026-08-03 flight/FCS realism audit, as behaviours under test: pitch
-// trim, flap selection, the weight-scheduled g placard, the zero/negative-g
-// feed limit, the hook-skip bolter, and the buffet channel.
-
 package flight
 
 import (
@@ -222,11 +218,8 @@ func TestBuffet(t *testing.T) {
 	}
 }
 
-// TestRelease: the stick released from a hard pull checks the rotation the
-// way the real law does — fly the g back to level at surface bandwidth, hand
-// to the hold once it arrives. The nose coasts a few degrees (you cannot
-// stop a 20°/s rotation without negative g) and captures deadbeat; the old
-// hold-only handover coasted ~11° at 350 kt on passive damping alone.
+// TestRelease: the stick released from a hard pull flies the g back to level,
+// then hands to the hold. A few degrees of coast is physics, not a defect.
 func TestRelease(t *testing.T) {
 	coast := func(kt float64) (float64, int) {
 		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})

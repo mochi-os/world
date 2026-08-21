@@ -4,20 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Turbulence and vertical drafts from the cloud layer, keyed to the SAME
-// cells the client renders. The renderer's cell field is worley noise over
-// wind-rotated coordinates; its hash is an integer PCG3D shared verbatim
-// with the client's noise bake, so both hosts and the visuals agree on
-// where the cells are (bit-exact hash; the surrounding float arithmetic
-// diverges only at filtering-error level, far below anything a pilot can
-// feel). Cell placement carries no time term — the renderer drifts only
-// the fill texture, not the cells.
-//
-// Realism decision (#122): convective cloud (cumulus) is turbulent — each
-// cell IS the visible top of a thermal, so the air bumps inside the cell,
-// rises beneath it, and gently sinks in the gaps between cells. Stratiform
-// decks form in STABLE air and stay deliberately smooth: hiding in the
-// concealment layer is serene; its price is the white-out, not chop.
+// Turbulence and vertical drafts from the cloud layer, keyed to the same worley
+// cells the client renders (shared PCG3D hash - see hash below). Cell placement
+// carries no time term; the renderer drifts only the fill.
 
 package flight
 

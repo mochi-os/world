@@ -319,20 +319,15 @@ func TestVolleyDeflection(t *testing.T) {
 	}
 }
 
-// TestJinkDefeatsTheBullet: the defence the instant model could never offer —
-// a perfectly led volley from the beam, against a target that BREAKS the
-// moment the trigger releases, arrives where he would have been and finds him
-// gone. Same led volley against a non-jinking control hits. This is the whole
-// point of real time of flight.
+// TestJinkDefeatsTheBullet: a perfectly led volley from the beam arrives where
+// the target would have been and finds him gone when he breaks at the trigger.
+// The same volley hits a non-jinking control.
 func TestJinkDefeatsTheBullet(t *testing.T) {
 	shoot := func(jink bool) int {
 		body, m := target()
 		muzzle := m.State.Position.Add(flight.Vec3{Z: 600})
-		// The DRAG-AWARE time of flight (2026-08-08): the round decelerates,
-		// so a lead computed at the muzzle speed lands short and even the
-		// control volley misses — which is precisely what this test then
-		// reported, silently, from the day drag landed until someone ran the
-		// battle package rather than only the game package above it.
+		// Time of flight is DRAG-AWARE: a lead computed at muzzle speed lands short
+		// and even the control volley misses.
 		time := 600.0 / Average(600, m.State.Position.Y)
 		aim := m.State.Position.Add(m.State.Velocity.Scale(time)).Add(flight.Vec3{Y: 4.9 * time * time})
 		bore := aim.Subtract(muzzle).Normalize()
@@ -394,19 +389,9 @@ func TestVolleyImpactsLandOnTheAirframe(t *testing.T) {
 	t.Logf("%d hits reported %d impact points, all on structure", hits, len(impacts))
 }
 
-// TestFringeRate is the honest form of the fringe promise. A probabilistic
-// model cannot promise any particular seed, so this measures the SHARE of
-// fringe bursts (outside the certainty radius, inside the fragment
-// envelope) that end in a catastrophic kill, across many seeds and burst
-// geometries, and holds it in a band: rarely, but not never.
-//
-// The band is the design intent stated plainly. Too low and a near miss is
-// a formality — the graded middle swallows every shot and a kill never
-// reads. Too high and the certainty radius is a lie, because everything
-// inside the envelope dies anyway and the fringe promise (a wounded jet
-// that still flies) is gone with it. A loaded jet sits at the top of the
-// band and a Winchester one at the bottom: the rounds on its own rails are
-// part of what kills it.
+// TestFringeRate: a probabilistic model cannot promise a seed, so this measures
+// the SHARE of fringe bursts that end in a catastrophic kill and bands it. Too
+// low and a near miss never reads; too high and the certainty radius is a lie.
 func TestFringeRate(t *testing.T) {
 	blown, total := 0, 0
 	for seed := uint64(1); seed <= 240; seed++ {
@@ -446,11 +431,9 @@ func TestFringeRate(t *testing.T) {
 	}
 }
 
-// TestShedElements pins the element ranges the CLIENT hides wing panels by.
-// engine.ts cannot ask the airframe how its surfaces are ordered, so it
-// carries the shed halves as constants (elements 4-7 port, 20-23 starboard).
-// If the airframe's construction order ever changes, this fails here — with
-// the file to edit named — rather than silently hiding the wrong wing.
+// TestShedElements pins the element ranges engine.ts hides wing panels by (4-7
+// port, 20-23 starboard): the client carries them as constants, so a change to
+// the airframe's construction order must fail here.
 func TestShedElements(t *testing.T) {
 	base, ranges := 0, map[float64][2]int{}
 	for si := range fa18c.Airframe.Surfaces {
@@ -486,11 +469,8 @@ func TestShedElements(t *testing.T) {
 	}
 }
 
-// TestShellDepth: a 20 mm round is a high-explosive shell with a point-
-// detonating fuze, not a solid slug. The burst does not care how fast it
-// arrived — so severity must NOT be scaled by impact energy — but the momentum
-// left in it decides how far in it functions: a fast shell reaches a spar or a
-// fuel cell, a slow one bursts on the skin.
+// TestShellDepth: a 20 mm round is an HE shell, not a slug - severity must NOT
+// scale with impact energy, but the momentum left decides how far in it works.
 func TestShellDepth(t *testing.T) {
 	if got := Depth(Muzzle); got != through {
 		t.Errorf("a shell striking at muzzle speed reached %d parts, want %d", got, through)
@@ -524,10 +504,8 @@ func TestShellDepth(t *testing.T) {
 	}
 }
 
-// TestShellLife: the round's damage does not decay with speed, so its life is
-// a cost cap rather than a lethality one — and it used to cut a shell off while
-// it was still doing 650 m/s, inside ranges where the pipper was still offering
-// a solution.
+// TestShellLife: damage does not decay with speed, so Life is a cost cap, not a
+// lethality one - it must not cut a shell off inside gunnery ranges.
 func TestShellLife(t *testing.T) {
 	environment := flight.Environment{Seed: 1, Wrap: 250000}
 	_ = environment

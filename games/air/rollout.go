@@ -12,20 +12,10 @@ import (
 	"world/games/air/flight"
 )
 
-// The arbiter rehearses every candidate play through the flight model, which
-// costs about 20 microseconds per step and ~19,000 steps per re-plan — 380 ms
-// of CPU for one bot's decision, and a remotely triggerable way to wedge a
-// session (#256). This file holds the fidelity knob the fix is measured
-// against: the same rollout, advanced four different ways.
-//
-// The danger is specific and this codebase has already paid for it once. The
-// rehearsal ran at QUARTER TIME from the day duel.go was born — the phantom
-// opponent moved four times faster than the rehearsed jet — and the bots did
-// not look broken, they just quietly stopped discriminating between plays.
-// Any reduced fidelity is a controlled version of that same divergence, so it
-// is never shipped on plausibility: agreement with the full model is measured
-// (TestFidelity), because ranking plays is a far weaker requirement than
-// simulating them and the failure mode is silent.
+// The arbiter rehearses every candidate play through the flight model - about
+// 380 ms of CPU per bot decision at full fidelity (#256). This file holds the
+// fidelity knob: the same rollout, advanced four ways. Reduced fidelity ships
+// only on measured agreement (TestFidelity); its failure mode is silent.
 type fidelity int
 
 const (
@@ -35,26 +25,10 @@ const (
 	both                      // point-mass at 60 Hz
 )
 
-// rehearsal selects how rollouts advance. The live server flies `both` — the
-// point-mass surrogate at 60 Hz — since 2026-08-08 (#256), and the choice is
-// measured, not assumed:
-//
-//	full 240 Hz     481.3 ms per re-plan   the old live path
-//	surrogate 60 Hz   1.7 ms               ~243x cheaper
-//
-// Paired over 360 decision points it picks the same play 66% of the time, and
-// the disagreements are cheap: judged by the FULL model's own scores it gives
-// up 12% of the candidate spread on average, and only 7% of all decisions cost
-// more than a fifth of it. (Before the surrogate learned to roll and to store
-// a full attitude, those read 48% / 21% / 19%.) Ranking candidates is a far
-// weaker requirement than simulating them, which is why this works at all.
-// What matters is that the FIGHTS moved TOWARD the full model, not just the
-// metric: the superhuman guns edge the ladder used to show was surrogate
-// fiction (0-0 at full fidelity), and the honest rollout plays it even.
-//
-// `full` remains, and TestFidelity keeps measuring against it — a surrogate
-// that drifts from the jet it stands in for is the quarter-time bug wearing a
-// different hat.
+// rehearsal selects how rollouts advance. The live server flies both - the
+// point-mass surrogate at 60 Hz, ~243x cheaper than full 240 Hz, picking the
+// same play 66% of the time and giving up 12% of the candidate spread when it
+// differs. full remains, and TestFidelity keeps measuring against it.
 var rehearsal = both
 
 // substeps is how many surrogate/model steps one 60 Hz rollout tick takes.
@@ -76,26 +50,10 @@ func (f fidelity) span() float64 {
 func (f fidelity) reduced() bool { return f == surrogate || f == both }
 
 // glide is the point-mass surrogate: the jet as energy and a turn rate,
-// advanced straight from the play's ORDER rather than through the stick, the
-// FCS and the blade-element aero. It keeps what ranks plays — thrust against
-// drag, induced drag paid for every g, the aero g ceiling the wing can
-// actually deliver at this speed — and drops what merely renders them.
-//
-// Thrust comes from the real engine lapse (flight.Output) and the atmosphere
-// from the real table, so the surrogate cannot drift from the jet on the two
-// terms an energy fight is decided by.
-//
-// A NOSE-SETTLING mirror of the executor's pipper takeover was tried here
-// and rejected by measurement (2026-08-13, three forms: parked instantly,
-// parked with the tier's wander as the floor, and driven at a 0.4 s time
-// constant — all scoped to the gun band). Each closed some of the floater
-// conversion gap (stock kills 2/1/1 of twelve against the full model's
-// 5/4/3) but every form INVERTED the drone ladder (machine 9/12 under the
-// ace's 11): against a compliant target every rehearsed approach holds the
-// solution window, so a settling nose scores every play as converting and
-// the machine's argmax loses its gradient exactly where it discriminates.
-// The floater gap is real but it is not worth that trade; whatever closes
-// it must discriminate BETTER close-in, not saturate.
+// advanced from the play's ORDER rather than through the stick, FCS and
+// blade-element aero. It keeps what ranks plays - thrust against drag, induced
+// drag per g, the aero g ceiling - and takes thrust and atmosphere from the
+// real tables.
 func glide(m *flight.Model, o order, dt float64) {
 	s := &m.State
 	speed := s.Velocity.Length()
@@ -140,19 +98,10 @@ func glide(m *flight.Model, o order, dt float64) {
 		drag *= 1.35
 	}
 
-	// Turn: rotate the velocity toward the aim at the rate the available
-	// lateral g gives — in the plane the WINGS span this instant, not the
-	// ideal one. The lift direction is carried tick to tick through the
-	// attitude and slews at the FCS roll-rate law, so a rehearsed reversal
-	// costs the roll the live jet pays. The first surrogate rolled instantly
-	// at full g, which flattered every close-in escape: the rehearsed
-	// defender was always cleaner than the jet could fly, and the superhuman
-	// guns edge the ladder gated on turned out to be that fiction (0-0 at
-	// full fidelity). The limiter's rolling-pull reduction is deliberately
-	// NOT mirrored here: modelling it on the standing bank error was
-	// measured and rejected — it over-taxed reversal-heavy missile defence
-	// and inverted the superhuman-ace arm 0-6 where the full model plays it
-	// near even. The slew alone prices reorientation time.
+	// Turn: rotate the velocity toward the aim at the rate the available lateral g
+	// gives, in the plane the WINGS span this instant. The lift direction slews at
+	// the FCS roll-rate law, so a rehearsed reversal costs the roll the live jet
+	// pays. The limiter's rolling-pull reduction is deliberately not mirrored.
 	direction := s.Velocity.Scale(1 / speed)
 	skyward := flight.Vec3{Y: 1}.Subtract(direction.Scale(direction.Y))
 	lifting := s.Attitude.Rotate(flight.Vec3{Y: 1})
@@ -210,22 +159,10 @@ func glide(m *flight.Model, o order, dt float64) {
 	}
 	s.Velocity = direction.Scale(speed)
 	s.Position = s.Position.Add(s.Velocity.Scale(dt))
-	// The NOSE, not the flight path (#256): a jet carries alpha between the
-	// two, and the whole conversion machinery — the pipper takeover, the led
-	// solution the offensive term scores — lives in exactly that gap. The
-	// first surrogate pointed the nose down the velocity vector and the
-	// superhuman, whose margin is the thinnest on the ladder, lost forty
-	// seconds on the flounder gate for it. The attitude stores the FULL
-	// frame — Look() flattened it to a wings-level horizontal heading, which
-	// handed appraise() a pitchless nose in every vertical fight.
-	//
-	// The nose SETTLES ON THE AIM when the aim is within the alpha budget —
-	// the executor's pipper takeover does exactly that in the full rollout,
-	// and appraise() scores the nose, so a surrogate whose nose only ever
-	// tilts into the pull plane cannot tell a converting approach from a
-	// near miss: the full model killed the floater 5/4/3 of twelve while
-	// stock managed 2/1/1 on the SAME play distribution, because the
-	// fine-grained choices never saw the conversion coming.
+	// The NOSE, not the flight path (#256): the conversion machinery lives in the
+	// alpha gap between them and appraise() scores the nose. Store the full frame
+	// (Look() flattens it to a wings-level heading) and settle the nose on the aim
+	// when the aim is inside the alpha budget, as the pipper takeover does.
 	alpha := clamp(coefficient/5.9, 0, m.Airframe.Limit.Alpha)
 	nose := direction
 	if heave.Length() > 1e-6 && alpha > 1e-4 {

@@ -1,15 +1,11 @@
-// Mochi world: What the bot BELIEVES — the two instruments that measure the
-// inputs every other gate only sees the consequences of.
-//
-// TestYouModel (KEEP) scores the opponent models against the scripted humans.
-// TestFloaterWager (TEMPORARY, #215 item 8) samples the trigger wager's own
-// arithmetic through a floater fight to say which term keeps the gate shut;
-// delete it once the conversion work is finished and the flounder gates are
-// demanding rather than reporting.
+// Mochi world: what the bot BELIEVES - instruments for the inputs every other
+// gate sees only the consequences of. TestYouModel is permanent;
+// TestFloaterWager (#215 item 8) is temporary, delete it once the conversion
+// work is finished.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 package air
 
@@ -23,31 +19,20 @@ import (
 	"world/games/air/flight"
 )
 
-// TestYouModel measures the bot's opponent models against the two calibrated
-// human stand-ins: where each model says he will be, against where the script
-// actually went, at five horizons — with a dead-straight-line baseline, which
-// is the point. A model that cannot beat "he keeps doing what he is doing"
-// is not earning its place, and for two months evolve() did not: its circle
-// extrapolation was wrong by 192 m at one second where a straight line was
-// wrong by 7 m, so every rehearsed play was ranked against a phantom
-// hundreds of metres from the truth. Keep this instrument. The gap it found
-// was invisible to every behavioural gate — the fights simply looked bad for
-// reasons nobody could name.
+// TestYouModel scores the bot's opponent models against the scripted humans at
+// five horizons, with a dead-straight-line baseline: a model that cannot beat
+// "he keeps doing what he is doing" is not earning its place.
 func TestYouModel(t *testing.T) {
 	heavy(t)
 	for _, script := range []string{"flounder", "jinker"} {
-		// Both opponent models at four horizons: evolve() is what the
-		// rehearsal flies its phantom on, predict() is what the pipper aims
-		// the gun at. The gun's transit at 600 m is about six tenths, and
-		// the rollout judges four seconds out, so the error at those two
-		// horizons bounds what either can honestly claim.
+		// evolve() is what the rehearsal flies its phantom on, predict() is what the
+		// pipper aims the gun at. The gun's transit at 600 m is about six tenths and
+		// the rollout judges four seconds out.
 		horizons := []float64{0.25, 0.5, 1.0, 2.0, 4.0}
 		errors := map[string][]float64{}
-		// One queue PER (model, horizon): a single mixed queue drains in push
-		// order, so a short-horizon guess sitting behind a long one is scored
-		// against the wrong tick — which reads as error falling with horizon,
-		// a physical impossibility that is worth recognising as a harness bug
-		// rather than a finding.
+		// One queue PER (model, horizon): a single mixed queue drains in push order,
+		// scoring short-horizon guesses against the wrong tick - which reads as error
+		// falling with horizon.
 		type guess struct {
 			due       uint64
 			predicted flight.Vec3

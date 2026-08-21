@@ -14,12 +14,9 @@ import (
 	"world/game"
 )
 
-// TestHuntSilence is the WVR sentinel: in a fox2-pinned furball — the fit
-// and mode every dogfight battery flies — no bot carries an AMRAAM,
-// radiates, locks, or launches one. Bots arm to the match's weapons class,
-// so this is the configuration the batteries pin; if this test fails, the
-// byte-identity guarantee the BVR programme rests on has been broken and
-// every battery number is suspect.
+// TestHuntSilence is the WVR sentinel: in a fox2-pinned furball no bot carries
+// an AMRAAM, radiates, locks, or launches one. Every dogfight battery's numbers
+// rest on that configuration.
 func TestHuntSilence(t *testing.T) {
 	made, err := (&Air{}).Create(game.Session{Identifier: "huntsilence", Game: "air", Mode: "furball",
 		Capacity: 8, Seed: 3,
@@ -54,11 +51,9 @@ func TestHuntSilence(t *testing.T) {
 	}
 }
 
-// TestHuntBvrJoust flies the BVR joust bot-versus-bot — the pair may include
-// bots, at most two combatants — and asserts the whole chain: the radar
-// acquires far beyond the 12 km the canopy sees, the emission discipline
-// separates the tiers, a DLZ-judged shot leaves through the same fox3() a
-// human trigger reaches, and the round flies with datalink attached.
+// TestHuntBvrJoust flies the BVR joust bot-versus-bot and asserts the chain:
+// acquisition beyond canopy range, emission discipline per tier, a DLZ-judged
+// shot through fox3(), and the round flying with datalink attached.
 func TestHuntBvrJoust(t *testing.T) {
 	made, err := (&Air{}).Create(game.Session{Identifier: "huntjoust", Game: "air", Mode: "joust",
 		Seed: 5,
@@ -139,14 +134,10 @@ func TestHuntBvrJoust(t *testing.T) {
 	fmt.Printf("bvr joust: novice STT at %.1f s, first launch inside 150 s\n", float64(sttNovice)/60)
 }
 
-// TestHuntDefence flies a fixed superhuman attacker against a defender of
-// each level over six seeds and measures the defence with gradient, not a
-// coin flip: binary survival compresses (the novice's full-burner drag
-// authentically survives marginal stern shots by running), so the
-// instrument tracks time alive under fire, every inbound radar round's
-// closest approach, and how many of those rounds died with the defender
-// still flying. The jammer trade is asserted here too: only the machine
-// ever arms it, loud beyond the terminal call and quiet inside it.
+// TestHuntDefence flies a fixed superhuman attacker against a defender of each
+// level over six seeds and measures gradient, not survival: it tracks time
+// alive, each inbound round's closest approach, and rounds defeated. Jammer
+// trade too.
 func TestHuntDefence(t *testing.T) {
 	type outcome struct {
 		alive    float64 // s the defender lasted (full fight = the limit)
@@ -270,11 +261,9 @@ func TestHuntDefence(t *testing.T) {
 		fmt.Printf("bvr defence vs a superhuman attacker: %-10s alive %5.1f s mean, survived %d/6, rounds faced %2d, defeated %2d/%2d, closest approach %6.0f m mean\n",
 			level, o.alive/6, survived[level], o.faced, o.defeated, o.settled, mean)
 	}
-	// The gates hold the instrument's ends: the novice must not outlast the
-	// machine by more than one fight of noise, and the machine's defence
-	// must beat the novice's on round quality — the fraction of inbound
-	// rounds it defeats. The middle tiers are reported for the tuning round;
-	// their per-dial ordering belongs to the battery.
+	// The gates hold the instrument's ends only: the novice must not outlast the
+	// machine, and the machine must defeat a larger share of inbound rounds. The
+	// middle tiers are reported.
 	if score["novice"].alive > score["superhuman"].alive+limit {
 		t.Fatalf("defence ladder inverted end to end: novice alive %.0f s total, superhuman %.0f s", score["novice"].alive, score["superhuman"].alive)
 	}
@@ -292,17 +281,10 @@ func TestHuntDefence(t *testing.T) {
 	}
 }
 
-// TestHuntSeam is the merge-seam test the hand-off demands: a BVR fight
-// collapsing to WVR hands the flight path to the dogfight arbiter cleanly.
-// The crank overlay must never fire inside the seam, and the pair must
-// genuinely merge or resolve — a never-closing fight is the degenerate
-// play the battery gates against.
-//
-// Four seeds, not one (2026-08-18): the never-closing outcome is a real
-// 1-in-6 result of symmetric competent BVR — measured 2 of 12 seeds on
-// both the 6,000 lb and the full-internal load — so a single seed flips
-// on the fuel constant, the wind, anything. The gate asks the majority to
-// merge or resolve; the crank-inside-the-seam rule holds for every seed.
+// TestHuntSeam: a BVR fight collapsing to WVR hands the flight path to the
+// dogfight arbiter cleanly - the crank must never fire inside the seam, and the
+// majority of seeds must merge or resolve. Never-closing is a real 1-in-6
+// outcome of symmetric competent BVR, so one seed cannot gate it.
 func TestHuntSeam(t *testing.T) {
 	seeds := []uint64{11, 12, 13, 14}
 	closing := 0

@@ -238,12 +238,9 @@ var batteries = []battery{
 		return map[string]float64{"down_deaths": float64(deaths), "up_net": float64(i.score["red"] - deaths)}
 	}},
 	{"defense", func(seed uint64, doc tactics) map[string]float64 {
-		// Defensive entry: a lone pilot with two missile-armed aces
-		// already saddled 1.4 km behind. Survival time once saddled is the
-		// metric the drag, spiral, jink, evade, and flare numbers serve.
-		// Missiles ON deliberately: guns-only kills between maneuvering bots
-		// essentially never land (see merge/skirmish), so a guns-only window
-		// ceilings whoever the defender is.
+		// Defensive entry: a lone pilot with two missile-armed aces saddled 1.4 km
+		// behind; the metric is survival time. Missiles ON deliberately - guns-only
+		// kills between maneuvering bots essentially never land.
 		i := arena("defense", seed, doc, true,
 			map[string]any{"pilot": 1.0}, map[string]any{"ace": 2.0})
 		var lone *craft

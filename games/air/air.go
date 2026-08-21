@@ -1275,6 +1275,15 @@ func plume(c *craft) float64 {
 	return clamp(lit, 0, 1)
 }
 
+// glow is the launch doctrine's read of the target's plume (0..1): the
+// brightness the seeker and the flare model both key on.
+func (i *instance) glow(b *brain) float64 {
+	if b.target < 0 {
+		return 0
+	}
+	return plume(i.aircraft[b.target])
+}
+
 // zoned is the heater ladder's verdict on the shot the brain wants (#48):
 // Heat() flies the round from the rail — off the jet's VELOCITY, not its
 // nose — against the track's present turn and burner, with the seeker's
@@ -1290,10 +1299,7 @@ func (i *instance) zoned(a *craft, b *brain, distance float64) bool {
 		return false
 	}
 	me := &a.model.State
-	lit := 0.0
-	if t := i.aircraft[b.target]; t != nil {
-		lit = plume(t)
-	}
+	lit := i.glow(b)
 	zone := Heat(round.Target{Position: me.Position, Velocity: me.Velocity},
 		round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
 		b.prey.swing, lit, i.environment.Wrap)

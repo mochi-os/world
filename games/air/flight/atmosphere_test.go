@@ -50,9 +50,8 @@ func TestAtmosphereOffsets(t *testing.T) {
 	}
 }
 
-// TestShortest: the loop-free minimum-image must match the iterative
-// definition across the normal range, and the hostile tiny wrap that once
-// hung the session goroutine must return instantly.
+// TestShortest: the loop-free minimum-image matches the iterative definition
+// across the normal range, and a tiny wrap returns instantly, not hanging.
 func TestShortest(t *testing.T) {
 	iterative := func(a, b, size float64) float64 {
 		d := b - a

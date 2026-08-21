@@ -18,11 +18,8 @@ import (
 )
 
 // partialStream hands over a fixed prefix and then stops, like a peer that
-// starts a frame and never finishes it. Once a read deadline is set it reports
-// the timeout IMMEDIATELY rather than sleeping, so the test asserts that the
-// reader bounds a mid-frame read at all without waiting out frame_deadline.
-// With no deadline set it parks — which is exactly what the reader did on every
-// read before this change.
+// starts a frame and never finishes it. With a read deadline set it reports the
+// timeout immediately; with none it parks, which is what the test asserts on.
 type partialStream struct {
 	mu       sync.Mutex
 	prefix   []byte
@@ -79,9 +76,8 @@ func wireOn(s wireStream) *wire {
 }
 
 // TestPartialFrameIsDropped: a peer that begins a length header and stops must
-// be torn down, not held. QUIC's idle timeout watches connection packets rather
-// than stream progress, so a client that keeps acking the server's keepalives
-// used to park this reader indefinitely at no cost to itself.
+// be torn down. QUIC's idle timeout watches connection packets rather than
+// stream progress, so acking keepalives alone parks the reader indefinitely.
 func TestPartialFrameIsDropped(t *testing.T) {
 	stream := &partialStream{prefix: []byte{0x00}, done: make(chan struct{})}
 	l := wireOn(stream)

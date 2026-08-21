@@ -10,12 +10,9 @@
 // from its session's tick goroutine, so implementations need no locking.
 package game
 
-// Player identifies one participant. Identity is self-asserted in the open
-// model (a later verified tier adds proof without changing this shape);
-// Name is the display name shown to other players; Slot is assigned by the
-// instance at Join and is stable for the life of the session. Team is the
-// player's game-defined join choice (a side in a team mode), passed through
-// from the join message verbatim — games that have no sides ignore it.
+// Player identifies one participant. Identity is self-asserted; Slot is
+// assigned by the instance at Join and stable for the session; Team is the
+// game-defined join choice, passed through verbatim.
 type Player struct {
 	Identity string
 	Name     string
@@ -25,12 +22,8 @@ type Player struct {
 }
 
 // Session carries the parameters a session was created with. Parameters is
-// game-defined and opaque to the server (mode settings, map, rules) — and
-// READ-ONLY from Create onward, for the game as much as the server: the map
-// is shared between the instance and the server's records, and a write after
-// creation would race concurrent readers, which for a Go map is a fatal
-// runtime error, not a recoverable panic. A game wanting mutable per-match
-// state copies what it needs out of Parameters in Create.
+// game-defined and opaque to the server, and READ-ONLY from Create onward: it
+// is shared with the server's records, and a concurrent map write is fatal.
 type Session struct {
 	Identifier string
 	Game       string
@@ -82,14 +75,9 @@ type Instance interface {
 	Finished() (bool, map[string]any)
 }
 
-// Occupancy is the optional half of Instance for games that put non-player
-// entities in the SLOT SPACE — air's practice bots take slots from the top
-// down while joining players are assigned from the bottom up. Without it the
-// server hands out slots from its own player map, which knows nothing about
-// them, and Join overwrites unconditionally: every joiner past the first
-// silently deleted one of the creator's bots, and the departing player then
-// took the slot with it. Games that own their whole slot space need not
-// implement it.
+// Occupancy is the optional half of Instance for games that place non-player
+// entities in the slot space. Without it the server assigns slots from its own
+// player map, which cannot see them, and Join overwrites them.
 type Occupancy interface {
 	// Occupied reports whether a slot already holds something the game placed
 	// there itself. It is consulted only while choosing a slot for a join.
@@ -97,14 +85,8 @@ type Occupancy interface {
 }
 
 // Closer is the optional half of Instance for games holding a resource that
-// outlives a single tick and is shared across sessions. The server calls Close
-// exactly once, when the session ends, whatever ended it.
-//
-// Air needs it for the practice-bot budget: bots are server-flown aircraft, so
-// they are the one thing a session creator can ask for that costs CPU on this
-// machine without anybody connecting. Reserving against a server-wide ceiling
-// is only safe if the reservation is released, and Instance had no lifecycle
-// at all — Create with no counterpart.
+// outlives a tick and is shared across sessions (air's practice-bot budget).
+// The server calls Close exactly once, when the session ends.
 type Closer interface {
 	Close()
 }

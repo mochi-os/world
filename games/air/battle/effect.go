@@ -40,17 +40,9 @@ const (
 	wheel     = 0.45 // gear-leg damage per hit: one hit blows the tyre, two fold the leg (#78)
 )
 
-// strike applies one hit to a part. The three hash words identify the hit
-// uniquely (shooter/tick/round) so every conditional roll is deterministic.
-// A CATASTROPHIC path — the fuel-air explosion, the round cooking off on
-// the rail — is far likelier from a direct hit than from a fragment. A 20
-// mm HEI shell is a small explosive charge arriving intact; a warhead
-// splinter is spent metal against a casing built to survive it. But it is
-// not impossible, and a burst that finds a wing tank's vapour space or a
-// round on the rail is exactly how a jet comes apart at six to ten metres
-// — so a fragment rolls the same paths at `splinter` of the odds. Ten rays
-// compound, which is what keeps a fringe miss usually survivable and
-// occasionally spectacular.
+// strike applies one hit to a part. The three hash words (shooter/tick/round)
+// identify it uniquely, so every conditional roll is deterministic. A fragment
+// rolls the catastrophic paths at `splinter` of a direct hit's odds.
 func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, slot uint64, tick uint64, round uint64) []Event {
 	var events []Event
 	damage := body.Damage
@@ -95,15 +87,9 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 		}
 	case Turbine:
 		damage.Engine[part.Index] = math.Min(1, damage.Engine[part.Index]+turbine*severity)
-		// Any turbine hit can kindle, severity-scaled (2026-08-03): the old
-		// gate required stacking one engine past 0.35 damage before a fire
-		// could even roll, and under real time of flight a tracking fight's
-		// hits scatter across the airframe — the pilot emptied all 578 rounds
-		// into an ace without ever making it limp, because at most one fire
-		// took hold all fight. A 20 mm HEI into a RUNNING turbine liberates
-		// blades and lights the hot section on the first hit it reaches; with
-		// a fire now costing the engine permanently, this is the lever that
-		// turns sustained gunnery into attrition rather than a lottery.
+		// Any turbine hit can kindle, severity-scaled: a 20 mm HEI into a running
+		// turbine lights the hot section on the first hit. A damage threshold here
+		// made sustained gunnery a lottery rather than attrition.
 		if body.Condition.Fire[part.Index%2] <= 0 && chance(kindle, 5) {
 			body.Condition.Fire[part.Index%2] = 0.05
 			events = append(events, Event{Kind: "fire", Engine: part.Index, Surface: -1})
@@ -134,12 +120,9 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
 		}
 	case Ammunition:
-		// The gun's own belt, and the same logic as a store on the rail: a hit
-		// on high explosive can set it off, and a jet that has fired everything
-		// presents nothing to set off. Scaled by what is actually left, so a
-		// bandit who has emptied his drum is a less explosive target than one
-		// who has not fired a shot — the mirror of the stores behaviour, and a
-		// reason to press an opponent who is still full.
+		// The gun's belt, same logic as a store on the rail: a hit on high explosive
+		// can set it off, scaled by what is left - a jet that has shot dry presents
+		// nothing to set off.
 		if body.Belt <= 0 {
 			break
 		}

@@ -13,13 +13,9 @@ import (
 	"world/game"
 )
 
-// TestRosterSurvivesJoins is #257: a creator's practice bots must still be
-// there after the humans arrive. Bots fill the slot space downward from 99;
-// the server assigns joining players upward from 0 out of its own player map,
-// which cannot see them; and Join overwrote whatever was in the slot. Each
-// joiner past the first therefore deleted a bot, and the player leaving took
-// the slot with it. Nothing panicked — the path is nil-guarded — so the only
-// symptom was a roster that quietly evaporated.
+// TestRosterSurvivesJoins (#257): a creator's practice bots must still be there
+// after the humans arrive. Bots fill the slot space downward from 99 and the
+// server assigns players upward from 0 out of a map that cannot see them.
 func TestRosterSurvivesJoins(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "roster", Game: "air", Mode: "furball", Capacity: 8, Seed: 1,
@@ -65,11 +61,10 @@ func TestRosterSurvivesJoins(t *testing.T) {
 	}
 }
 
-// TestRosterSitsAboveThePlayers: the invariant that makes the collision
-// impossible rather than unlikely. A bot must never occupy a slot a joining
-// player can be given, whatever the capacity or the roster size — and the
-// familiar 99-downward numbering must survive for ordinary sessions, because
-// the whole test suite and the wire have read it that way for months.
+// TestRosterSitsAboveThePlayers: a bot must never occupy a slot a joining
+// player can be given, whatever the capacity or roster size, and the
+// 99-downward numbering must survive ordinary sessions - the wire reads it that
+// way.
 func TestRosterSitsAboveThePlayers(t *testing.T) {
 	for _, c := range []struct {
 		capacity int

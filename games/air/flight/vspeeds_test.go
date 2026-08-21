@@ -55,12 +55,9 @@ func vsJet(fuel, alt, speed float64, gear bool) *Model {
 	return m
 }
 
-// vsStall decelerates in level flight at idle until the jet can no longer
-// hold altitude — the operational stall under the carefree FCS (the alpha
-// limiter IS this jet's stall boundary). The entry is trimmed analytically
-// (attitude at the level-flight alpha) so no spawn transient trips the sink
-// detector; idle thrust then bleeds ~1-2 kt/s with the stick holding level.
-// Returns TAS at the sink onset.
+// vsStall decelerates in level flight at idle until the jet can no longer hold
+// altitude - the operational stall under the carefree FCS. The entry is trimmed
+// analytically so no spawn transient trips the sink detector. Returns TAS.
 func vsStall(fuel, alt float64, gear bool) float64 {
 	rho := air(alt, Environment{}).Density
 	probe := New(Fighter, Environment{}, World{}) // weigh the flown configuration instead of guessing empty+fuel: stores mass counts
@@ -175,14 +172,10 @@ func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64, reheat bool) (
 	return alpha, gamma
 }
 
-// vsClimbPoint measures the climb capability at one speed as the SPECIFIC
-// ENERGY rate (Ps) over a windowed MIL run. The entry is PRE-ESTABLISHED in
-// the statically-estimated steady climb (attitude and velocity vector both on
-// the climb angle): entering level, the jet spent the whole window pulling
-// into a 45-degree climb — sustained n>1 burning the excess in induced drag —
-// and read HALF the true low-speed Ps, smearing Vx into Vy. engines counts
-// the live engines: 2, or 1 for the single-engine rows. (A zero-engine glide
-// through this machinery porpoises — vsGlide measures that statically.)
+// vsClimbPoint measures climb capability at one speed as the specific energy
+// rate (Ps) over a windowed MIL run, entered in the statically-estimated steady
+// climb: entering level reads half the true low-speed Ps. engines: live
+// engines.
 func vsClimbPoint(fuel, alt, target float64, engines float64, reheat bool) float64 {
 	m := vsJet(fuel, alt, target, false)
 	alpha, gamma := vsClimbTrim(m, fuel, alt, target, engines, reheat)
@@ -279,15 +272,10 @@ func vsClimbSweep(fuel, alt, stall float64, engines float64, reheat bool) (vx, g
 	return g.v, math.Asin(clamp(g.rate/g.v, -1, 1)) * 180 / math.Pi, r.v, r.rate
 }
 
-// vsGlide finds best glide — the shallowest dead-stick descent — by STATIC
-// trim on the same m.forces route as vsVh: at each speed, an inner bisection
-// trims the stabilator (pitch moment), a middle one trims alpha (path-normal
-// balance), and a fixed-point iteration settles the slope where the
-// path-tangential force balances. FLYING the glide with a speed-governor
-// stick porpoised through the UA law's negative-g range (±4 g swings read
-// L/D 2.3 at every speed) — like the approach, an idle steady state has no
-// unique dynamic attractor for a simple governor to hold. Returns the best
-// speed and its glide angle (rad, negative).
+// vsGlide finds best glide - the shallowest dead-stick descent - by static trim
+// (stabilator, then alpha, then a fixed point on the slope); flown, it
+// porpoises through the UA law's negative-g range. Returns speed and angle
+// (rad, negative).
 func vsGlide(fuel, alt, stall float64) (float64, float64) {
 	m := vsJet(fuel, alt, 150, false)
 	m.State.Damage.Engine[0] = 1
@@ -364,13 +352,9 @@ func vsGlide(fuel, alt, stall float64) (float64, float64) {
 	return bestV, bestG
 }
 
-// vsVmc finds the minimum control speed by STATIC moment balance: the yaw
-// moment of full-afterburner single-engine thrust asymmetry against the yaw
-// authority of full rudder at that speed, bisected to the crossing. (A dynamic
-// trial is hopeless here: at light weight full AB is beyond 1:1 thrust-weight
-// and any speed-hold goes near-vertical within seconds.) Returns 0 when full
-// rudder overpowers the asymmetry all the way down to the stall — Vmc not
-// limiting, as expected with the F404s podded ±0.55 m off centreline.
+// vsVmc finds the minimum control speed by static moment balance: single-engine
+// thrust asymmetry against full rudder authority, bisected to the crossing.
+// Returns 0 when rudder wins down to the stall - Vmc not limiting.
 func vsVmc(fuel, alt, stall float64) float64 {
 	m := vsJet(fuel, alt, 100, false)
 	m.State.Damage.Engine[1] = 1 // propulsion reads damage from the MODEL state
@@ -406,17 +390,9 @@ func vsVmc(fuel, alt, stall float64) float64 {
 	return high
 }
 
-// vsApproach measures on-speed: the E-bracket speed, where the landing
-// configuration TRIMS at the airframe's on-speed alpha (8.1 deg) descending
-// the 3 degree glideslope. Static trim solve, the same m.forces route as
-// vsVmc: an inner bisection trims the stabilator to null the pitch moment,
-// an outer one finds the speed where the body-normal force balances weight.
-// A flown stick-free approach has NO unique settled speed to measure: the PA
-// law's neutral demand tracks the alpha LEVEL FLIGHT needs at whatever speed
-// the throttle gives it (fcs.go), so speed is set entirely by the throttle,
-// and a sink-tracking throttle governor leaves the phugoid undamped — the
-// averaging window sampled whatever phase it landed on (Vapp read 1.01 Vs0
-// at max gross from one such sample).
+// vsApproach measures on-speed: the speed at which the landing configuration
+// trims at the on-speed alpha down the 3 degree glideslope, by static trim. A
+// flown stick-free approach has no unique settled speed to measure.
 func vsApproach(fuel, alt float64) float64 {
 	gamma := 3 * math.Pi / 180
 	m := vsJet(fuel, alt, 75, true)
@@ -462,13 +438,8 @@ func vsApproach(fuel, alt float64) float64 {
 }
 
 // vsVh finds the maximum level speed at full afterburner: the static
-// thrust=drag crossing on the same m.forces route as vsApproach — inner
-// stabilator-trim bisection (pitch moment), middle alpha bisection (normal
-// balance), outer speed search on the longitudinal residual. A dynamic
-// acceleration run asymptotes to this crossing far too slowly to read to a
-// knot. The outer search scans DOWN from far beyond the envelope for the
-// highest thrust-sufficient speed before bisecting, so a transonic pinch in
-// the excess curve cannot strand the answer on a lower crossing.
+// thrust=drag crossing (stabilator, alpha, then speed). The outer search scans
+// down from beyond the envelope so a transonic pinch cannot strand it low.
 func vsVh(fuel, alt float64) float64 {
 	m := vsJet(fuel, alt, 200, false)
 	c := m.Airframe.Control
@@ -533,14 +504,9 @@ func vsVh(fuel, alt float64) float64 {
 	return (lo + hi) / 2
 }
 
-// vsSustained bisects the Ps=0 load factor at one speed (the envelope-map
-// method) and returns the sustained turn rate there (deg/s) with the turn
-// radius (m). Full afterburner. A trial only counts as sustained when the FCS
-// ACHIEVED the commanded g (window mean within 0.5): below the lift boundary
-// the jet mushes at the alpha limiter while full burner still grows specific
-// energy — the Ps test alone called that "sustaining 7.6 g at 90 m/s" and
-// raced the radius search to zero speed. Rate and radius are computed from
-// the achieved g, not the commanded one.
+// vsSustained bisects the Ps=0 load factor at one speed, returning sustained
+// turn rate (deg/s) and radius (m) at full afterburner. A trial counts only if
+// the FCS achieved the commanded g; below the lift boundary the jet mushes.
 func vsSustained(fuel, alt, speed float64) (float64, float64) {
 	alt = math.Max(alt, 457) // high-g trials DESCEND tens of metres while converging: from a 30 m "sea level" start they sank into sea-surface ground effect (and then under the waves — open water has no collision), where the slashed induced drag read as "sustains the limiter at 467 KTAS at max gross". The EM battery runs at 1500 ft for the same reason.
 	measure := func(n float64) (float64, float64) {
@@ -594,14 +560,9 @@ func vsSustained(fuel, alt, speed float64) (float64, float64) {
 	return lateral / speed * 180 / math.Pi, speed * speed / lateral
 }
 
-// vsCorner finds CORNER SPEED — the slowest speed at which a snap full-stick
-// pull delivers as much g as it delivers at any speed. This is the fly-by-wire
-// jet's answer to Va: with envelope protection the classical maneuvering
-// speed's structural meaning is moot (abrupt full deflection is safe at any
-// speed — the point of the carefree FCS). The 2.5 s snap window is kept from
-// the old law's plateau doctrine, but since the kinematic-feedforward fix the
-// law pegs the limiter within it (~7.5 by 2.5 s at speed), so the window now
-// simply reads the honest limiter; the plateau prints alongside the speed.
+// vsCorner finds corner speed: the slowest speed at which a snap full-stick
+// pull delivers as much g as at any speed. With envelope protection there is no
+// structural Va; the 2.5 s snap window reads the limiter, plateau printed too.
 func vsCorner(fuel, alt, stall float64) (float64, float64) {
 	snap := func(v float64) float64 {
 		m := vsJet(fuel, alt, v, false)
@@ -617,11 +578,9 @@ func vsCorner(fuel, alt, stall float64) (float64, float64) {
 		}
 		return peak
 	}
-	// The plateau is the MAX over three fast points, and the acceptance sits
-	// an ABSOLUTE 0.2 g below it. The old single-point plateau with a 3%
-	// relative threshold hunted on a flat curve — that is what a plateau is —
-	// so a hundredth of a g of model drift moved the accepted cell ~15 kt
-	// (7.4-vs-7.5 g between builds, the drift that triggered this re-base).
+	// The plateau is the max over three fast points and acceptance sits an
+	// absolute 0.2 g below it: a relative threshold hunts on a flat curve, so a
+	// hundredth of a g of drift moves the accepted cell ~15 kt.
 	plateau := snap(2.4 * stall)
 	for _, at := range []float64{2.0, 2.2} {
 		if p := snap(at * stall); p > plateau {

@@ -102,14 +102,12 @@ type session struct {
 
 	permanent bool // a standing match: exempt from the idle sweep, recreated at startup
 
-	// Offer ownership (#77). A player may hold ONE live offer at a time: an
-	// open match nobody has joined yet, kept alive by its owner's presence on
-	// the server page. owner is the pilot token the creator sent (stable
-	// across reconnects, unlike an address); offered is its last heartbeat —
-	// the page's own match-list poll — and withdrawn is set by the lobby
+	// Offer ownership (#77): a player holds ONE live offer, kept alive by its
+	// owner's match-list poll. owner is the pilot token (stable across
+	// reconnects); offered is its last heartbeat; withdrawn is set by the lobby
 	// goroutine for the tick loop to act on, since only the tick goroutine may
-	// close a session. joined latches once anyone actually connects: from then
-	// on it is a match like any other and the offer rules stop applying.
+	// close a session; joined latches once anyone connects and the offer rules
+	// stop applying.
 	owner     string
 	offered   time.Time
 	joined    bool
@@ -225,15 +223,10 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 }
 
 // sessions_rules copies the curated parameters subset the lobby advertises
-// (#17/#19): the rules a joiner cares about before entering — never the whole
-// map, which can carry creator-internal settings. The cheat set IS advertised:
-// a cheats match that looks standard in the list is the worst surprise on
-// offer. Copied ONCE, at creation, because spec.Parameters is the same map
-// object handed to the game instance: a listing that read it live would race
-// any game that ever wrote a parameter after Create, and a concurrent map
-// read-write is a FATAL runtime error no guard() can recover — the whole
-// process dies, every session with it. The copy is deep for the one nested
-// value (cheats), so not even that map is shared.
+// (#17/#19) - never the whole map, but the cheat set IS advertised. Copied once
+// at creation: spec.Parameters is the same map the game instance holds, and a
+// live read would race a parameter write into a fatal concurrent map access.
+// Deep for cheats.
 func sessions_rules(parameters map[string]any) map[string]any {
 	rules := map[string]any{}
 	for _, key := range []string{"missiles", "weapons", "start", "spaced", "tod", "clouds", "cheats"} {
@@ -290,14 +283,9 @@ func sessions_withdraw(owner string) int {
 }
 
 // sessions_touch refreshes the offer clock for this pilot's own offers: the
-// match-list poll IS the heartbeat, so a player browsing the server page keeps
-// their offer alive without a second request.
-//
-// A token holding no offer costs only the read lock. The poll is
-// unauthenticated and its token unvalidated, so taking the write lock on the
-// way in would let any caller contend with the tick goroutines, which need it
-// for every mirror update. The match list itself is deliberately not rate
-// limited: players cluster behind one address far more than attackers do.
+// match-list poll IS the heartbeat. A token holding no offer costs only the
+// read lock, so an unauthenticated poll cannot contend with the tick
+// goroutines.
 func sessions_touch(owner string) {
 	if owner == "" {
 		return
@@ -324,24 +312,12 @@ func sessions_touch(owner string) {
 	sessions_lock.Unlock()
 }
 
-// sessions_stale flags offers whose owner has stopped heartbeating. The
-// FLAGGING is global, cheap and time-based; the ACTING (closing) stays with
-// each session's own tick goroutine, which is the only goroutine allowed to
-// end a session. One sweep per second is plenty against a 25-second grace —
-// this used to run on EVERY session's EVERY tick (60 Hz for air), which took
-// the global write lock N*60 times a second and scanned all N sessions each
-// time: O(N^2) lock-hold growth on the hottest path in the process, for a
-// check whose answer changes once per grace period.
-// ORPHAN_GRACE is how long a session nobody ever joined survives when it has no
-// owner to heartbeat for it.
-//
-// Every condition in the owner sweep below is about an owner who has stopped
-// polling, so a creator who simply omits "pilot" satisfies none of them:
-// sessions_own returns early without an owner, offered stays zero, and the
-// session then lived until the tick's 300 s idle close. At a hundred slots and
-// ten creates per minute per address, two addresses kept the server permanently
-// full. Nothing legitimate needs this window: a real creator opens the page,
-// which heartbeats, and a real match sets joined the moment anyone connects.
+// sessions_stale flags offers whose owner has stopped heartbeating; the closing
+// stays with each session's tick goroutine, the only one allowed to end a
+// session. ORPHAN_GRACE bounds a session nobody ever joined and that has no
+// owner to heartbeat for it: a creator who omits "pilot" satisfies none of the
+// owner conditions and would otherwise hold its slot until the 300 s idle
+// close.
 const ORPHAN_GRACE = 30 * time.Second
 
 func sessions_stale() {
@@ -391,10 +367,8 @@ func sessions_get(identifier string) *session {
 }
 
 // sessions_list summarises sessions for the lobby, optionally filtered by game.
-// pilot is the CALLER's own token, matched here and never published: the token
-// is the capability /withdraw and the heartbeat accept, so a listing that
-// carried it would let any reader retire anybody's offer. The client only ever
-// needs to know which offer is its own, which is what mine answers.
+// pilot is the CALLER's own token, matched here and never published: it is the
+// capability for /withdraw, so a listing carrying it would leak that.
 func sessions_list(name string, pilot string) []map[string]any {
 	sessions_lock.RLock()
 	defer sessions_lock.RUnlock()

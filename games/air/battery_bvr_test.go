@@ -14,17 +14,10 @@ import (
 	"world/game"
 )
 
-// TestBvrLadder is the BVR tuning battery: full jousts at every pairing the
-// gates care about, judged on decisions — deliberately separate from the
-// dogfight suites, whose fox2-pinned numbers this battery must never
-// disturb. Gates, per the settled design: the ladder holds end to end
-// (superhuman over novice), equal pairings produce genuine fights (they
-// merge or resolve — never-closing is the degenerate play), and nobody
-// dumps a magazine. Honest physics bounds what may be demanded: stern
-// chases are marginal, head-on first exchanges are the high-Pk moment, and
-// a flown defence deterministically defeats shots outside burn-through —
-// so kill counts at these sample sizes are REPORTED, and the gates assert
-// order and health rather than precise tallies.
+// TestBvrLadder is the BVR tuning battery: full jousts at every gated pairing,
+// kept separate from the fox2-pinned dogfight suites. The gates assert order
+// and health - the ladder holds, fights close, nobody dumps a rack - never
+// tallies.
 func TestBvrLadder(t *testing.T) {
 	heavy(t)
 	type tally struct {
@@ -114,22 +107,9 @@ func TestBvrLadder(t *testing.T) {
 	if end.weak > end.strong {
 		t.Fatalf("the BVR ladder inverted end to end: novice beat superhuman %d-%d", end.weak, end.strong)
 	}
-	// The top rung, armed 2026-08-14 with counter-fire (ruling 9): the
-	// machine must not LOSE to the ace beyond one-seed noise. Before
-	// counter-fire this rung sat at 7-11 over twenty seeds — the machine
-	// died with a full rack whenever the ace's first credible shot forced
-	// it defensive early — and a 0-6 inversion passed this battery unseen
-	// because only the end pair was gated. The rung's measured state is
-	// level (7-7 at twenty seeds, 6 draws): symmetric competent BVR
-	// neutralizes, so ordering is not demanded, but losing it again is a
-	// regression this gate now catches.
-	// Slack widened to two (2026-08-20, aligning with the #46 ruling that
-	// six seeds cannot carry a strict gate): the rung read 2-4 here while
-	// the SAME tree's twenty-four seed TestBvrWide read 13-10 — a two-seed
-	// flip at this width is the seed luck the rung's own history records,
-	// and the wide instrument (gated at +-3 in every doctrine sweep) is the
-	// armed detector for a real inversion. This narrow gate keeps only the
-	// catastrophic claim: a sweep of the rung is never seed luck.
+	// The top rung: symmetric competent BVR neutralizes, so ordering is not
+	// demanded, only a sweep. Slack of two - six seeds cannot carry a strict gate
+	// (#46); TestBvrWide is the armed detector for a real inversion.
 	top := results["superhuman v ace"]
 	if top.weak > top.strong+2 {
 		t.Fatalf("the top rung inverted: ace beat superhuman %d-%d", top.weak, top.strong)
@@ -139,18 +119,9 @@ func TestBvrLadder(t *testing.T) {
 		if r.closest > 20000 {
 			t.Fatalf("%s v %s never closed inside 20 km: degenerate never-closing play (closest %.0f m)", pair[0], pair[1], r.closest)
 		}
-		// The novice's full ripple is the authentic incomplete toolkit, so
-		// raw spend only gates the pairings where both sides carry the
-		// discipline to hold rounds — discipline 0.7 and up, the same bar
-		// the missile patience uses. The pilot (0.6) is below it: on the
-		// full-internal jet (#46) its fights run four to seven minutes and
-		// it fires its rack at its own three-second look cadence (measured
-		// 2026-08-19: first round at 90-95 s, the last three inside 7 s
-		// at the endgame, six of six fights resolved), which read as 48 of
-		// 48 against a gate calibrated on 6,000 lb fights that ended before
-		// the racks did. That is not the dump this gate exists for — the
-		// counter-fire ping-pong of 2026-08-14, which the disciplined
-		// pairings still measure at 41-42.
+		// Raw spend only gates pairings where both sides have the discipline to hold
+		// rounds (0.7 and up). The novice's full ripple is its authentic toolkit, and
+		// the pilot's long fights legitimately empty the rack.
 		if pair[1] != "novice" && pair[1] != "pilot" && r.spent > 44 {
 			t.Fatalf("%s v %s dumped magazines: %d of 48 AMRAAMs spent", pair[0], pair[1], r.spent)
 		}

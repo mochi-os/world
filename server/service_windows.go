@@ -1,16 +1,12 @@
 // Mochi world: Windows Service Control Manager integration.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 //
-// When mochi-world is started by the SCM, IsWindowsService returns true and
-// we hand control to svc.Run, which calls Execute below. Execute starts
-// main_serve in a goroutine and translates SCM Stop/Shutdown commands into a
-// push on the stopping channel — the same path an OS signal takes on Unix.
-//
-// In interactive (developer console) mode IsWindowsService returns false and
-// main() falls through to the normal main_serve path — same as Unix.
+// Under the SCM, svc.Run calls Execute, which starts main_serve and translates
+// Stop/Shutdown into a push on the stopping channel - the path an OS signal
+// takes on Unix. Interactive mode falls through to main_serve directly.
 
 //go:build windows
 

@@ -1,12 +1,11 @@
-// Mochi world: Windows listing transport — dials the co-located Mochi
-// server's world pipe. The pipe's security descriptor is the credential; on
-// Windows it currently admits LocalSystem and Administrators only (see the
-// Mochi server's world_windows.go), so a listed Windows world server runs
-// under one of those until the MSI grows a dedicated service account.
+// Mochi world: Windows listing transport - dials the co-located Mochi server's
+// world pipe. The pipe's security descriptor is the credential and admits
+// LocalSystem and Administrators only, so a listed server must run under one of
+// those.
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 //go:build windows
 

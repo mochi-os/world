@@ -15,13 +15,8 @@ import (
 )
 
 // TestDeterminism (#225): two instances built from the same session must play
-// out the same fight, tick for tick. They did not: TestBotSectionEqual gave a
-// fail then a pass on consecutive runs of the same binary at the same seeds,
-// which means every band in the doctrine battery was fitted against noise the
-// size of its own effect. The leak was Go's randomised map order in the
-// b.known decision loops — a min-pick with a strict < breaks ties by whichever
-// contact the range happened to visit first, and the symmetric spawn ring
-// makes exact ties genuinely common.
+// out the same fight, tick for tick. The leak class is Go's randomised map
+// order in the b.known loops, where a strict-< min-pick breaks ties by visit.
 func TestDeterminism(t *testing.T) {
 	heavy(t)
 	sessions := []game.Session{}

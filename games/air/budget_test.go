@@ -15,16 +15,9 @@ import (
 	"world/game"
 )
 
-// TestBudget is the gate on #256: the arbiter must not be able to stall the
-// session goroutine, because that goroutine also drains input, sends snapshots
-// and runs the liveness sweep — a multi-second tick means the sweep evicts
-// everyone in the session as 15-seconds-silent. It is reachable from one
-// unauthenticated POST /sessions with a bot roster and no players at all.
-//
-// Measured 2026-08-08, furball with 16 aces: mean 76.9 ms and a 6976 ms worst
-// tick before the surrogate rollout and the per-tick allowance; the numbers
-// below after. Teams (1.4 ms) was always fine, which is what proved it was the
-// arbiter rather than the population.
+// TestBudget is the gate on #256: a slow arbiter tick stalls the session
+// goroutine, which also drains input and runs the liveness sweep, so the sweep
+// evicts everyone as silent. Reachable from one unauthenticated POST /sessions.
 func TestBudget(t *testing.T) {
 	heavy(t)
 	for _, roster := range []float64{16, 99} {

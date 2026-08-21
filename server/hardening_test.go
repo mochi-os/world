@@ -1,14 +1,13 @@
 // Mochi world: unauthenticated denial-of-service bounds
 //
-// Everything this server exposes is unauthenticated by design, so each public
-// path needs its own bound. These pin the ones that had none: a connection that
-// never speaks, a frame that decodes to unbounded elements, and one address
-// holding every slot.
+// Everything this server exposes is unauthenticated, so each public path needs
+// its own bound: a connection that never speaks, a frame that decodes to
+// unbounded elements, and one address holding every slot.
 //
 // Copyright © 2026 Mochisoft OÜ
 // SPDX-License-Identifier: AGPL-3.0-only
-// This file is part of Mochi, licensed under the GNU AGPL v3 with the
-// Mochi Application Interface Exception - see license.txt and license-exception.md.
+// This file is part of Mochi, licensed under the GNU AGPL v3 with the Mochi
+// Application Interface Exception - see license.txt and license-exception.md.
 
 package main
 

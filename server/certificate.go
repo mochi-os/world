@@ -6,31 +6,17 @@
 
 // QUIC mandates TLS even on localhost. Three modes, in order of precedence:
 //
-//  1. [tls] certificate/key — operator-provided files serve both the lobby and
-//     the transport, and clients validate normally. The pair is reloaded
-//     whenever the certificate file's modification time changes, so an
-//     external renewal (an ACME client rotating the file in place) applies
-//     without a restart.
-//  2. [acme] hosts — built-in Let's Encrypt: certificates are obtained and
-//     renewed automatically for the listed hostnames, cached under
-//     [acme] cache. Validation uses HTTP-01, so port 80 must be reachable.
-//  3. Neither — an ephemeral self-signed ECDSA P-256 certificate is
-//     generated: 12 days validity (the WebTransport serverCertificateHashes
-//     rules cap acceptable certificates at 14), rotated at day 10, its
-//     SHA-256 advertised through the lobby so clients can pin it.
+//  1. [tls] certificate/key - operator files, reloaded when the certificate's
+// modification time changes, so an external renewal needs no restart.
+//  2. [acme] hosts - built-in Let's Encrypt, cached under [acme] cache;
+// HTTP-01 validation, so port 80 must be reachable.
+//  3. Neither - an ephemeral self-signed certificate, 12 days validity (the
+// WebTransport serverCertificateHashes cap is 14), rotated at day 10, its
+// SHA-256 advertised through the lobby for clients to pin.
 //
-// Mode 3 is ENCRYPTED BUT UNAUTHENTICATED, by design and unavoidably: the pin
-// is advertised over the plaintext-HTTP lobby (the lobby must be plaintext —
-// a browser cannot fetch() a self-signed HTTPS endpoint, which is the whole
-// reason WebTransport's serverCertificateHashes exists), and a server with no
-// DNS name or CA certificate cannot be authenticated by a browser at all. On
-// an untrusted network an on-path attacker could rewrite the advertised
-// address+hash and be pinned. This is acceptable for the mode's purpose (LAN /
-// no-DNS / dev): the world threat model already treats servers as untrusted,
-// and a browser served over HTTPS reaches only modes 1-2 anyway — it blocks
-// the plaintext lobby as mixed content — so any public deployment authenticates.
-// Not a code fix: operators exposing a server on an untrusted network use [tls]
-// or [acme] (world.conf documents this).
+// Mode 3 is encrypted but unauthenticated: the pin rides the plaintext lobby,
+// so an on-path attacker can substitute both. It is for LAN / no-DNS / dev;
+// public deployments use [tls] or [acme].
 
 package main
 
@@ -120,12 +106,8 @@ func certificate_start() error {
 }
 
 // certificate_responder builds the HTTP-01 validation listener. It carries the
-// same deadlines as the lobby: both are public, and this one answers strangers
-// on port 80 with no rate limiter in front of it at all.
-//
-// Split out from certificate_start so its configuration can be asserted. The
-// server is otherwise constructed inside a goroutine and bound to a privileged
-// port, which leaves nothing for a test to reach.
+// lobby's deadlines: it answers strangers on port 80 with no rate limiter in
+// front of it. Split out from certificate_start so a test can assert them.
 func certificate_responder(handler http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              ":80",

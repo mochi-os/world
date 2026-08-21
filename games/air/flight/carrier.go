@@ -24,10 +24,8 @@ const (
 	absorb   = 8000.0 // N·s/m of payout rate (at the reference weight setting)
 	greatest = 4.2e5  // cable tension ceiling, N (at the reference weight setting): sized so a mid-weight engagement nets ~300 kN ≈ 2.4 g and ~100 m of runout, the Mk 7 class — at 6e5 the wire pulled 4.7 g and crushed the nose gear to a fuselage strike; at 3e5 the setting-scaled pull fell to 220 kN and the runout ran 156 m off the angle deck (#72 scenario 9)
 	// The energy the constants above were tuned at: the setting formula below
-	// evaluated at TestTrap's condition (fa18c, full internal fuel 15,600 kg,
-	// sea-level deck: expected engagement 1.16×stall ≈ 76.5 m/s). Defined
-	// through the SAME formula so that exact condition computes setting = 1.0
-	// and behaves identically to the pre-setting gear.
+	// evaluated at TestTrap's condition. Defined through the SAME formula so that
+	// condition computes setting = 1.0.
 	reference = 9.13e7 // kg·(m/s)² — 2× the tuned engagement energy
 )
 
@@ -55,26 +53,16 @@ func (m *Model) holdback(s *State, total *Forces) {
 	velocity := s.Velocity.Subtract(c.direction().Scale(c.Speed))
 	heading := c.Heading + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
-	// The launch bar rides in the track SLOT: laterally the nose is captured
-	// stiffly (the slot is mechanical), while the ALONG-track gather is
-	// distance-scheduled — gentle at the capture radius (the full 240 kN
-	// damper at the nose point once pitched a 3-4 m/s arrival onto its tail
-	// probe), firming to the full holdback at the spot. Alignment emerges by
-	// ROLLING into the slot line, as on the real deck: an in-place yaw torque
-	// cannot turn a parked jet against main-tire grip (offset arrivals used
-	// to settle ~11° cocked and launch crooked).
+	// The launch bar rides in the track SLOT: laterally stiff (the slot is
+	// mechanical), the along-track gather distance-scheduled. Alignment emerges by
+	// ROLLING into the line - yaw torque cannot turn a parked jet.
 	along := track.Scale(pull.X*track.X + pull.Z*track.Z)
 	cross := Vec3{X: pull.X - along.X, Z: pull.Z - along.Z}
 	vAlong := velocity.X*track.X + velocity.Z*track.Z
 	vCross := Vec3{X: velocity.X - track.X*vAlong, Z: velocity.Z - track.Z*vAlong}
-	// Caps apply to the SPRINGS only — when spring and damping shared a cap,
-	// saturation left no damping at all and the capture wobbled. Damping is
-	// speed-scheduled instead: gentle at arrival speed (a hard decel at the
-	// nose point is the tail-slam), stiffening near rest to kill oscillation.
-	// The lateral slot engages softly at the capture radius and firms as the
-	// jet closes: a full-stiffness step at attach is an impulse into the
-	// struts (applied at the nose point BELOW the CG, every lateral force
-	// also rolls and pitches the jet — the capture "bounce and roll").
+	// Caps apply to the SPRINGS only - a shared cap saturates and leaves no
+	// damping at all. Damping is speed-scheduled instead, and the lateral slot
+	// engages softly at the capture radius to avoid an impulse at attach.
 	slotCap := 8e4 * clamp(1-along.Length()/5, 0.25, 1)
 	spring := cross.Scale(4e5)
 	if spring.Length() > slotCap {
@@ -89,33 +77,18 @@ func (m *Model) holdback(s *State, total *Forces) {
 	damp := vAlong * 1.7e5 * clamp(1-math.Abs(vAlong)/5, 0.15, 1)
 	damp = clamp(damp, -1.0e5, 1.0e5) // bounded: mid-speed braking must never approach the tail-slam regime, and near rest it is far below the bound anyway; without a bound the far-field creep equilibrium (spring vs damping) crawled the last metres for tens of seconds
 	gather := gspring.Subtract(track.Scale(damp))
-	// Applied at CG HEIGHT over the nose point: the physical bar pulls at deck
-	// level, but every horizontal force 2.6 m below the CG also pitches and
-	// rolls the jet on its struts — the endless "bounce and roll on capture".
-	// The XZ lever (nose ahead of the CG) still provides the yaw geometry.
-	// The lateral slot applies at CG HEIGHT (a deck-level side force rolls the
-	// jet on its struts — the capture "rock"). The along-track gather blends
-	// by ENGINE POWER: docking happens at idle, where deck-level braking at
-	// the nose pitched the jet over its nose gear (a -37°/s slam on arrival);
-	// the run-up happens at full power, where the deck-level pitch coupling
-	// is part of the tuned flyaway behaviour (raising it sank the shot).
+	// Applied at CG HEIGHT over the nose point: a horizontal force at deck level
+	// also pitches and rolls the jet on its struts. The along-track gather blends
+	// by engine power - deck-level braking at idle noses over.
 	m.apply(s, slot, Vec3{X: point.X, Y: s.Position.Y, Z: point.Z}, total)
 	power := clamp((s.Engine[0].Spool-0.2)/0.5, 0, 1)
 	m.apply(s, gather, Vec3{X: point.X, Y: s.Position.Y + (point.Y-s.Position.Y)*power, Z: point.Z}, total)
 	forward := s.Attitude.Rotate(Vec3{X: 1})
 	swing := forward.X*track.Z - forward.Z*track.X // + when nose is left of track
 	if s.Gear.Stroke <= -3 {
-		// TENSION: a strong yaw trim squares the jet before the shot — the
-		// castering nosewheel and the mains' short lever arm let a parked jet
-		// yaw under torque. (A bar-tension force couple was tried first: its
-		// moment is ~-7.8e5·sin(swing) against the trim's +8e5·swing — a
-		// near-exact cancellation that stalled small crabs and SPUN large
-		// ones.) Fires as soon as the jet is straight, so an aligned jet
-		// launches the same step it asked to.
-		// Soft-start over ~1.2 s using the tension clock (elapsed = -3 - Stroke):
-		// stepping the full torque onto an 11° crab snapped the jet hard enough
-		// to roll a wingtip probe into the deck. Heavily overdamped; the 4 s
-		// timeout covers slow convergence.
+		// TENSION: a yaw trim squares the jet before the shot, soft-started over ~1.2
+		// s off the tension clock (elapsed = -3 - Stroke). Heavily overdamped; the 4
+		// s timeout covers slow convergence.
 		ramp := clamp((-3-s.Gear.Stroke)/1.2, 0.1, 1)
 		total.Moment = total.Moment.Add(Vec3{Y: -swing * 1.6e6 * ramp}.Subtract(Vec3{Y: s.Omega.Y * 2.2e6})) // NEGATIVE: +Y yaw is nose LEFT and swing is + when the nose is left of track, so correction is -swing (the + form fed the crab — proven by telemetry: swing GREW under tension; the sign was masked for months by pre-aligned spawns). Strong enough to overwhelm tire grip by design
 		// The FIRE decision lives in events (the once-per-step state pass) —
@@ -150,12 +123,9 @@ func (m *Model) stroke(s *State, total *Forces) {
 	shuttleLine := c.world(cat.Position, s.Time)
 	off := Vec3{X: Shortest(point.X, shuttleLine.X, m.Environment.Wrap), Z: Shortest(point.Z, shuttleLine.Z, m.Environment.Wrap)}
 	cross := off.Subtract(track.Scale(off.X*track.X + off.Z*track.Z))
-	// Pure spring on the cross-track offset with the slot's physical clearance
-	// as a deadband: an aligned run never touches the walls (zero force, the
-	// golden trace is untouched), while a crabbed start has its nose held on
-	// the line and the body trails straight within the first metres. No
-	// velocity term — it reacted to the nose's pitch-sweep and put yaw into
-	// clean shots; tire cornering damps the lateral mode on its own.
+	// Pure spring on the cross-track offset with the slot clearance as a deadband,
+	// so an aligned run takes zero force. No velocity term: it reacted to the
+	// nose's pitch-sweep and put yaw into clean shots.
 	span := cross.Length()
 	if span > 0.15 {
 		slot := cross.Scale((span - 0.15) / span * 1.2e5)
@@ -164,11 +134,8 @@ func (m *Model) stroke(s *State, total *Forces) {
 		}
 		m.apply(s, slot, Vec3{X: point.X, Y: s.Position.Y, Z: point.Z}, total) // CG height: a deck-level lateral shove at 90 m/s rolls the jet (see holdback)
 	}
-	// The shot is set for the aircraft's weight, as the real catapult crew
-	// does: ~1.16× the powered-approach stall speed, capped by the cat's
-	// mechanical limit. A light jet no longer rockets off mid-stroke at the
-	// full 88 m/s; a heavy one settles toward the deck edge before flying
-	// away — the sink real launches show.
+	// The shot is set for the aircraft's weight, as the real crew does: ~1.16× the
+	// powered-approach stall speed, capped by the cat's limit.
 	stall := math.Sqrt(2 * m.mass * gravity / (air(m.State.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
 	// The crew sets the shot for AIRSPEED off the bow, and wind over the deck
 	// is part of the budget (#44): a 25 kt headwind means the stroke itself
@@ -203,12 +170,9 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 	// Payout rate from the hook-tip velocity resolved along both legs.
 	velocity := s.Velocity.Subtract(c.direction().Scale(c.Speed))
 	rate := -velocity.Dot(legA.Normalize()) - velocity.Dot(legB.Normalize())
-	// Weight setting, dialled per engagement as the real gear crew does (and as
-	// the catapult already sets its shot): the retard scales with the energy a
-	// correctly-flown engagement carries at THIS gross mass — on-speed approach
-	// (1.16× stall at this weight) less the deck's own way. Constant runout and
-	// constant felt G across fuel states; an over-speed engagement still carries
-	// excess energy and still pulls longer and harder, as it should.
+	// Weight setting, dialled per engagement: the retard scales with the energy a
+	// correctly-flown engagement carries at THIS gross mass, so runout and felt g
+	// stay constant across fuel states.
 	stall := math.Sqrt(2 * m.mass * gravity / (air(s.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
 	engage := math.Max(1.16*stall-c.Speed, 30)
 	setting := m.mass * engage * engage / reference

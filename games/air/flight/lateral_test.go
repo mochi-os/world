@@ -4,12 +4,9 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// Everything pinned about the powered approach until now was longitudinal:
-// on-speed alpha, the trim laws, the power compensator. Lineup is the other
-// half of a pass, and it ran entirely uncovered — the trap and bolter cases
-// fly the centreline in still air. These pin roll authority with the flaperons
-// drooped, whether a lineup correction costs the ball, and whether the jet
-// stays flyable with a crosswind on the deck.
+// Landing-configuration lateral-directional coverage: roll authority with the
+// flaperons drooped, whether a lineup correction costs the ball, and whether
+// the jet stays flyable with a crosswind on the deck.
 
 package flight
 
@@ -55,13 +52,9 @@ func TestApproachRoll(t *testing.T) {
 	if math.Abs(right+left) > 1.0 {
 		t.Errorf("roll must be mirror-symmetric: right %.1f°/s, left %.1f°/s", right, left)
 	}
-	// A roll should not cost the ball: the alpha law holds on-speed through
-	// it. 1.5 -> 3.5 deg (2026-08-03): the old band was calibrated while the
-	// deck wing-leveler wrongly ran airborne and quietly capped how much bank
-	// three seconds of full stick could reach; with the leveler deck-gated the
-	// same input rolls much further, and ~3 deg of excursion at extreme bank
-	// is the alpha loop working, not failing. The realistic correction case
-	// (TestApproachLineup, roll in and out at 15 deg) still holds on-speed.
+	// A roll should not cost the ball. The band is wide because full stick at
+	// extreme bank moves alpha ~3° legitimately; the realistic correction case is
+	// TestApproachLineup.
 	if rightAlpha > 3.5 || leftAlpha > 3.5 {
 		t.Errorf("rolling moved alpha off on-speed by %.2f°/%.2f°", rightAlpha, leftAlpha)
 	}

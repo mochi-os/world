@@ -91,14 +91,9 @@ type Station struct {
 	Drag     float64 // Cd on frontal area
 }
 
-// Store is one catalog entry: a fixture (pylon, rail, twin adapter) or a
-// store (missile, tank) at its station position, carrying mass and flat-plate
-// drag while its mask bit is set. The catalog lists every legal fitment;
-// mutually exclusive entries (a station's single rail versus its twin
-// adapter) are distinct bits and the mask owner attaches one of them. A
-// fuel-bearing entry (external tank) also extends the fuel system: attaching
-// it fills State.External by its capacity, and weigh() carries the remaining
-// external fuel at the attached tanks' positions.
+// Store is one catalog entry - a fixture or a store at its station, carrying
+// mass and flat-plate drag while its mask bit is set. Mutually exclusive
+// fitments are distinct bits; a fuel-bearing entry extends State.External.
 type Store struct {
 	Name     string // catalog identity — the wire and client vocabulary
 	Station  int    // NATOPS station 1..9 (port tip to starboard tip)

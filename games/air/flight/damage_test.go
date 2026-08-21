@@ -53,13 +53,8 @@ func TestElementLossRolls(t *testing.T) {
 		for i := (first + last) / 2; i < last; i++ {
 			m.State.Damage.Element[i] = 1 // outboard half gone
 		}
-		// One second: long enough for roll inertia to answer the lost lift. The
-		// old 0.1 s window read a spawn transient, not the damage — Level used
-		// to compose MINUS the trimmed alpha, so every run began with a violent
-		// pitch recovery that coupled straight into roll (0.48 rad/s in 0.1 s,
-		// against 0.02 from the wing loss itself). With a genuinely trimmed
-		// spawn the roll builds honestly instead: 0.09 at 0.5 s, 0.44 at 1 s,
-		// 39° of bank by 2 s.
+		// One second: long enough for roll inertia to answer the lost lift. A shorter
+		// window reads the spawn transient instead of the damage.
 		for i := 0; i < 240; i++ {
 			m.Step(flight.Inputs{Throttle: 0.5})
 		}
@@ -142,11 +137,8 @@ func TestEncodeDamage(t *testing.T) {
 	}
 }
 
-// TestShiftRolls: the shed-wing CG walk (Damage.Shift) must roll the jet —
-// lift acting off the displaced centre is a real moment, mirror-symmetric
-// between sides. Exaggerated shift, Direct mode, no element damage: this
-// isolates the CG path from the lift-asymmetry path TestElementLossRolls
-// already covers.
+// TestShiftRolls: the shed-wing CG walk (Damage.Shift) must roll the jet,
+// mirror-symmetric. No element damage, so the CG path is isolated.
 func TestShiftRolls(t *testing.T) {
 	rate := func(shift float64) float64 {
 		m := cruising(t)
@@ -194,12 +186,9 @@ func stalls(t *testing.T, wound func(*flight.Model)) float64 {
 	m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 145, fa18c.Airframe.Mass.Fuel*0.5)
 	wound(m)
 	altitude := m.State.Position.Y
-	// The slowest speed at which the jet still ARRESTS its descent. Watching for
-	// a fixed height loss instead cannot separate the stall from the entry: at
-	// idle the jet gives up ~60 m before the pitch controller catches it, then
-	// holds altitude for another 15 s, and any "lost N metres" rule fires during
-	// that dip. Speed only ever decays here, so the last moment the sink reaches
-	// zero is the last moment the wing could still carry the aeroplane.
+	// The slowest speed at which the jet still ARRESTS its descent. A fixed
+	// height-loss rule cannot separate the stall from the entry: the idle entry
+	// dips ~60 m, then holds altitude for another 15 s.
 	held := m.State.Velocity.Length()
 	stick := 0.0
 	for i := 0; i < 240*180; i++ {
@@ -220,19 +209,9 @@ func clamped(v float64, low float64, high float64) float64 {
 	return math.Max(low, math.Min(high, v))
 }
 
-// TestWingLossStalls: losing the INBOARD wing structure (both sides, so the
-// jet stays level) must wreck slow flight — the surviving area demands far
-// more speed for the same weight. The inboard half is the gate because
-// OUTBOARD clipping lowers the flown sink onset ~6% — an accepted quirk
-// (investigated 2026-07-12): the pass-1 induced-wash mean keeps dead
-// elements' area, so amputated tips hand the survivors their downwash relief
-// (statics stay correct — the clipped jet needs 14.2° for level flight at
-// 95 m/s against 12.7° pristine — and the choice is right for scattered
-// hole damage), while the FCS alpha backstop gates the FLOWN onset by alpha
-// rather than lift margin, letting the lift-poor jet ride ~1° deeper. Real
-// combat damage is scattered or asymmetric, so the clean symmetric
-// amputation that triggers the inversion is synthetic. See the induced-wash
-// note in aero.go pass 1.
+// TestWingLossStalls: losing the INBOARD wing structure (both sides, so the jet
+// stays level) must wreck slow flight. Inboard is the gate because symmetric
+// OUTBOARD clipping inverts the flown onset - see aero.go pass 1.
 func TestWingLossStalls(t *testing.T) {
 	pristine := stalls(t, func(m *flight.Model) {})
 	clipped := stalls(t, func(m *flight.Model) {
