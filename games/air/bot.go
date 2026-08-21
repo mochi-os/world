@@ -655,6 +655,25 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			b.paired = 0
 		}
 		paired := b.launched != 0 && tick-b.launched < 60 && b.paired < 2
+		// The LOOK must see a RESULT (#54): three seconds is shorter than the
+		// round flies — up to twenty-one — so the look expired with the last
+		// pair still guiding at the same target and the whole rack left in
+		// seven seconds (three legal pairs, recording 01a0215c), after which
+		// the bot fought the last 105 s Winchester. BVR has always held the
+		// next round while an own round is short of Pitbull; this is the
+		// heater path's equivalent: the disciplined tiers (the BVR gate's own
+		// library bar) hold a NEW engagement while any of their heaters still
+		// guides at the target. The pair inside the window stays licensed —
+		// doubling against one flare programme is doctrine — and the novice
+		// keeps the ripple, which is the authentic incomplete toolkit.
+		if looked && !paired && b.skill.library >= 2 {
+			for _, m := range i.flying {
+				if m.radar == nil && m.shooter == slot && m.target == b.target && !m.loose && m.blind <= 0 {
+					looked = false
+					break
+				}
+			}
+		}
 		if i.missiles && i.free() && b.missiles > 0 && (paired || looked) {
 			// Missile shot discipline (#141): the seeker head has no IFF — it
 			// locks the best heat source in the cone whoever owns it. Checked
