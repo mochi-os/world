@@ -2215,15 +2215,20 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 		// deterministic rhythm — bursts of yank, moments of mush.
 		b.g *= 0.55 + 0.45*battle.Roll(i.environment.Seed, uint64(slot)+41, tick/90)
 	}
-	// Run-in burner discipline (#255): with missiles in play the afterburner
-	// is a beacon — the plume-conditioned seeker locks a lit nose out to half
-	// the envelope and a cold one only close aboard. The instructor tiers run
-	// the approach at MIL when pointed in and fast enough to afford it; the
-	// low tiers keep advertising, which is authentic and is how they die.
-	// Behind him (tail > 0.5) the plume is hidden from the seeker that
-	// matters — his looks forward — so the saddle's burner (#49) stands.
+	// Burner discipline (#255, widened by #56): with missiles in play the
+	// afterburner is a beacon at EVERY aspect — the plume-conditioned floor
+	// lifts a lit jet's lockability by 1,750*(1-tailview) metres, which is
+	// 1.7 km head-on and still a kilometre at the quartering aspect the
+	// 2026-08-20 ace fed the player from, 66% lit, arming all six of the
+	// shots it then survived by metres. The old rule ran cold only when
+	// POINTED IN; the instructor tiers now run cold anywhere inside reach
+	// when fast enough to afford it. The low tiers keep advertising, which
+	// is authentic and is how they die. Behind him (tail > 0.5) the plume
+	// is hidden from the rail that matters — his cone looks forward — so
+	// the saddle's burner (#49) stands; and the defence path has always cut
+	// the burner while a round is actually chasing (it halves the flares).
 	if b.skill.library >= 3 && i.missiles && b.prey != nil && distance < 3500 &&
-		nose.Dot(direction) > 0.2 && speed > pace*0.85 && tail < 0.5 {
+		speed > pace*0.85 && tail < 0.5 {
 		b.reheat = 0
 	}
 
