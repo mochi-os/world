@@ -1492,7 +1492,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 		if i.cheat.invulnerable && !target.bot {
 			return false // the fuse fires but the warhead cannot hurt a human under the cheat
 		}
-		kill, events, _ := battle.Warhead(battle.Radar, burst, target.model.State.Position, target.model.State.Attitude,
+		kill, events, _ := battle.Warhead(battle.Radar, burst, m.velocity.Subtract(target.model.State.Velocity).Length(), target.model.State.Position, target.model.State.Attitude,
 			&target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
 		target.condition.Damager = m.shooter
 		target.condition.Damaged = 0
@@ -1597,7 +1597,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 					continue // the fuse fires but the warhead cannot hurt a human under the cheat
 				}
 				burst := target.model.State.Position.Subtract(closest) // the missile at its nearest point, anchored to the target
-				kill, events, _ := battle.Blast(burst, target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+				kill, events, _ := battle.Blast(burst, closure.Length(), target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
 				target.condition.Damager = m.shooter
 				target.condition.Damaged = 0
 				for _, event := range events {

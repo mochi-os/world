@@ -250,7 +250,7 @@ func fly(this js.Value, arguments []js.Value) any {
 }
 
 func blast(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], arsenal[:14])
+	receive(arguments[0], arsenal[:15])
 	// blast reuses the aim layout with the pose at different offsets.
 	selector := [17]float64{arsenal[0]}
 	copy(selector[10:13], arsenal[4:7])
@@ -270,7 +270,8 @@ func blast(this js.Value, arguments []js.Value) any {
 	if arsenal[13] > 1 {
 		class = arsenal[13]
 	}
-	kill, raised, struck := battle.Warhead(class, point, position, attitude, body, wrap,
+	closure := arsenal[14] // word 14: missile-target relative speed at the fuse, m/s; 0 = the 650 anchor (#57)
+	kill, raised, struck := battle.Warhead(class, point, closure, position, attitude, body, wrap,
 		model.Environment.Seed, uint64(arsenal[11]), uint64(arsenal[12]))
 	if kill || len(raised) > 0 {
 		body.Condition.Damager = int(arsenal[11])

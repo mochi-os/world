@@ -14,15 +14,18 @@ import (
 	"world/games/air/flight"
 )
 
-// hover flies the scripted perch: pursue() chasing a ghost that orbits
-// 1,500 m above the bot, so the perch holds the high ground wherever the bot
-// goes. The high fighter that converts at a moment of its choosing is stood
-// in for by one that never converts at all — every second the bot lingers
-// beneath it is the bot's own choice.
-func hover(me, foe *flight.State, tick uint64) map[string]any {
+// hover flies the scripted perch: pursue() chasing a ghost that orbits a
+// FIXED centre at a FIXED ceiling — the perch owns its sky but the sky is
+// reachable, so a bot that climbs to co-altitude or leaves the circle has
+// honestly refused to linger. (The first version anchored the ghost 1,500 m
+// above the BOT, which re-based the perch every tick and made the metric
+// unwinnable by construction.) The high fighter that converts at a moment of
+// its choosing is stood in for by one that never converts at all — every
+// second beneath it is the bot's own choice.
+func hover(me *flight.State, centre flight.Vec3, ceiling float64, tick uint64) map[string]any {
 	angle := float64(tick) / 60 * 0.15
 	ghost := flight.State{}
-	ghost.Position = foe.Position.Add(flight.Vec3{X: 900 * math.Cos(angle), Y: 1500, Z: 900 * math.Sin(angle)})
+	ghost.Position = flight.Vec3{X: centre.X + 900*math.Cos(angle), Y: ceiling, Z: centre.Z + 900*math.Sin(angle)}
 	ghost.Velocity = flight.Vec3{X: -135 * math.Sin(angle), Z: 135 * math.Cos(angle)}
 	data := pursue(me, &ghost)
 	data["fire"] = false
@@ -63,8 +66,10 @@ func TestPerchDiscipline(t *testing.T) {
 		me := &i.aircraft[0].model.State
 		me.Position.Y = i.aircraft[bot].model.State.Position.Y + 1500
 		foe := &i.aircraft[bot].model.State
+		centre := foe.Position
+		ceiling := me.Position.Y
 		for tick := uint64(0); tick < 120*60; tick++ {
-			data := hover(me, foe, tick)
+			data := hover(me, centre, ceiling, tick)
 			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 			if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
 				i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
@@ -87,11 +92,13 @@ func TestPerchDiscipline(t *testing.T) {
 	share := 100 * float64(beneath) / math.Max(float64(total), 1)
 	t.Logf("lingered beneath the perch %.1f%% of %d ticks | closest %0.f m | mean speed %.0f m/s | mean gap %.0f m | modes %v",
 		share, total, closest, speedSum/math.Max(float64(total), 1), gapSum/math.Max(float64(total), 1), modes)
-	// RATCHET, not target: the perch term (#64) bought 49.3 -> 44.5%, and the
-	// residue is structural — a sustained climb never pays inside a 4 s
-	// rehearsal horizon, so the rest of the fix is fight-level intent, not
-	// scoring. The bound holds the ground taken; the goal is 25.
-	if share > 50 {
+	// RATCHET, not target: against a FIXED perch the ordinary doctrine reaches
+	// a mean gap of ~300 m and lingers 42% (#64) — the deep entrapment of the
+	// player fights needs a perch-and-POUNCE opponent this probe does not yet
+	// fly, and both fix attempts (a scorer term, a regain bailout) measured
+	// inert here. The bound holds the ground; the real gate arrives with the
+	// pouncing opponent.
+	if share > 45 {
 		t.Errorf("the bot lingered beneath the perch %.1f%% of the fight: conceded height got cheaper again", share)
 	}
 }
