@@ -42,13 +42,17 @@ func Warhead(class float64, point flight.Vec3, closure float64, position flight.
 	lethal, fringe := lethal*class, fringe*class
 	// Closure scales the fragments, not the blast (#57): they leave the case
 	// at ~2 km/s and the engagement's relative speed adds head-on, subtracts
-	// astern — energy goes with the square. Anchored at 650 m/s, the measured
-	// closure of the typical chase fusing, so everything tuned before this
-	// keeps its lethality there; a 1,200 m/s head-on fusing more than triples
-	// the punch and a cold stern trickle loses a third.
+	// astern — energy goes with the square of the ARRIVAL speed, in which the
+	// case velocity dominates and the closure modulates. Anchored at 650 m/s,
+	// the measured chase fusing, so everything tuned before this keeps its
+	// lethality there; a 1,200 m/s head-on fusing lands ~1.5x the punch and a
+	// slow overtake on a fleeing target ~0.75x. (A first cut scaled by the
+	// closure ratio alone, which halved slow-chase fusings and left a duck
+	// alive through six of them — the case velocity is most of the energy.)
 	sway := 1.0
 	if closure > 0 {
-		sway = clamp((closure/650)*(closure/650), 0.5, 3)
+		arrival := (2000 + closure) / 2650
+		sway = clamp(arrival*arrival, 0.6, 2.2)
 	}
 	relative := flight.Vec3{
 		X: flight.Shortest(position.X, point.X, wrap),

@@ -251,13 +251,21 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			fmt.Printf(" %s %.0f%%", e.mode, 100*float64(e.ticks)/math.Max(1, float64(total)))
 		}
 		fmt.Println()
-		if level == "ace" { // re-enabled 2026-08-11: the attacker now overshoots (see pursue), which is the failing the LIMIT note required before this share could be judged
-			// The claim, made falsifiable: this tier offers NO THREAT AND NO ESCAPE, so
-			// the gate asks for one or the other as an OUTCOME. The tracked share cannot
-			// carry a gate - winning early shortens the denominator, so it rewards dying
-			// sooner. Twenty-four seeds: an outcome gate on six is decided by one event.
-			if downed == 0 && broke == 0 {
-				t.Errorf("ace was shot down in %d of 24 and never killed its attacker or broke contact: no threat and no escape", lost)
+		if level == "ace" {
+			// The gate carries only the DEFENCE claims it can honestly make (#65):
+			// the old outcome clause counted being shot down as an outcome, so the
+			// #41-#61 defence arc — by removing the ace's last death — flipped it
+			// red as a side effect of a pure improvement (at the clause's birth
+			// the ace was tracked 83% and shot down 5 of 6). The offence numbers
+			// stay printed above as the family measurement: the counter-offensive
+			// has never existed (converted 0.0% at every point in history), and
+			// `downed > 0` re-arms as the acceptance gate when the pursuit family
+			// (#63/#64/#68/#69) lands.
+			if lost > 1 {
+				t.Errorf("ace was shot down in %d of 24 by the crude script: the defence regressed", lost)
+			}
+			if 100*float64(tracked)/math.Max(1, float64(total)) > 20 {
+				t.Errorf("ace tracked in the attacker's rear quarter %.0f%% of the fight: the prey era is returning", 100*float64(tracked)/math.Max(1, float64(total)))
 			}
 		}
 	}
