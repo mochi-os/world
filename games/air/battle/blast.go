@@ -30,13 +30,15 @@ const (
 // Blast detonates an AIM-9M-class warhead at a world point against a target
 // body. Returns whether the blast was an outright structural kill, and the
 // events the fragment strikes raised.
-func Blast(point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event) {
+func Blast(point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
 	return Warhead(Heater, point, position, attitude, body, wrap, seed, slot, tick)
 }
 
 // Warhead is Blast with an explicit charge class (Heater, Radar): the radii
-// scale with the cube root of the charge mass.
-func Warhead(class float64, point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event) {
+// scale with the cube root of the charge mass. The final return is where the
+// fragments landed, in the target's body frame — the visible evidence of a
+// connecting burst, as against a fireball the target flies through unmarked.
+func Warhead(class float64, point flight.Vec3, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
 	lethal, fringe := lethal*class, fringe*class
 	relative := flight.Vec3{
 		X: flight.Shortest(position.X, point.X, wrap),
@@ -46,27 +48,29 @@ func Warhead(class float64, point flight.Vec3, position flight.Vec3, attitude fl
 	burst := attitude.Unrotate(relative)
 	miss := burst.Length()
 	if miss < lethal {
-		return true, []Event{{Kind: "explode", Engine: -1, Surface: -1}}
+		return true, []Event{{Kind: "explode", Engine: -1, Surface: -1}}, []flight.Vec3{burst}
 	}
 	if miss > fringe {
-		return false, nil
+		return false, nil, nil
 	}
 	// Fragment rays from the burst point, deterministically scattered toward
 	// the airframe, each striking at twice gun severity.
 	var events []Event
+	var hits []flight.Vec3
 	toward := burst.Scale(-1).Normalize()
 	for f := 0; f < fragments; f++ {
 		ray := uint64(f)
 		pitch := (roll(seed, slot, tick, ray, 30) - 0.5) * 1.2
 		yaw := (roll(seed, slot, tick, ray, 31) - 0.5) * 1.2
 		direction := scatter(toward, pitch, yaw)
-		part, _ := trace(body.Parts, burst, direction, fringe*2)
+		part, along := trace(body.Parts, burst, direction, fringe*2)
 		if part < 0 {
 			continue
 		}
+		hits = append(hits, burst.Add(direction.Scale(along)))
 		events = append(events, strike(body, &body.Parts[part], 2, false, seed, slot, tick, ray+100)...)
 	}
-	return false, events
+	return false, events, hits
 }
 
 // scatter tilts a unit direction by small pitch/yaw angles using any

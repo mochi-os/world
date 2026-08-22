@@ -257,7 +257,7 @@ func blast(this js.Value, arguments []js.Value) any {
 	copy(selector[13:17], arsenal[7:11])
 	body, position, attitude := aim(selector[:])
 	if body == nil {
-		out := [2]float64{0, 0}
+		out := [3]float64{0, 0, 0}
 		send(out[:], arguments[1]) // an unresolved target must still write the output: a stale buffer read as the previous blast's verdict
 		return 0
 	}
@@ -270,17 +270,24 @@ func blast(this js.Value, arguments []js.Value) any {
 	if arsenal[13] > 1 {
 		class = arsenal[13]
 	}
-	kill, raised := battle.Warhead(class, point, position, attitude, body, wrap,
+	kill, raised, struck := battle.Warhead(class, point, position, attitude, body, wrap,
 		model.Environment.Seed, uint64(arsenal[11]), uint64(arsenal[12]))
 	if kill || len(raised) > 0 {
 		body.Condition.Damager = int(arsenal[11])
 		body.Condition.Damaged = 0
 	}
-	out := [2]float64{0, events(raised)}
+	// Output: kill, event mask, then the fragment impact points in the
+	// target's body frame — the client draws the connecting evidence there.
+	var out [33]float64
 	if kill {
 		out[0] = 1
 	}
-	send(out[:], arguments[1])
+	out[1] = events(raised)
+	out[2] = float64(len(struck))
+	for h, hit := range struck {
+		out[3+h*3], out[4+h*3], out[5+h*3] = hit.X, hit.Y, hit.Z
+	}
+	send(out[:3+len(struck)*3], arguments[1])
 	return kill
 }
 

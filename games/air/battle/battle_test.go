@@ -216,12 +216,12 @@ func TestShed(t *testing.T) {
 // TestBlast: a direct hit is a structural kill; a fringe burst fragments.
 func TestBlast(t *testing.T) {
 	body, m := target()
-	kill, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 2}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 1)
+	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 2}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 1)
 	if !kill {
 		t.Fatal("a 2 m miss must be a structural kill")
 	}
 	body, m = target()
-	kill, events := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
+	kill, events, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
 	if kill {
 		t.Fatal("a 9 m miss must not be an outright kill")
 	}
@@ -236,7 +236,7 @@ func TestBlast(t *testing.T) {
 // running, it is neither exploded nor falling out of the sky.
 func TestFringeFlies(t *testing.T) {
 	body, m := target()
-	kill, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
+	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
 	if kill {
 		t.Fatal("the fringe blast killed outright — the premise of this test needs re-basing")
 	}
@@ -409,7 +409,7 @@ func TestFringeRate(t *testing.T) {
 		if point.Subtract(m.State.Position).Length() <= lethal {
 			continue // inside the certainty radius: not a fringe burst
 		}
-		kill, _ := Blast(point, m.State.Position, m.State.Attitude, body, 0, seed, 3, 2)
+		kill, _, _ := Blast(point, m.State.Position, m.State.Attitude, body, 0, seed, 3, 2)
 		if kill {
 			continue // an outright structural kill is the certainty radius, not this measurement
 		}
