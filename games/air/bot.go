@@ -2217,13 +2217,15 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// the saddle's burner (#49) stands; and the defence path has always cut
 	// the burner while a round is actually chasing (it halves the flares).
 	// (#61): inside the heater span the plume is a NO-ESCAPE shot on me at
-	// any speed — a lit jet extends the shooter's reach past 2.5 km where a
-	// cold one is unreachable beyond ~750 m — so the speed floor holds only
-	// OUTSIDE the span: extend cold-poor, rebuild beyond reach, re-enter.
-	if b.skill.library >= 3 && i.missiles && b.prey != nil && tail < 0.5 {
+	// any speed and ANY aspect — a lit jet extends the shooter's reach past
+	// 2.5 km where a cold one is unreachable beyond ~750 m, and the saddle's
+	// "hidden" plume is one defensive reversal from being a beam shot. The
+	// speed floor and the behind-him carve-out hold only OUTSIDE the span:
+	// extend cold-poor, rebuild beyond reach, re-enter.
+	if b.skill.library >= 3 && i.missiles && b.prey != nil {
 		if distance < b.tactics.missile.span {
 			b.reheat = 0
-		} else if distance < 3500 && speed > pace*0.85 {
+		} else if distance < 3500 && speed > pace*0.85 && tail < 0.5 {
 			b.reheat = 0
 		}
 	}
@@ -2243,9 +2245,14 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// and a held saddle or press track qualifies as posture without the
 	// gun's close-range shoot flag — the seeker needs the nose, not the
 	// pipper. Cold targets keep the full rear-aspect doctrine untouched.
-	glow := i.glow(b)
-	tracking := b.shoot || (glow > 0.3 && (b.mode == "saddle" || b.mode == "press") && b.prey != nil)
-	if b.missiles > 0 && tracking && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail-b.tactics.missile.relax*glow && distance < b.tactics.missile.span)) {
+	// COMMITTED burner only: plume() reads achieved reheat, which glows for
+	// seconds of spool-down after the lever drops — embers, not doctrine.
+	// Shots at that tail redistributed knife-edge merges for no tactical
+	// meaning; the beam opens against a jet HOLDING the burner, not one
+	// caught mid-throttle.
+	heat := clamp((i.glow(b)-0.5)*2, 0, 1)
+	tracking := b.shoot || (heat > 0 && (b.mode == "saddle" || b.mode == "press") && b.prey != nil)
+	if b.missiles > 0 && tracking && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail-b.tactics.missile.relax*heat && distance < b.tactics.missile.span)) {
 		margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
 		limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) * (b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
 		if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {
