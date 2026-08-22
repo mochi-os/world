@@ -1275,6 +1275,35 @@ func plume(c *craft) float64 {
 	return clamp(lit, 0, 1)
 }
 
+// serene reports nothing hunting the slot right now — no round guiding on it,
+// no second hostile inside striking range. The license to donate energy: the
+// limiter ride points the nose at one opponent by making the jet briefly
+// helpless against every other.
+func (i *instance) serene(slot int) bool {
+	for _, m := range i.flying {
+		if m.target == slot && !m.loose && m.blind <= 0 {
+			return false
+		}
+	}
+	me := i.aircraft[slot]
+	if me == nil || me.model == nil {
+		return false
+	}
+	hostile := 0
+	for s, c := range i.aircraft {
+		if c == nil || s == slot || !c.alive || c.model == nil {
+			continue
+		}
+		if me.team != "" && c.team == me.team {
+			continue
+		}
+		if shortest(me.model.State.Position, c.model.State.Position, i.environment.Wrap).Length() < 4000 {
+			hostile++
+		}
+	}
+	return hostile <= 1
+}
+
 // glow is the launch doctrine's read of the target's plume (0..1): the
 // brightness the seeker and the flare model both key on.
 func (i *instance) glow(b *brain) float64 {

@@ -316,6 +316,16 @@ var plays = []play{
 		f := m.flat()
 		return order{aim: flight.Vec3{X: f.X, Y: 0.6, Z: f.Z}.Normalize(), g: 3, throttle: 1, reheat: 1}
 	}},
+	{"ride", 3, 6, func(m *moment) order {
+		// The limiter ride (#63): square the nose onto the gun solution and
+		// command double the doctrine ceiling — the FCS alpha limiter, never
+		// the paddle, is the boundary, exactly the transient the player wins
+		// angle fights with. polish()'s aero cap and guard()'s climb lid step
+		// aside for this play alone; the rollout prices the speed the point
+		// donates, so the arbiter only buys it when the shot pays for it, and
+		// choose() offers it only inside a claimed FINISH with a clean six.
+		return order{aim: m.aloft(m.lead()), g: m.pull * 2, throttle: 1}
+	}},
 }
 
 // evolve advances the opponent's track by dt along the LOCAL CURVE: velocity
@@ -588,6 +598,9 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		}
 		if p.name == "extend" && distance > 2500 {
 			continue // already separated: rehearsing more separation buys nothing
+		}
+		if p.name == "ride" && (b.intent != "finish" || prey.velocity.Length() < 170 || !i.serene(slot)) {
+			continue // the point donates the jet's energy: only inside a claimed FINISH, with nothing hunting me, and against a target still fast enough to contest the angles — a crawling one is the saddle's kill (#49)
 		}
 		horizon := base
 		if p.span > 0 && int(p.span*60) > horizon {

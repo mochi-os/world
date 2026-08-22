@@ -2232,9 +2232,14 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 
 	// The aero cap, every tier: never command far past what the wing gives at
 	// this speed — beyond it the demand rides the alpha limiter, thrust feeds
-	// induced drag, and the jet mushes at 130 m/s in full burner forever.
-	stall := pace / math.Sqrt(a.model.Airframe.Limit.Positive)
-	b.g = math.Min(b.g, math.Max(0.85*(speed/stall)*(speed/stall), 1.1))
+	// induced drag, and the jet mushes at 130 m/s in full burner forever. The
+	// limiter ride is the one licensed exception (#63): its whole point is the
+	// regime past the cap, its rollout was priced there, and the too-slow
+	// bailout still catches a ride that spends below fighting speed.
+	if b.play != "ride" {
+		stall := pace / math.Sqrt(a.model.Airframe.Limit.Positive)
+		b.g = math.Min(b.g, math.Max(0.85*(speed/stall)*(speed/stall), 1.1))
+	}
 
 	// Missile request: the launch gates with discipline-scaled margin. The
 	// disciplined SAVE their missiles for rear-aspect close shots — the ones
@@ -2314,7 +2319,9 @@ func (i *instance) guard(b *brain, me *flight.State, pace float64) {
 	if me.Position.Y < 1500 && b.aim.Y < 0.12 {
 		b.aim = flight.Vec3{X: b.aim.X, Y: 0.12, Z: b.aim.Z}.Normalize() // PN missiles chase bots into harder low breaks: keep the deck fights gently climbing
 	}
-	if lid := clamp(speed/pace-0.6, 0.12, 1.0); b.aim.Y > lid {
+	// The speed-scaled climb lid — except for the limiter ride (#63), whose
+	// nose-high point at exactly these speeds is the play.
+	if lid := clamp(speed/pace-0.6, 0.12, 1.0); b.aim.Y > lid && b.play != "ride" {
 		b.aim = flight.Vec3{X: b.aim.X, Y: lid, Z: b.aim.Z}.Normalize()
 	}
 }
