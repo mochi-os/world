@@ -95,6 +95,7 @@ func TestPounceExposure(t *testing.T) {
 	heavy(t)
 	beneath, total, downed, lost, windows := 0, 0, 0, 0, 0
 	modes := map[string]int{}
+	audit := map[string]int{}
 	for seed := uint64(1); seed <= 24; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("pounce%d", seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
@@ -148,9 +149,23 @@ func TestPounceExposure(t *testing.T) {
 		if !i.aircraft[bot].alive || i.aircraft[bot].model == nil {
 			lost++
 		}
+		for k, v := range i.aircraft[bot].brain.audit {
+			audit[k] += v
+		}
 		i.Close()
 	}
 	share := 100 * float64(beneath) / math.Max(float64(total), 1)
-	t.Logf("pounce baseline: bandit lost %d of 24, attacker downed %d | lingered beneath %.1f%% | gun windows handed over %.1f s per fight | of %d ticks | modes %v",
-		lost, downed, share, float64(windows)/60/24, total, modes)
+	t.Logf("pounce: bandit lost %d of 24, attacker downed %d | lingered beneath %.1f%% | gun windows handed over %.1f s per fight | of %d ticks | modes %v | regain audit %v",
+		lost, downed, share, float64(windows)/60/24, total, modes, audit)
+	// The acceptance (#64), set from measurement: the baseline read 34.2%
+	// lingered / 0.7 s of gun windows per fight, and the regain bailout must
+	// both EMPLOY (the inert-landing lesson — two fix shapes died silent) and
+	// move the exposure. Thresholds carry the measured noise band above the
+	// post-fix numbers, per the #69 recalibration lesson.
+	if audit["enter"] == 0 {
+		t.Errorf("the regain bailout never entered across 24 pounce fights: the fix is inert (audit %v)", audit)
+	}
+	if share > 28 {
+		t.Errorf("lingered beneath the perch %.1f%% of the fight: the conceded-height exposure is back at its defect baseline (34.2%%)", share)
+	}
 }

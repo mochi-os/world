@@ -476,7 +476,11 @@ func TestBotsFight(t *testing.T) {
 				if a.brain != nil {
 					mode = a.brain.mode
 				}
-				t.Logf("t=%ds slot %d died: mode=%s y=%.0f damager=%d", tick/60, slot, mode, a.model.State.Position.Y, a.condition.Damager)
+				height := -1.0 // a sea impact can tear the model down in the same step the death lands
+				if a.model != nil {
+					height = a.model.State.Position.Y
+				}
+				t.Logf("t=%ds slot %d died: mode=%s y=%.0f damager=%d", tick/60, slot, mode, height, a.condition.Damager)
 				if a.condition.Damager < 0 {
 					splashes++ // judged AT the death: the end-of-run condition belongs to the respawned jet, not the corpse
 				}

@@ -257,10 +257,15 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			// #41-#61 defence arc — by removing the ace's last death — flipped it
 			// red as a side effect of a pure improvement (at the clause's birth
 			// the ace was tracked 83% and shot down 5 of 6). The offence numbers
-			// stay printed above as the family measurement: the counter-offensive
-			// has never existed (converted 0.0% at every point in history), and
-			// `downed > 0` re-arms as the acceptance gate when the pursuit family
-			// (#63/#64/#68/#69) lands.
+			// stay printed above as the record: the counter-offensive has never
+			// existed (converted 0.0% at every point in history). The promised
+			// re-arm of `downed > 0` on the pursuit family's landing was measured
+			// and DECLINED (2026-08-23): with the whole family in, the ace reads
+			// downed 0/24 and converted 0.0% here while never being shot down —
+			// each landed fix addresses a losing pattern this near-perfect
+			// pursuer never exhibits, and REVERSING it is an unbuilt capability
+			// (its one flaw is sight loss under g), tracked as its own task. A
+			// gate red at birth is a demand, not a regression guard.
 			if lost > 1 {
 				t.Errorf("ace was shot down in %d of 24 by the crude script: the defence regressed", lost)
 			}

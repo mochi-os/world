@@ -415,8 +415,13 @@ type brain struct {
 	target    int     // slot, -1 none
 	decided   uint64  // last decision tick
 	known     map[int]*track
-	prey      *track  // the target's track at decision time (steer aims/fires against it)
-	distance  float64 // to the target at decision time
+	prey      *track         // the target's track at decision time (steer aims/fires against it)
+	distance  float64        // to the target at decision time
+	tail      float64        // pursuit geometry at decision time: 1 = square behind him, -1 = head-on
+	ceded     uint64         // tick the overhead cede began (#64), 0 = sky clear
+	dove      uint64         // tick the opponent last dived on me from above, 0 = never
+	regained  uint64         // the regain bailout's entry tick, 0 = not flying it
+	audit     map[string]int // employment counters for the licensed overrides, read by the probes
 	aim       flight.Vec3
 	g         float64
 	throttle  float64
@@ -1332,6 +1337,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b.distance = distance
 	chase := prey.velocity.Normalize()
 	tail := direction.Dot(chase) // 1 = square behind him, -1 = head-on
+	b.tail = tail
 	closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
 	mine := me.Position.Y + speed*speed/19.62
 	theirs := prey.position.Y + prey.velocity.Length()*prey.velocity.Length()/19.62

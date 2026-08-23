@@ -599,6 +599,10 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		if p.name == "extend" && distance > 2500 {
 			continue // already separated: rehearsing more separation buys nothing
 		}
+		if (p.name == "saddle" || p.name == "lag") && distance > 2000 && b.tail > 0.35 && b.nearing*120 < distance-800 {
+			n++      // consume the play's noise index: every surviving play keeps the draw it had ungated, so fights diverge from the old arbitration ONLY where a park would actually have won
+			continue // the parking laws (#69): saddle's speed-match and lag's corner-pace reheat both MIL-park a matched-speed stern chase, and beyond ~2.5 km the rehearsal horizon cannot tell a park from a pursuit — they win on selection noise, stick via incumbency, and bleed the closure press had built. Banned only where they cannot ARRIVE: a far-field stern chase whose closure trend is more than two minutes from gun range. A closing stalk, and any mutual fight, keeps the full repertoire.
+		}
 		if p.name == "ride" && (b.intent != "finish" || prey.velocity.Length() < 170 || !i.serene(slot)) {
 			continue // the point donates the jet's energy: only inside a claimed FINISH, with nothing hunting me, and against a target still fast enough to contest the angles — a crawling one is the saddle's kill (#49)
 		}
@@ -649,6 +653,94 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		b.chanced = tick // the conversion clock starts when the fight does
 	}
 	b.judge(me, prey, tick, distance, menace, gap)
+
+	// The regain bailout (#64): the perch-and-pounce pattern that has beaten
+	// the bot in every piloted fight hides from BOTH deciding layers. Each
+	// dive flips the intent to deny and back, restarting the conversion
+	// clock, so the starvation reset never fires; and the rehearsal horizon
+	// ends seconds before a sustained climb pays (the refuted scorer term).
+	// So the diagnosis is tracked directly — he owns the height and the
+	// energy overhead, he is not committed on me right now, and the
+	// arbiter's own promise admits it holds no solution — and once it has
+	// held for five seconds the catalogue is set aside for the one law it
+	// cannot rehearse: climb out from under him and TAKE the sky, held to
+	// parity or his commitment. Every gate is counted in b.audit so an inert
+	// landing is visible to the pounce probe, not silent (#64's history).
+	if b.skill.library >= 2 {
+		if b.audit == nil {
+			b.audit = map[string]int{}
+		}
+		speed := me.Velocity.Length()
+		above := prey.position.Y - me.Position.Y
+		diving := -prey.velocity.Dot(direction) > 120 && distance < 2500
+		if diving && above > 250 {
+			b.dove = tick // he attacked from above: the perch is a THREAT, not a bystander
+		}
+		// The cede is POSITIONAL, not energetic: a perch orbits slowly, so its
+		// TOTAL energy often sits below the jet beneath it — the first landing
+		// of this bailout gated on the energy sum and never entered once in
+		// 24 pounce fights (audit: ceded 0.5% of ticks). Height inside pounce
+		// reach IS the advantage being measured.
+		holds := above > 400 && distance < 4000
+		if holds {
+			b.audit["ceded"]++
+			if b.ceded == 0 {
+				b.ceded = tick
+			}
+		} else if above < 250 || distance > 4500 {
+			b.ceded = 0 // clearly down or clearly gone; a dive's brief pass through the band does not clear the diagnosis
+		}
+		// Entry demands the PERCH signature, not mere height: he loiters slow
+		// overhead (banking position to spend on dives) AND has recently
+		// DIVED on me from above. Geometry alone is not enough — the low
+		// play parks 300 m beneath its own target, so mere height-above
+		// described the straight-and-level offerer TestConvert hands over,
+		// and the first two landings sent the superhuman climbing away from
+		// free kills (0/12) and inverted the BVR top rung. An opponent who
+		// has never attacked from his perch is a target, not a threat.
+		if b.regained == 0 && holds && !diving && menace < 0 && b.promise < 0.4 && b.intent != "finish" &&
+			prey.velocity.Length() < 200 && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
+			b.audit["calm"]++
+			if b.ceded != 0 && tick-b.ceded > 300 {
+				b.audit["enter"]++
+				b.regained = tick
+			}
+		}
+		if b.regained != 0 {
+			exit := ""
+			switch {
+			case menace >= 0:
+				exit = "menaced"
+			case diving:
+				exit = "committed"
+			case above < 150:
+				exit = "parity"
+			case distance > 4500:
+				exit = "left" // past reach it is not regaining, it is leaving (the reset's own range bound)
+			case speed < b.skill.floor*0.85:
+				exit = "slow"
+			}
+			if exit != "" {
+				b.audit[exit]++
+				b.regained, b.ceded = 0, 0
+				b.until = tick // the catalogue re-arbitrates immediately
+			} else {
+				b.audit["hold"]++
+				out := me.Position.Subtract(prey.position)
+				out.Y = 0
+				if out.Length() > 1 {
+					out = out.Normalize()
+				} else {
+					out = flight.Vec3{X: 1}
+				}
+				b.play = "regain"
+				b.aim = flight.Vec3{X: out.X, Y: 0.75, Z: out.Z}.Normalize()
+				b.g, b.throttle, b.reheat, b.brake = 3, 1, 1, 0
+				b.mode = b.play
+				return
+			}
+		}
+	}
 
 	// The press clock (the finisher's deliberate looseness, #144): held
 	// advantage in range starts it, losing the range stops it.
