@@ -97,7 +97,7 @@ func connection_join(l link) (map[string]any, error) {
 func connection_read(l link, s *session, slot int) {
 	defer func() {
 		select {
-		case s.inbox <- order{kind: "leave", slot: slot}:
+		case s.inbox <- order{kind: "leave", slot: slot, link: l}:
 		case <-s.done:
 		}
 		l.close("gone")
@@ -118,7 +118,7 @@ func connection_read(l link, s *session, slot int) {
 				continue
 			}
 			select {
-			case s.inbox <- order{kind: "input", slot: slot, inputs: inputs}:
+			case s.inbox <- order{kind: "input", slot: slot, link: l, inputs: inputs}:
 			case <-s.done:
 				return
 			default: // inbox full: drop — newer inputs supersede anyway
@@ -132,7 +132,7 @@ func connection_read(l link, s *session, slot int) {
 				words = words[:400] // a hard byte cap at the door; the session trims to runes
 			}
 			select {
-			case s.inbox <- order{kind: "chat", slot: slot, text: words, scope: text(message, "scope")}:
+			case s.inbox <- order{kind: "chat", slot: slot, link: l, text: words, scope: text(message, "scope")}:
 			case <-s.done:
 				return
 			default: // inbox full: chat loses to inputs
@@ -143,7 +143,7 @@ func connection_read(l link, s *session, slot int) {
 				continue
 			}
 			select {
-			case s.inbox <- order{kind: "jettison", slot: slot, departures: departures}:
+			case s.inbox <- order{kind: "jettison", slot: slot, link: l, departures: departures}:
 			case <-s.done:
 				return
 			default: // inbox full: a lost jettison re-sends nothing — the client's next one supersedes
@@ -155,7 +155,7 @@ func connection_read(l link, s *session, slot int) {
 				continue // the instance validates the target; a nonsense mode dies at the door
 			}
 			select {
-			case s.inbox <- order{kind: "radar", slot: slot, mode: mode, target: target}:
+			case s.inbox <- order{kind: "radar", slot: slot, link: l, mode: mode, target: target}:
 			case <-s.done:
 				return
 			default: // inbox full: a lost report re-sends nothing — the client's next state change supersedes

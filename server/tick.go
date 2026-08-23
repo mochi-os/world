@@ -104,6 +104,25 @@ func session_run(s *session, g game.Game) {
 	}
 }
 
+// session_owner returns the player an order came from, or nil once the slot has
+// changed hands since the order was queued. A reader stamps its slot at connect
+// and never revisits it, so its leave - queued from the defer as the connection
+// drops - can drain after the freed slot was refilled, and would then evict or
+// steer whoever holds it now. The liveness sweep makes that routine rather than
+// freak: every timed-out player queues a stale leave on the way out.
+//
+// The link identifies the occupancy: session_remove nils it and drops the row,
+// and every join allocates a fresh player, so it is never reused. An order
+// carrying no link is honoured on the slot alone - nothing in connection.go
+// sends one, and the join tests build orders that way.
+func session_owner(s *session, o order) *player {
+	p := s.players[o.slot]
+	if p == nil || (o.link != nil && p.link != o.link) {
+		return nil
+	}
+	return p
+}
+
 // session_orders drains pending joins, leaves, and inputs.
 func session_orders(s *session) {
 	for {
@@ -113,9 +132,11 @@ func session_orders(s *session) {
 			case "join":
 				o.reply <- session_join(s, o)
 			case "leave":
-				session_remove(s, o.slot)
+				if session_owner(s, o) != nil {
+					session_remove(s, o.slot)
+				}
 			case "input":
-				if p := s.players[o.slot]; p != nil {
+				if p := session_owner(s, o); p != nil {
 					p.seen = time.Now()
 					for _, in := range o.inputs {
 						if after(in.Sequence, p.sequence) || len(p.queue) == 0 {
@@ -132,11 +153,11 @@ func session_orders(s *session) {
 			case "chat":
 				session_chat(s, o)
 			case "jettison":
-				if j, ok := s.instance.(jettisoner); ok && s.players[o.slot] != nil {
+				if j, ok := s.instance.(jettisoner); ok && session_owner(s, o) != nil {
 					j.Jettison(o.slot, o.departures)
 				}
 			case "radar":
-				if r, ok := s.instance.(radiator); ok && s.players[o.slot] != nil {
+				if r, ok := s.instance.(radiator); ok && session_owner(s, o) != nil {
 					r.Radar(o.slot, o.mode, o.target)
 				}
 			}
@@ -151,7 +172,7 @@ func session_orders(s *session) {
 // team's tactics on the wire for anyone to read. The sender receives their
 // own line back: the echo is the delivery confirmation.
 func session_chat(s *session, o order) {
-	p := s.players[o.slot]
+	p := session_owner(s, o)
 	if p == nil || p.link == nil {
 		return
 	}
