@@ -147,6 +147,11 @@ func sessions_standing() {
 	list := []string{}
 	if names == "" {
 		for name := range games {
+			// Echo is the transport suite's fixture and is registered only by
+			// the test binary (see echo_test.go), so this excludes nothing in
+			// production - but the tests DO register it, and without this they
+			// get a standing echo session that the listing assertions then
+			// count. Keep it.
 			if name != "echo" {
 				list = append(list, name)
 			}

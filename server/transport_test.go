@@ -25,7 +25,6 @@ import (
 	"strings"
 	"unicode/utf8"
 	"world/games/air"
-	"world/games/echo"
 )
 
 const test_port = 19700
@@ -34,7 +33,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("MOCHI_TRANSPORT_LISTEN", "127.0.0.1")
 	os.Setenv("MOCHI_TRANSPORT_PORT", fmt.Sprint(test_port))
 	os.Setenv("MOCHI_LIMITS_IDLE", "1")
-	games_register(echo.New())
+	games_register(echo_new())
 	games_register(air.New())
 	if err := certificate_start(); err != nil {
 		panic(err)

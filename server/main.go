@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"world/games/air"
-	"world/games/echo"
 )
 
 var (
@@ -65,7 +64,6 @@ func main_serve(ready func()) int {
 	log_debug = ini_bool("log", "debug", false)
 	info("mochi-world %s starting", build_version)
 
-	games_register(echo.New())
 	games_register(air.New())
 
 	sessions_standing()
