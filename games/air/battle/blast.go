@@ -68,7 +68,12 @@ func Warhead(class float64, point flight.Vec3, closure float64, position flight.
 		return false, nil, nil
 	}
 	// Fragment rays from the burst point, deterministically scattered toward
-	// the airframe, each striking at twice gun severity.
+	// the airframe, each striking at twice gun severity. A body station is
+	// skin over mostly empty volume, so a fragment that meets one takes its
+	// transit toll there and carries on to whatever the station shadows — the
+	// tail-cone capsule must not armour the engines and tails behind it (#78:
+	// a 7.8 m dead-astern fusing, the stern chase's best aim, wounded nothing
+	// while a burst 1 m off the axis wounded heavily).
 	var events []Event
 	var hits []flight.Vec3
 	toward := burst.Scale(-1).Normalize()
@@ -77,12 +82,32 @@ func Warhead(class float64, point flight.Vec3, closure float64, position flight.
 		pitch := (roll(seed, slot, tick, ray, 30) - 0.5) * 1.2
 		yaw := (roll(seed, slot, tick, ray, 31) - 0.5) * 1.2
 		direction := scatter(toward, pitch, yaw)
-		part, along := trace(body.Parts, burst, direction, fringe*2)
-		if part < 0 {
-			continue
+		origin, budget := burst, fringe*2
+		var mark *flight.Vec3
+		for hop := 0; hop < 4 && budget > 0; hop++ {
+			part, along := trace(body.Parts, origin, direction, budget)
+			if part < 0 {
+				break
+			}
+			p := &body.Parts[part]
+			point := origin.Add(direction.Scale(along))
+			if p.Kind == Fuselage {
+				if mark == nil { // the toll is paid once: one hole in, and the mark stays here if nothing lies beyond
+					mark = &point
+					events = append(events, strike(body, p, 2*sway, false, seed, slot, tick, ray+100)...)
+				}
+				step := along + p.Radius*2.2
+				origin = origin.Add(direction.Scale(step))
+				budget -= step
+				continue
+			}
+			mark = &point
+			events = append(events, strike(body, p, 2*sway, false, seed, slot, tick, ray+200)...)
+			break
 		}
-		hits = append(hits, burst.Add(direction.Scale(along)))
-		events = append(events, strike(body, &body.Parts[part], 2*sway, false, seed, slot, tick, ray+100)...)
+		if mark != nil { // one visible mark per fragment — the wasm bridge carries at most `fragments` impact points
+			hits = append(hits, *mark)
+		}
 	}
 	return false, events, hits
 }
