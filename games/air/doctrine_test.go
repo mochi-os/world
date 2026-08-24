@@ -138,6 +138,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 	levels := []string{"ace", "superhuman"}
 	for _, level := range levels {
 		modes := map[string]int{}
+		audit := map[string]int{}
 		tracked, closest, escaped := 0, 1e9, 0
 		converted := 0       // ticks the BOT held the attacker's rear quarter: the counter-offensive that has never existed
 		downed, lost := 0, 0 // seeds where the ATTACKER died, and where the bandit did
@@ -225,6 +226,9 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			if away {
 				broke++
 			}
+			for k, v := range i.aircraft[bot].brain.audit {
+				audit[k] += v
+			}
 		}
 		type entry struct {
 			mode  string
@@ -251,6 +255,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			fmt.Printf(" %s %.0f%%", e.mode, 100*float64(e.ticks)/math.Max(1, float64(total)))
 		}
 		fmt.Println()
+		fmt.Printf("  override audit: %v\n", audit)
 		if level == "ace" {
 			// The gate carries only the DEFENCE claims it can honestly make (#65):
 			// the old outcome clause counted being shot down as an outcome, so the
