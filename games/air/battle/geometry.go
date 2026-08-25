@@ -35,6 +35,7 @@ type Part struct {
 	Kind    int
 	Index   int // flat element index (Structure), engine index (Turbine), station index (Fuselage)
 	Surface int // owning surface (Structure), else -1
+	Engine  int // Fuselage only: engine whose span the station encloses (-1 none, 2 both) — the bay a 20 mm burst reaches (#81)
 	A, B    flight.Vec3
 	Radius  float64
 	Root    bool    // innermost element of its surface: actuator territory
@@ -103,6 +104,29 @@ func Parts(a *flight.Airframe) []Part {
 		A: a.Cockpit.Add(flight.Vec3{X: 0.8}), B: a.Cockpit.Add(flight.Vec3{X: 2.4}), Radius: 0.45})
 	parts = append(parts, Part{Kind: Tank, Index: 0, Surface: -1,
 		A: a.Tank.Subtract(flight.Vec3{X: 1.8}), B: a.Tank.Add(flight.Vec3{X: 1.8}), Radius: 0.8})
+	// Mark what each body station encloses (#81): a 20 mm HEI shell detonates
+	// at the skin and sprays the bay it opened, so a station hit must reach
+	// the systems inside its span — the accessory runs around an engine, the
+	// fuel lines along the tank bay. Engine is meaningful for Fuselage parts
+	// only; everything else leaves the zero value unread.
+	for pi := range parts {
+		p := &parts[pi]
+		if p.Kind != Fuselage {
+			continue
+		}
+		over := func(x, half float64) bool { return x+half >= p.A.X && x-half <= p.B.X }
+		p.Engine = -1
+		for gi := range a.Engines {
+			if over(a.Engines[gi].Position.X, 1.2) {
+				if p.Engine >= 0 {
+					p.Engine = 2 // the bay spans both engines
+				} else {
+					p.Engine = gi
+				}
+			}
+		}
+		p.Wet = over(a.Tank.X, 1.8)
+	}
 	// Live rounds on the stations. Every catalog entry with a warhead gets a
 	// capsule; whether it is actually THERE is Body.Stores at strike time, so
 	// a jet that has shot its rack presents empty rails and stops being a

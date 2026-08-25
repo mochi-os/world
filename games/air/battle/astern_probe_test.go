@@ -78,3 +78,42 @@ func TestAsternProbe(t *testing.T) {
 		}
 	}
 }
+
+// The #81 gate: a 20 mm HEI shell that stops in a body station bursts inside
+// it — engine damage behind an aft station, leaks along the tank bay — while a
+// transiting warhead fragment (direct=false) leaves only the skin effects, so
+// the #78 fragment balance is untouched by the gun model.
+func TestStationBurst(t *testing.T) {
+	find := func(body *Body, want func(p *Part) bool) *Part {
+		for pi := range body.Parts {
+			if p := &body.Parts[pi]; p.Kind == Fuselage && want(p) {
+				return p
+			}
+		}
+		return nil
+	}
+	for _, direct := range []bool{true, false} {
+		m := flight.New(fa18c.Airframe, flight.Environment{Seed: 11}, flight.World{Sea: 0})
+		m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 180, fa18c.Airframe.Mass.Fuel*0.7)
+		body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
+		aft := find(body, func(p *Part) bool { return p.Engine >= 0 })
+		wet := find(body, func(p *Part) bool { return p.Wet })
+		if aft == nil || wet == nil {
+			t.Fatal("no engine-enclosing or tank-bay station marked: the geometry pass is dead")
+		}
+		for r := uint64(0); r < 10; r++ {
+			strike(body, aft, 1, direct, 11, 3, r, r)
+			strike(body, wet, 1, direct, 11, 3, r, r+50)
+		}
+		engines := m.State.Damage.Engine[0] + m.State.Damage.Engine[1]
+		if direct && engines <= 0 {
+			t.Errorf("ten direct hits on an engine-bay station left the engines untouched: the HEI burst is not reaching inside")
+		}
+		if direct && m.State.Damage.Leak <= 0 {
+			t.Errorf("ten direct hits along the tank bay leaked nothing: the fuel lines are not modelled")
+		}
+		if !direct && (engines > 0 || m.State.Damage.Leak > 0) {
+			t.Errorf("transiting fragments burst inside a station (engines %.2f, leak %.2f): the direct gate leaks and #78 balance shifts", engines, m.State.Damage.Leak)
+		}
+	}
+}

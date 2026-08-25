@@ -37,6 +37,9 @@ const (
 	flash     = 0.05 // chance a wet-wing hit lights the fuel
 	mortal    = 0.40 // chance a cockpit hit kills the pilot
 	plumbing  = 0.12 // chance a fuselage hit cuts a hydraulic run
+	accessory = 0.08 // engine thrust loss per DIRECT hit on the station enclosing it: HEI in the bay reaches the accessory section — about a quarter of a hit on the turbine itself (#81)
+	piping    = 0.10 // leak per direct hit on a station along the tank bay, kg/s: the fuel lines, not the tank (the Tank capsule is its own part)
+	scorch    = 0.04 // chance a direct hit in an engine bay lights it: incendiary in a volume built to contain fire — well under the damaged-engine kindle
 	wheel     = 0.45 // gear-leg damage per hit: one hit blows the tyre, two fold the leg (#78)
 )
 
@@ -139,6 +142,34 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 			channel := int(roll(seed, slot, tick, round, 9) * float64(flight.ChannelSpeedbrake+1))
 			jam(damage, channel, 0.5)
 			events = append(events, Event{Kind: "jam", Engine: -1, Surface: -1})
+		}
+		// A 20 mm HEI shell bursts INSIDE the station it hits (#81): blast and
+		// incendiary into the bay it opened — engine accessories behind an aft
+		// station, fuel lines along the tank bay. Only for DIRECT hits: a
+		// transiting warhead fragment (#78) just holes the skin on its way to
+		// whatever the station shadows, and spends its burst there instead.
+		if direct {
+			if part.Engine >= 0 {
+				engine := part.Engine
+				if engine > 1 { // the bay spans both: the burst picks a side
+					engine = int(roll(seed, slot, tick, round, 15) * 2)
+					if engine > 1 {
+						engine = 1
+					}
+				}
+				damage.Engine[engine] = math.Min(1, damage.Engine[engine]+accessory*severity)
+				if body.Condition.Fire[engine%2] <= 0 && chance(scorch, 16) {
+					body.Condition.Fire[engine%2] = 0.05
+					events = append(events, Event{Kind: "fire", Engine: engine, Surface: -1})
+				}
+			}
+			if part.Wet {
+				damage.Leak += piping * severity
+				if chance(flash, 17) {
+					ignite(body, seed, slot, tick)
+					events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
+				}
+			}
 		}
 	}
 	return events
