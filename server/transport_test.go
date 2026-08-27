@@ -15,8 +15,10 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -24,6 +26,7 @@ import (
 
 	"strings"
 	"unicode/utf8"
+	"world/game"
 	"world/games/air"
 )
 
@@ -767,5 +770,162 @@ func TestOfferPrivacy(t *testing.T) {
 				t.Errorf("the pilot token is published as %q", key)
 			}
 		}
+	}
+}
+
+// TestRulesAreBounded — the advertised parameter subset was copied by value,
+// so a creator could put a megabyte under `tod` (or ten thousand keys under
+// `cheats`) and have the lobby re-serialise it into every GET /sessions body,
+// for every caller, for the life of the match.
+func TestRulesAreBounded(t *testing.T) {
+	rules := sessions_rules(map[string]any{
+		"missiles": true,
+		"tod":      strings.Repeat("x", 5000),
+		"cheats": map[string]any{
+			"fuel":    true,
+			"padding": strings.Repeat("y", 5000),
+		},
+		"clouds": map[string]any{"nested": strings.Repeat("z", 5000)},
+	})
+	if rules["missiles"] != true {
+		t.Errorf("a plain flag was dropped: %#v", rules["missiles"])
+	}
+	if words, _ := rules["tod"].(string); len([]rune(words)) != 32 {
+		t.Errorf("tod kept %d runes of a 5000-rune value", len([]rune(words)))
+	}
+	cheats, ok := rules["cheats"].(map[string]any)
+	if !ok {
+		t.Fatalf("cheats is %#v", rules["cheats"])
+	}
+	if cheats["fuel"] != true {
+		t.Error("a known cheat was dropped")
+	}
+	if _, found := cheats["padding"]; found {
+		t.Error("an unknown cheat key was republished")
+	}
+	if _, found := rules["clouds"]; found {
+		t.Errorf("a nested map was republished under clouds: %#v", rules["clouds"])
+	}
+}
+
+// TestChatCursorRejectsRubbish — Sscanf's error was discarded, so `since=abc`
+// silently read as 0 and replayed the whole backlog on every poll.
+func TestChatCursorRejectsRubbish(t *testing.T) {
+	browses = map[string][]time.Time{}
+	request := httptest.NewRequest("GET", "/chat?since=abc", nil)
+	request.RemoteAddr = "198.51.100.60:1"
+	recorder := httptest.NewRecorder()
+	lobby_chat(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Errorf("a malformed cursor answered %d, want 400", recorder.Code)
+	}
+
+	// The control: an absent cursor is not malformed, it means "from the start".
+	request = httptest.NewRequest("GET", "/chat", nil)
+	request.RemoteAddr = "198.51.100.60:1"
+	recorder = httptest.NewRecorder()
+	lobby_chat(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Errorf("an absent cursor answered %d, want 200", recorder.Code)
+	}
+}
+
+// TestChatSurvivesAForeignSequence — the reader asserted line["sequence"] to
+// uint64 with no comma-ok, on a handler any anonymous caller can reach, so a
+// line written by anything but chat_append would panic the goroutine.
+func TestChatSurvivesAForeignSequence(t *testing.T) {
+	browses = map[string][]time.Time{}
+	chat_lock.Lock()
+	previous := chat_lines
+	chat_lines = []map[string]any{{"sequence": 1, "text": "written by something else"}}
+	chat_lock.Unlock()
+	t.Cleanup(func() {
+		chat_lock.Lock()
+		chat_lines = previous
+		chat_lock.Unlock()
+	})
+
+	request := httptest.NewRequest("GET", "/chat", nil)
+	request.RemoteAddr = "198.51.100.61:1"
+	recorder := httptest.NewRecorder()
+	lobby_chat(recorder, request) // panics before the fix
+	if recorder.Code != http.StatusOK {
+		t.Errorf("answered %d, want 200", recorder.Code)
+	}
+}
+
+// slow is a game whose Create blocks until it is released, standing in for
+// air's - which solves one trim per requested bot, from a count the request
+// body chooses.
+type slow struct {
+	entered chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *slow) Name() string     { return "slow" }
+func (s *slow) Rate() (int, int) { return 20, 10 }
+func (s *slow) Create(game.Session) (game.Instance, error) {
+	s.once.Do(func() { close(s.entered) })
+	<-s.release
+	return &fakeInstance{}, nil
+}
+
+// TestCreateStaysOutOfTheRegistryLock — sessions_lock was held across
+// game.Create, and Create is reached by an unauthenticated POST, so every join,
+// every lobby poll and every other session's tick goroutine stalled for as
+// long as one creation ran.
+func TestCreateStaysOutOfTheRegistryLock(t *testing.T) {
+	g := &slow{entered: make(chan struct{}), release: make(chan struct{})}
+	games_register(g)
+	t.Cleanup(func() { delete(games, g.Name()) })
+
+	created := make(chan *session, 1)
+	go func() {
+		s, err := sessions_make(g.Name(), "test", "Slow", 2, nil, false)
+		if err != nil {
+			t.Error(err)
+		}
+		created <- s
+	}()
+	<-g.entered
+
+	polled := make(chan struct{})
+	go func() { sessions_counts(); close(polled) }()
+	select {
+	case <-polled:
+	case <-time.After(3 * time.Second):
+		close(g.release)
+		t.Fatal("a lobby poll blocked behind an in-flight game.Create")
+	}
+
+	close(g.release)
+	s := <-created
+	if s == nil {
+		t.Fatal("no session created")
+	}
+	sessions_lock.Lock()
+	delete(sessions, s.identifier)
+	sessions_lock.Unlock()
+}
+
+// TestCapacityStaysInsideTheWireFormat — `limits players` was clamped only
+// per session, so an operator setting it to 500 got slots the snapshot cannot
+// name: the missile record has seven bits for the shooter.
+func TestCapacityStaysInsideTheWireFormat(t *testing.T) {
+	os.Setenv("MOCHI_LIMITS_PLAYERS", "500")
+	t.Cleanup(func() { os.Unsetenv("MOCHI_LIMITS_PLAYERS") })
+
+	s, err := sessions_create("echo", "test", "wide", 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		sessions_lock.Lock()
+		delete(sessions, s.identifier)
+		sessions_lock.Unlock()
+	})
+	if s.spec.Capacity != slots {
+		t.Errorf("capacity %d, want the %d ceiling the protocol can address", s.spec.Capacity, slots)
 	}
 }

@@ -16,6 +16,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -58,13 +59,26 @@ var (
 	hosts_lock sync.Mutex
 )
 
-// transport_host_admit reserves a per-host slot, reporting false when this
-// address already holds its share. Paired with transport_host_release.
-func transport_host_admit(address string) bool {
+// origin reduces a remote address to the key every per-address budget counts
+// against. A residential IPv6 allocation is a /64, so keying on the literal
+// address would let one subscriber bypass every limit in the server for free
+// by using a fresh address per request; IPv4 keeps the whole address.
+func origin(address string) string {
 	host, _, err := net.SplitHostPort(address)
 	if err != nil {
 		host = address
 	}
+	parsed := net.ParseIP(host)
+	if parsed == nil || parsed.To4() != nil {
+		return host
+	}
+	return parsed.Mask(net.CIDRMask(64, 128)).String()
+}
+
+// transport_host_admit reserves a per-host slot, reporting false when this
+// address already holds its share. Paired with transport_host_release.
+func transport_host_admit(address string) bool {
+	host := origin(address)
 	hosts_lock.Lock()
 	defer hosts_lock.Unlock()
 	if hosts[host] >= HOST_CONNECTIONS_MAXIMUM {
@@ -78,10 +92,7 @@ func transport_host_admit(address string) bool {
 // deletes the entry at zero so the map cannot grow with every address that has
 // ever connected.
 func transport_host_release(address string) {
-	host, _, err := net.SplitHostPort(address)
-	if err != nil {
-		host = address
-	}
+	host := origin(address)
 	hosts_lock.Lock()
 	defer hosts_lock.Unlock()
 	if hosts[host] <= 1 {
@@ -215,8 +226,57 @@ type wire struct {
 	outbound chan []byte
 	closed   chan struct{}
 	once     sync.Once
-	sending  sync.Mutex // serialises stream writes
-	reason   string     // set once by close before closed is closed
+	sending  sync.Mutex   // serialises stream writes
+	reason   string       // set once by close before closed is closed
+	oversize sync.Once    // bounds the too-large datagram warning to one per connection
+	queued   atomic.Int64 // bytes sitting in inbound, bounded by queue_bytes
+	rate     struct {
+		sync.Mutex
+		window time.Time
+		count  int
+	}
+}
+
+// queue_bytes bounds the payload one connection may have waiting for the
+// consumer. The 256-message channel depth alone permits 256 x frame_most.
+const queue_bytes = 1 << 20
+
+// frames_minute bounds inbound control-stream messages per connection. A 60 Hz
+// client sends ~3600/min of input plus chat and stores traffic, so this leaves
+// generous headroom while still bounding the CBOR decode an attacker can buy.
+const frames_minute = 12000
+
+// admit applies both inbound budgets to a frame about to be queued and
+// returns the close reason, or "" to accept it.
+//
+// Rate first: the per-kind limits (chat flood, jettison cooldown) all run AFTER
+// the CBOR decode, and input and radar have none at all, so without a budget
+// here one connection buys a core's worth of decoding. Then bytes rather than
+// messages: the queue is 256 deep and a frame may be 64 KiB, so counting
+// messages alone permits 16 MiB in flight per connection.
+func (l *wire) admit(size int) string {
+	if !l.allow() {
+		return "rate"
+	}
+	if l.queued.Add(int64(size)) > queue_bytes {
+		l.queued.Add(-int64(size))
+		return "backlog"
+	}
+	return ""
+}
+
+// allow reports whether this connection may enqueue another frame, on a
+// sliding one-minute window.
+func (l *wire) allow() bool {
+	l.rate.Lock()
+	defer l.rate.Unlock()
+	now := time.Now()
+	if now.Sub(l.rate.window) >= time.Minute {
+		l.rate.window = now
+		l.rate.count = 0
+	}
+	l.rate.count++
+	return l.rate.count <= frames_minute
 }
 
 // send_deadline bounds a single stream write: a peer that stops reading its
@@ -257,9 +317,14 @@ func (l *wire) streams() {
 			return
 		}
 		_ = l.stream.SetReadDeadline(time.Time{}) // between frames again
+		if reason := l.admit(len(payload)); reason != "" {
+			l.close(reason)
+			return
+		}
 		select {
 		case l.inbound <- payload:
 		case <-l.closed:
+			l.queued.Add(-int64(len(payload)))
 			return
 		}
 	}
@@ -289,7 +354,10 @@ func (l *wire) datagrams() {
 func (l *wire) send(payload []byte) error {
 	l.sending.Lock()
 	defer l.sending.Unlock()
-	l.stream.SetWriteDeadline(time.Now().Add(send_deadline)) // a stalled write fails rather than blocking the writer forever
+	// A stalled write fails rather than blocking the writer forever. The two
+	// SetReadDeadline siblings discard deliberately; match them explicitly so
+	// this does not read as an oversight.
+	_ = l.stream.SetWriteDeadline(time.Now().Add(send_deadline))
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, uint32(len(payload)))
 	if _, err := l.stream.Write(header); err != nil {
@@ -350,6 +418,7 @@ func (l *wire) teardown(graceful bool) {
 func (l *wire) read() ([]byte, error) {
 	select {
 	case payload := <-l.inbound:
+		l.queued.Add(-int64(len(payload))) // the budget is released as the consumer drains
 		return payload, nil
 	case <-l.closed:
 		return nil, io.EOF
@@ -370,7 +439,21 @@ func (l *wire) write(bytes []byte, reliable bool) {
 		}
 		return
 	}
-	l.session.SendDatagram(bytes)
+	// An unreliable send may legitimately fail (the session is going away), but
+	// a payload above the peer's datagram ceiling fails EVERY time, so a busy
+	// match dropped the recipient's pose updates entirely and silently: the
+	// interest window reaches 31 remotes, which is ~1280 bytes of CBOR, and
+	// before MTU discovery lifts it the usable datagram is ~1240. Fall back to
+	// the reliable stream so the player still sees the world, and say so once.
+	if err := l.session.SendDatagram(bytes); err != nil {
+		var large *quic.DatagramTooLargeError
+		if errors.As(err, &large) {
+			l.oversize.Do(func() {
+				warn("transport: datagram of %d bytes exceeds the peer's limit; falling back to the control stream", len(bytes))
+			})
+			l.write(bytes, true)
+		}
+	}
 }
 
 func (l *wire) close(reason string) {

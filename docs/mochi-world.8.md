@@ -162,7 +162,13 @@ hash, which the lobby advertises.
 :   Maximum concurrent sessions. Default *100*.
 
 **players**
-:   Maximum concurrent players. Default *100*.
+:   Maximum players in one session, and the default capacity when a match is
+    created without one. Default *100*, maximum *128* - the snapshot names an
+    aircraft's slot in seven bits, so a higher setting is clamped and warned
+    about. This is per session, not server-wide: the only global ceiling is the
+    fixed 512 concurrent connections each public listener accepts, which is not
+    configurable. A session whose capacity fills the 128 slots has no room for
+    practice bots, which are seated above the players.
 
 **creates**
 :   Session creations allowed per client address per minute. Default *10*.
@@ -172,6 +178,16 @@ hash, which the lobby advertises.
 
 **withdraws**
 :   Offer withdrawals allowed per client address per minute. Default *30*.
+
+**browses**
+:   Match-list, status and chat reads allowed per client address per minute.
+    Default *120*. The loosest budget, because the match-list poll doubles as
+    the offer heartbeat.
+
+Every per-address budget counts an IPv6 client against its /64 prefix rather
+than its literal address, since a single subscriber is normally given a whole
+/64. The player connection itself is limited separately: 30 connects per
+minute and 16 concurrent connections per address, neither configurable.
 
 # FILES
 

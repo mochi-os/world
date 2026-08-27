@@ -79,9 +79,6 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	return m
 }
 
-// SetWorld replaces the world geometry (host re-init).
-func (m *Model) SetWorld(w World) { m.World = w }
-
 // Attached reports the attached-station bitmask (bit i = Airframe.Stores[i]).
 // battle reads it to know which rounds are still on the rails.
 func (m *Model) Attached() uint64 { return m.stores }

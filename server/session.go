@@ -7,7 +7,6 @@
 package main
 
 import (
-	"crypto/rand"
 	"encoding/hex"
 	"errors"
 	"sort"
@@ -124,10 +123,15 @@ var (
 	sessions_lock sync.RWMutex
 )
 
+// slots is the highest number of aircraft one session can address: the missile
+// record packs the shooter's slot into seven bits because the eighth carries
+// the round's kind, so every slot in play has to stay below 128.
+const slots = 128
+
 // identifier returns a fresh random session identifier.
 func identifier() (string, error) {
 	bytes := make([]byte, 12)
-	if _, err := rand.Read(bytes); err != nil {
+	if _, err := entropy.Read(bytes); err != nil {
 		return "", err // a zero identifier collides with every other zero identifier
 	}
 	return hex.EncodeToString(bytes), nil
@@ -182,14 +186,25 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 		return nil, errors.New("unknown")
 	}
 	limit := ini_int("limits", "sessions", 100)
-	sessions_lock.Lock()
-	defer sessions_lock.Unlock()
-	if len(sessions) >= limit {
-		return nil, errors.New("full")
-	}
 	most := ini_int("limits", "players", 100)
+	if most > slots {
+		// A misconfigured operator cannot be allowed past the wire format: the
+		// snapshot names a slot in one byte and the missile record has only
+		// seven bits for the shooter, so an aircraft above this decodes on the
+		// client as a different weapon fired by somebody else.
+		warn("configuration limits.players: %d exceeds the %d the protocol can address", most, slots)
+		most = slots
+	}
 	if capacity <= 0 || capacity > most {
 		capacity = most
+	}
+	// Cheap pre-check so an obviously full server refuses before paying for a
+	// Create; the authoritative test is under the lock below.
+	sessions_lock.RLock()
+	full := len(sessions) >= limit
+	sessions_lock.RUnlock()
+	if full {
+		return nil, errors.New("full")
 	}
 	token, err := identifier()
 	if err != nil {
@@ -200,9 +215,18 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 		return nil, err
 	}
 	spec := game.Session{Identifier: token, Game: name, Mode: mode, Label: label, Capacity: capacity, Seed: random, Parameters: parameters}
+	// Built OUTSIDE the registry lock: Create solves one trim per requested bot
+	// and the bot count comes from the request body, so holding sessions_lock
+	// across it stalled every join, every lobby poll and every other session's
+	// tick goroutine for as long as it ran.
 	instance, err := g.Create(spec)
 	if err != nil {
 		return nil, err
+	}
+	sessions_lock.Lock()
+	defer sessions_lock.Unlock()
+	if len(sessions) >= limit { // re-checked: another creator may have raced in
+		return nil, errors.New("full")
 	}
 	s := &session{
 		permanent:  permanent,
@@ -239,14 +263,33 @@ func sessions_rules(parameters map[string]any) map[string]any {
 		if !found {
 			continue
 		}
-		if nested, ok := value.(map[string]any); ok {
-			inner := make(map[string]any, len(nested))
-			for k, v := range nested {
-				inner[k] = v
+		if key == "cheats" {
+			// The cheat set is advertised, but only the keys the client knows:
+			// the raw map is caller-supplied and a 64 KiB body would otherwise
+			// be echoed to every GET /sessions caller.
+			nested, ok := value.(map[string]any)
+			if !ok {
+				continue
 			}
-			value = inner
+			inner := map[string]any{}
+			for _, name := range []string{"invulnerable", "ammunition", "fuel"} {
+				if flag, found := nested[name].(bool); found {
+					inner[name] = flag
+				}
+			}
+			rules[key] = inner
+			continue
 		}
-		rules[key] = value
+		// Everything else is advertised only as a bounded scalar. A caller can
+		// still choose the value; it cannot choose its size or its shape.
+		switch typed := value.(type) {
+		case string:
+			rules[key] = clean(typed, 32)
+		case bool:
+			rules[key] = typed
+		case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+			rules[key] = typed
+		}
 	}
 	return rules
 }
@@ -355,7 +398,7 @@ func sessions_stale_manager() {
 
 func seed() (uint64, error) {
 	bytes := make([]byte, 8)
-	if _, err := rand.Read(bytes); err != nil {
+	if _, err := entropy.Read(bytes); err != nil {
 		return 0, err // a zero seed makes every match predictable
 	}
 	var v uint64

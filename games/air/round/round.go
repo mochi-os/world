@@ -17,21 +17,21 @@ import (
 
 // The missile, per the public record.
 const (
-	Mass       = 157.0   // kg at launch (AIM-120C-5)
-	Propellant = 51.26   // kg, burned linearly over the boost
-	Burn       = 7.75    // s — the all-boost WPU-16/B
-	Thrust     = 16700.0 // N, constant across the burn
-	Reference  = 0.4     // m² — the drag reference area PAIRED with the Cd table below
-	Lift       = 0.173   // m² — lift area (CLmax·S): sized so 30 g runs out below ~700 m/s at medium altitude, matching the CFD
-	Induced    = 0.45    // m² — the induced-drag area: drag-due-to-lift is QUADRATIC (lift² / (q·Induced)), so a 1 g level-hold costs almost nothing while a 30 g pull bleeds hard, sized for a max-AoA lift-to-drag near 2.5
+	Mass       = 157.0        // kg at launch (AIM-120C-5)
+	Propellant = 51.26        // kg, burned linearly over the boost
+	Burn       = 7.75         // s — the all-boost WPU-16/B
+	Thrust     = 16700.0      // N, constant across the burn
+	Reference  = 0.4          // m² — the drag reference area PAIRED with the Cd table below
+	Lift       = 0.173        // m² — lift area (CLmax·S): sized so 30 g runs out below ~700 m/s at medium altitude, matching the CFD
+	Induced    = 0.45         // m² — the induced-drag area: drag-due-to-lift is QUADRATIC (lift² / (q·Induced)), so a 1 g level-hold costs almost nothing while a 30 g pull bleeds hard, sized for a max-AoA lift-to-drag near 2.5
 	Structure  = 30 * 9.80665 // m/s² — the structural lateral ceiling
-	Activation = 18000.0 // m — the seeker goes active (HUSKY) at this estimated range
-	Terminal   = 9000.0  // m — the seeker holds its own track (PITBULL) inside this
-	Gimbal     = 0.5     // cos 60°: the seeker's look cone about the velocity vector
-	Battery    = 100.0   // s — thermal battery life, the default Life
-	Fuse       = 20.0    // m — proximity fuse trigger, sized to the 22 kg warhead it carries (battle's Radar class fragments to ~24 m; the trigger sits just inside)
-	Arming     = 1.5     // s — the fuse arms this long after launch
-	Warhead    = 22.0    // kg — blast-fragmentation class, consumed by battle
+	Activation = 18000.0      // m — the seeker goes active (HUSKY) at this estimated range
+	Terminal   = 9000.0       // m — the seeker holds its own track (PITBULL) inside this
+	Gimbal     = 0.5          // cos 60°: the seeker's look cone about the velocity vector
+	Battery    = 100.0        // s — thermal battery life, the default Life
+	Fuse       = 20.0         // m — proximity fuse trigger, sized to the 22 kg warhead it carries (battle's Radar class fragments to ~24 m; the trigger sits just inside)
+	Arming     = 1.5          // s — the fuse arms this long after launch
+	Warhead    = 22.0         // kg — blast-fragmentation class, consumed by battle
 )
 
 // Chaff (#29). A bloomed cloud stops within seconds, so a pulse-doppler seeker
@@ -291,7 +291,7 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 			m.moved, m.since = truth.Velocity, 0
 		}
 		lateral := m.accel.Subtract(unit.Scale(m.accel.Dot(unit))) // only the part that bends the target's path
-		command = command.Add(lateral.Scale(2))                   // N/2
+		command = command.Add(lateral.Scale(2))                    // N/2
 	case Midcourse, Active:
 		// Command inertial: fly a lead collision against the estimate — two
 		// fixed-point passes on time-to-go — with the loft's climb bias

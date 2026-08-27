@@ -100,7 +100,9 @@ func certificate_start() error {
 		info("certificate: acme, hosts %s", strings.Join(names, " "))
 		return nil
 	}
-	certificate_generate()
+	if err := certificate_generate(); err != nil {
+		return err
+	}
 	go certificate_manager()
 	return nil
 }
@@ -182,13 +184,17 @@ func certificate_hash() (string, int64) {
 	return ephemeral_hash, ephemeral_expires.Unix()
 }
 
-func certificate_generate() {
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+// certificate_generate mints the self-signed ephemeral pair. It returns an
+// error so the STARTUP call can be fatal: leaving ephemeral nil makes
+// certificate_get answer (nil, nil), and every handshake on both listeners
+// then fails while the process stays up and looks healthy - the failure mode
+// #175/#179 removed from the bind and operator-certificate paths.
+func certificate_generate() error {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), entropy)
 	if err != nil {
-		warn("certificate: %v", err)
-		return
+		return fmt.Errorf("certificate: %w", err)
 	}
-	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	serial, _ := rand.Int(entropy, new(big.Int).Lsh(big.NewInt(1), 128))
 	names := []string{"localhost"}
 	addresses := []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")}
 	if u, err := url.Parse(ini_string("transport", "address", "")); err == nil && u != nil && u.Hostname() != "" {
@@ -208,10 +214,9 @@ func certificate_generate() {
 		DNSNames:     names,
 		IPAddresses:  addresses,
 	}
-	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
+	der, err := x509.CreateCertificate(entropy, &template, &template, &key.PublicKey, key)
 	if err != nil {
-		warn("certificate: %v", err)
-		return
+		return fmt.Errorf("certificate: %w", err)
 	}
 	sum := sha256.Sum256(der)
 	pair := tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
@@ -221,6 +226,7 @@ func certificate_generate() {
 	ephemeral_expires = template.NotAfter
 	ephemeral_lock.Unlock()
 	info("certificate: ephemeral, sha-256 %s, expires %s", ephemeral_hash, template.NotAfter.Format("2006-01-02"))
+	return nil
 }
 
 // certificate_manager rotates the ephemeral certificate before expiry. New
@@ -232,7 +238,11 @@ func certificate_manager() {
 		remaining := time.Until(ephemeral_expires)
 		ephemeral_lock.RUnlock()
 		if remaining < 2*24*time.Hour {
-			certificate_generate()
+			// Non-fatal: the existing pair is still valid, so a failed rotation
+			// is retried on the next tick rather than taking the server down.
+			if err := certificate_generate(); err != nil {
+				warn("%v", err)
+			}
 		}
 	}
 }

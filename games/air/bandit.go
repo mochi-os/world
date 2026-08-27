@@ -62,7 +62,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 
 // Place resets the bandit to a fresh state (spawn or respawn) and clears the
 // brain's per-life memory.
-func (b *Bandit) Place(words []float64) {
+func (b *Bandit) place(words []float64) {
 	b.craft.model.State = flight.Decode(words)
 	b.craft.brain.reborn()
 	b.craft.alive = true

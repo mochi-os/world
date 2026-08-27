@@ -553,7 +553,7 @@ func TestJammerServer(t *testing.T) {
 		t.Fatalf("the defender who went quiet and defended still died (closest %.0f m) — disarming must hand the round back to rules the defence beats", m.radar.Least)
 	}
 
-		// The full defence, radiating: HOJ eats the beam and the chaff. The
+	// The full defence, radiating: HOJ eats the beam and the chaff. The
 	// quiet control of this same defence is TestChaffServer's.
 	i, shooter, target = build()
 	target.latest.Jammer = true

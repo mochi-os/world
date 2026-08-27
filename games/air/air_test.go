@@ -1637,7 +1637,7 @@ func TestBandit(t *testing.T) {
 	spawn.State.Attitude = flight.Look(flight.Vec3{X: -1})
 	words := make([]float64, flight.Size)
 	spawn.State.Encode(words)
-	b.Place(words)
+	b.place(words)
 
 	// The player: straight and level away from the bandit — a towed target.
 	player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
@@ -2323,5 +2323,36 @@ func TestRehearsalOwnsItsDamage(t *testing.T) {
 	if a.model.State.Damage.Element[0] != 0.25 || a.model.State.Damage.Jam[0] != 0.5 {
 		t.Fatalf("writing the rehearsal's damage moved the live jet: element %.2f jam %.2f",
 			a.model.State.Damage.Element[0], a.model.State.Damage.Jam[0])
+	}
+}
+
+// TestBotSlotsStayInSevenBits — bots fill downward from Capacity+bots-1, so a
+// roomy session put them past 127. The missile record packs the shooter into
+// seven bits because the eighth carries the round's kind, so an AIM-9 from a
+// high-slot bot decoded client-side as an AIM-120 fired by slot-128.
+func TestBotSlotsStayInSevenBits(t *testing.T) {
+	bots_live.Store(0)
+	t.Cleanup(func() { bots_live.Store(0) })
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "slots", Game: "air", Mode: "furball", Capacity: 120, Seed: 2,
+		Parameters: map[string]any{"bots": 99.0}})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	i := made.(*instance)
+	defer i.Close()
+
+	if i.bots == 0 {
+		t.Fatal("no bots created; the test would pass vacuously")
+	}
+	for _, slot := range i.slots() {
+		if slot > slot_most {
+			t.Errorf("bot at slot %d: the shooter byte's high bit is the round's kind", slot)
+		}
+		// The other half of the bound: bots must stay ABOVE the player range,
+		// or Join overwrites one of them (the collision air.go:215 describes).
+		if slot < 120 {
+			t.Errorf("bot at slot %d is inside the 120-slot player range", slot)
+		}
 	}
 }

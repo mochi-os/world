@@ -75,7 +75,12 @@ func ini_bool(section string, key string, fallback bool) bool {
 		return fallback
 	case "true", "yes", "on", "1":
 		return true
-	default:
+	case "false", "no", "off", "0":
 		return false
+	default:
+		// ini_int warns on a value it cannot read; silence here means a typo
+		// like `public = ture` quietly unpublishes the server.
+		warn("configuration %s.%s: not a boolean: %q", section, key, v)
+		return fallback
 	}
 }

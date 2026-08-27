@@ -16,7 +16,6 @@ package main
 
 import (
 	"bytes"
-	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -54,11 +53,22 @@ func listing_id() string {
 	}
 	alphabet := "0123456789abcdefghijklmnopqrstuvwxyz"
 	raw := make([]byte, 32)
-	if _, err := rand.Read(raw); err != nil {
+	if _, err := entropy.Read(raw); err != nil {
 		warn("listing: cannot generate id: %v", err)
 		return ""
 	}
+	// Rejection sampling: 256 is not a multiple of 36, so a plain modulo would
+	// make the first four characters of the alphabet likelier than the rest.
+	limit := byte(256 - (256 % len(alphabet)))
 	for i := range raw {
+		for raw[i] >= limit {
+			var one [1]byte
+			if _, err := entropy.Read(one[:]); err != nil {
+				warn("listing: cannot generate id: %v", err)
+				return ""
+			}
+			raw[i] = one[0]
+		}
 		raw[i] = alphabet[int(raw[i])%len(alphabet)]
 	}
 	id := string(raw)

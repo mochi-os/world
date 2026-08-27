@@ -1,4 +1,4 @@
-version = 1.5
+version = 1.6
 bin = ../bin
 ldflags = -s -w -X main.build_version=$(version)
 go_sources := $(shell find server game games -name '*.go') go.mod go.sum
@@ -94,6 +94,14 @@ docker-scan: docker-local
 # Run this after any change to bot.go or the doctrine tests.
 test-doctrine:
 	AIR_DOCTRINE=1 go test -timeout 40m ./games/air/
+
+# Race detection. games/air runs ~257 s uninstrumented, so it overruns the 600 s
+# default under -race and the largest package in the tree never got race
+# coverage at all. -short skips the envelope sweeps; the timeout covers the
+# rest with margin.
+test-race:
+	go test -race ./server/... ./game/...
+	go test -race -short -timeout 30m ./games/...
 
 # The -short gate: skips the flight-envelope sweeps too, for seconds not a
 # minute. Doctrine sweeps are already opt-in, so `test` and this differ only in

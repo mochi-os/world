@@ -101,3 +101,35 @@ func TestListingPayload(t *testing.T) {
 		t.Fatalf("advertised address %q carries the /play path", parsed.World.Address)
 	}
 }
+
+// biased answers every bulk read with one repeated byte and every single-byte
+// read (the rejection loop's) with zero, so the two mappings are told apart by
+// the character they produce.
+type biased struct{ value byte }
+
+func (b biased) Read(p []byte) (int, error) {
+	if len(p) == 1 {
+		p[0] = 0
+		return 1, nil
+	}
+	for i := range p {
+		p[i] = b.value
+	}
+	return len(p), nil
+}
+
+// TestListingIDHasNoModuloBias — 256 is not a multiple of the 36-character
+// alphabet, so a plain `raw[i] % 36` made 0-3 turn up 8/7 as often as the rest.
+// Byte 253 is one of the four that has to be resampled: mapped it gives '1',
+// resampled it gives '0'.
+func TestListingIDHasNoModuloBias(t *testing.T) {
+	previous := entropy
+	entropy = biased{value: 253}
+	t.Cleanup(func() { entropy = previous })
+
+	listing_test_conf(t, "[world]\ndata = "+t.TempDir()+"\n")
+	id := listing_id()
+	if id != strings.Repeat("0", 32) {
+		t.Errorf("id %q: byte 253 was mapped rather than resampled", id)
+	}
+}

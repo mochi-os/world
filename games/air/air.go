@@ -243,6 +243,18 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		// aircraft, every one costing CPU on this machine with nobody
 		// connected. bots_reserve grants what is left and no more, so a flood
 		// gets emptier and emptier matches instead of the whole machine.
+		// Every aircraft's slot has to stay inside the seven bits the missile
+		// record gives the shooter, and the bots sit ABOVE the players, so the
+		// ceiling has to come off the bot count - lowering `top` instead would
+		// push them back down into the players' range and reinstate the
+		// overwrite the block above exists to prevent. Capacity is bounded to
+		// the same wire ceiling server-side, so this can only reduce.
+		if room := slot_most + 1 - session.Capacity; want > room {
+			want = room
+			if want < 0 {
+				want = 0
+			}
+		}
 		want = bots_reserve(want)
 		i.bots = want
 		top := 99
@@ -1425,7 +1437,10 @@ func (i *instance) fox3(slot int, a *craft) bool {
 		return false
 	}
 	if i.mode == "teams" && target.team != "" && target.team == a.team {
-		return false // no fratricide in teams: the same rule the heater's acquire applies
+		return false // no fratricide in teams. This is the FOX-3 rule only: the
+		// radar shot needs a designated lock the avionics can refuse, so it can
+		// check sides. The heater does not - acquire is team-blind by design,
+		// exactly like an IR seeker, so an AIM-9 can still hit a team mate.
 	}
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	i.launched++
@@ -1797,7 +1812,13 @@ func (i *instance) finish(winner int, loser int) {
 // hot path: names arrive in the welcome and the session mirror, and clients
 // count kills from the kill events.
 const (
-	near   = 20 // rank at which a remote ENTERS the recipient's sticky near set
+	near = 20 // rank at which a remote ENTERS the recipient's sticky near set
+	// wreck_record is the packed derelict: position, attitude, velocity, burn.
+	wreck_record = 34
+	// slot_most is the highest slot the missile record can name: the shooter
+	// occupies seven bits because the eighth carries the round's kind (#27).
+	slot_most = 127
+
 	depart = 24 // rank past which it leaves (hysteresis: weaving aircraft at the boundary flapped between full- and slow-rate updates — the jerk was visible)
 	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
@@ -2013,21 +2034,21 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(sh.m.velocity.Z)))
 			d[24] = byte(sh.m.shooter) // the client hides its OWN darts (it already flies the launch visual) and shows everyone else's
 			if sh.m.radar != nil {
-				d[24] |= 0x80 // the round's KIND rides the shooter byte's high bit (#27): slots stop at 62, so the bit is free, the record stays 25 bytes and an older client simply draws the AIM-120 as a heater
+				d[24] |= 0x80 // the round's KIND rides the shooter byte's high bit (#27): slot_most keeps every slot inside seven bits, so the bit is free, the record stays 25 bytes and an older client simply draws the AIM-120 as a heater
 			}
 			darts = append(darts, d[:]...)
 		}
 		poses[self] = map[string]any{"blob": blob, "missiles": darts}
 	}
-	// Wrecks: global, capped, 42-byte records (position, attitude, velocity, burn).
+	// Wrecks: global, capped, wreck_record-byte records (position, attitude, velocity, burn).
 	limit := len(i.wrecks)
 	if limit > 4 {
 		limit = 4
 	}
-	derelicts := make([]byte, 0, limit*42)
+	derelicts := make([]byte, 0, limit*wreck_record)
 	for _, w := range i.wrecks[:limit] {
 		s := &w.model.State
-		var d [42]byte
+		var d [wreck_record]byte
 		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(s.Position.X)))
 		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(s.Position.Y)))
 		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(s.Position.Z)))
@@ -2043,7 +2064,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		binary.LittleEndian.PutUint32(d[28:], math.Float32bits(float32(s.Velocity.Z)))
 		d[32] = byte(clamp(w.burn[0], 0, 1) * 255)
 		d[33] = byte(clamp(w.burn[1], 0, 1) * 255)
-		derelicts = append(derelicts, d[:34]...)
+		derelicts = append(derelicts, d[:]...)
 	}
 	return map[string]any{"wrecks": derelicts, "cores": cores, "poses": poses}
 }

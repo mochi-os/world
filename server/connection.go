@@ -40,13 +40,21 @@ func connection_serve(l link) {
 	}
 	team := clean(text(message, "team"), 16)
 	stores, _ := message["stores"].(map[string]any)
-	joiner := game.Player{Identity: text(message, "identity"), Name: name, Team: team, Stores: stores}
+	// identity is retained per player and re-serialised into the welcome every
+	// later joiner receives, so it is capped and stripped like name and team.
+	identity := clean(text(message, "identity"), 64)
+	joiner := game.Player{Identity: identity, Name: name, Team: team, Stores: stores}
 	reply := make(chan answer, 1)
 	cancel := make(chan struct{})
 	select {
 	case s.inbox <- order{kind: "join", player: joiner, link: l, reply: reply, cancel: cancel}:
 	case <-s.done:
 		connection_refuse(l, "ended")
+		return
+	case <-time.After(inbox_deadline):
+		// input/chat/jettison/radar all carry a default: drop. join and leave
+		// selected only on the inbox, so a flooded queue parked this goroutine.
+		connection_refuse(l, "busy")
 		return
 	}
 	var a answer
@@ -68,6 +76,13 @@ func connection_serve(l link) {
 	debug("session %s: %s joined slot %d", s.identifier, name, a.slot)
 	connection_read(l, s, a.slot)
 }
+
+// inbox_deadline bounds how long join and leave wait on a full session inbox.
+// The other order kinds drop instead; these two must be delivered, but not at
+// the cost of parking their goroutine on a queue that is not draining. One
+// tick interval is ~16 ms, so this is many ticks of slack. A var, not a const,
+// so a test can shorten it - the same reason HANDSHAKE_GRACE below is one.
+var inbox_deadline = 2 * time.Second
 
 // HANDSHAKE_GRACE bounds how long a connection may hold a slot without saying
 // anything: the slot is reserved before the join arrives and the liveness sweep
@@ -99,6 +114,9 @@ func connection_read(l link, s *session, slot int) {
 		select {
 		case s.inbox <- order{kind: "leave", slot: slot, link: l}:
 		case <-s.done:
+		case <-time.After(inbox_deadline):
+			// The liveness sweep removes the player anyway; blocking here would
+			// hold the reader goroutine on a queue it cannot drain.
 		}
 		l.close("gone")
 	}()

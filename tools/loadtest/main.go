@@ -45,6 +45,9 @@ type stat struct {
 
 func main() {
 	flag.Parse()
+	// Load harness only: world serves a self-signed ephemeral certificate, and
+	// this tool measures throughput rather than trust. It is the sole
+	// verification-disabling flag in the tree.
 	insecure := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 
 	// Create a fresh match sized for the clients (no bots: every aircraft is a
@@ -80,7 +83,7 @@ func main() {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			runClient(id, created.Session, created.Address, &stats[id], measureFrom, stopAt, &connected)
+			run_client(id, created.Session, created.Address, &stats[id], measureFrom, stopAt, &connected)
 		}(c)
 		time.Sleep(3 * time.Millisecond) // stagger joins so it isn't a thundering herd
 	}
@@ -89,7 +92,7 @@ func main() {
 	report(stats, *duration)
 }
 
-func runClient(id int, session, address string, st *stat, measureFrom, stopAt time.Time, connected *int64) {
+func run_client(id int, session, address string, st *stat, measureFrom, stopAt time.Time, connected *int64) {
 	d := webtransport.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -162,7 +165,7 @@ func runClient(id int, session, address string, st *stat, measureFrom, stopAt ti
 		if kind != "snapshot" && kind != "poses" {
 			continue
 		}
-		tick := toUint(m["tick"])
+		tick := to_uint(m["tick"])
 		if now.Before(measureFrom) {
 			lastAt = now
 			continue
@@ -181,7 +184,7 @@ func runClient(id int, session, address string, st *stat, measureFrom, stopAt ti
 	}
 }
 
-func toUint(v any) uint64 {
+func to_uint(v any) uint64 {
 	switch n := v.(type) {
 	case uint64:
 		return n

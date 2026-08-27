@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -96,11 +97,21 @@ func lobby_cors(w http.ResponseWriter, r *http.Request) bool {
 func lobby_respond(w http.ResponseWriter, status int, body map[string]any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(body)
+	// The status is already on the wire, so a marshal failure can only be
+	// logged - but silence would leave a truncated body behind a 200.
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		debug("lobby: cannot encode response: %v", err)
+	}
 }
 
 func lobby_status(w http.ResponseWriter, r *http.Request) {
 	if lobby_cors(w, r) {
+		return
+	}
+	// Walks every session under sessions_counts, so it carries the same budget
+	// as the other reads that answer any origin.
+	if !lobby_browse(r) {
+		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
 		return
 	}
 	count, players := sessions_counts()
@@ -247,12 +258,28 @@ func lobby_chat(w http.ResponseWriter, r *http.Request) {
 	}
 	switch r.Method {
 	case http.MethodGet:
+		// Copies up to 100 lines under chat_lock, contending with every poster.
+		if !lobby_browse(r) {
+			lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
+			return
+		}
 		since := uint64(0)
-		fmt.Sscanf(r.URL.Query().Get("since"), "%d", &since)
+		if cursor := r.URL.Query().Get("since"); cursor != "" {
+			parsed, err := strconv.ParseUint(cursor, 10, 64)
+			if err != nil {
+				lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "since"})
+				return
+			}
+			since = parsed
+		}
 		chat_lock.Lock()
 		lines := []map[string]any{}
 		for _, line := range chat_lines {
-			if line["sequence"].(uint64) > since {
+			// chat_append is the only writer today, but this is an anonymous
+			// request path: a single-value assertion here would panic the
+			// handler goroutine the day that stops being true.
+			sequence, _ := line["sequence"].(uint64)
+			if sequence > since {
 				lines = append(lines, line)
 			}
 		}
@@ -342,10 +369,7 @@ func lobby_browse(r *http.Request) bool {
 
 // lobby_permit is the shared per-host sliding-minute limiter.
 func lobby_permit(table map[string][]time.Time, r *http.Request, limit int) bool {
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
+	host := origin(r.RemoteAddr)
 	creates_lock.Lock()
 	defer creates_lock.Unlock()
 	recent := []time.Time{}

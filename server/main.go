@@ -11,7 +11,9 @@
 package main
 
 import (
+	"crypto/rand"
 	"flag"
+	"io"
 	"os"
 	"os/signal"
 	stack "runtime/debug" // aliased: this package already has a debug() logger
@@ -31,6 +33,12 @@ var (
 // guard runs f and turns a panic into a logged fault instead of a dead process.
 // recover() sees only panics on its OWN goroutine, so every `go` reachable from
 // client input needs its own guard. after runs during recovery, itself guarded.
+// entropy is the server's randomness source. A package var rather than
+// crypto/rand.Reader at each site so a test can substitute a failing or
+// deterministic reader: assigning to rand.Reader itself races the QUIC stack,
+// which reads it from its own goroutines for every connection id.
+var entropy io.Reader = rand.Reader
+
 func guard(name string, after func(), f func()) {
 	defer func() {
 		fault := recover()

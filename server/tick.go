@@ -54,7 +54,7 @@ func session_run(s *session, g game.Game) {
 				// still ACKs), but a live client streams inputs every frame. Remove
 				// outright rather than nil-ing the link - a timed-out join has no reader
 				// (#176) - and a later duplicate leave is a no-op.
-				if p.link == nil || (!p.seen.IsZero() && time.Since(p.seen) > 15*time.Second) {
+				if !p.seen.IsZero() && time.Since(p.seen) > 15*time.Second {
 					session_remove(s, slot)
 					continue
 				}

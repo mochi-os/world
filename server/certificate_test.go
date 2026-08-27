@@ -14,6 +14,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
 	"net"
 	"os"
@@ -190,5 +191,46 @@ func TestListenerLimit(t *testing.T) {
 	case <-accepted:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the second connection was not accepted after the first closed: the cap never releases")
+	}
+}
+
+// broken is an entropy source that always fails, standing in for a machine
+// whose getrandom(2) is unavailable.
+type broken struct{}
+
+func (broken) Read([]byte) (int, error) { return 0, errors.New("no entropy") }
+
+// TestEphemeralGenerationFailureIsFatal — certificate_generate warned and
+// returned, leaving `ephemeral` nil; certificate_get then answered (nil, nil)
+// and BOTH listeners failed every handshake while the process stayed up and
+// looked healthy. That is the failure mode #175 and #179 removed from the bind
+// and operator paths, left in place on the third.
+func TestEphemeralGenerationFailureIsFatal(t *testing.T) {
+	certificate_file, key_file, operator = "", "", nil
+	previous := entropy
+	entropy = broken{}
+	t.Cleanup(func() {
+		entropy = previous
+		certificate_file, key_file, operator = "", "", nil
+	})
+
+	if err := certificate_generate(); err == nil {
+		t.Error("certificate_generate reported success with no entropy")
+	}
+	if err := certificate_start(); err == nil {
+		t.Error("certificate_start came up deaf instead of failing")
+	}
+
+	// The control: with entropy restored the same call succeeds and publishes
+	// a pair, so the test above is not merely asserting that startup is broken.
+	entropy = previous
+	if err := certificate_generate(); err != nil {
+		t.Fatalf("certificate_generate failed with working entropy: %v", err)
+	}
+	ephemeral_lock.RLock()
+	pair := ephemeral
+	ephemeral_lock.RUnlock()
+	if pair == nil {
+		t.Error("no ephemeral pair published after a successful generation")
 	}
 }

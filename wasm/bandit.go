@@ -30,19 +30,19 @@ var (
 
 func bandits() map[string]any {
 	return map[string]any{
-		"bandit_init":   guard(banditInitialize),
-		"bandit_place":  guard(banditPlace),
-		"bandit_mirror": guard(banditMirror),
-		"bandit_menace": guard(banditMenace),
-		"bandit_step":   guard(banditStep),
-		"bandit_coast":  guard(banditCoast),
-		"bandit_mode":   guard(banditMode),
+		"bandit_init":   guard(bandit_initialize),
+		"bandit_place":  guard(bandit_place),
+		"bandit_mirror": guard(bandit_mirror),
+		"bandit_menace": guard(bandit_menace),
+		"bandit_step":   guard(bandit_step),
+		"bandit_coast":  guard(bandit_coast),
+		"bandit_mode":   guard(bandit_mode),
 	}
 }
 
-// banditInitialize builds the harness from a JSON payload: level, seed, wrap,
+// bandit_initialize builds the harness from a JSON payload: level, seed, wrap,
 // sky (cloud preset), night, missiles, weapons, fuel. Returns an error string, or "" on success.
-func banditInitialize(this js.Value, arguments []js.Value) any {
+func bandit_initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
 		Level    string
 		Seed     uint64
@@ -60,9 +60,9 @@ func banditInitialize(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// banditPlace spawns the bandit from a JSON payload: position and velocity
+// bandit_place spawns the bandit from a JSON payload: position and velocity
 // triples — attitude, engines, and the brain's fresh life derive in Go.
-func banditPlace(this js.Value, arguments []js.Value) any {
+func bandit_place(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return "uninitialised"
 	}
@@ -76,9 +76,9 @@ func banditPlace(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// banditMirror updates the player's reflection: flight.Size encoded state
+// bandit_mirror updates the player's reflection: flight.Size encoded state
 // words plus one flags word (bit 1 firing, bit 2 alive).
-func banditMirror(this js.Value, arguments []js.Value) any {
+func bandit_mirror(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return "uninitialised"
 	}
@@ -88,9 +88,9 @@ func banditMirror(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// banditMenace declares the player's missiles chasing the bandit: count
+// bandit_menace declares the player's missiles chasing the bandit: count
 // missiles of six words each (position, velocity).
-func banditMenace(this js.Value, arguments []js.Value) any {
+func bandit_menace(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return "uninitialised"
 	}
@@ -103,11 +103,11 @@ func banditMenace(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// banditStep advances one 60 Hz frame and writes the bandit's encoded state
+// bandit_step advances one 60 Hz frame and writes the bandit's encoded state
 // into the given buffer. Returns flags: bit 1 firing, bit 2 flare dropped.
-// banditCoast flies the DEAD bandit one frame and returns its state: no
+// bandit_coast flies the DEAD bandit one frame and returns its state: no
 // thinking, the levers held, and the caller's standing roll.
-func banditCoast(this js.Value, arguments []js.Value) any {
+func bandit_coast(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return -1
 	}
@@ -121,7 +121,7 @@ func banditCoast(this js.Value, arguments []js.Value) any {
 	return 0
 }
 
-func banditStep(this js.Value, arguments []js.Value) any {
+func bandit_step(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return -1
 	}
@@ -155,9 +155,9 @@ func banditStep(this js.Value, arguments []js.Value) any {
 	return flags
 }
 
-// banditMode reports the brain's current doctrine state — the flight
+// bandit_mode reports the brain's current doctrine state — the flight
 // recorder's developer-only channel (#212). Empty when no brain is flying.
-func banditMode(this js.Value, arguments []js.Value) any {
+func bandit_mode(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return ""
 	}

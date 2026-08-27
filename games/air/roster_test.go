@@ -64,7 +64,9 @@ func TestRosterSurvivesJoins(t *testing.T) {
 // TestRosterSitsAboveThePlayers: a bot must never occupy a slot a joining
 // player can be given, whatever the capacity or roster size, and the
 // 99-downward numbering must survive ordinary sessions - the wire reads it that
-// way.
+// way. The roster is bounded above as well as below: every slot has to stay
+// inside the seven bits the missile record gives the shooter (#477), and since
+// the bots sit ABOVE the players that ceiling comes off the bot count.
 func TestRosterSitsAboveThePlayers(t *testing.T) {
 	for _, c := range []struct {
 		capacity int
@@ -74,7 +76,8 @@ func TestRosterSitsAboveThePlayers(t *testing.T) {
 	}{
 		{8, 6, 6, 99},      // the ordinary session: unchanged, bots 99..94
 		{100, 2, 2, 101},   // a full-house capacity pushes the bots above it
-		{128, 16, 16, 143}, // and a large one pushes them further
+		{120, 16, 8, 127},  // a large one takes only what is left below slot 128
+		{128, 16, 0, -1},   // a capacity filling the wire ceiling leaves room for none
 		{8, 99, 99, 106},   // the maximum roster in a small session
 		{16, 200, 99, 114}, // an over-large request is still capped at 99 bots
 	} {
