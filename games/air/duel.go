@@ -494,11 +494,27 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 		planar := radial.Subtract(ring.normal.Scale(radial.Dot(ring.normal)))
 		standing = clamp((ring.radius-planar.Length())/math.Max(ring.radius, 200), -1, 1)
 	}
+	// The stack (#42): height OVER the opponent, priced on its own — edge
+	// already counts altitude as energy, but in close combat height over a
+	// co-energy opponent converts to position in a way speed cannot (the jet
+	// beneath cannot bring its lift vector up without collapsing its rate),
+	// and pricing them as fungible is what let the bot dive out of deadlocked
+	// spirals and donate the perch every piloted fight was lost through (the
+	// Nash-equilibrium defection, recording 01a0496dbd0a: co-altitude lag at
+	// t=96, low at t=104, dead at t=157). Relative and zero-sum, dead beyond
+	// 2.5 km, dwarfed by the offence terms in a genuine conversion — and
+	// scaled by the energy-read skill: the novice authentically cannot price
+	// it. Sits outside the posture weights, like the deck penalties — and
+	// faded by threat: height is an asset a pilot husbands in a NEUTRAL
+	// fight and spends without regret once someone is on the six, so taxing
+	// the escape dive is wrong exactly where escaping matters (it inverted
+	// the wide heater ladder before this gate).
+	stack := clamp((s.Position.Y-hisP.Y)/400, -1, 1) * near * clamp(1-2*threat, 0, 1)
 	// The range term is deliberately shallow: every geometry term dies by 2.5 km,
 	// so beyond that this gradient is nearly the whole scorer and steepening it
 	// reweights the merge and gun bands too. Pulling a distant bot back wants a
 	// term that is zero inside weapons range, not a bigger multiplier here.
-	score := w.offence*offence - 1.3*w.threat*threat - 0.8*w.threat*joust - w.energy*hungry*clamp(edge*-1, 0, 1) - r/12000 +
+	score := w.offence*offence - 1.3*w.threat*threat - 0.8*w.threat*joust - w.energy*hungry*clamp(edge*-1, 0, 1) + 0.45*sk.energy*stack - r/12000 +
 		sk.geometry*0.25*standing*clamp((2500-r)/1500, 0, 1) +
 		w.closing*0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
 		w.offence*0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
