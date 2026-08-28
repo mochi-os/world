@@ -33,7 +33,7 @@ func TestApproachRoll(t *testing.T) {
 		best, worst := 0.0, 0.0
 		onspeed := m.Airframe.Control.Onspeed
 		for i := 0; i < 240*3; i++ {
-			m.Step(Inputs{Throttle: throttle, Roll: side, Gear: true})
+			m.Step(Inputs{Throttle: throttle, Roll: side, Gear: true, Flap: 2})
 			if p, _, _ := rates(m.State.Omega); math.Abs(p) > math.Abs(best) {
 				best = p
 			}
@@ -73,7 +73,7 @@ func TestApproachLineup(t *testing.T) {
 		if i >= 240*6 {
 			target = 0
 		}
-		m.Step(Inputs{Throttle: throttle, Roll: clamp((target-bank(m))*4, -1, 1), Gear: true})
+		m.Step(Inputs{Throttle: throttle, Roll: clamp((target-bank(m))*4, -1, 1), Gear: true, Flap: 2})
 		held := alpha(m.State.Attitude.Unrotate(m.State.Velocity))
 		if d := math.Abs(held - onspeed); d > worst {
 			worst = d
@@ -99,7 +99,7 @@ func TestApproachCrosswind(t *testing.T) {
 		onspeed := m.Airframe.Control.Onspeed
 		peak, worst := 0.0, 0.0
 		for i := 0; i < 240*15; i++ {
-			m.Step(Inputs{Throttle: throttle, Gear: true})
+			m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
 			v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 			peak = math.Max(peak, math.Abs(beta(v)))
 			worst = math.Max(worst, math.Abs(alpha(v)-onspeed))
@@ -139,7 +139,7 @@ func TestCrosswindTrap(t *testing.T) {
 		if caught {
 			throttle = 0
 		}
-		m.Step(Inputs{Gear: true, Hook: true, Throttle: throttle})
+		m.Step(Inputs{Gear: true, Hook: true, Throttle: throttle, Flap: 2})
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}

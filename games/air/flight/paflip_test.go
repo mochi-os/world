@@ -16,11 +16,14 @@ import (
 // toward wings-level the moment the law flips, mid-bank in the turn to final.
 func TestPAFlip(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 145, Fighter.Mass.Fuel*0.4)
+	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 120, Fighter.Mass.Fuel*0.4)
 	m.State.Attitude = m.State.Attitude.Multiply(Axis(Vec3{X: 1}, -45*math.Pi/180))
 	in := Inputs{Gear: true, Throttle: 0.25, Pitch: 0.25}
 	prevBank, wasPA := 0.0, false
 	for tick := 0; tick < 60*40; tick++ {
+		if tick == 60*4 {
+			in.Flap = 2 // the pilot selects flaps mid-bank: THIS is the PA entry now (#86)
+		}
 		for s := 0; s < 4; s++ {
 			m.Step(in)
 		}
@@ -39,5 +42,5 @@ func TestPAFlip(t *testing.T) {
 		}
 		wasPA, prevBank = m.pa, bank
 	}
-	t.Fatal("the deceleration never reached the PA threshold")
+	t.Fatal("the flap selection never entered PA")
 }

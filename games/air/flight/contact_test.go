@@ -185,7 +185,7 @@ func TestTrap(t *testing.T) {
 		if caught {
 			throttle = 0 // throttle to idle in the wire, as the real procedure has it — the gentler low-energy arrest otherwise lets approach power creep the trapped jet
 		}
-		m.Step(Inputs{Gear: true, Hook: true, Throttle: throttle})
+		m.Step(Inputs{Gear: true, Hook: true, Flap: 2, Throttle: throttle})
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}
@@ -211,7 +211,7 @@ func TestBolter(t *testing.T) {
 	m.State.Engine[0] = EngineState{Spool: 1}
 	m.State.Engine[1] = EngineState{Spool: 1}
 	for i := 0; i < 240*8; i++ {
-		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1})
+		m.Step(Inputs{Gear: true, Flap: 2, Throttle: 1, Reheat: 1})
 		if m.State.Gear.Wire >= 0 {
 			t.Fatal("caught a wire with the hook up")
 		}

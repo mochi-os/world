@@ -34,6 +34,14 @@ type Model struct {
 	halfleg bool // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
 	launder float64
 
+	// PA level-flight datum secant (#86) - unencoded like the law memory: the
+	// scratch model exists because Evaluate composes its own state and must
+	// never run on the flying one.
+	static   *Model
+	fitAlpha float64
+	fitClock float64
+	rolling  float64 // ground-gains hold, s: weight-on-wheels keyed the law directly and a strut bounce flickered it mid-rollout (#86)
+
 	// Deployable and store memory - unencoded for the same reason: the slews
 	// re-derive within seconds and the mask is re-asserted by its owner.
 	probe    float64 // refuelling probe extension 0..1 (~5 s hydraulic stroke)

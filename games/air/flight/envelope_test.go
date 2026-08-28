@@ -21,7 +21,7 @@ func settle(t *testing.T, fuel float64) (float64, float64) {
 		m.State = Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, fuel)
 		sumVy, sumSpeed, sumAlpha, n := 0.0, 0.0, 0.0, 0
 		for i := 0; i < 240*90; i++ {
-			m.Step(Inputs{Throttle: throttle, Gear: true})
+			m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
 			if i >= 240*45 {
 				body := m.State.Attitude.Unrotate(m.State.Velocity)
 				sumVy += m.State.Velocity.Y

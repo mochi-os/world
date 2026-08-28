@@ -27,7 +27,7 @@ func TestTrim(t *testing.T) {
 	settled := func(trim bool) float64 {
 		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 800}, Vec3{X: 1}, 75, Fighter.Mass.Fuel*0.4)
-		in := Inputs{Gear: true, Throttle: 0.30} // approach power: a hair downhill, so the runaway climb never pins the flyaway-attitude cap both twins would share
+		in := Inputs{Gear: true, Flap: 2, Throttle: 0.30} // approach power: a hair downhill, so the runaway climb never pins the flyaway-attitude cap both twins would share
 		total := 0.0
 		for tick := 0; tick < 240*20; tick++ {
 			in.Trim = 0
@@ -88,9 +88,12 @@ func TestFlapSelect(t *testing.T) {
 		}
 		return m.State.Fcs.Flap
 	}
-	full, half := droop(0, false), droop(1, false)
+	full, half, auto := droop(2, false), droop(1, false), droop(0, false)
 	if full < 0.05 {
-		t.Fatalf("the automatic approach droop is missing: %.3f rad", full)
+		t.Fatalf("the FULL approach droop is missing: %.3f rad", full)
+	}
+	if auto >= half {
+		t.Fatalf("AUTO droops %.3f rad against HALF's %.3f — the landing configuration must belong to the switch, not a schedule (#86)", auto, half)
 	}
 	ratio := half / full
 	if ratio < 0.35 || ratio > 0.75 {

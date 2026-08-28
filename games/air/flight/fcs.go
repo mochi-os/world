@@ -37,29 +37,39 @@ func (m *Model) fcs(in Inputs, local Air) {
 	var stabTarget, flapTarget, rudderTarget, droopTarget, slatFloor float64
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
 
-	// Law selection with hysteresis: enter PA below 125 m/s, leave above 128.6.
-	// Launder the integral across ANY law change - it means a pitch-RATE bias
-	// up-and-away and a direct stabilator add in PA.
-	pa := m.pa
+	// Law selection follows the FLAP SWITCH, as the real jet's does (#86):
+	// HALF or FULL selects the powered-approach gains, AUTO keeps up-and-away
+	// whatever the gear handle says — the real FCS has no speed threshold that
+	// flips a law under the pilot's hand. The old gear-and-CAS trigger put a
+	// hysteresis band at 243-250 KCAS, exactly where a dirty arrival flies,
+	// and laundered the trim on every crossing. The deck's HALF latch counts
+	// as a selection: the jet is handed over configured for the takeoff leg,
+	// and the clean-up passing 180 KCAS clean returns it to AUTO. Launder the
+	// integral across ANY law change - it means a pitch-RATE bias up-and-away
+	// and a direct stabilator add in PA.
+	if m.State.Gear.Wow && m.State.Velocity.Length() < 40 {
+		m.halfleg = true // HALF flap set on deck, held through the clean-up climb
+	}
+	if !in.Gear && calibrated > 92.6 && in.Flap < 1 {
+		m.halfleg = false // the clean-up ended the takeoff leg
+	}
+	// Weight on wheels selects the ground gains whatever the switch says —
+	// the real FCS changes gains on the WoW switch, and the alpha-follow that
+	// keeps the stabilator sane on deck lives in the PA branch. Held for half
+	// a second past the last contact: a strut bounce on the rollout otherwise
+	// flickers the law and the flicker showed up as a lateral pull (#86).
+	if m.State.Gear.Wow {
+		m.rolling = 3 // long enough to bridge a floated rollout: a light jet with full droop lifts off at rollout speed, and the UA attitude-hold flew it away where the ground mode's idle derotation resettles it
+	} else {
+		m.rolling = math.Max(0, m.rolling-Dt)
+	}
+	pa := in.Flap >= 1 || m.halfleg || m.rolling > 0
 	if !m.lawInit {
-		pa = in.Gear && calibrated < 130
 		m.pa = pa // initialisation is NOT a law change: leaving m.pa at its zero value made the first step of every fresh model read as a flip and launder the trim for its first two seconds (TestTrap's scripted pass missed the wires)
 		m.lawInit = true
-	} else if pa {
-		// The virtual flap switch (NATOPS): the FLAPS own the configuration, not the
-		// gear handle. AUTO is selected passing 180 KCAS clean, so a gear-up climb
-		// keeps takeoff flap; 128.6 m/s is the overspeed cap.
-		if (!in.Gear && calibrated > 92.6) || calibrated > 128.6 { // 128.6 m/s = the 250 KCAS flap placard (NATOPS figure 4-2); 135 sat 12 kt over it (#49)
-			pa = false
-		}
-	} else if in.Gear && calibrated < 125 {
-		pa = true
-	}
-	if !pa {
-		m.halfleg = false // the clean-up ended the takeoff leg; the next PA entry is an approach
 	}
 	if pa != m.pa {
-		m.launder = 2 // seconds of decay: each law re-learns its own trim behind the demand faders
+		m.launder = 2 // a deliberate configuration change still re-learns its trim behind the demand faders
 	}
 	m.pa = pa
 	if extension := m.State.Gear.Extension; extension > 0.02 && extension < 0.98 {
@@ -94,7 +104,11 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// alpha LEVEL FLIGHT needs in the CURRENT configuration (droop lift
 		// included), converging on on-speed exactly at on-speed. The stick is
 		// squared, sign-preserved: linear is unflyable on a keyboard.
-		fine := stick * math.Abs(stick)
+		// Linear, as the real PA stick is (#86): the squared shaping made 35%
+		// stick command ~1 degree of alpha and deadened every fine correction
+		// on approach. The keyboard's soft onset lives in the client's input
+		// ramp, where it belongs, not in the law every device flies.
+		fine := stick
 		// The pitch trim switch, PA sense: it biases the ALPHA datum (the real
 		// law trims an on-speed AoA reference), so "trim to on-speed, fly the
 		// ball with power" is a real technique here rather than an automatic.
@@ -102,12 +116,6 @@ func (m *Model) fcs(in Inputs, local Air) {
 			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*Dt, -4*math.Pi/180, 4*math.Pi/180)
 		}
 		droopTarget, slatFloor = m.Approaching(pressure)
-		// The takeoff configuration is LATCHED, not read off the gear handle: HALF
-		// flap set on deck and held through the clean-up climb, so gear-up cannot
-		// halve the droop nor gear-down grant FULL off the bow.
-		if m.State.Gear.Wow && m.State.Velocity.Length() < 40 {
-			m.halfleg = true
-		}
 		if in.Flap >= 2 {
 			// FULL selected: the heavy shot's and the short field's setting —
 			// honoured even on deck.
@@ -119,14 +127,45 @@ func (m *Model) fcs(in Inputs, local Air) {
 		}
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
-		grade := clamp((need-c.Droop.Lift*schedule)/4.5, 0, c.Onspeed) // 4.5/rad: the TRIMMED lift slope (stabilator download included) fit through the on-speed anchor — see Droop.Lift
+		// The level-flight alpha from the airframe's own statics rather than a
+		// straight-line fit (#86): the 4.5/rad fit disagreed with the real
+		// aerodynamics by over a degree across the envelope, and hands-off the
+		// "trimmed" jet ballooned +1,500 fpm at pattern speeds. A secant walks
+		// the clean-wing CL(alpha) onto the demand four times a second, on a
+		// scratch model because Evaluate composes its own state and must never
+		// run on the flying one; the droop's share stays the linear term the
+		// schedule prices.
+		clean := need - c.Droop.Lift*schedule
+		if m.static == nil {
+			m.static = New(m.Airframe, m.Environment, m.World)
+			m.fitAlpha = clamp(clean/4.5, 0, c.Onspeed)
+			m.fitClock = 0
+		}
+		m.fitClock -= Dt
+		if m.fitClock <= 0 {
+			m.fitClock = 0.25
+			m.static.State.Fuel = m.State.Fuel
+			cl, _ := m.static.Evaluate(speed, m.fitAlpha, m.State.Position.Y)
+			m.fitAlpha = clamp(m.fitAlpha+(clean-cl)/4.5, -0.05, 0.45)
+		}
+		grade := clamp(m.fitAlpha, 0, c.Onspeed)
 		// The cap serves the ARRIVE-DIRTY regime, not the ball: near on-speed `need`
 		// moves as 1/v² and a hard min() walks the datum with every power correction.
 		// Blended ~160-190 kt: AoA-referenced inside, level-flight auto-trim beyond.
 		anchor := c.Droop.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
 		blend := clamp((0.80*anchor-need)/(0.18*anchor), 0, 1)
 		level := c.Onspeed - blend*math.Max(c.Onspeed-grade, 0)
-		demand := level + fine*(9*math.Pi/180) + f.Datum
+		// Full authority, as the real PA law gives (#86): the alpha/g limiter
+		// is an up-and-away feature, and NATOPS's gear/flaps +2.0/0 g is a
+		// placard the pilot observes, not a wire — the old fixed 9-degree span
+		// priced the placard into the stick and pinned every dirty pull at
+		// ~2 g. Aft stick commands to the pre-stall schedule; the exposure
+		// beyond the placard is recorded below, like the up-and-away limits.
+		span := 22*math.Pi/180 - level
+		if fine < 0 {
+			span = level + 5*math.Pi/180
+		}
+		demand := level + fine*span + f.Datum
 		// Flyaway attitude capture: hands-off after a catapult shot the real
 		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
 		// into a full-burner zoom. Binds only when pitch exceeds the datum;
@@ -159,6 +198,17 @@ func (m *Model) fcs(in Inputs, local Air) {
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
 		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
 		brakeTarget = 0                                               // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
+		// The dirty placard, procedural like the real jet's (#86): nothing
+		// here stops the pull — the exposure beyond gear/flaps +2.0/0 g feeds
+		// the same structural weakness the up-and-away limits do.
+		if !m.State.Gear.Wow {
+			if m.State.Fcs.Normal > 2.0 {
+				m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * Dt
+			}
+			if m.State.Fcs.Normal < 0 {
+				m.State.Damage.Stress -= m.State.Fcs.Normal * Dt
+			}
+		}
 		// Wing leveler on deck: as lift builds down the stroke the wheels
 		// unload and the crosswind's rolling moment grows — with no roll
 		// channel the jet left the catapult at 17° bank, 1 rad/s (measured).
@@ -233,15 +283,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 		} else {
 			demand = level + stick*(level-floor)
 		}
-		// Demand shaping, asymmetric: onset slews at 25 g/s, release at double,
-		// judged against `level`. No zero-means-fresh sentinel - a full push slews
-		// THROUGH zero. The ceiling opens with the gear (Extension 1→0), so a stick
-		// held through retraction does not step to the full limit.
-		if m.State.Gear.Extension > 0.02 && calibrated < 130 {
-			demand = math.Min(demand, level+(ceiling-level)*(1-m.State.Gear.Extension))
-		}
-		if m.State.Gear.Extension > 0.02 {
-			demand = math.Min(demand, 2.0) // gear in transit or down: +2.0 g structural cap (NATOPS 4.1.8), at ANY speed — the fast gear-down pull was uncapped
+		// The gear placard is procedural, like the flap one (#86): NATOPS
+		// 4.1.8's +2.0 g with the gear out stops nothing here — the old caps
+		// wired it into the stick, and below 252 kt gear-down they clamped the
+		// demand to bare level flight, a dead stick the pilot met the moment
+		// the flap-switch law keying exposed this regime. The exposure beyond
+		// the placard feeds the same structural weakness the other limits do,
+		// scaled by how far out the gear is.
+		if ext := m.State.Gear.Extension; ext > 0.02 && m.State.Fcs.Normal > 2.0 {
+			m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * ext * Dt
 		}
 		shaping := 25.0
 		if math.Abs(demand-level) < math.Abs(f.Demand-level) {

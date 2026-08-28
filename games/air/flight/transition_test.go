@@ -18,22 +18,28 @@ import (
 // cross flies a gear-down speed crossing of the law boundary under the given
 // throttle and stick, returning the worst pitch rate and load-factor excursion
 // seen in the boundary region plus the number of law changes.
-func cross(t *testing.T, start float64, throttle float64, stick float64, until func(speed float64) bool) (worstQ float64, worstNz float64, flips int) {
+func cross(t *testing.T, start float64, throttle float64, stick float64, flapFrom float64, flapTo float64, switchAt func(speed float64) bool, until func(speed float64) bool) (worstQ float64, worstNz float64, flips int) {
 	t.Helper()
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 600}, Vec3{X: 1}, start, 2000)
 	for i := 0; i < 240*8; i++ { // settle into the starting law's trim
-		m.Step(Inputs{Throttle: 0.55, Gear: true})
+		m.Step(Inputs{Throttle: 0.55, Gear: true, Flap: flapFrom})
 	}
 	was := m.pa
+	flap := flapFrom
+	switched := false
 	for i := 0; i < 240*120; i++ {
-		m.Step(Inputs{Throttle: throttle, Pitch: stick, Gear: true})
+		speed := m.State.Velocity.Length()
+		if !switched && switchAt(speed) {
+			flap = flapTo // the pilot works the flap switch: THIS is the law change now (#86)
+			switched = true
+		}
+		m.Step(Inputs{Throttle: throttle, Pitch: stick, Gear: true, Flap: flap})
 		if m.pa != was {
 			flips++
 			was = m.pa
 		}
-		speed := m.State.Velocity.Length()
-		if speed > 115 && speed < 145 { // the boundary region
+		if speed > 115 && speed < 145 { // the handover region
 			_, q, _ := rates(m.State.Omega)
 			if a := math.Abs(q); a > worstQ {
 				worstQ = a
@@ -57,7 +63,7 @@ func TestLawBoundaryAcceleration(t *testing.T) {
 	// 0.12 stick holds attitude through the acceleration (a waveoff); a bigger
 	// pull climbs, sags the speed back through the band and swamps the handover
 	// transient. 146, not 150: a gear-down MIL run now peaks at ~149.7 m/s.
-	worstQ, worstNz, flips := cross(t, 110, 1.0, 0.12, func(speed float64) bool { return speed > 146 })
+	worstQ, worstNz, flips := cross(t, 110, 1.0, 0.12, 2, 0, func(speed float64) bool { return speed > 120 }, func(speed float64) bool { return speed > 146 })
 	t.Logf("accel: worst q %.1f deg/s, worst |nz-1| %.2f, law flips %d", worstQ*180/math.Pi, worstNz, flips)
 	if flips != 1 {
 		t.Fatalf("law must flip exactly once, flipped %d times", flips)
@@ -73,7 +79,7 @@ func TestLawBoundaryAcceleration(t *testing.T) {
 // TestLawBoundaryDeceleration: the mirrored crossing — dirtying up early and
 // decelerating into the approach with a touch of stick held.
 func TestLawBoundaryDeceleration(t *testing.T) {
-	worstQ, worstNz, flips := cross(t, 150, 0.15, 0.15, func(speed float64) bool { return speed < 115 })
+	worstQ, worstNz, flips := cross(t, 150, 0.15, 0.15, 0, 2, func(speed float64) bool { return speed < 130 }, func(speed float64) bool { return speed < 115 })
 	t.Logf("decel: worst q %.1f deg/s, worst |nz-1| %.2f, law flips %d", worstQ*180/math.Pi, worstNz, flips)
 	if flips != 1 {
 		t.Fatalf("law must flip exactly once, flipped %d times", flips)
@@ -86,8 +92,9 @@ func TestLawBoundaryDeceleration(t *testing.T) {
 	}
 }
 
-// TestLawHysteresis: inside the 125..135 m/s band the law must hold whatever it
-// was, however the speed wobbles.
+// TestLawHysteresis: the law follows the flap switch alone (#86) — however
+// the speed wobbles about the OLD 130 m/s gate, with the switch untouched the
+// law must never move. The name stays for the history it pins.
 func TestLawHysteresis(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	// Low, where TAS ≈ CAS (the law gates are calibrated airspeed), with the
@@ -136,9 +143,9 @@ func TestGearCycle(t *testing.T) {
 		speed    float64
 		from, to bool
 	}{
-		{"down into PA", 115, false, true},
-		{"up out of PA", 115, true, false},
-		{"down fast, no law change", 160, false, true},
+		{"down at pattern speed", 115, false, true},
+		{"up at pattern speed", 115, true, false},
+		{"down fast", 160, false, true},
 	}
 	// The steady cases regression-pin current behaviour; the climb case below
 	// winds the trim up first. The teeth are in the law-flip laundering, not the
@@ -172,23 +179,34 @@ func TestGearCycle(t *testing.T) {
 		})
 	}
 	t.Run("up during a full-power climb", func(t *testing.T) {
-		// The wound-trim case: a full-burner climbing cleanup right after a
-		// low-level departure, stick held — the state the original defect
-		// lived in. The PA integral is loaded when the gear starts up.
+		// The wound-trim case, in the takeoff leg's own terms: HALF flap
+		// latched off the deck, a full-burner climb with the stick held, gear
+		// up mid-climb, and the PA-to-UA flip arriving as the jet passes 180
+		// KCAS clean — the loaded PA integral crosses both the transit and the
+		// law flip. The original defect snapped 23 deg/s at this seam.
 		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 60}, Vec3{X: 1}, 90, 3000)
+		m.halfleg = true
 		for i := 0; i < 240*6; i++ { // full-power climb establishing, gear down
 			m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 0.3, Gear: true})
 		}
-		worstQ := 0.0
+		worstQ, flips := 0.0, 0
+		pa := m.pa
 		for i := 0; i < 240*8; i++ { // cleanup mid-climb
 			m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 0.3, Gear: false})
+			if m.pa != pa {
+				flips++
+				pa = m.pa
+			}
 			_, q, _ := rates(m.State.Omega)
 			if a := math.Abs(q); a > worstQ {
 				worstQ = a
 			}
 		}
-		t.Logf("climbing cleanup: worst q %.1f deg/s", worstQ*180/math.Pi)
+		t.Logf("climbing cleanup: worst q %.1f deg/s, law flips %d", worstQ*180/math.Pi, flips)
+		if flips != 1 {
+			t.Fatalf("the cleanup must cross the PA-to-UA seam exactly once: %d flips", flips)
+		}
 		if worstQ > 15*math.Pi/180 {
 			t.Fatalf("pitch-rate excursion %.1f deg/s at the climbing cleanup (the un-laundered jump snapped 23 deg/s)", worstQ*180/math.Pi)
 		}
@@ -255,7 +273,7 @@ func TestPatternHold(t *testing.T) {
 		// design, and an 85 m/s CLEAN spawn (near-stall, alpha 12.7°) drove the
 		// hold through that gate and measured the waveoff, not the pattern.
 		throttle := clamp(0.5+(110-m.State.Velocity.Length())*0.05, 0.1, 0.8)
-		m.Step(Inputs{Throttle: throttle, Gear: true})
+		m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
 		if i > 240*60 { // past gear extension, the law-change laundering, and the droop's configuration balloon — real-jet behaviour whose energy tail decays for most of a minute at pattern power
 			if vy := m.State.Velocity.Y; vy > climbed {
 				climbed = vy
@@ -289,7 +307,7 @@ func TestBallDatum(t *testing.T) {
 		if i > 240*8 && i < 240*16 {
 			in = throttle + 0.25 // the fat correction: ~12 kt fast at its peak
 		}
-		m.Step(Inputs{Throttle: in, Gear: true})
+		m.Step(Inputs{Throttle: in, Gear: true, Flap: 2})
 		if i > 240*5 {
 			a := alpha(m.State.Attitude.Unrotate(m.State.Velocity)) * 180 / math.Pi
 			low = math.Min(low, a)

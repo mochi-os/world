@@ -17,6 +17,7 @@ import (
 func TestFlapsAuto(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 82, Fighter.Mass.Fuel*0.6)
+	m.halfleg = true // the deck latch: this test picks the takeoff leg up already airborne (#86: the law follows the flap switch, and the latch is the deck's selection)
 	in := Inputs{Gear: true, Throttle: 1, Reheat: 1, Pitch: 0.1}
 	for tick := 0; tick < 60*2; tick++ {
 		m.Step(in) // two seconds gear-down: the climb-out established in PA

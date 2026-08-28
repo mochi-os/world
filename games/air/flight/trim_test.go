@@ -60,7 +60,7 @@ func TestApproach(t *testing.T) {
 		sink := -s.Velocity.Y
 		low, high := entry, entry
 		for i := 0; i < 240*20; i++ {
-			m.Step(Inputs{Throttle: spool, Gear: true})
+			m.Step(Inputs{Throttle: spool, Gear: true, Flap: 2})
 			speed := m.State.Velocity.Length()
 			low, high = math.Min(low, speed), math.Max(high, speed)
 		}

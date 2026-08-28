@@ -239,10 +239,21 @@ func TestNegativeFloorFixed(t *testing.T) {
 func TestBrakeAutoRetract(t *testing.T) {
 	m := calm()
 	launch(m, 240)
-	// One continuous full-aft pull with the board commanded out. The g builds
-	// slowly (the trim integrator walks the pull's tail), so the board is
-	// fully out through the sub-6 g phase and the retract engages as the g
-	// crosses the threshold several seconds in.
+	// Clean up first: the takeoff leg holds HALF flap (the PA law) until 180
+	// KCAS clean, and the landing configuration auto-stows the board (#86) —
+	// the pull that exercises the retract belongs to the up-and-away law.
+	for i := 0; i < 240*8; i++ {
+		m.Step(Inputs{Throttle: 1, Reheat: 1})
+	}
+	// Board out first, straight and level: extension takes over a second, and
+	// the un-capped pull crosses the retract threshold faster than the board
+	// can travel, so extending mid-pull never shows a fully-out board.
+	for i := 0; i < 240*3; i++ {
+		m.Step(Inputs{Throttle: 1, Reheat: 1, Speedbrake: 1})
+	}
+	// One continuous full-aft pull with the board out: it stays out through
+	// the sub-6 g phase and the retract engages as the g crosses the
+	// threshold.
 	extended, stowed, peak := 0.0, 1.0, 0.0
 	for i := 0; i < 240*10; i++ {
 		m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: 1, Speedbrake: 1})

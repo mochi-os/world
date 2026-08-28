@@ -41,7 +41,11 @@ func pioRun(kt, gain, stepDeg float64, gear bool) pioResult {
 		delayed := lag[0]
 		lag = lag[1:]
 		stick := clamp(gain*delayed*57.3/10, -1, 1) // gain = stick per 10° of error
-		m.Step(Inputs{Throttle: throttle, Pitch: stick, Gear: gear})
+		flap := 0.0
+		if gear {
+			flap = 2 // the approach configuration is gear AND full flap — the law follows the flap switch (#86)
+		}
+		m.Step(Inputs{Throttle: throttle, Pitch: stick, Gear: gear, Flap: flap})
 		if i >= 240*2 {
 			history = append(history, pitch*57.3)
 		}

@@ -279,7 +279,7 @@ func blast(this js.Value, arguments []js.Value) any {
 	}
 	// Output: kill, event mask, then the fragment impact points in the
 	// target's body frame — the client draws the connecting evidence there.
-	var out [33]float64
+	var out [37]float64
 	if kill {
 		out[0] = 1
 	}
@@ -288,7 +288,16 @@ func blast(this js.Value, arguments []js.Value) any {
 	for h, hit := range struck {
 		out[3+h*3], out[4+h*3], out[5+h*3] = hit.X, hit.Y, hit.Z
 	}
-	send(out[:3+len(struck)*3], arguments[1])
+	// Diagnostic tail (#85): the miss and the target position AS THIS JUDGE
+	// MEASURED THEM. A fusing the client recorded at 2.0 m returned nothing,
+	// and the only way that happens is this measurement disagreeing with the
+	// client's — rotation preserves length, so the relative vector's length is
+	// exactly the miss Warhead judged.
+	relative := flight.Vec3{X: flight.Shortest(position.X, point.X, wrap), Y: point.Y - position.Y, Z: flight.Shortest(position.Z, point.Z, wrap)}
+	tail := 3 + len(struck)*3
+	out[tail] = relative.Length()
+	out[tail+1], out[tail+2], out[tail+3] = position.X, position.Y, position.Z
+	send(out[:tail+4], arguments[1])
 	return kill
 }
 
