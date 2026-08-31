@@ -101,7 +101,10 @@ func vsStall(fuel, alt float64, gear bool) float64 {
 
 // vsRotate measures the minimum rotation speed: full MIL takeoff roll with
 // full aft stick held from 30 m/s — Vr where the nose lifts, Vlof at liftoff.
-func vsRotate(fuel float64) (float64, float64) {
+// The flap selection matters (#91): NATOPS takeoff is FLAP HALF, and the
+// runway rotate hint carries the HALF numbers; AUTO is measured beside it to
+// show what leaving the switch up costs.
+func vsRotate(fuel float64, flap float64) (float64, float64) {
 	world := World{Sea: 0, Fields: []Field{{Height: 0, Strips: []Strip{{A: Vec3{X: -200}, B: Vec3{X: 4000}, Width: 60}}}}}
 	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, world)
 	m.State.Position = Vec3{Y: 2.6}
@@ -117,7 +120,7 @@ func vsRotate(fuel float64) (float64, float64) {
 		if v > 30 {
 			stick = 1
 		}
-		m.Step(Inputs{Gear: true, Throttle: 1, Pitch: stick})
+		m.Step(Inputs{Gear: true, Flap: flap, Throttle: 1, Pitch: stick})
 		pitch := math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1))
 		if v > 30 && math.IsNaN(base) {
 			base = pitch
@@ -699,8 +702,10 @@ func TestVSpeeds(t *testing.T) {
 		if 2*78700 > weight {
 			fmt.Println("(T/W exceeds 1 in reheat: the jet climbs vertically, accelerating — a best CLIMB ANGLE only exists at MIL, where Vx below is measured; in AB the concept is degenerate)")
 		}
-		vr, vlof := vsRotate(w.fuel)
-		fmt.Printf("Vr  minimum rotation (SL, MIL): %s   (liftoff %s)\n", vsBoth(vr, 0), vsBoth(vlof, 0))
+		vr, vlof := vsRotate(w.fuel, 1)
+		fmt.Printf("Vr  minimum rotation (SL, MIL, flap HALF): %s   (liftoff %s)\n", vsBoth(vr, 0), vsBoth(vlof, 0))
+		vrAuto, vlofAuto := vsRotate(w.fuel, 0)
+		fmt.Printf("Vr  with flaps left in AUTO:               %s   (liftoff %s)\n", vsBoth(vrAuto, 0), vsBoth(vlofAuto, 0))
 		for _, at := range vspeedAlts {
 			fmt.Printf("--- %s ---\n", at.label)
 			vs1 := vsStall(w.fuel, at.m, false)
@@ -746,6 +751,32 @@ func TestVSpeeds(t *testing.T) {
 			fmt.Printf("best sustained turn:         %s  (%.1f deg/s, AB)\n", vsBoth(bv, at.m), bw)
 			tv, tr, tw := vsRadius(w.fuel, at.m, vs1, bv)
 			fmt.Printf("tightest sustained turn:     %s  (radius %.0f m, %.1f deg/s, AB)\n", vsBoth(tv, at.m), tr, tw)
+		}
+	}
+}
+
+// TestRotateFlap (#91): the runway rotate hint says "rotate at 140 knots",
+// and this pins the measured minimum it rests on. Measured 2026-08-31: the
+// nose lifts at ~98 KCAS and the jet flies away at 116-119 regardless of
+// weight or flap selection — the CG sits close enough to the main gear that
+// rotation is tail-authority-limited, and by rotation alpha the AUTO
+// schedule has drooped the flaps as far as HALF does, so the selection is
+// procedure and control law, not rotation performance. If the minimum ever
+// climbs toward the hint's 140, the hint is stale.
+func TestRotateFlap(t *testing.T) {
+	for _, w := range []struct {
+		label string
+		fuel  float64
+	}{
+		{"light", lightFuel},
+		{"heavy", heavyFuel},
+	} {
+		rotate, liftoff := vsRotate(w.fuel, 1)
+		rotateKcas := vsKnots(calibrated(rotate, 0, Environment{}))
+		liftoffKcas := vsKnots(calibrated(liftoff, 0, Environment{}))
+		t.Logf("%s (%.0f kg): flap HALF Vr %.0f KCAS, liftoff %.0f", w.label, 10700+w.fuel, rotateKcas, liftoffKcas)
+		if liftoffKcas < 105 || liftoffKcas > 132 {
+			t.Errorf("%s: minimum liftoff %.0f KCAS at flap HALF — outside 105-132; the 140-knot rotate hint no longer carries margin", w.label, liftoffKcas)
 		}
 	}
 }
