@@ -85,9 +85,21 @@ func output(state EngineState, engine *Engine, density float64, mach float64) (f
 	if mach > rolloff {
 		intake = clamp(1-(mach-rolloff)*0.8, 0.3, 1)
 	}
-	dry := engine.Dry * state.Spool * sigma * (1 + ram_dry*mach*mach) * intake
-	boost := (engine.Reheat - engine.Dry) * state.Reheat * sigma * (1 + ram_wet*mach*mach) * intake
+	// Ram recovery grows in from M0.25 to M0.9 (#95): the plain Mach² term
+	// handed the mid-band fight (M0.55-0.75) a quarter of static thrust as a
+	// free bonus, which is what left a 7 g turn at 450 KCAS with thrust to
+	// spare and the sustained-rate peak parked at 400-450 KCAS. Full ram from
+	// M0.9 up leaves the calibrated top end (deck terminal, the M1.7x dash,
+	// the intake rolloff) untouched.
+	ram := ramp((mach - 0.25) / 0.65)
+	dry := engine.Dry * state.Spool * sigma * (1 + ram_dry*mach*mach*ram) * intake
+	boost := (engine.Reheat - engine.Dry) * state.Reheat * sigma * (1 + ram_wet*mach*mach*ram) * intake
 	return dry, boost
+}
+
+// ramp clamps a rise fraction to the unit interval.
+func ramp(fraction float64) float64 {
+	return clamp(fraction, 0, 1)
 }
 
 // propulsion adds engine forces for a trial state.

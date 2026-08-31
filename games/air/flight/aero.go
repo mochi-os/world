@@ -274,12 +274,18 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	bodyBeta := beta(v)
 	bodyMach := speed / local.Sound
 	// Transonic body wave drag: the fuselage is the area-rule offender.
+	// Onset 0.86 over a 0.20 ramp (#95): the old 0.92/0.12 step dropped the
+	// whole hump between the 600 KCAS acceleration gate and terminal, so
+	// the deck run held flat 2.4 s segments to M0.91 and then the rise bit
+	// hard enough to park terminal at 660 KCAS — the creep now starts
+	// where the real jet's last hundred knots begin to stretch and peaks
+	// past the terminal band.
 	bodyWave := 0.0
-	if bodyMach > 0.92 {
-		ramp := clamp((bodyMach-0.92)/0.12, 0, 1)
+	if bodyMach > 0.86 {
+		ramp := clamp((bodyMach-0.86)/0.20, 0, 1)
 		bodyWave = a.Wave.Body * ramp * ramp
-		if bodyMach > 1.02 {
-			bodyWave /= 1 + (bodyMach-1.02)*3.0 // the hump decays supersonic
+		if bodyMach > 1.06 {
+			bodyWave /= 1 + (bodyMach-1.06)*3.0 // the hump decays supersonic
 		}
 	}
 	for bi := range a.Body {

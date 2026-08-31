@@ -49,18 +49,57 @@ func TestDepartureBoundary(t *testing.T) {
 	for _, kcas := range []float64{135, 160} {
 		cell("gear down, flap FULL", true, 2, kcas)
 	}
-	// The crossed-control extreme, measured (the recording's departure lived
-	// out here): full aft, full rudder, opposite stick, slow. Logged, not
-	// gated — where the real boundary sits is the model's own truth.
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, 160/1.94384, 3000)
-	worst := 0.0
-	for i := 0; i < 240*8; i++ {
-		m.Step(Inputs{Pitch: 1, Yaw: -1, Roll: 1, Throttle: 0.8})
-		v := m.State.Attitude.Unrotate(m.State.Velocity)
-		worst = math.Max(worst, math.Abs(beta(v)))
+	// The crossed-control extremes: full aft, full rudder, opposite stick,
+	// held four seconds, then released. The dirty/slow cells are the
+	// in-close-waveoff accident regime the flight-1 crash actually lived in
+	// (#97): gear down, FULL flap, pattern speeds, adverse yaw.
+	crossed := func(name string, gear bool, flap, kcas float64) (float64, float64) {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kcas/1.94384, 3000)
+		if gear {
+			m.State.Gear.Extension = 1
+		}
+		in := Inputs{Gear: gear, Flap: flap, Throttle: 0.8}
+		for i := 0; i < 240*2; i++ {
+			m.Step(in)
+		}
+		worst := 0.0
+		in.Pitch, in.Yaw, in.Roll = 1, -1, 1
+		for i := 0; i < 240*4; i++ {
+			m.Step(in)
+			v := m.State.Attitude.Unrotate(m.State.Velocity)
+			worst = math.Max(worst, math.Abs(beta(v)))
+		}
+		// Release: controls neutral. The last two seconds of the six-second
+		// window say whether letting go brings the jet back.
+		in.Pitch, in.Yaw, in.Roll = 0, 0, 0
+		ending := 0.0
+		for i := 0; i < 240*6; i++ {
+			m.Step(in)
+			v := m.State.Attitude.Unrotate(m.State.Velocity)
+			if i >= 240*4 {
+				ending = math.Max(ending, math.Abs(beta(v)))
+			}
+		}
+		t.Logf("%-24s %3.0f kt crossed: beta peak %5.1f°, after release %5.1f°", name, kcas, worst*180/math.Pi, ending*180/math.Pi)
+		return worst * 180 / math.Pi, ending * 180 / math.Pi
 	}
-	t.Logf("crossed controls at 160 kt: beta peak %.1f°", worst*180/math.Pi)
+	crossed("clean", false, 0, 160)
+	for _, kcas := range []float64{130, 145} {
+		peak, after := crossed("gear down, flap FULL", true, 2, kcas)
+		// Realism cuts both ways in this cell (#97): the real jet departs
+		// under crossed controls dirty and slow (the in-close-waveoff
+		// accident class), so the model must neither shrug it off nor lose
+		// the jet for good — a real yaw excursion, and a recovery once the
+		// controls are released. Measured 2026-08-30: 19.8°/17.9° peaks
+		// (clean 160 kt reaches only 13.8°), 0.6°/0.5° after release.
+		if peak < 15 {
+			t.Errorf("dirty crossed controls at %.0f kt peaked at only %.1f° beta — the accident regime's departure is protected away", kcas, peak)
+		}
+		if after > 12 {
+			t.Errorf("dirty crossed controls at %.0f kt still at %.1f° beta two seconds after release — the departure does not recover", kcas, after)
+		}
+	}
 }
 
 // TestWaveoff: the pattern's safety number — from on-speed at 200 ft on
@@ -118,17 +157,28 @@ func TestBleed(t *testing.T) {
 		t.Fatal("never completed the half-turn")
 	}
 	// Regression pin, not judgement: measured 170 kt on 2026-08-28 with the
-	// post-#86 law (the decay compounds — as speed falls the 5 g hold needs
-	// rising alpha, and the drag rises with it). A move outside the band is a
+	// post-#86 law, 178 after the #95 ram/drag-rise retune (the decay
+	// compounds — as speed falls the 5 g hold needs rising alpha, and the
+	// drag rises with it). No public exact-condition anchor exists (NATOPS
+	// EM charts are restricted); the closest published figure, GAO's 62 kt/s
+	// instantaneous bleed at 15,000 ft at max pull, brackets this ~19 kt/s
+	// at 5 g MIL on the plausible side (#96). A move outside the band is a
 	// thrust/drag change re-tuning every fight, not noise.
 	if lost < 130 || lost > 210 {
-		t.Errorf("half-turn bleed %.0f kt holding 5 g at MIL — outside the 130-210 regression band (measured 170)", lost)
+		t.Errorf("half-turn bleed %.0f kt holding 5 g at MIL — outside the 130-210 regression band (measured 178)", lost)
 	}
 }
 
 // TestRollTracking: the PIO battery only exercises pitch; this is the roll
 // axis — a delayed pure-gain pilot capturing a 30° bank. Sustained ringing at
 // working gain is the lateral PIO the pitch battery cannot see.
+//
+// The ≤0.7 working region is calibrated against the real pilot (#98): across
+// twelve bank-capture events in the two 2026-08-28 fights the flown
+// equivalent gain (peak stick per 25° of bank swing —
+// claude/scripts/air/lateralgain.py) measured median 0.41, p75 0.58, max
+// 0.61. The ringing at gain 1.0 is an over-aggressive synthetic pilot no
+// human input reaches, not missing lateral damping.
 func TestRollTracking(t *testing.T) {
 	ring := func(kt, gain float64) (int, bool) {
 		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})

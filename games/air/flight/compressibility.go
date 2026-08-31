@@ -42,17 +42,24 @@ func compress(mach float64, cl float64, hump float64) (float64, float64, float64
 		slope = 2.0
 	}
 	// Wave drag above the lift-dependent critical Mach: the classic
-	// transonic HUMP — a steep quartic rise peaking just past M1, then a
-	// slow supersonic decay (Lock's law is only valid near divergence).
-	edge := critical - 0.12*math.Abs(cl)
+	// transonic HUMP — a cubic rise peaking just past M1, then a slow
+	// supersonic decay (Lock's law is only valid near divergence). Onset
+	// 0.76 less 0.30 per unit lift (#95): the quartic from 0.85−0.12·cl put
+	// essentially nothing below M0.95, so a full-reheat deck run held the
+	// same 2.4 s per 50 kt from M0.55 to M0.91 and a 7 g turn at 450 KCAS
+	// still had thrust to spare — drag creep must begin where the real
+	// jet's last hundred knots start to stretch.
+	edge := 0.76 - 0.30*math.Abs(cl)
 	wave := 0.0
 	if mach > edge {
 		rise := clamp((mach-edge)/(1.0-edge), 0, 1)
-		rise = rise * rise * rise * rise
+		rise = rise * rise * rise
 		if mach > 1.02 {
 			rise = 1 / (1 + (mach-1.02)*2.6) // slow decay to the supersonic shelf
 		}
-		wave = hump * rise
+		// Wave drag grows with lift (shock-induced separation): the hump
+		// value is the low-lift peak; a turning section pays more.
+		wave = hump * (1 + 4*cl*cl) * rise
 	}
 	// Transonic aft AC shift: ~10% of chord, ramped across the band, felt
 	// as a nose-down moment proportional to lift.

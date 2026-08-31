@@ -17,7 +17,9 @@ func TestDragRise(t *testing.T) {
 	sound := air(2000, m.Environment).Sound
 	_, subsonic, _ := polar(m, 0.70*sound, 0.02, 0)
 	_, transonic, _ := polar(m, 1.02*sound, 0.02, 0)
-	if transonic < subsonic*2.5 {
+	// 2.2: the #95 recalibration trimmed the hump peak to land the 686 KCAS
+	// deck terminal (measured ratio 2.4); a vanished hump reads ~1.
+	if transonic < subsonic*2.2 {
 		t.Fatalf("no drag divergence: CD %f at M0.70 vs %f at M1.02", subsonic, transonic)
 	}
 }

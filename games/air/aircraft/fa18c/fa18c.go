@@ -74,8 +74,8 @@ func build() *flight.Airframe {
 	a.Control.Rate.Rudder = 75 * math.Pi / 180
 	a.Control.Rate.Slat = 0.6
 	a.Control.Rate.Brake = 1.0
-	a.Wave.Hump = 0.030 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
-	a.Wave.Body = 0.10
+	a.Wave.Hump = 0.025 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
+	a.Wave.Body = 0.085
 
 	// The full fitment catalog (#17). Bits 0 and 1 must stay the wingtip AIM-9Ms:
 	// every count-to-mask mapping and the calibrated bot rely on those indices.

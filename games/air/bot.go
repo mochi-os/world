@@ -739,6 +739,16 @@ func beaten(b *brain, m *missile) bool {
 	return b.skill.library >= 3 && (m.loose || m.blind > 0)
 }
 
+// spent is the kinematic half of the same judgement (#101): a coasting round
+// that can no longer close will never arrive, and breaking for it anyway is
+// how the #95 energy model turned perfect perception into permanent defence —
+// the machine died mid-evade at 2 km, rounds still aboard, against an ace
+// whose blind wedge let it keep fighting. `closing` is the round's closure
+// toward me, m/s, computed by the caller against the wrap-corrected bearing.
+func spent(b *brain, m *missile, closing float64) bool {
+	return b.skill.library >= 3 && m.burn <= 0 && closing < 120
+}
+
 // decide refreshes the picture and picks the maneuver. Runs at the skill's cadence.
 func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b := a.brain
@@ -1046,7 +1056,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if !b.noticed[m.number] && distance < 500+1000*b.skill.discipline {
 			b.noticed[m.number] = true // the corner of the eye, late
 		}
-		if b.noticed[m.number] && distance < 4500 && !beaten(b, m) {
+		if b.noticed[m.number] && distance < 4500 && !beaten(b, m) &&
+			!spent(b, m, -m.velocity.Subtract(me.Velocity).Dot(direction)) {
 			threatened, inbound, radar = true, direction, m.radar != nil
 			break
 		}
@@ -2229,10 +2240,27 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// speed floor and the behind-him carve-out hold only OUTSIDE the span:
 	// extend cold-poor, rebuild beyond reach, re-enter.
 	if b.skill.library >= 3 && i.missiles && b.prey != nil {
+		cold := false
 		if distance < b.tactics.missile.span {
 			b.reheat = 0
+			cold = true
 		} else if distance < 3500 && speed > pace*0.85 && tail < 0.5 {
 			b.reheat = 0
+			cold = true
+		}
+		// Cold closure (#101): the #95 energy model re-priced military power,
+		// and a cold MIL pursuit no longer holds closure on its own — the
+		// instructor tiers starved a few hundred metres short of every
+		// conversion (closure +3.9 m/s, saddle gate open unfired 1,237 ticks)
+		// while the lit pilot tier kept its energy and won the ladder. The
+		// legal currency inside the span is the height these tiers already
+		// husband: when a cold pursuit is not gaining and he is not above me,
+		// shallow the line below his plane and spend altitude as closure. The
+		// climb lid and deck floor (guard()) still bound the line.
+		if cold && b.nearing < 20 && me.Position.Y > b.prey.position.Y-50 &&
+			(b.mode == "saddle" || b.mode == "press" || b.mode == "lag" || b.mode == "screw") {
+			drop := clamp((20-b.nearing)*0.012, 0, 0.25)
+			b.aim = flight.Vec3{X: b.aim.X, Y: b.aim.Y - drop, Z: b.aim.Z}.Normalize()
 		}
 	}
 

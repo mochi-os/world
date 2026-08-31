@@ -90,10 +90,12 @@ docker-scan: docker-local
 	    --ignorefile /.trivyignore \
 	    $(docker_image):dev
 
-# The bot doctrine sweeps: several simulated minutes per seed (~18 min total).
+# The bot doctrine sweeps: several simulated minutes per seed. Fights run
+# longer under the #95 energy model (less free mid-band thrust means slower
+# conversions), so the package measures ~75 min where it once took ~18.
 # Run this after any change to bot.go or the doctrine tests.
 test-doctrine:
-	AIR_DOCTRINE=1 go test -timeout 40m ./games/air/
+	AIR_DOCTRINE=1 go test -timeout 100m ./games/air/
 
 # Race detection. games/air runs ~257 s uninstrumented, so it overruns the 600 s
 # default under -race and the largest package in the tree never got race

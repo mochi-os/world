@@ -374,6 +374,25 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	if float64(tick-b.alerted)/60 < b.skill.react {
 		return false // not yet noticed: the reaction-delay dial is the skill's own reaction time
 	}
+	// Inside the merge the beam is no defence (#101): a shooter at two
+	// kilometres arrives with his round, and the standoff notch hands him a
+	// cold, predictable stern — under the #95 energy model eleven of fifteen
+	// wide-BVR losses died mid-notch at ~2 km with rounds still aboard,
+	// perfect perception keeping the machine on permanent defence while the
+	// half-blind ace fought on. From the pilot up, once any hostile is inside
+	// the seam the WVR arbiter owns the flight path: fight the shooter, and
+	// let the terminal evade break the round.
+	if b.skill.library >= 2 {
+		for other, c := range i.aircraft {
+			if other == slot || c == nil || !c.alive || c.model == nil || !hostile(a, c) {
+				continue
+			}
+			if _, d := i.bearing(a.model.State.Position, c.model.State.Position); d < 3000 {
+				b.guarding, b.jam = 0, false
+				return false
+			}
+		}
+	}
 	if b.guarding != threat.number {
 		// A fresh engagement: roll its character once, deterministically.
 		b.guarding = threat.number

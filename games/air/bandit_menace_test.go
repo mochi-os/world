@@ -103,3 +103,30 @@ func TestMenaceBeatenDefence(t *testing.T) {
 		t.Error("the bandit went defensive for a round it could see was already beaten: the -2 sentinel is not reaching `beaten`")
 	}
 }
+
+// TestSpent: the kinematic half of the round judgement (#101) — a coasting
+// round that can no longer close is defeated, and only the instructor tiers
+// read it. The closure thresholds are what keep perfect perception from
+// becoming permanent defence.
+func TestSpent(t *testing.T) {
+	ace := &brain{skill: skills["ace"]}
+	pilot := &brain{skill: skills["pilot"]}
+	coasting := &missile{burn: 0}
+	boosting := &missile{burn: 1.5}
+	for _, c := range []struct {
+		name    string
+		b       *brain
+		m       *missile
+		closing float64
+		spent   bool
+	}{
+		{name: "a coasting round barely closing, read by the ace", b: ace, m: coasting, closing: 80, spent: true},
+		{name: "a coasting round still closing hard", b: ace, m: coasting, closing: 400, spent: false},
+		{name: "a boosting round barely closing", b: ace, m: boosting, closing: 80, spent: false},
+		{name: "the pilot cannot read a spent round", b: pilot, m: coasting, closing: 80, spent: false},
+	} {
+		if got := spent(c.b, c.m, c.closing); got != c.spent {
+			t.Errorf("%s: spent = %v, want %v", c.name, got, c.spent)
+		}
+	}
+}

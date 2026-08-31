@@ -31,8 +31,8 @@ func TestTopSpeedGate(t *testing.T) {
 		}
 		return m.Cas() * 1.94384, m.Mach()
 	}
-	if kcas, mach := terminal(300); kcas < 630 || kcas > 700 || mach < 0.95 || mach > 1.08 {
-		t.Errorf("deck terminal speed %.0f KCAS / M%.2f, want 630-700 / M0.95-1.08", kcas, mach)
+	if kcas, mach := terminal(300); kcas < 670 || kcas > 710 || mach < 1.00 || mach > 1.10 {
+		t.Errorf("deck terminal speed %.0f KCAS / M%.2f, want 670-710 / M1.00-1.10 (published ~700; #95 measured 686 / M1.05)", kcas, mach)
 	}
 	if _, mach := terminal(11000); mach < 1.6 || mach > 1.85 {
 		t.Errorf("high terminal speed M%.2f, want M1.60-1.85", mach)
@@ -43,26 +43,39 @@ func TestTopSpeedGate(t *testing.T) {
 // specific-excess-power anchor for the fight's energy economy.
 func TestAccelerationGate(t *testing.T) {
 	m := energy()
-	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 300/1.94384, 2500)
+	// Start below the first mark: stamping 300 KCAS at step zero folds the
+	// trim transient into the 300-400 window and poisons the segment shape.
+	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 135, 2500)
 	var hold leveler
-	started, finished := -1.0, -1.0
+	marks := map[float64]float64{}
 	for i := 0; i < 240*60; i++ {
 		m.Step(Inputs{Throttle: 1, Reheat: 1, Pitch: clamp(hold.pitch(m, 300), -0.3, 0.3)})
 		kcas := m.Cas() * 1.94384
-		if started < 0 && kcas >= 300 {
-			started = float64(i) * Dt
+		for _, gate := range []float64{300, 400, 500, 600} {
+			if kcas >= gate {
+				if _, done := marks[gate]; !done {
+					marks[gate] = float64(i) * Dt
+				}
+			}
 		}
-		if finished < 0 && kcas >= 600 {
-			finished = float64(i) * Dt
+		if _, done := marks[600]; done {
 			break
 		}
 	}
-	if started < 0 || finished < 0 {
+	if len(marks) < 4 {
 		t.Fatal("never reached 600 KCAS at full reheat on the deck")
 	}
-	span := finished - started
+	span := marks[600] - marks[300]
 	if span < 10 || span > 25 {
 		t.Errorf("300-600 KCAS took %.1f s at full reheat, want 10-25 s", span)
+	}
+	// The last hundred knots stretch (#95): 600 KCAS on the deck is M0.91,
+	// inside the drag rise, so its segment must cost visibly more than the
+	// low-band one. The pre-#95 model ran every 50 kt segment at the same
+	// 2.4-2.5 s all the way to M0.91.
+	early, late := marks[400]-marks[300], marks[600]-marks[500]
+	if late < early*1.02 {
+		t.Errorf("500-600 KCAS took %.1f s v %.1f s for 300-400: the transonic rise is not stretching the top of the run", late, early)
 	}
 }
 
@@ -101,5 +114,11 @@ func TestSustainedTurnGate(t *testing.T) {
 	}
 	if r := rate(4600, 400); r < 11 || r > 15 {
 		t.Errorf("sustained %.1f°/s at 400 KCAS / 15,000 ft, want 11-15 (measured 12.9)", r)
+	}
+	// The doghouse's right side must close (#95): a 7 g pull at 450 KCAS on
+	// the deck rides the thrust boundary, not "thrust to spare". Pre-#95 the
+	// ungated Mach² ram bonus measured Ps +19 m/s here.
+	if power, achieved, _ := excess(300, 450, 7); achieved > 6.5 && power > 8 {
+		t.Errorf("Ps %+.0f m/s at %.1f g / 450 KCAS on the deck: the mid-band ram surplus is back", power, achieved)
 	}
 }
