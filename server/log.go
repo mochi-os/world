@@ -18,7 +18,10 @@ func (w *log_writer) Write(bytes []byte) (int, error) {
 	return fmt.Printf("%s %s", time.Now().Format("2006-01-02 15:04:05.000000"), string(bytes))
 }
 
-func init() {
+// log_start installs the timestamping writer. Called first thing from main,
+// not from an init(): the ordering against windows_service_redirect_logs, which
+// also touches the log package, is the whole point of it being explicit.
+func log_start() {
 	log.SetFlags(0)
 	log.SetOutput(new(log_writer))
 }

@@ -868,7 +868,7 @@ func (s *slow) Rate() (int, int) { return 20, 10 }
 func (s *slow) Create(game.Session) (game.Instance, error) {
 	s.once.Do(func() { close(s.entered) })
 	<-s.release
-	return &fakeInstance{}, nil
+	return &fake_instance{}, nil
 }
 
 // TestCreateStaysOutOfTheRegistryLock — sessions_lock was held across

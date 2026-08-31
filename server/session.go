@@ -226,6 +226,13 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	sessions_lock.Lock()
 	defer sessions_lock.Unlock()
 	if len(sessions) >= limit { // re-checked: another creator may have raced in
+		// Close what Create built. A game holding a resource that outlives a
+		// tick reserves it inside Create (air takes its share of the practice
+		// bot budget), and only Close gives it back, so dropping the instance
+		// here spent that reservation for the life of the process.
+		if closer, ok := instance.(game.Closer); ok {
+			closer.Close()
+		}
 		return nil, errors.New("full")
 	}
 	s := &session{

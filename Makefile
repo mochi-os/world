@@ -289,6 +289,9 @@ pkg: pkg-amd64 pkg-arm64
 docker-stage: $(bin)/mochi-world $(bin)/mochi-world-linux-arm64
 	rm -rf build/docker/bin
 	mkdir -p build/docker/bin
+	# An empty directory for the image to COPY --chown as the state mount
+	# point. Git does not track empty directories, so it is staged here.
+	mkdir -p build/docker/state
 	cp $(bin)/mochi-world build/docker/bin/mochi-world-amd64
 	cp $(bin)/mochi-world-linux-arm64 build/docker/bin/mochi-world-arm64
 

@@ -36,12 +36,12 @@ import (
 
 // The event mask bits shared with the client.
 const (
-	maskFire = 1 << iota
-	maskPilot
-	maskExplode
-	maskJam
-	maskShed
-	maskLeak
+	mask_fire = 1 << iota
+	mask_pilot
+	mask_explode
+	mask_jam
+	mask_shed
+	mask_leak
 )
 
 const hulks = 9 // bandit + up to eight neutral traffic aircraft
@@ -111,15 +111,15 @@ func events(list []battle.Event) float64 {
 	for _, e := range list {
 		switch e.Kind {
 		case "fire":
-			mask |= maskFire
+			mask |= mask_fire
 		case "pilot":
-			mask |= maskPilot
+			mask |= mask_pilot
 		case "explode":
-			mask |= maskExplode
+			mask |= mask_explode
 		case "jam":
-			mask |= maskJam
+			mask |= mask_jam
 		case "shed":
-			mask |= maskShed
+			mask |= mask_shed
 		}
 	}
 	return float64(mask)
@@ -204,7 +204,7 @@ func fly(this js.Value, arguments []js.Value) any {
 		wrap = model.Environment.Wrap
 		seed = model.Environment.Seed
 	}
-	banditHits, ownHits := 0, 0
+	bandit_hits, own_hits := 0, 0
 	var impacts []flight.Vec3
 	alive := airborne[:0]
 	for r := range airborne {
@@ -213,7 +213,7 @@ func fly(this js.Value, arguments []js.Value) any {
 		if round.Shooter == 0 && present {
 			hit, _, impact := battle.Strike(round, position, attitude, velocity, &fleet[0].body, dt, wrap, seed)
 			if hit {
-				banditHits++
+				bandit_hits++
 				if len(impacts) < battle.ImpactPoints {
 					impacts = append(impacts, impact)
 				}
@@ -226,7 +226,7 @@ func fly(this js.Value, arguments []js.Value) any {
 			body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
 			hit, _, _ := battle.Strike(round, model.State.Position, model.State.Attitude, model.State.Velocity, &body, dt, wrap, seed)
 			if hit {
-				ownHits++
+				own_hits++
 				condition.Damager = 1
 				condition.Damaged = 0
 				landed = true
@@ -241,12 +241,12 @@ func fly(this js.Value, arguments []js.Value) any {
 	}
 	airborne = alive
 	out := make([]float64, 3+3*len(impacts))
-	out[0], out[1], out[2] = float64(banditHits), float64(ownHits), float64(len(impacts))
+	out[0], out[1], out[2] = float64(bandit_hits), float64(own_hits), float64(len(impacts))
 	for n, point := range impacts {
 		out[3+3*n], out[4+3*n], out[5+3*n] = point.X, point.Y, point.Z
 	}
 	send(out, arguments[1])
-	return banditHits + ownHits
+	return bandit_hits + own_hits
 }
 
 func blast(this js.Value, arguments []js.Value) any {
@@ -262,9 +262,16 @@ func blast(this js.Value, arguments []js.Value) any {
 		return 0
 	}
 	point := flight.Vec3{X: arsenal[1], Y: arsenal[2], Z: arsenal[3]}
-	wrap := 0.0
+	// Seed alongside wrap, as fly does. Reading model.Environment.Seed below
+	// while only wrap was guarded meant a hulk target with no model - aim
+	// resolves one out of `fleet` without touching model - panicked, and the
+	// recovery returned a "panic: ..." string without writing the output
+	// buffer: exactly the stale-verdict hazard the unresolved-target branch
+	// above exists to prevent. No export may require another to have run
+	// first (see scratch).
+	wrap, seed := 0.0, uint64(0)
 	if model != nil {
-		wrap = model.Environment.Wrap
+		wrap, seed = model.Environment.Wrap, model.Environment.Seed
 	}
 	class := battle.Heater // word 13: the warhead class, defaulting to the 9M's charge
 	if arsenal[13] > 1 {
@@ -272,7 +279,7 @@ func blast(this js.Value, arguments []js.Value) any {
 	}
 	closure := arsenal[14] // word 14: missile-target relative speed at the fuse, m/s; 0 = the 650 anchor (#57)
 	kill, raised, struck := battle.Warhead(class, point, closure, position, attitude, body, wrap,
-		model.Environment.Seed, uint64(arsenal[11]), uint64(arsenal[12]))
+		seed, uint64(arsenal[11]), uint64(arsenal[12]))
 	if kill || len(raised) > 0 {
 		body.Condition.Damager = int(arsenal[11])
 		body.Condition.Damaged = 0
@@ -317,6 +324,12 @@ func progress(this js.Value, arguments []js.Value) any {
 		}
 	}
 	tick := uint64(arsenal[1])
+	// Same reason as blast: the hulk loop below advances bodies out of `fleet`
+	// and needs the seed whether or not a model was ever built.
+	seed := uint64(0)
+	if model != nil {
+		seed = model.Environment.Seed
+	}
 	out := arsenal[:64]
 	for i := range out {
 		out[i] = 0
@@ -339,7 +352,7 @@ func progress(this js.Value, arguments []js.Value) any {
 		if i == 0 && bandit != nil {
 			throttle = bandit.Throttle() // the bandit's fires feed on ITS lever, so the brain's fire drill (#130) can starve them
 		}
-		raised := battle.Advance(&h.body, nil, throttle, [2]bool{}, 60, model.Environment.Seed, uint64(i+1), tick)
+		raised := battle.Advance(&h.body, nil, throttle, [2]bool{}, 60, seed, uint64(i+1), tick)
 		base := 6 + i*9
 		out[base], out[base+1] = h.condition.Fire[0], h.condition.Fire[1]
 		out[base+2], out[base+3] = bit(h.condition.Burning), bit(h.condition.Killed)

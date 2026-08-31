@@ -12,40 +12,40 @@ import (
 	"world/game"
 )
 
-type fakeInstance struct{ joined, left int }
+type fake_instance struct{ joined, left int }
 
-func (f *fakeInstance) Join(game.Player) (map[string]any, error) {
+func (f *fake_instance) Join(game.Player) (map[string]any, error) {
 	f.joined++
 	return map[string]any{}, nil
 }
-func (f *fakeInstance) Leave(game.Player)                 { f.left++ }
-func (f *fakeInstance) Step(uint64, map[int][]game.Input) {}
-func (f *fakeInstance) Snapshot(uint64) map[string]any    { return nil }
-func (f *fakeInstance) Events() []map[string]any          { return nil }
-func (f *fakeInstance) Finished() (bool, map[string]any)  { return false, nil }
+func (f *fake_instance) Leave(game.Player)                 { f.left++ }
+func (f *fake_instance) Step(uint64, map[int][]game.Input) {}
+func (f *fake_instance) Snapshot(uint64) map[string]any    { return nil }
+func (f *fake_instance) Events() []map[string]any          { return nil }
+func (f *fake_instance) Finished() (bool, map[string]any)  { return false, nil }
 
-// joinCancels closes the order's cancel channel from inside Join, to hit the
+// join_cancels closes the order's cancel channel from inside Join, to hit the
 // post-Join rollback window deterministically.
-type joinCancels struct {
-	fakeInstance
+type join_cancels struct {
+	fake_instance
 	cancel chan struct{}
 }
 
-func (j *joinCancels) Join(p game.Player) (map[string]any, error) {
+func (j *join_cancels) Join(p game.Player) (map[string]any, error) {
 	j.joined++
 	close(j.cancel)
 	return map[string]any{}, nil
 }
 
-func bareSession(inst game.Instance, capacity int) *session {
+func bare_session(inst game.Instance, capacity int) *session {
 	return &session{identifier: "t", spec: game.Session{Capacity: capacity}, instance: inst, players: map[int]*player{}}
 }
 
 // TestJoinCancelledBeforeJoin: a caller that already gave up (cancel closed)
 // is refused before Instance.Join runs — no ghost, no game-side join.
 func TestJoinCancelledBeforeJoin(t *testing.T) {
-	inst := &fakeInstance{}
-	s := bareSession(inst, 4)
+	inst := &fake_instance{}
+	s := bare_session(inst, 4)
 	cancel := make(chan struct{})
 	close(cancel)
 	if a := session_join(s, order{kind: "join", cancel: cancel}); a.err == nil {
@@ -62,8 +62,8 @@ func TestJoinCancelledBeforeJoin(t *testing.T) {
 // TestJoinCancelledDuringJoin: the caller times out WHILE Instance.Join runs;
 // the game-side join must be rolled back and no player committed.
 func TestJoinCancelledDuringJoin(t *testing.T) {
-	inst := &joinCancels{cancel: make(chan struct{})}
-	s := bareSession(inst, 4)
+	inst := &join_cancels{cancel: make(chan struct{})}
+	s := bare_session(inst, 4)
 	if a := session_join(s, order{kind: "join", cancel: inst.cancel}); a.err == nil {
 		t.Fatal("join admitted despite a mid-join cancel")
 	}
@@ -78,8 +78,8 @@ func TestJoinCancelledDuringJoin(t *testing.T) {
 // TestRemoveGhost: session_remove reaps a nil-link ghost, tells the game, frees
 // the slot, and is idempotent (a later duplicate leave is a no-op).
 func TestRemoveGhost(t *testing.T) {
-	inst := &fakeInstance{}
-	s := bareSession(inst, 2)
+	inst := &fake_instance{}
+	s := bare_session(inst, 2)
 	s.players[0] = &player{Player: game.Player{Name: "ghost", Slot: 0}, link: nil}
 	session_remove(s, 0)
 	if len(s.players) != 0 {

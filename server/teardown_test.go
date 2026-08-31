@@ -16,26 +16,26 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// stallStream is a wireStream whose Write blocks (a peer that has stopped
+// stall_stream is a wire_stream whose Write blocks (a peer that has stopped
 // reading its stream, flow-controlled) until CancelWrite aborts it.
-type stallStream struct {
+type stall_stream struct {
 	unblock   chan struct{}
 	mu        sync.Mutex
 	cancelled bool
 	writes    int
 }
 
-func (s *stallStream) Read([]byte) (int, error) { <-s.unblock; return 0, errors.New("closed") }
-func (s *stallStream) Write(p []byte) (int, error) {
+func (s *stall_stream) Read([]byte) (int, error) { <-s.unblock; return 0, errors.New("closed") }
+func (s *stall_stream) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	s.writes++
 	s.mu.Unlock()
 	<-s.unblock // block like flow control until CancelWrite/Close releases us
 	return 0, errors.New("write aborted")
 }
-func (s *stallStream) SetReadDeadline(time.Time) error  { return nil } // this fake's Read blocks on unblock, not on time
-func (s *stallStream) SetWriteDeadline(time.Time) error { return nil } // deadline irrelevant: CancelWrite is the unblock under test
-func (s *stallStream) CancelWrite(webtransport.StreamErrorCode) {
+func (s *stall_stream) SetReadDeadline(time.Time) error  { return nil } // this fake's Read blocks on unblock, not on time
+func (s *stall_stream) SetWriteDeadline(time.Time) error { return nil } // deadline irrelevant: CancelWrite is the unblock under test
+func (s *stall_stream) CancelWrite(webtransport.StreamErrorCode) {
 	s.mu.Lock()
 	if !s.cancelled {
 		s.cancelled = true
@@ -43,19 +43,19 @@ func (s *stallStream) CancelWrite(webtransport.StreamErrorCode) {
 	}
 	s.mu.Unlock()
 }
-func (s *stallStream) Close() error { s.CancelWrite(0); return nil }
+func (s *stall_stream) Close() error { s.CancelWrite(0); return nil }
 
-type recordSession struct {
+type record_session struct {
 	closed chan struct{}
 	once   sync.Once
 }
 
-func (r *recordSession) SendDatagram([]byte) error { return nil }
-func (r *recordSession) ReceiveDatagram(context.Context) ([]byte, error) {
+func (r *record_session) SendDatagram([]byte) error { return nil }
+func (r *record_session) ReceiveDatagram(context.Context) ([]byte, error) {
 	<-r.closed
 	return nil, errors.New("closed")
 }
-func (r *recordSession) CloseWithError(webtransport.SessionErrorCode, string) error {
+func (r *record_session) CloseWithError(webtransport.SessionErrorCode, string) error {
 	r.once.Do(func() { close(r.closed) })
 	return nil
 }
@@ -64,8 +64,8 @@ func (r *recordSession) CloseWithError(webtransport.SessionErrorCode, string) er
 // must tear the session down promptly when the connection is classified slow —
 // not strand the goroutine and QUIC session while keepalives hold it open.
 func TestSlowWriterTeardown(t *testing.T) {
-	stream := &stallStream{unblock: make(chan struct{})}
-	session := &recordSession{closed: make(chan struct{})}
+	stream := &stall_stream{unblock: make(chan struct{})}
+	session := &record_session{closed: make(chan struct{})}
 	l := &wire{session: session, stream: stream, outbound: make(chan []byte, 256), closed: make(chan struct{})}
 
 	done := make(chan struct{})

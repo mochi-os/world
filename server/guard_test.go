@@ -14,39 +14,39 @@ import (
 	"world/game"
 )
 
-// faultyInstance panics on its nth Step, standing in for the arithmetic edges
+// faulty_instance panics on its nth Step, standing in for the arithmetic edges
 // real game modules hit on client-chosen input.
-type faultyInstance struct {
-	fakeInstance
+type faulty_instance struct {
+	fake_instance
 	after int
 	steps int
 }
 
-func (f *faultyInstance) Step(tick uint64, in map[int][]game.Input) {
+func (f *faulty_instance) Step(tick uint64, in map[int][]game.Input) {
 	f.steps++
 	if f.steps >= f.after {
 		panic("simulated game fault")
 	}
 }
 
-// countingInstance just records that it is still being ticked. The counter is
+// counting_instance just records that it is still being ticked. The counter is
 // atomic because the tick goroutine writes it while the test body reads it —
 // as a plain int this was itself a data race under -race.
-type countingInstance struct {
-	fakeInstance
+type counting_instance struct {
+	fake_instance
 	steps atomic.Int64
 }
 
-func (c *countingInstance) Step(uint64, map[int][]game.Input) { c.steps.Add(1) }
+func (c *counting_instance) Step(uint64, map[int][]game.Input) { c.steps.Add(1) }
 
-type fakeGame struct {
+type fake_game struct {
 	name     string
 	instance game.Instance
 }
 
-func (f *fakeGame) Name() string                               { return f.name }
-func (f *fakeGame) Rate() (int, int)                           { return 60, 20 }
-func (f *fakeGame) Create(game.Session) (game.Instance, error) { return f.instance, nil }
+func (f *fake_game) Name() string                               { return f.name }
+func (f *fake_game) Rate() (int, int)                           { return 60, 20 }
+func (f *fake_game) Create(game.Session) (game.Instance, error) { return f.instance, nil }
 
 // TestGuardRecovers: a panic inside the guarded function must not escape, and
 // the cleanup must run.
@@ -79,10 +79,10 @@ func TestGuardPassesThrough(t *testing.T) {
 // TestSessionPanicIsContained: a game module that panics mid-tick must end ONLY
 // its own session, leaving every other match on the host running.
 func TestSessionPanicIsContained(t *testing.T) {
-	faulty := &faultyInstance{after: 2}
-	healthy := &countingInstance{}
-	games["faulty"] = &fakeGame{name: "faulty", instance: faulty}
-	games["healthy"] = &fakeGame{name: "healthy", instance: healthy}
+	faulty := &faulty_instance{after: 2}
+	healthy := &counting_instance{}
+	games["faulty"] = &fake_game{name: "faulty", instance: faulty}
+	games["healthy"] = &fake_game{name: "healthy", instance: healthy}
 	defer func() { delete(games, "faulty"); delete(games, "healthy") }()
 
 	good, err := sessions_make("healthy", "m", "M", 4, nil, false)

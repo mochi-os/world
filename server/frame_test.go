@@ -17,10 +17,10 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// partialStream hands over a fixed prefix and then stops, like a peer that
+// partial_stream hands over a fixed prefix and then stops, like a peer that
 // starts a frame and never finishes it. With a read deadline set it reports the
 // timeout immediately; with none it parks, which is what the test asserts on.
-type partialStream struct {
+type partial_stream struct {
 	mu       sync.Mutex
 	prefix   []byte
 	deadline bool
@@ -28,7 +28,7 @@ type partialStream struct {
 	done     chan struct{}
 }
 
-func (p *partialStream) Read(b []byte) (int, error) {
+func (p *partial_stream) Read(b []byte) (int, error) {
 	p.mu.Lock()
 	if len(p.prefix) > 0 {
 		n := copy(b, p.prefix)
@@ -48,26 +48,28 @@ func (p *partialStream) Read(b []byte) (int, error) {
 	return 0, errors.New("closed")
 }
 
-func (p *partialStream) Write(b []byte) (int, error) { return len(b), nil }
-func (p *partialStream) SetReadDeadline(t time.Time) error {
+func (p *partial_stream) Write(b []byte) (int, error) { return len(b), nil }
+func (p *partial_stream) SetReadDeadline(t time.Time) error {
 	p.mu.Lock()
 	p.deadline = !t.IsZero()
 	p.mu.Unlock()
 	return nil
 }
-func (p *partialStream) SetWriteDeadline(time.Time) error         { return nil }
-func (p *partialStream) CancelWrite(webtransport.StreamErrorCode) {}
-func (p *partialStream) Close() error                             { return nil }
+func (p *partial_stream) SetWriteDeadline(time.Time) error         { return nil }
+func (p *partial_stream) CancelWrite(webtransport.StreamErrorCode) {}
+func (p *partial_stream) Close() error                             { return nil }
 
-func (p *partialStream) wasParked() bool {
+// stalled reports whether the read parked with no deadline set - named apart
+// from the `parked` field it reads so the two do not collide.
+func (p *partial_stream) stalled() bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.parked
 }
 
-func wireOn(s wireStream) *wire {
+func wire_on(s wire_stream) *wire {
 	return &wire{
-		session:  &recordSession{closed: make(chan struct{})},
+		session:  &record_session{closed: make(chan struct{})},
 		stream:   s,
 		inbound:  make(chan []byte, 4),
 		outbound: make(chan []byte, 4),
@@ -79,8 +81,8 @@ func wireOn(s wireStream) *wire {
 // be torn down. QUIC's idle timeout watches connection packets rather than
 // stream progress, so acking keepalives alone parks the reader indefinitely.
 func TestPartialFrameIsDropped(t *testing.T) {
-	stream := &partialStream{prefix: []byte{0x00}, done: make(chan struct{})}
-	l := wireOn(stream)
+	stream := &partial_stream{prefix: []byte{0x00}, done: make(chan struct{})}
+	l := wire_on(stream)
 	finished := make(chan struct{})
 	go func() { l.streams(); close(finished) }()
 
@@ -92,7 +94,7 @@ func TestPartialFrameIsDropped(t *testing.T) {
 	if l.reason != "partial" {
 		t.Fatalf("closed with %q, want \"partial\"", l.reason)
 	}
-	if stream.wasParked() {
+	if stream.stalled() {
 		t.Fatal("the mid-frame read ran with no deadline set")
 	}
 }
@@ -103,8 +105,8 @@ func TestPartialFrameIsDropped(t *testing.T) {
 func TestTruncatedPayloadIsDropped(t *testing.T) {
 	header := make([]byte, 4)
 	binary.BigEndian.PutUint32(header, frame_most)
-	stream := &partialStream{prefix: header, done: make(chan struct{})}
-	l := wireOn(stream)
+	stream := &partial_stream{prefix: header, done: make(chan struct{})}
+	l := wire_on(stream)
 	finished := make(chan struct{})
 	go func() { l.streams(); close(finished) }()
 
@@ -126,8 +128,8 @@ func TestQuietBetweenFramesIsAllowed(t *testing.T) {
 	framed := make([]byte, 4+len(body))
 	binary.BigEndian.PutUint32(framed, uint32(len(body)))
 	copy(framed[4:], body)
-	stream := &partialStream{prefix: framed, done: make(chan struct{})}
-	l := wireOn(stream)
+	stream := &partial_stream{prefix: framed, done: make(chan struct{})}
+	l := wire_on(stream)
 	go l.streams()
 
 	select {
@@ -146,7 +148,7 @@ func TestQuietBetweenFramesIsAllowed(t *testing.T) {
 		t.Fatalf("closed with %q while merely idle between frames", l.reason)
 	default:
 	}
-	if !stream.wasParked() {
+	if !stream.stalled() {
 		t.Fatal("the reader left a deadline set between frames")
 	}
 	close(stream.done)

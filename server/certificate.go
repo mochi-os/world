@@ -11,7 +11,7 @@
 //  2. [acme] hosts - built-in Let's Encrypt, cached under [acme] cache;
 // HTTP-01 validation, so port 80 must be reachable.
 //  3. Neither - an ephemeral self-signed certificate, 12 days validity (the
-// WebTransport serverCertificateHashes cap is 14), rotated at day 10, its
+// WebTransport server_certificate_hashes cap is 14), rotated at day 10, its
 // SHA-256 advertised through the lobby for clients to pin.
 //
 // Mode 3 is encrypted but unauthenticated: the pin rides the plaintext lobby,
@@ -48,9 +48,10 @@ var (
 
 	acme_manager *autocert.Manager // non-nil in [acme] mode
 
-	operator      *tls.Certificate // file mode: the loaded pair
-	operator_time time.Time        // certificate file's mtime at load
-	operator_lock sync.RWMutex
+	operator           *tls.Certificate // file mode: the loaded pair
+	operator_time      time.Time        // certificate file's mtime at load
+	operator_complaint string           // last reload error already reported, so it is warned once not per handshake
+	operator_lock      sync.RWMutex
 
 	ephemeral         *tls.Certificate
 	ephemeral_hash    string
@@ -159,11 +160,27 @@ func certificate_operator() (*tls.Certificate, error) {
 	pair, err := tls.LoadX509KeyPair(certificate_file, key_file)
 	if err != nil {
 		if current != nil {
-			warn("certificate: reload %s: %v", certificate_file, err)
+			// Once per failure, not once per handshake. This runs before any
+			// rate limiter, so while a renewal has the file briefly unreadable
+			// a peer that reconnects in a loop turns one hiccup into a log
+			// flood, and journald's own throttling then hides whatever else
+			// the server had to say.
+			operator_lock.Lock()
+			said := operator_complaint == err.Error()
+			operator_complaint = err.Error()
+			operator_lock.Unlock()
+			if said {
+				debug("certificate: reload %s: %v", certificate_file, err)
+			} else {
+				warn("certificate: reload %s: %v", certificate_file, err)
+			}
 			return current, nil
 		}
 		return nil, err
 	}
+	operator_lock.Lock()
+	operator_complaint = ""
+	operator_lock.Unlock()
 	operator_lock.Lock()
 	operator = &pair
 	operator_time = when

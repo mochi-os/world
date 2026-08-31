@@ -36,11 +36,11 @@ var (
 )
 
 type stat struct {
-	firstTick, lastTick uint64
-	firstAt, lastAt     time.Time
-	snapshots           int
-	gaps                []float64 // datagram inter-arrival, ms (during measurement)
-	joined              bool
+	first_tick, last_tick uint64
+	first_at, last_at     time.Time
+	snapshots             int
+	gaps                  []float64 // datagram inter-arrival, ms (during measurement)
+	joined                bool
 }
 
 func main() {
@@ -73,8 +73,8 @@ func main() {
 	}
 	fmt.Printf("match %s at %s — connecting %d clients\n", created.Session, created.Address, *clients)
 
-	measureFrom := time.Now().Add(*warmup)
-	stopAt := measureFrom.Add(*duration)
+	measure_from := time.Now().Add(*warmup)
+	stop_at := measure_from.Add(*duration)
 	stats := make([]stat, *clients)
 	var connected int64
 	var wg sync.WaitGroup
@@ -83,7 +83,7 @@ func main() {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			run_client(id, created.Session, created.Address, &stats[id], measureFrom, stopAt, &connected)
+			run_client(id, created.Session, created.Address, &stats[id], measure_from, stop_at, &connected)
 		}(c)
 		time.Sleep(3 * time.Millisecond) // stagger joins so it isn't a thundering herd
 	}
@@ -92,7 +92,7 @@ func main() {
 	report(stats, *duration)
 }
 
-func run_client(id int, session, address string, st *stat, measureFrom, stopAt time.Time, connected *int64) {
+func run_client(id int, session, address string, st *stat, measure_from, stop_at time.Time, connected *int64) {
 	d := webtransport.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -150,8 +150,8 @@ func run_client(id int, session, address string, st *stat, measureFrom, stopAt t
 	}()
 
 	// receive loop: read snapshot datagrams, track the server tick over wall time
-	var lastAt time.Time
-	for time.Now().Before(stopAt) {
+	var last_at time.Time
+	for time.Now().Before(stop_at) {
 		payload, err := sess.ReceiveDatagram(context.Background())
 		if err != nil {
 			return
@@ -166,21 +166,21 @@ func run_client(id int, session, address string, st *stat, measureFrom, stopAt t
 			continue
 		}
 		tick := to_uint(m["tick"])
-		if now.Before(measureFrom) {
-			lastAt = now
+		if now.Before(measure_from) {
+			last_at = now
 			continue
 		}
-		if st.firstTick == 0 {
-			st.firstTick, st.firstAt = tick, now
+		if st.first_tick == 0 {
+			st.first_tick, st.first_at = tick, now
 		}
-		if tick > st.lastTick {
-			st.lastTick, st.lastAt = tick, now
+		if tick > st.last_tick {
+			st.last_tick, st.last_at = tick, now
 		}
 		st.snapshots++
-		if !lastAt.IsZero() {
-			st.gaps = append(st.gaps, float64(now.Sub(lastAt).Microseconds())/1000)
+		if !last_at.IsZero() {
+			st.gaps = append(st.gaps, float64(now.Sub(last_at).Microseconds())/1000)
 		}
-		lastAt = now
+		last_at = now
 	}
 }
 
@@ -199,29 +199,29 @@ func to_uint(v any) uint64 {
 }
 
 func report(stats []stat, window time.Duration) {
-	joined, tickRates, snapRates, jitters := 0, []float64{}, []float64{}, []float64{}
+	joined, tick_rates, snap_rates, jitters := 0, []float64{}, []float64{}, []float64{}
 	for _, s := range stats {
 		if !s.joined {
 			continue
 		}
 		joined++
-		if s.lastTick > s.firstTick && s.lastAt.After(s.firstAt) {
-			secs := s.lastAt.Sub(s.firstAt).Seconds()
-			tickRates = append(tickRates, float64(s.lastTick-s.firstTick)/secs)
-			snapRates = append(snapRates, float64(s.snapshots)/secs)
+		if s.last_tick > s.first_tick && s.last_at.After(s.first_at) {
+			secs := s.last_at.Sub(s.first_at).Seconds()
+			tick_rates = append(tick_rates, float64(s.last_tick-s.first_tick)/secs)
+			snap_rates = append(snap_rates, float64(s.snapshots)/secs)
 		}
 		if len(s.gaps) > 4 {
 			jitters = append(jitters, p(s.gaps, 0.99))
 		}
 	}
 	fmt.Printf("\nconnected %d/%d clients\n", joined, len(stats))
-	if len(tickRates) == 0 {
+	if len(tick_rates) == 0 {
 		fmt.Println("no snapshots measured — check the server is up and the match started")
 		return
 	}
-	fmt.Printf("server tick rate (target 60/s):  min %.1f  mean %.1f  (a drop below 60 = the server can't hold real time under this load)\n", min(tickRates), mean(tickRates))
-	fmt.Printf("snapshot rate per client (~20/s): min %.1f  mean %.1f\n", min(snapRates), mean(snapRates))
-	fmt.Printf("datagram inter-arrival p99:       mean %.1f ms  worst %.1f ms  (steady ~25 ms = 2 datagrams/snapshot at 20 Hz)\n", mean(jitters), max(jitters))
+	fmt.Printf("server tick rate (target 60/s):  least %.1f  mean %.1f  (a drop below 60 = the server can't hold real time under this load)\n", least(tick_rates), mean(tick_rates))
+	fmt.Printf("snapshot rate per client (~20/s): least %.1f  mean %.1f\n", least(snap_rates), mean(snap_rates))
+	fmt.Printf("datagram inter-arrival p99:       mean %.1f ms  worst %.1f ms  (steady ~25 ms = 2 datagrams/snapshot at 20 Hz)\n", mean(jitters), most(jitters))
 }
 
 func p(a []float64, q float64) float64 {
@@ -243,7 +243,7 @@ func mean(a []float64) float64 {
 	}
 	return t / float64(len(a))
 }
-func min(a []float64) float64 {
+func least(a []float64) float64 {
 	m := a[0]
 	for _, x := range a {
 		if x < m {
@@ -252,8 +252,8 @@ func min(a []float64) float64 {
 	}
 	return m
 }
-func max(a []float64) float64 {
-	m := 0.0
+func most(a []float64) float64 {
+	m := a[0] // not 0.0: seeded there it answers 0 for an all-negative slice
 	for _, x := range a {
 		if x > m {
 			m = x

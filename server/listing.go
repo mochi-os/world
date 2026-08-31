@@ -17,10 +17,12 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"world/games/air/flight"
@@ -130,15 +132,8 @@ func listing_payload(id, name string) ([]byte, error) {
 // listing_start launches the status pusher when this server is public.
 // Called from main_serve; a private server returns before spawning anything.
 func listing_start() {
-	if !ini_bool("world", "public", false) {
-		return
-	}
-	name := ini_string("world", "name", "")
-	if name == "" {
-		// Refuse rather than defaulting to a hostname: an unnamed listing is
-		// an operator mistake, and infrastructure names do not belong on a
-		// player-facing join page.
-		warn("listing: [world] public is true but no name is set - not publishing")
+	name, ok := listing_ready()
+	if !ok {
 		return
 	}
 	id := listing_id()
@@ -146,6 +141,30 @@ func listing_start() {
 		return
 	}
 	go listing_push_manager(id, name)
+}
+
+// listing_ready reports whether this server may publish, and the name it
+// publishes under. Both refusals are operator mistakes caught here rather than
+// downstream: an unnamed listing would put an infrastructure name on a
+// player-facing join page, and a server with no [transport] address would
+// publish transport_origin's https://127.0.0.1:<port> fallback - right for a
+// client on this machine, wrong for the address gossiped to every server on the
+// network. Core accepts that one (world_address_valid passes any https URL) and
+// republishes it, so nothing downstream catches it either.
+func listing_ready() (string, bool) {
+	if !ini_bool("world", "public", false) {
+		return "", false
+	}
+	name := ini_string("world", "name", "")
+	if name == "" {
+		warn("listing: [world] public is true but no name is set - not publishing")
+		return "", false
+	}
+	if ini_string("transport", "address", "") == "" {
+		warn("listing: [world] public is true but no [transport] address is set - not publishing")
+		return "", false
+	}
+	return name, true
 }
 
 // listing_push_manager pushes on change and on the idle floor, forever.
@@ -180,11 +199,24 @@ func listing_push_manager(id, name string) {
 	}
 }
 
+// listing_client is built once, at the first push. A Transport per push
+// allocated a connection pool nobody kept and could not age out (IdleConnTimeout
+// is 0), and it only failed to strand connections because core answers with a
+// body this side never reads, which makes net/http close the socket rather than
+// pool it. A bodiless 2xx from core would have started leaking a connection and
+// its goroutines per push, on both sides.
+var (
+	listing_client *http.Client
+	listing_once   sync.Once
+)
+
 // listing_push delivers one status payload over the local socket. Latest
 // state only: a failure is reported, never retried out of band.
 func listing_push(payload []byte) bool {
-	client := &http.Client{Timeout: 10 * time.Second, Transport: listing_transport()}
-	response, err := client.Post("http://mochi/_/world/status", "application/json", bytes.NewReader(payload))
+	listing_once.Do(func() {
+		listing_client = &http.Client{Timeout: 10 * time.Second, Transport: listing_transport()}
+	})
+	response, err := listing_client.Post("http://mochi/_/world/status", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		debug("listing: push: %v", err)
 		return false
@@ -194,5 +226,8 @@ func listing_push(payload []byte) bool {
 		debug("listing: push refused: %s", response.Status)
 		return false
 	}
+	// Drained so the connection is reused rather than closed and redialled:
+	// net/http only pools a connection whose body was read to EOF.
+	_, _ = io.Copy(io.Discard, response.Body)
 	return true
 }

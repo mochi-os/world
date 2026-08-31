@@ -53,8 +53,9 @@ variable as **MOCHI\_<SECTION>\_<KEY>** (for example
 :   The server name shown to players in the lobby. Default *Mochi world*.
 
 **standing**
-:   Comma-separated list of permanent sessions to create at startup, in
-    addition to each game's default standing session.
+:   Comma-separated list of permanent sessions to create at startup. Replaces
+    the default of one standing session per registered game rather than adding
+    to it, so a list naming one game leaves every other game without one.
 
 **public**
 :   *true* to publish this server in the network-wide join list. Requires a

@@ -102,7 +102,10 @@ func windows_service_redirect_logs() {
 	if err != nil {
 		return
 	}
+	// Assigning os.Stdout is enough: log_writer, which stamps each line with
+	// the time, writes through fmt.Printf. A log.SetOutput(file) here replaced
+	// that writer, and with SetFlags(0) the service log then had no times at
+	// all.
 	os.Stdout = file
 	os.Stderr = file
-	log.SetOutput(file)
 }

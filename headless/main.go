@@ -431,14 +431,14 @@ func command_em(arguments []string) {
 		if limit < 1 {
 			continue
 		}
-		thrustDry, thrustWet := m.Thrust(speed, *altitude)
+		thrust_dry, thrust_wet := m.Thrust(speed, *altitude)
 		level := angle(m, speed, *altitude, w/(q*area))
 		_, drag := m.Evaluate(speed, level, *altitude)
 		excess := func(thrust float64) float64 { return (thrust - drag*q*area) * speed / w }
-		if v := excess(thrustDry); v > dry.value {
+		if v := excess(thrust_dry); v > dry.value {
 			dry = point{speed, v}
 		}
-		if v := excess(thrustWet); v > wet.value {
+		if v := excess(thrust_wet); v > wet.value {
 			wet = point{speed, v}
 		}
 		if corner == 0 && limit >= 7.5 {
@@ -448,7 +448,7 @@ func command_em(arguments []string) {
 		for n := limit; n >= 1; n -= 0.05 {
 			pull := angle(m, speed, *altitude, n*w/(q*area))
 			_, cd := m.Evaluate(speed, pull, *altitude)
-			if cd*q*area <= thrustWet {
+			if cd*q*area <= thrust_wet {
 				sustained = n
 				break
 			}
@@ -466,7 +466,7 @@ func command_em(arguments []string) {
 				radius = speed * speed / (gravity * math.Sqrt(sustained*sustained-1))
 			}
 			fmt.Printf("%.0f,%.3f,%.0f,%.1f,%.1f,%.2f,%.2f,%.2f,%.0f\n",
-				speed, mach, cas(speed, *altitude)*knots, excess(thrustDry), excess(thrustWet), limit, sustained, turn, radius)
+				speed, mach, cas(speed, *altitude)*knots, excess(thrust_dry), excess(thrust_wet), limit, sustained, turn, radius)
 		}
 	}
 	report := func(label string, p point, unit string, scale float64) {

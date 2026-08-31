@@ -2,7 +2,9 @@ Name:           mochi-world
 Version:        %{_version}
 Release:        1%{?dist}
 Summary:        Realtime game server for the Mochi ecosystem
-License:        Proprietary
+# AGPL-3.0-only with the Mochi Application Interface Exception; see
+# license.txt and license-exception.md in the source tree.
+License:        AGPL-3.0-only
 URL:            https://mochi-os.org
 
 %description

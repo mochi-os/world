@@ -143,10 +143,16 @@ func scratch(count int) []byte {
 	return bytes[:count]
 }
 
-// receive copies a JS Uint8Array into a float64 slice.
+// receive copies a JS Uint8Array into a float64 slice. A view shorter than the
+// export's declared word count is refused rather than tolerated: scratch hands
+// the same growing buffer to every export, so a short copy left the tail of
+// whatever the previous call wrote, and the export read those stale words as
+// its own arguments. guard turns the panic into a returned string.
 func receive(view js.Value, floats []float64) {
 	buffer := scratch(len(floats) * 8)
-	js.CopyBytesToGo(buffer, view)
+	if n := js.CopyBytesToGo(buffer, view); n != len(buffer) {
+		panic(fmt.Sprintf("receive: %d of %d bytes", n, len(buffer)))
+	}
 	for i := range floats {
 		floats[i] = math.Float64frombits(binary.LittleEndian.Uint64(buffer[i*8:]))
 	}

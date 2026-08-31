@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"golang.org/x/net/netutil"
 )
@@ -173,16 +174,20 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		// through clean() - control characters stripped, the cap counted in runes.
 		request.Mode = clean(request.Mode, 32)
 		request.Label = clean(request.Label, 64)
-		// One offer at a time: a new match replaces whatever this pilot was
-		// already offering, so the list can never fill with a single player's
-		// abandoned matches.
 		pilot := clean(request.Pilot, 64)
-		sessions_withdraw(pilot)
 		s, err := sessions_create(request.Game, request.Mode, request.Label, request.Capacity, request.Parameters)
 		if err != nil {
 			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
 		}
+		// One offer at a time: a new match replaces whatever this pilot was
+		// already offering, so the list can never fill with a single player's
+		// abandoned matches. Withdrawn AFTER the create succeeds, because
+		// withdrawing first meant a "full" or "unknown" error left the pilot
+		// with no offer at all - a replacement that replaced it with nothing.
+		// Before sessions_own, so the new session carries no owner yet and is
+		// not caught by its own replacement.
+		sessions_withdraw(pilot)
 		sessions_own(s, pilot)
 		if name := clean(request.Name, 32); name != "" {
 			chat_made(name, s.spec.Label) // the lobby's system line: who just made what (#84)
@@ -318,7 +323,12 @@ func lobby_chat(w http.ResponseWriter, r *http.Request) {
 // clean strips control characters and caps a user string at limit runes.
 func clean(words string, limit int) string {
 	words = strings.Map(func(r rune) rune {
-		if r < 32 || r == 127 {
+		// Format characters render as nothing but reorder or hide what follows:
+		// the bidi embeddings and overrides (U+202A-202E, U+2066-2069) make text
+		// read backwards, and the zero-width space and joiners (U+200B-200D,
+		// U+FEFF) make one player's name visually identical to another's. The
+		// C1 range is the same argument one block up from the ASCII controls.
+		if r < 32 || r == 127 || (r >= 0x80 && r < 0xa0) || unicode.Is(unicode.Cf, r) {
 			return -1
 		}
 		return r
@@ -383,14 +393,33 @@ func lobby_permit(table map[string][]time.Time, r *http.Request, limit int) bool
 		return false
 	}
 	table[host] = append(recent, time.Now())
-	if len(table) > 10000 { // prune the table itself under address churn
-		for h, list := range table {
-			if len(list) == 0 || time.Since(list[len(list)-1]) > time.Minute {
-				delete(table, h)
+	return true
+}
+
+// lobby_prune_manager drops limiter entries no longer inside anybody's window.
+// It runs on its own clock because the prune it replaces ran inline, after
+// insertion, whenever a table passed 10000 entries: a 10000-entry walk on every
+// lobby request from anybody, holding the mutex all four budgets share, for as
+// long as one source kept that many keys warm. A source holding a /48 has 65536
+// distinct /64 keys and only has to touch each once a minute.
+func lobby_prune_manager() {
+	for range time.Tick(time.Minute) {
+		lobby_prune()
+	}
+}
+
+// lobby_prune drops every limiter entry whose newest timestamp has left the
+// window. One pass, so it is also what a test drives.
+func lobby_prune() {
+	creates_lock.Lock()
+	defer creates_lock.Unlock()
+	for _, table := range []map[string][]time.Time{creates, plays, says, retires, browses} {
+		for host, list := range table {
+			if len(list) == 0 || time.Since(list[len(list)-1]) >= time.Minute {
+				delete(table, host)
 			}
 		}
 	}
-	return true
 }
 
 // transport_origin is the server's advertised base URL - what a player pastes

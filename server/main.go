@@ -30,15 +30,15 @@ var (
 	stopping      = make(chan struct{}, 1) // pushed by the Windows SCM handler to request shutdown
 )
 
-// guard runs f and turns a panic into a logged fault instead of a dead process.
-// recover() sees only panics on its OWN goroutine, so every `go` reachable from
-// client input needs its own guard. after runs during recovery, itself guarded.
 // entropy is the server's randomness source. A package var rather than
 // crypto/rand.Reader at each site so a test can substitute a failing or
 // deterministic reader: assigning to rand.Reader itself races the QUIC stack,
 // which reads it from its own goroutines for every connection id.
 var entropy io.Reader = rand.Reader
 
+// guard runs f and turns a panic into a logged fault instead of a dead process.
+// recover() sees only panics on its OWN goroutine, so every `go` reachable from
+// client input needs its own guard. after runs during recovery, itself guarded.
 func guard(name string, after func(), f func()) {
 	defer func() {
 		fault := recover()
@@ -55,6 +55,7 @@ func guard(name string, after func(), f func()) {
 }
 
 func main() {
+	log_start()
 	windows_service_redirect_logs()
 	if windows_service_run() {
 		return
@@ -76,6 +77,7 @@ func main_serve(ready func()) int {
 
 	sessions_standing()
 	go sessions_stale_manager()
+	go lobby_prune_manager()
 	if err := certificate_start(); err != nil {
 		warn("startup: %v", err)
 		return 1

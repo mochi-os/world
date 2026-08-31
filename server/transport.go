@@ -119,6 +119,17 @@ func transport_start(fatal chan<- error) error {
 				MaxIdleTimeout:  60 * time.Second,
 				KeepAlivePeriod: 15 * time.Second,
 				EnableDatagrams: true,
+				// Sized to what the protocol uses rather than quic-go's default
+				// of 100 each. transport_serve accepts exactly one bidirectional
+				// stream per session and reads no unidirectional ones beyond
+				// HTTP/3's own, so the surplus was capacity a peer could fill
+				// with data nothing would ever read: streams past the first are
+				// never accepted, and their bytes sit in the receive buffers for
+				// the life of the connection. Four covers the CONNECT request
+				// stream and the session's control stream with headroom; eight
+				// covers HTTP/3's control stream and the two QPACK streams.
+				MaxIncomingStreams:    4,
+				MaxIncomingUniStreams: 8,
 			}},
 		// Open server: players connect from any Mochi server's origin (and
 		// from sandboxed iframes with a null origin) — the library's default
@@ -140,39 +151,96 @@ func transport_start(fatal chan<- error) error {
 	}
 	mux.HandleFunc("/play", func(w http.ResponseWriter, r *http.Request) {
 		// The data plane gets the lobby's per-host sliding-minute limiter: session
-		// and player caps bound the steady state, not connection churn.
+		// and player caps bound the steady state, not connection churn. The
+		// capacity budgets are already spent by transport_accept, which admitted
+		// this connection before HTTP/3 ever saw a request on it.
 		if !lobby_permit(plays, r, 30) {
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		if !transport_admit() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		// Concurrent holds, not just connect rate: without this one address
-		// could occupy every slot the global cap allows and hold them.
-		address := r.RemoteAddr
-		if !transport_host_admit(address) {
-			transport_release()
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
 		session, err := server.Upgrade(w, r)
 		if err != nil {
-			transport_host_release(address)
-			transport_release()
 			debug("transport: upgrade: %v", err)
 			return
 		}
 		go guard("transport connection", func() { session.CloseWithError(0, "fault") }, func() {
-			defer transport_release()
-			defer transport_host_release(address)
 			transport_serve(session)
 		})
 	})
+	// Own the accept loop rather than handing the socket to Serve: it accepts
+	// every QUIC handshake and only then routes a request, so a peer that
+	// completed the handshake and never asked for /play held a connection, its
+	// buffers and its goroutines for the whole 60 s idle timeout, counted by
+	// nothing. The budgets belong where the connection is born.
+	// The two flags webtransport.Server.serve would have set for us, and which
+	// its ServeQUICConn refuses a connection without: taking over the accept
+	// loop means taking over the whole of what it did.
+	quicconf := server.H3.QUICConfig.Clone()
+	quicconf.EnableDatagrams = true
+	quicconf.EnableStreamResetPartialDelivery = true
+	quictransport := &quic.Transport{Conn: connection}
+	listener, err := quictransport.ListenEarly(tlsconf, quicconf)
+	if err != nil {
+		return fmt.Errorf("transport listen %s: %w", address, err)
+	}
 	info("transport listening on %s (udp)", address)
-	go func() { fatal <- fmt.Errorf("transport: %w", server.Serve(connection)) }()
+	go func() { fatal <- fmt.Errorf("transport: %w", transport_accept(listener, server)) }()
 	return nil
+}
+
+// transport_accept admits QUIC connections against the same global and
+// per-host budgets the TCP listeners get from listener_limit, then hands each
+// admitted one to HTTP/3. Returns only when the listener itself fails.
+func transport_accept(listener quic_listener, server *webtransport.Server) error {
+	for {
+		connection, err := listener.Accept(context.Background())
+		if err != nil {
+			return err
+		}
+		address := connection.RemoteAddr().String()
+		if !transport_hold(address) {
+			connection.CloseWithError(0, "busy")
+			continue
+		}
+		go guard("transport accept", func() { connection.CloseWithError(0, "fault") }, func() {
+			defer transport_drop(address)
+			// The webtransport server's own method, not http3's: it registers
+			// the session manager that Upgrade later looks the connection up
+			// in. Serves until the connection closes, which is after the
+			// session running on it has ended, so the budgets are held for
+			// exactly as long as the peer holds resources here.
+			_ = server.ServeQUICConn(connection)
+		})
+	}
+}
+
+// quic_listener is what transport_accept needs of a QUIC listener, as an
+// interface so a test can supply connections without a network.
+type quic_listener interface {
+	Accept(context.Context) (*quic.Conn, error)
+}
+
+// transport_hold reserves both connection budgets for one address, reporting
+// false when either is spent. A refusal consumes nothing: the global slot taken
+// by the reserve-then-check in transport_admit is returned before the per-host
+// refusal is reported, or the ceiling would ratchet down one connection at a
+// time. Concurrent holds, not just connect rate: without the per-host half one
+// address could occupy every slot the global cap allows and hold them.
+func transport_hold(address string) bool {
+	if !transport_admit() {
+		return false
+	}
+	if !transport_host_admit(address) {
+		transport_release()
+		return false
+	}
+	return true
+}
+
+// transport_drop returns what transport_hold reserved.
+func transport_drop(address string) {
+	transport_host_release(address)
+	transport_release()
 }
 
 // transport_serve accepts the client's control stream then hands the
@@ -200,10 +268,10 @@ func transport_serve(session *webtransport.Session) {
 	connection_serve(l)
 }
 
-// wireStream and wireSession are the transport primitives the wire drives, as
+// wire_stream and wire_session are the transport primitives the wire drives, as
 // interfaces (satisfied by *webtransport.Stream / *webtransport.Session) so a
 // test can inject a stream whose Write blocks.
-type wireStream interface {
+type wire_stream interface {
 	io.Reader
 	Write([]byte) (int, error)
 	SetReadDeadline(time.Time) error
@@ -212,7 +280,7 @@ type wireStream interface {
 	Close() error
 }
 
-type wireSession interface {
+type wire_session interface {
 	SendDatagram([]byte) error
 	ReceiveDatagram(context.Context) ([]byte, error)
 	CloseWithError(webtransport.SessionErrorCode, string) error
@@ -220,8 +288,8 @@ type wireSession interface {
 
 // wire implements link over a WebTransport session.
 type wire struct {
-	session  wireSession
-	stream   wireStream
+	session  wire_session
+	stream   wire_stream
 	inbound  chan []byte
 	outbound chan []byte
 	closed   chan struct{}
@@ -341,11 +409,27 @@ func (l *wire) datagrams() {
 		if len(payload) > frame_most {
 			continue
 		}
+		// Both budgets apply here too. Without the rate half, frames_minute
+		// bounded only the control stream, while this path - the one carrying
+		// 60 Hz input - bought a CBOR decode per packet for nothing: the
+		// consumer is one goroutine per connection looping read() then decode().
+		// Without the byte half, read() still released every datagram from
+		// `queued`, so the counter drifted negative and the backlog cap stopped
+		// firing for the control stream as well.
+		if reason := l.admit(len(payload)); reason != "" {
+			l.close(reason)
+			return
+		}
 		select {
 		case l.inbound <- payload:
 		case <-l.closed:
+			l.queued.Add(-int64(len(payload)))
 			return
 		default: // input flood: drop — newer samples supersede
+			// Released here because read() never will: a dropped payload
+			// reaches no consumer, and leaving it counted is the same
+			// asymmetry in the other direction.
+			l.queued.Add(-int64(len(payload)))
 		}
 	}
 }

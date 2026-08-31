@@ -60,6 +60,13 @@ func connection_serve(l link) {
 	var a answer
 	select {
 	case a = <-reply:
+	case <-s.done:
+		// The session ended while the join sat in the inbox. Nobody will answer
+		// it, so without this the client waited out the whole timer and was
+		// told "timeout" about a session that had simply gone.
+		close(cancel)
+		connection_refuse(l, "ended")
+		return
 	case <-time.After(5 * time.Second):
 		// The tick is stalled: give up, and tell session_join to roll back
 		// rather than admit a player onto this now-abandoned link. Without
@@ -100,7 +107,10 @@ func connection_join(l link) (map[string]any, error) {
 		connection_refuse(l, "protocol")
 		return nil, errors.New("protocol") // a real error (decode succeeds on a non-join): nil let the caller fall through to a second "unknown session" refusal
 	}
-	if v, found := message["protocol"]; found && int(number(map[string]any{"v": v}, "v")) != protocol {
+	// Not `if found &&`: a client that simply omits the field opted itself out
+	// of the version gate, then decoded this protocol's pose records against a
+	// different layout. A missing key reads as 0 and is refused.
+	if int(number(message, "protocol")) != protocol {
 		connection_refuse(l, "protocol")
 		return nil, errors.New("protocol")
 	}

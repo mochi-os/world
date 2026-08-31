@@ -266,13 +266,13 @@ func enrol(t *testing.T, s *session, identifier string) {
 // stripped at the door; identity was taken verbatim, and it is retained per
 // player and re-serialised into the roster every later joiner receives.
 func TestJoinIdentityIsCappedAndCleaned(t *testing.T) {
-	s := bareSession(&fakeInstance{}, 4)
+	s := bare_session(&fake_instance{}, 4)
 	s.inbox = make(chan order, 4)
 	s.done = make(chan struct{})
 	enrol(t, s, "identity-cap")
 
 	hostile := strings.Repeat("A", 300) + "\x07\x00 tail"
-	frame, err := encode(map[string]any{"kind": "join", "session": s.identifier, "name": "pilot", "identity": hostile})
+	frame, err := encode(map[string]any{"kind": "join", "session": s.identifier, "name": "pilot", "identity": hostile, "protocol": protocol})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,12 +315,12 @@ func TestJoinRefusesRatherThanWaitOnAFullInbox(t *testing.T) {
 	inbox_deadline = 150 * time.Millisecond
 	t.Cleanup(func() { inbox_deadline = previous })
 
-	s := bareSession(&fakeInstance{}, 4)
+	s := bare_session(&fake_instance{}, 4)
 	s.inbox = make(chan order) // nothing is draining it
 	s.done = make(chan struct{})
 	enrol(t, s, "wedged-inbox")
 
-	frame, err := encode(map[string]any{"kind": "join", "session": s.identifier, "name": "pilot"})
+	frame, err := encode(map[string]any{"kind": "join", "session": s.identifier, "name": "pilot", "protocol": protocol})
 	if err != nil {
 		t.Fatal(err)
 	}
