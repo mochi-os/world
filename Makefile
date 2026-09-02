@@ -1,4 +1,7 @@
 version = 1.6
+
+# Generation time stamped into the published manifest.
+generated := $(shell date +%s)
 bin = ../bin
 ldflags = -s -w -X main.build_version=$(version)
 go_sources := $(shell find server game games -name '*.go') go.mod go.sum
@@ -351,7 +354,10 @@ release-publish:
 	cp $(pkg_amd64) ../packages/macos/mochi-world-amd64.pkg
 	cp $(pkg_arm64) ../packages/macos/mochi-world-arm64.pkg
 	mkdir -p ../packages/world
-	echo '{"tracks": {"production": "$(version)"}}' > ../packages/world/versions.json
+	echo '{"generated": $(generated), "platform": "world", "tracks": {"production": "$(version)"}}' > ../packages/world/versions.json
+	# Signed with the release key like the server manifests, so a client that
+	# appears can verify it. -rawin needs openssl 3.0+.
+	openssl pkeyutl -sign -rawin -inkey ../core/local/update-signing.key -in ../packages/world/versions.json | base64 -w0 > ../packages/world/versions.json.sig
 	# Publish to yuzu by name (not the packages.mochi-os.org alias) so the
 	# target is deterministic regardless of where that record points.
 	@t0=$$(date +%s); \
