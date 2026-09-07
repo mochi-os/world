@@ -597,6 +597,53 @@ func corner(m *flight.Model) float64 {
 
 // think runs one bot for one tick: decide at the skill's cadence, steer every
 // tick, and hand the one-shot weapon requests to the instance.
+// trigger is the shot decision, and unlike the rest of decide() it runs EVERY
+// tick. Manoeuvre is a plan, and re-deciding a plan at the skill's cadence is
+// what makes a tier feel human. A trigger is a reflex, and gating it on the
+// same clock meant the ace sampled its own launch window five times a second
+// where the superhuman sampled it sixty. Against an opponent whose aspect
+// swings fast -- the slow high-alpha fight -- the legal windows are brief, and
+// that sampling gap alone was worth 4 launches against 22 over sixteen fights
+// (#107). The tier's humanity is untouched: this acts on b.prey, the PERCEIVED
+// track with that tier's own delay and staleness, its wander still bends the
+// nose, and the pair-and-look magazine discipline in think() still decides
+// what actually leaves the rail.
+//
+// The crude aspect precondition that used to stand in front of this is gone.
+// It was a pre-#48 heuristic that decided whether the LADDER was consulted at
+// all, and against a target pointing at the bot -- tail negative nearly always
+// -- it refused to consult it. #48's whole intent was that the launch gate
+// read the heater ladder, and since #104 the ladder is honest about what the
+// seeker can actually hold, so the heuristic in front of it is redundant.
+func (i *instance) trigger(slot int, a *craft, tick uint64) {
+	b := a.brain
+	if b == nil || a.model == nil || b.prey == nil || b.target < 0 || b.missiles <= 0 {
+		return
+	}
+	heat := clamp((i.glow(b)-0.5)*2, 0, 1)
+	if !b.shoot && !(heat > 0 && (b.mode == "saddle" || b.mode == "press")) {
+		return
+	}
+	me := &a.model.State
+	prey := b.prey
+	horizon := 0.0
+	if b.skill.library >= 2 {
+		horizon = float64(tick-prey.when) / 60 // lead the stale track; the rookie chases where he WAS
+	}
+	direction, distance := i.bearing(me.Position, predict(prey, horizon, b.skill.library >= 3))
+	if distance < 1 || prey.velocity.Length() < 1 {
+		return
+	}
+	tail := direction.Dot(prey.velocity.Normalize())
+	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+	margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
+	limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) *
+		(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
+	if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {
+		b.loose = true
+	}
+}
+
 func (i *instance) think(slot int, a *craft, tick uint64) {
 	b := a.brain
 	b.magazine = a.ammunition
@@ -607,7 +654,8 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		b.decided = tick
 		i.decide(slot, a, tick)
 	}
-	i.hunt(slot, a, tick) // BVR radar, DLZ shot, crank, and defence (hunt.go): inert without AMRAAMs aboard or radar rounds inbound
+	i.trigger(slot, a, tick) // the shot is a reflex, not a plan: every tick, whatever the cadence
+	i.hunt(slot, a, tick)    // BVR radar, DLZ shot, crank, and defence (hunt.go): inert without AMRAAMs aboard or radar rounds inbound
 	a.latest = b.steer(a.model, tick)
 	a.latest.Jammer = b.jam // the armed level, brain-driven for bots the way a client reports it for humans (same equipment, same trade-offs)
 	// The fire drill (#130, deferred from #78): engine fires feed on throttle
@@ -2289,15 +2337,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// Shots at that tail redistributed knife-edge merges for no tactical
 	// meaning; the beam opens against a jet HOLDING the burner, not one
 	// caught mid-throttle.
-	heat := clamp((i.glow(b)-0.5)*2, 0, 1)
-	tracking := b.shoot || (heat > 0 && (b.mode == "saddle" || b.mode == "press") && b.prey != nil)
-	if b.missiles > 0 && tracking && (b.skill.discipline < 0.7 || (tail > b.tactics.missile.tail-b.tactics.missile.relax*heat && distance < b.tactics.missile.span)) {
-		margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
-		limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) * (b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
-		if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {
-			b.loose = true
-		}
-	}
+	// The launch gate moved to trigger(), which runs every tick (#107).
 
 	i.guard(b, me, pace)
 

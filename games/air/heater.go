@@ -33,124 +33,48 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// line of sight and either flies on or bends 7.5 g away. No flares (the zone
 	// cannot know them) and no seeker acquisition roll.
 	arrives := func(trial float64, breaking bool) bool {
-		const dt = 1.0 / 60
-		virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-		forward := shooter.Velocity
-		if forward.Length() > 1 {
-			forward = forward.Normalize()
-		} else {
-			forward = direction
-		}
-		m := missile{
-			position: shooter.Position.Add(forward.Scale(3)),
-			velocity: shooter.Velocity.Add(forward.Scale(30)),
-			life:     missile_life,
-			burn:     missile_boost,
-		}
-		m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
-		closest := math.MaxFloat64
-		for m.life > 0 {
-			m.life -= dt
-			m.flew += dt
-			speed := m.velocity.Length()
-			// The proximity fuse: closest approach inside this step, exactly
-			// as pursue() judges it.
-			if m.flew > missile_arm {
-				relative := shortest(m.position, virtual.Position, wrap)
-				closure := virtual.Velocity.Subtract(m.velocity)
-				step := 0.0
-				if squared := closure.Dot(closure); squared > 1e-9 {
-					step = clamp(-relative.Dot(closure)/squared, 0, dt)
-				}
-				if near := relative.Add(closure.Scale(step)).Length(); near < closest {
-					closest = near
-				}
-				if closest < missile_fuse {
-					return true
-				}
-			}
-			if m.flew > missile_arm {
-				direction := shortest(m.position, virtual.Position, wrap).Normalize()
-				axis := m.velocity.Normalize()
-				if direction.Dot(axis) < missile_gimbal {
-					m.loose = true
-				}
-				rate := direction.Subtract(m.sight).Scale(1 / dt)
-				rate = rate.Subtract(direction.Scale(rate.Dot(direction)))
-				if rate.Length() > missile_track {
-					m.loose = true
-				}
-				m.sight = direction
-				if !m.loose {
-					closing := math.Abs(virtual.Velocity.Subtract(m.velocity).Dot(direction))
-					accel := rate.Scale(missile_n * closing)
-					limit := missile_g * 9.81 * clamp(speed/600, 0.15, 1)
-					if pull := accel.Length(); pull > limit {
-						accel = accel.Scale(limit / pull)
-					}
-					m.velocity = m.velocity.Add(accel.Scale(dt))
-					speed = m.velocity.Length()
-					bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
-					m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
-					if m.burn <= 0 && speed < virtual.Velocity.Length()+60 && closing < 40 {
-						return false // energy death: coasting below convergence speed, opening
-					}
-				}
-			} else {
-				m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
-			}
-			if m.loose {
-				// Ballistic, fuse live: it may still pass close, but a lost
-				// lock at any range short of the fuse is a miss for the zone.
-				return false
-			}
-			if m.burn > 0 {
-				m.burn -= dt
-				m.velocity = m.velocity.Add(m.velocity.Normalize().Scale(missile_thrust * dt))
-			}
-			m.position = m.position.Add(m.velocity.Scale(dt))
-			if m.position.Y <= 0 {
-				return false
-			}
-			if speed := virtual.Velocity.Length(); speed > 1 {
-				heading := virtual.Velocity.Scale(1 / speed)
-				if breaking {
-					// The heater's escape is the BEAM, not the AMRAAM's tail-on run: square
-					// the missile's line of sight at 7.5 g, re-squared as it rotates, so the
-					// endgame outruns the seeker's 20 deg/s ceiling.
-					line := shortest(m.position, virtual.Position, wrap).Normalize()
-					side := flight.Vec3{Y: 1}.Cross(line).Normalize()
-					if side.Dot(swing) < 0 || (swing.Length() < 1 && side.Dot(heading) < 0) {
-						side = side.Scale(-1)
-					}
-					beam := side.Subtract(line.Scale(side.Dot(line))).Normalize()
-					if heading.Dot(beam) < 0.999 {
-						turned := heading.Add(beam.Subtract(heading.Scale(beam.Dot(heading))).Normalize().Scale(7.5 * 9.80665 / speed * dt))
-						virtual.Velocity = turned.Normalize().Scale(speed)
-					}
-				} else if turn := swing.Subtract(heading.Scale(swing.Dot(heading))); turn.Length() > 1 {
-					// Flying on as now means holding his present turn: the
-					// velocity rotates at his measured rate, speed held, the
-					// same local curve the arbiter's evolve() extrapolates.
-					virtual.Velocity = heading.Add(turn.Scale(dt / speed)).Normalize().Scale(speed)
-				}
-			}
-			virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
-		}
-		return false
+		return reaches(shooter, target, direction, swing, wrap, trial, breaking)
 	}
 
-	// Bisect the outermost range satisfying a criterion, walking the floor
-	// outward first as the AMRAAM's ladder does: a shooter whose velocity
-	// is off the line cannot make the turn-in at point-blank range while a
-	// mid-range shot arrives cleanly.
-	rung := func(good func(float64) bool) float64 {
+	// Bisect the range band satisfying a criterion, walking the floor outward
+	// first as the AMRAAM's ladder does: a shooter whose velocity is off the
+	// line cannot make the turn-in at point-blank range while a mid-range shot
+	// arrives cleanly.
+	//
+	// Both ends are returned, because the band has a real inner edge and
+	// reporting only the outer one is what #104 was. The seeker's track-rate
+	// ceiling is not a limit that relaxes as the shot closes -- line-of-sight
+	// rate goes as crossing speed over range, so closing in RAISES it, and on
+	// the beam the far shot is the easy one while the near shot saturates. A
+	// ladder that returns only the outermost arriving range, leaving every
+	// consumer to assume the whole span inside it is good, therefore endorses
+	// exactly the shots the round cannot fly: at the geometry of the
+	// 2026-09-06 joust this band ran from 1,850 m to 2,500 m and the bot fired
+	// at 998 m. The floor walk already pays for the bracket the inner edge
+	// lives in, so refining it costs nothing at the aspects where the walk
+	// never had to move.
+	rung := func(good func(float64) bool) (float64, float64) {
 		low, high := 400.0, 12000.0
+		refused := 0.0
 		for !good(low) {
+			refused = low
 			low *= 1.5
 			if low > high/2 {
-				return 0
+				return 0, 0
 			}
+		}
+		inner := 0.0
+		if refused > 0 {
+			bottom, top := refused, low
+			for i := 0; i < 6; i++ {
+				mid := (bottom + top) / 2
+				if good(mid) {
+					top = mid
+				} else {
+					bottom = mid
+				}
+			}
+			inner = top
 		}
 		for i := 0; i < 10; i++ {
 			mid := (low + high) / 2
@@ -160,10 +84,11 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 				high = mid
 			}
 		}
-		return low
+		return inner, low
 	}
 	zone := round.Zone{}
-	zone.Max = rung(func(r float64) bool { return arrives(r, false) })
+	near, far := rung(func(r float64) bool { return arrives(r, false) })
+	zone.Max = far
 	// The seeker's reach at this aspect, exactly as acquire() judges a lock:
 	// full range square at a tailpipe, the plume's floor head-on.
 	tail := 0.0
@@ -175,7 +100,8 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 		zone.Max = reach
 	}
 	zone.Aero = zone.Max
-	zone.Escape = rung(func(r float64) bool { return arrives(r, true) })
+	brink, escape := rung(func(r float64) bool { return arrives(r, true) })
+	zone.Escape = escape
 	if zone.Escape > zone.Max {
 		zone.Escape = zone.Max
 	}
@@ -187,7 +113,132 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 		closing = 0
 	}
 	zone.Minimum = math.Max(300, closing*(missile_arm+0.5))
+	// The band's own inner edge, where it sits outside the fuse floor. Both
+	// rungs contribute: the disciplined tiers fire inside Escape and everyone
+	// else inside Max, and a single Minimum has to be honest for both.
+	if near > zone.Minimum {
+		zone.Minimum = near
+	}
+	if brink > zone.Minimum && zone.Escape > 0 {
+		zone.Minimum = brink
+	}
+	if zone.Minimum >= zone.Max {
+		zone.Max, zone.Aero, zone.Escape = 0, 0, 0
+	}
 	return zone
+}
+
+// reaches flies one virtual round at a target placed trial metres along the
+// present line of sight and reports whether it fuses. This is the ladder's
+// whole opinion of a shot: every rung in Heat is a bisection over it, and the
+// bot's gate is a question about it. breaking bends the target into the beam
+// at 7.5 g; otherwise it holds its measured turn.
+func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, wrap float64, trial float64, breaking bool) bool {
+	const dt = 1.0 / 60
+	virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
+	forward := shooter.Velocity
+	if forward.Length() > 1 {
+		forward = forward.Normalize()
+	} else {
+		forward = direction
+	}
+	m := missile{
+		position: shooter.Position.Add(forward.Scale(3)),
+		velocity: shooter.Velocity.Add(forward.Scale(30)),
+		life:     missile_life,
+		burn:     missile_boost,
+	}
+	m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
+	closest := math.MaxFloat64
+	for m.life > 0 {
+		m.life -= dt
+		m.flew += dt
+		speed := m.velocity.Length()
+		// The proximity fuse: closest approach inside this step, exactly
+		// as pursue() judges it.
+		if m.flew > missile_arm {
+			relative := shortest(m.position, virtual.Position, wrap)
+			closure := virtual.Velocity.Subtract(m.velocity)
+			step := 0.0
+			if squared := closure.Dot(closure); squared > 1e-9 {
+				step = clamp(-relative.Dot(closure)/squared, 0, dt)
+			}
+			if near := relative.Add(closure.Scale(step)).Length(); near < closest {
+				closest = near
+			}
+			if closest < missile_fuse {
+				return true
+			}
+		}
+		if m.flew > missile_arm {
+			direction := shortest(m.position, virtual.Position, wrap).Normalize()
+			axis := m.velocity.Normalize()
+			if direction.Dot(axis) < missile_gimbal {
+				m.loose = true
+			}
+			rate := direction.Subtract(m.sight).Scale(1 / dt)
+			rate = rate.Subtract(direction.Scale(rate.Dot(direction)))
+			if rate.Length() > missile_track {
+				m.loose = true
+			}
+			m.sight = direction
+			if !m.loose {
+				closing := math.Abs(virtual.Velocity.Subtract(m.velocity).Dot(direction))
+				accel := rate.Scale(missile_n * closing)
+				limit := missile_g * 9.81 * clamp(speed/600, 0.15, 1)
+				if pull := accel.Length(); pull > limit {
+					accel = accel.Scale(limit / pull)
+				}
+				m.velocity = m.velocity.Add(accel.Scale(dt))
+				speed = m.velocity.Length()
+				bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
+				m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
+				if m.burn <= 0 && speed < virtual.Velocity.Length()+60 && closing < 40 {
+					return false // energy death: coasting below convergence speed, opening
+				}
+			}
+		} else {
+			m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
+		}
+		if m.loose {
+			// Ballistic, fuse live: it may still pass close, but a lost
+			// lock at any range short of the fuse is a miss for the zone.
+			return false
+		}
+		if m.burn > 0 {
+			m.burn -= dt
+			m.velocity = m.velocity.Add(m.velocity.Normalize().Scale(missile_thrust * dt))
+		}
+		m.position = m.position.Add(m.velocity.Scale(dt))
+		if m.position.Y <= 0 {
+			return false
+		}
+		if speed := virtual.Velocity.Length(); speed > 1 {
+			heading := virtual.Velocity.Scale(1 / speed)
+			if breaking {
+				// The heater's escape is the BEAM, not the AMRAAM's tail-on run: square
+				// the missile's line of sight at 7.5 g, re-squared as it rotates, so the
+				// endgame outruns the seeker's 20 deg/s ceiling.
+				line := shortest(m.position, virtual.Position, wrap).Normalize()
+				side := flight.Vec3{Y: 1}.Cross(line).Normalize()
+				if side.Dot(swing) < 0 || (swing.Length() < 1 && side.Dot(heading) < 0) {
+					side = side.Scale(-1)
+				}
+				beam := side.Subtract(line.Scale(side.Dot(line))).Normalize()
+				if heading.Dot(beam) < 0.999 {
+					turned := heading.Add(beam.Subtract(heading.Scale(beam.Dot(heading))).Normalize().Scale(7.5 * 9.80665 / speed * dt))
+					virtual.Velocity = turned.Normalize().Scale(speed)
+				}
+			} else if turn := swing.Subtract(heading.Scale(swing.Dot(heading))); turn.Length() > 1 {
+				// Flying on as now means holding his present turn: the
+				// velocity rotates at his measured rate, speed held, the
+				// same local curve the arbiter's evolve() extrapolates.
+				virtual.Velocity = heading.Add(turn.Scale(dt / speed)).Normalize().Scale(speed)
+			}
+		}
+		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
+	}
+	return false
 }
 
 // shortest is the wrap-aware displacement from one point to another.

@@ -13,6 +13,30 @@ import (
 	"world/games/air/round"
 )
 
+type shot struct {
+	name               string
+	shooterP, shooterV flight.Vec3
+	targetP, targetV   flight.Vec3
+	swing              flight.Vec3
+	fired              float64
+}
+
+// The two geometries the ace actually shot from in the 2026-09-06 joust, at
+// the real altitude: Heat abandons a round the instant its path reaches Y<=0,
+// so a probe run at sea level reports "no shot at any aspect" and means
+// nothing. swing is the target's MEASURED turn (the player was pulling 6.5 g
+// at both launches), which zoned() passes and the ladder extrapolates.
+func recorded() []shot {
+	return []shot{
+		{"t=19.1 beam at 1658 m", flight.Vec3{Y: 4639.3}, flight.Vec3{X: -26.26, Y: -49.00, Z: 183.36},
+			flight.Vec3{X: 830.25, Y: 4398.8, Z: 1414.56}, flight.Vec3{X: -219.30, Y: -33.00, Z: 156.23},
+			flight.Vec3{X: 62.74, Y: 19.48, Z: -119.91}, 1658},
+		{"t=22.5 beam at  998 m", flight.Vec3{Y: 4444.7}, flight.Vec3{X: 35.96, Y: -61.00, Z: 182.69},
+			flight.Vec3{X: -127.18, Y: 4282.8, Z: 976.98}, flight.Vec3{X: -253.60, Y: -32.00, Z: -51.37},
+			flight.Vec3{X: -48.42, Y: -5.45, Z: -72.58}, 998},
+	}
+}
+
 // TestHeatZone pins the AIM-9M ladder to the physics the cockpit's SHOOT cue
 // will lean on (#47): the zone must order with aspect and closure the way
 // the seeker's own rules dictate, and the floor must be inside the ceiling.
@@ -27,7 +51,7 @@ func TestHeatZone(t *testing.T) {
 	tail := Heat(shooter, place(0), flight.Vec3{}, 0, 0)
 	beam := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 0, 0)
 	head := Heat(shooter, place(math.Pi), flight.Vec3{}, 0, 0)
-	for name, z := range map[string]round.Zone{"tail": tail, "beam": beam, "head": head} {
+	for name, z := range map[string]round.Zone{"tail": tail, "head": head} {
 		if z.Max <= 0 {
 			t.Errorf("%s: no Rmax at all (%+v)", name, z)
 		}
@@ -35,10 +59,25 @@ func TestHeatZone(t *testing.T) {
 			t.Errorf("%s: the ladder is out of order: %+v", name, z)
 		}
 	}
-	// The zone is the SEEKER's, not the kinematics': the acquisition cap is what
-	// orders stern > beam > head-on, the same cap acquire() applies to a lock.
-	if !(tail.Max > beam.Max && beam.Max > head.Max) {
-		t.Errorf("Rmax should order stern > beam > head-on: %.0f / %.0f / %.0f m", tail.Max, beam.Max, head.Max)
+	// A cold target square on the beam is not a shot at any range (#104). The
+	// seeker can acquire one only inside 750 m, and the crossing rate at that
+	// range saturates its 20 deg/s track ceiling before the round arrives, so
+	// the band's inner edge closes over its outer edge. The ladder says so by
+	// reporting no zone rather than a span its own round refuses to fly.
+	if beam.Max > 0 {
+		t.Errorf("a cold beam target should offer no shot at all, got %+v", beam)
+	}
+	// The zone is the SEEKER's, not the kinematics': the acquisition cap is
+	// what pulls a stern shot out to the full reach.
+	//
+	// This deliberately does NOT assert stern > beam > head-on. That ordering
+	// cannot hold: the cap keys on how square the shot is to the tailpipe, and
+	// a beam target and a head-on target are both zero there, so the two get
+	// the same reach by construction. The assertion that used to stand here
+	// compared them anyway and passed on 5e-13 of floating-point noise in the
+	// beam's cosine -- it was decided by rounding, not by physics.
+	if !(tail.Max > head.Max) {
+		t.Errorf("Rmax should order stern > head-on: %.0f / %.0f m", tail.Max, head.Max)
 	}
 	if math.Abs(tail.Max-missile_range) > 50 {
 		t.Errorf("a stern shot's Rmax should be the seeker's full reach (%.0f m), got %.0f", missile_range, tail.Max)
@@ -49,6 +88,11 @@ func TestHeatZone(t *testing.T) {
 	// Lit up, the head-on reach grows: the plume is the beacon.
 	if lit := Heat(shooter, place(math.Pi), flight.Vec3{}, 1, 0); lit.Max <= head.Max {
 		t.Errorf("a burner-lit head-on nose should be lockable further than a cold one: %.0f v %.0f m", lit.Max, head.Max)
+	}
+	// And the plume is what re-opens the beam, by carrying the acquisition
+	// reach out to where the crossing rate is slow enough to track.
+	if lit := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 1, 0); lit.Max <= 0 || lit.Minimum >= lit.Max {
+		t.Errorf("a burner-lit beam target should offer a far-band shot, got %+v", lit)
 	}
 	t.Logf("tail %+v", tail)
 	t.Logf("beam %+v", beam)
@@ -117,5 +161,37 @@ func TestHeatRecordedShots(t *testing.T) {
 	}
 	if steady+flashed < 8 {
 		t.Errorf("only %d of the twelve recorded shots read shootable; ten were", steady+flashed)
+	}
+}
+
+// TestHeaterRefusesTheSaturatingBeamShot is #104's gate. In the 2026-09-06
+// joust the ace threw four heaters at a beaming target in four seconds and
+// every seeker saturated within two. The launch gate was reading the ladder
+// as designed; the ladder was the thing that lied, because rung() reported
+// only the OUTERMOST arriving range and zoned() then accepted everything
+// inside it. That assumption holds for a reach or energy limit and is exactly
+// inverted for the seeker's track-rate ceiling: line-of-sight rate goes as
+// crossing speed over range, so closing in raises it. At the geometry of the
+// second launch the ladder's own round refuses every range inside 1,800 m --
+// and the bot fired at 998 m.
+func TestHeaterRefusesTheSaturatingBeamShot(t *testing.T) {
+	near := recorded()[1]
+	for _, lit := range []float64{0, 1} {
+		z := Heat(round.Target{Position: near.shooterP, Velocity: near.shooterV},
+			round.Target{Position: near.targetP, Velocity: near.targetV}, near.swing, lit, 0)
+		if near.fired > z.Minimum && near.fired <= z.Escape {
+			t.Errorf("lit=%.0f: the ladder endorses the saturating beam shot at %.0f m (%+v)", lit, near.fired, z)
+		}
+	}
+
+	// The positive control, without which the assertion above proves nothing:
+	// the same shooter at the same altitude against a target running away is
+	// the shot the seeker CAN hold, and it must still be endorsed.
+	chase := near.shooterV.Normalize()
+	stern := round.Target{Position: near.shooterP.Add(chase.Scale(1400)), Velocity: chase.Scale(240)}
+	z := Heat(round.Target{Position: near.shooterP, Velocity: near.shooterV}, stern, flight.Vec3{}, 0, 0)
+	span := stern.Position.Subtract(near.shooterP).Length()
+	if !(span > z.Minimum && span <= z.Escape) {
+		t.Errorf("a stern chase at %.0f m should still be a shot, got %+v", span, z)
 	}
 }
