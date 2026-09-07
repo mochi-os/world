@@ -626,3 +626,38 @@ func TestChaffResolve(t *testing.T) {
 		t.Fatalf("the rejected bloom disturbed the track (phase %d)", m.Phase)
 	}
 }
+
+// TestEscapeTurnFromExactlyHeadOn is #105's gate. The escape rung flies the
+// target away at 7.5 g, and it aims at the component of the flee direction
+// PERPENDICULAR to the present heading. A target flying exactly down the line
+// of sight at the shooter makes that component the zero vector, so Normalize()
+// has nothing to point at and the break silently never happens: Escape then
+// reads identically to Max, and the target's velocity is unchanged after a
+// hundred seconds of nominal 7.5 g. Real geometry carries enough float noise to
+// step around it -- building the same shot as {X: 250*cos(pi), Z: 250*sin(pi)}
+// leaves ~3e-14 of perpendicular component, which is plenty -- so this is
+// reachable only from an exactly axis-aligned setup. Which is precisely what a
+// test writes.
+func TestEscapeTurnFromExactlyHeadOn(t *testing.T) {
+	shooter := Target{Position: flight.Vec3{Y: 9144}, Velocity: flight.Vec3{X: 250}}
+	// EXACTLY anti-parallel: no perpendicular component whatsoever.
+	target := Target{Position: flight.Vec3{X: 30000, Y: 9144}, Velocity: flight.Vec3{X: -250}}
+	zone := Ladder(shooter, target, 0)
+	if zone.Escape >= zone.Max {
+		t.Errorf("an exactly head-on target never broke: Escape %.0f, Max %.0f — the escape turn is degenerate",
+			zone.Escape, zone.Max)
+	}
+	// And it must be a real break rather than a rounding: a sustained 7.5 g
+	// reversal over the round's whole flight costs a large share of the reach.
+	if zone.Escape > zone.Max*0.8 {
+		t.Errorf("the break barely moved the rung: Escape %.0f is %.0f%% of Max %.0f",
+			zone.Escape, 100*zone.Escape/zone.Max, zone.Max)
+	}
+	// The control: an oblique shot has always worked, and must still. If this
+	// fails too, the guard broke the ordinary path rather than fixing the edge.
+	oblique := Target{Position: flight.Vec3{X: 30000, Y: 9144},
+		Velocity: flight.Vec3{X: 250 * math.Cos(2.356), Z: 250 * math.Sin(2.356)}}
+	if z := Ladder(shooter, oblique, 0); z.Escape >= z.Max {
+		t.Errorf("the oblique escape regressed: Escape %.0f, Max %.0f", z.Escape, z.Max)
+	}
+}

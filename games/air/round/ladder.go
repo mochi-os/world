@@ -11,7 +11,11 @@
 
 package round
 
-import "math"
+import (
+	"math"
+
+	"world/games/air/flight"
+)
 
 // Zone is the launch-acceptability ladder for the current geometry, in
 // metres of launch range, with the seconds-to-active estimate for the
@@ -60,7 +64,23 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 				if speed > 1 {
 					heading := virtual.Velocity.Scale(1 / speed)
 					if heading.Dot(away) < 0.999 {
-						turned := heading.Add(away.Subtract(heading.Scale(away.Dot(heading))).Normalize().Scale(escape / speed * dt))
+						// The turn is toward the component of the flee direction
+						// PERPENDICULAR to the present heading. Exactly anti-parallel
+						// -- a target flying straight down the line of sight at the
+						// shooter -- makes that component the zero vector, so
+						// Normalize() has nothing to point at and the break silently
+						// never happened: measured, Escape read identically to Max and
+						// the target's velocity was unchanged after a hundred seconds
+						// of nominal 7.5 g. Real geometry carries enough float noise to
+						// avoid it, but a synthetic head-on lands on it exactly. A jet
+						// reversing picks a side; pick one rather than fly on.
+						turn := away.Subtract(heading.Scale(away.Dot(heading)))
+						if turn.Length() < 1e-6 {
+							if turn = (flight.Vec3{Y: 1}).Cross(heading); turn.Length() < 1e-6 {
+								turn = (flight.Vec3{X: 1}).Cross(heading)
+							}
+						}
+						turned := heading.Add(turn.Normalize().Scale(escape / speed * dt))
 						virtual.Velocity = turned.Normalize().Scale(speed)
 					}
 				}
