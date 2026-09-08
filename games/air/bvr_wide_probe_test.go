@@ -8,6 +8,7 @@ package air
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"testing"
 
@@ -16,7 +17,11 @@ import (
 
 func TestBvrWide(t *testing.T) {
 	wide(t)
-	seeds := uint64(24)
+	// 48, not 24 (#106): at 24 seeds this rung passed while the same code failed
+	// at 48 by eight fights. The gate's own tolerance is +-2 at 24 seeds and the
+	// true margin was four times that, so a green run at 24 was never evidence
+	// about this pair. Costs about seven extra minutes in the doctrine battery.
+	seeds := uint64(48)
 	if v := os.Getenv("AIR_BVR_SEEDS"); v != "" {
 		fmt.Sscanf(v, "%d", &seeds)
 	}
@@ -72,9 +77,14 @@ func TestBvrWide(t *testing.T) {
 		}
 		fmt.Printf("bvr wide %-11s v %-7s %d-%d, %d no result | AMRAAMs spent %d of %d\n", strong, weak, wins, losses, draws, spent, 8*seeds)
 		// THE GATE (#46): symmetric competent BVR neutralises, so order is not
-		// demanded of these rungs - losing them beyond the seed band is. Twenty-four
-		// seeds move by about two.
-		if seeds >= 24 && losses > wins+3 {
+		// demanded of these rungs - losing them beyond the seed band is.
+		//
+		// The band SCALES with the sample (#106). A win-loss margin wanders as
+		// the square root of the fights, so the +3 that is right at 24 seeds is
+		// about +4 at 48; a fixed number would mean raising the seed count
+		// silently TIGHTENED the gate rather than only resolving it better.
+		band := 3 * math.Sqrt(float64(seeds)/24)
+		if seeds >= 24 && float64(losses) > float64(wins)+band {
 			t.Errorf("bvr wide: %s lost to %s %d-%d over %d seeds: the rung is inverted", strong, weak, losses, wins, seeds)
 		}
 	}

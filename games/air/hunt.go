@@ -31,7 +31,19 @@ type press struct {
 func pressing(library int, machine bool) press {
 	switch {
 	case machine:
-		return press{depth: 0.15, look: 180, withhold: true}
+		// The machine used to withhold to 0.15, on the reasoning that a perfect
+		// pilot can afford to hold for the no-escape shot. Against a SYMMETRIC
+		// opponent that is a losing trade: depth positions the shot between
+		// Escape and Max, so a lower one fires LATER, and at a 30,000 ft head-on
+		// the ace's 0.35 puts its missile away about 10 km of closure earlier --
+		// every time. The superhuman was therefore always the one defending
+		// first, and a jet cranking off a launch warning is not pointing at
+		// anything it can shoot. Measured at 48 seeds, superhuman v ace: 0.15
+		// lost 18-29, 0.25 still lost 15-25, 0.35 neutralises at 21-21. BVR shot
+		// depth cannot be a tier axis -- any withholding relative to the
+		// opponent loses the first-shot race -- so the machine's edge stays
+		// reflex and precision (#106).
+		return press{depth: 0.35, look: 180, withhold: true}
 	case library <= 1:
 		return press{depth: 1.0, look: 120, withhold: false}
 	case library == 2:

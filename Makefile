@@ -98,7 +98,7 @@ docker-scan: docker-local
 # conversions), so the package measures ~75 min where it once took ~18.
 # Run this after any change to bot.go or the doctrine tests.
 test-doctrine:
-	AIR_DOCTRINE=1 go test -timeout 100m ./games/air/
+	AIR_DOCTRINE=1 go test -timeout 120m ./games/air/
 
 # Race detection. games/air runs ~257 s uninstrumented, so it overruns the 600 s
 # default under -race and the largest package in the tree never got race
