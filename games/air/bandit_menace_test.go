@@ -130,3 +130,35 @@ func TestSpent(t *testing.T) {
 		}
 	}
 }
+
+// TestMenaceCarriesABattery (#135) — a mirrored round must be judgeable.
+// round.Model.Step returns false on Life <= 0 and round.Lethal's only loop
+// exit is that return, so a flat battery made Lethal answer false for every
+// geometry: counterfire's credibility gate could never be satisfied in single
+// player, and the withholding tiers' one licensed defensive AMRAAM never
+// happened against a human. Measured before the fix: 0 credible ticks across
+// 2, 8 and 18 km launches, with the superhuman firing nothing in 40 s.
+func TestMenaceCarriesABattery(t *testing.T) {
+	wrap := 250000.0
+	bandit := NewBandit("ace", 1, wrap, "", false, true, "open", 0)
+	bandit.Spawn(flight.Vec3{X: 12000, Y: 8000}, flight.Vec3{X: -240})
+	bandit.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
+
+	if len(bandit.arena.flying) != 1 || bandit.arena.flying[0].radar == nil {
+		t.Fatal("the radar round was not declared")
+	}
+	m := bandit.arena.flying[0].radar
+	if m.Life <= 0 {
+		t.Errorf("the mirrored round arrived with a flat battery (Life %.0f): Lethal cannot judge it", m.Life)
+	}
+	if m.Wrap != wrap {
+		t.Errorf("the mirrored round does not wrap with the arena: Wrap %.0f, want %.0f", m.Wrap, wrap)
+	}
+	// The behavioural half: the credibility gate can now answer at all. A
+	// round closing head-on from 12 km IS credible, and that is the judgement
+	// counterfire rests its one licensed shot on.
+	target := round.Target{Position: bandit.craft.model.State.Position, Velocity: bandit.craft.model.State.Velocity}
+	if !round.Lethal(*m, target, 0.2) {
+		t.Error("a head-on round at 12 km was judged not credible: the gate is still inert")
+	}
+}

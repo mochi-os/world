@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"world/game"
+	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 // TestHuntSilence is the WVR sentinel: in a fox2-pinned furball no bot carries
@@ -335,5 +337,44 @@ func TestHuntSeam(t *testing.T) {
 	}
 	if closing < 3 {
 		t.Fatalf("only %d of %d seeds merged or resolved in eight minutes: degenerate never-closing play", closing, len(seeds))
+	}
+}
+
+// TestJammerStaysWithTheMachine pins a tier boundary that measurement chose
+// over argument. Every craft carries the same jammer and the same loud rules,
+// and arming it is one range comparison -- by every structural test it is
+// doctrine, which would put it at library >= 3 alongside the ace. Measured
+// 2026-09-08, that collapses the symmetric BVR seam: ace v ace fell from 3 of
+// 4 seeds merging or resolving to 1 of 4, while machine v machine, where both
+// sides already jam, held at 3 of 4. Two jamming pilots hold no lock on each
+// other and only machine reflexes recover the fight. TestHuntSeam catches the
+// regression indirectly, after seventy seconds of simulation; this names it.
+func TestJammerStaysWithTheMachine(t *testing.T) {
+	// Driven through the real defensive path, not by restating the condition.
+	arm := func(level string, span float64) bool {
+		b := NewBandit(level, 1, 250000, "", false, true, "open", 0)
+		b.Spawn(flight.Vec3{X: span, Y: 8000}, flight.Vec3{X: -240})
+		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
+		player.State = flight.Level(player, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, fuel)
+		words := make([]float64, flight.Size)
+		player.State.Encode(words)
+		for tick := 0; tick < 90; tick++ {
+			b.Mirror(words, false, true)
+			b.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
+			b.Step()
+		}
+		return b.craft.brain.jam && b.craft.latest.Jammer
+	}
+
+	if !arm("superhuman", guard_quiet+6000) {
+		t.Error("the machine did not arm its jammer against a spoofable inbound")
+	}
+	if arm("superhuman", guard_quiet-3000) {
+		t.Error("the machine kept radiating inside the terminal call, where home-on-jam overrides every other defence")
+	}
+	for _, level := range []string{"novice", "pilot", "ace"} {
+		if arm(level, guard_quiet+6000) {
+			t.Errorf("%s armed a jammer: below the machine the trade does not pay (see the comment above)", level)
+		}
 	}
 }

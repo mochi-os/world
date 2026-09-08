@@ -28,27 +28,28 @@ type press struct {
 	withhold bool
 }
 
-func pressing(library int, machine bool) press {
+func pressing(library int) press {
 	switch {
-	case machine:
-		// The machine used to withhold to 0.15, on the reasoning that a perfect
-		// pilot can afford to hold for the no-escape shot. Against a SYMMETRIC
-		// opponent that is a losing trade: depth positions the shot between
-		// Escape and Max, so a lower one fires LATER, and at a 30,000 ft head-on
-		// the ace's 0.35 puts its missile away about 10 km of closure earlier --
-		// every time. The superhuman was therefore always the one defending
-		// first, and a jet cranking off a launch warning is not pointing at
-		// anything it can shoot. Measured at 48 seeds, superhuman v ace: 0.15
-		// lost 18-29, 0.25 still lost 15-25, 0.35 neutralises at 21-21. BVR shot
-		// depth cannot be a tier axis -- any withholding relative to the
-		// opponent loses the first-shot race -- so the machine's edge stays
-		// reflex and precision (#106).
-		return press{depth: 0.35, look: 180, withhold: true}
 	case library <= 1:
 		return press{depth: 1.0, look: 120, withhold: false}
 	case library == 2:
 		return press{depth: 0.7, look: 180, withhold: false}
 	default:
+		// The ace and the machine share this rung, and the sharing is the
+		// point. The machine used to withhold to 0.15 on its own branch, on
+		// the reasoning that a perfect pilot can afford to hold for the
+		// no-escape shot. Against a SYMMETRIC opponent that is a losing trade:
+		// depth positions the shot between Escape and Max, so a lower one
+		// fires LATER, and at a 30,000 ft head-on the ace's 0.35 puts its
+		// missile away about 10 km of closure earlier -- every time. The
+		// superhuman was therefore always the one defending first, and a jet
+		// cranking off a launch warning is not pointing at anything it can
+		// shoot. Measured at 48 seeds, superhuman v ace: 0.15 lost 18-29, 0.25
+		// still lost 15-25, 0.35 neutralises at 21-21 (#106). BVR shot depth
+		// cannot be a tier axis, so the machine's branch was left returning
+		// exactly this struct and has now been deleted along with the flag it
+		// switched on: the top two tiers differ by their human dials, not by
+		// their doctrine.
 		return press{depth: 0.35, look: 180, withhold: true}
 	}
 }
@@ -105,7 +106,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	if a.amraams != len(stores_amraams(a.loadout)) {
 		return
 	}
-	if !pressing(b.skill.library, b.skill.machine).withhold {
+	if !pressing(b.skill.library).withhold {
 		return
 	}
 	if b.countered >= b.alerted || (b.launched > 0 && tick-b.launched <= 60) {
@@ -233,7 +234,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 			i.environment.Wrap)
 	}
 
-	d := pressing(b.skill.library, b.skill.machine)
+	d := pressing(b.skill.library)
 	committed := span <= b.zone.Max*radar_commit
 	if trackable && (committed || !d.withhold) {
 		a.emitter, a.lock = 2, target
@@ -460,6 +461,18 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
+	// MACHINE ONLY, and measured rather than assumed (2026-09-08). The
+	// argument for giving this to the ace was strong: arming is one range
+	// comparison against a span this function has already computed, no reflex
+	// and no perception the ace lacks, and the equipment is identical on every
+	// craft (air.go's loud rules, and the player's own XMIT switch). It was
+	// tried, and the symmetric BVR seam collapsed -- ace v ace went from 3 of 4
+	// seeds merging or resolving to 1 of 4, while machine v machine, where BOTH
+	// sides already jam, stayed at 3 of 4. Two jamming pilots can hold no lock
+	// on each other, and only machine reflexes recover the fight from that; at
+	// the ace's 0.4 s react and 12-tick cadence it simply never resolves. So
+	// the emission trade is not a pure doctrine axis after all: its value is
+	// coupled to reaction time, and it stays with the tier that can pay for it.
 	if b.skill.machine {
 		b.jam = span > guard_quiet // armed while spoofable, quiet at the terminal call
 	}

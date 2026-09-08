@@ -83,10 +83,20 @@ type skill struct {
 // perception, discipline, and trigger-cadence humanities the code applies
 // beyond this table.
 var skills = map[string]skill{
-	"novice":     {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0},
-	"pilot":      {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, energy: 0.5},
-	"ace":        {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, energy: 1, geometry: 1},
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 700, trigger: 0.03, commit: 4.0, floor: 154, energy: 1, geometry: 1, machine: true}, // commit stays ace-grade: strategy re-judged at 1.6 s like the ace — the machine edge is reflex and precision, and a half-second commit just flipped between near-tied lines and finished none of them
+	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, energy: 0.5},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, energy: 1, geometry: 1},
+	// The superhuman IS the ace with the human dials at zero — delay, cadence,
+	// wander and react — and nothing else. open and trigger were 700 and 0.03
+	// against the ace's 600 and 0.06; neither is a human limit (one is gun
+	// opening range, the other the willingness to take a low-percentage shot),
+	// and #106 had already shown what a machine-only doctrine number costs:
+	// its own BVR depth lost 18-29 until it was aligned with the ace's. Every
+	// remaining divergence is a perception or reflex limit switched off by the
+	// machine flag. commit stays ace-grade too: strategy re-judged at 1.6 s
+	// like the ace, because a half-second commit just flipped between
+	// near-tied lines and finished none of them.
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, energy: 1, geometry: 1, machine: true},
 }
 
 // commitment is the manoeuvre set that must be flown through rather than

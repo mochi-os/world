@@ -8,6 +8,7 @@ package air
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"testing"
 
@@ -277,6 +278,51 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			if 100*float64(tracked)/math.Max(1, float64(total)) > 20 {
 				t.Errorf("ace tracked in the attacker's rear quarter %.0f%% of the fight: the prey era is returning", 100*float64(tracked)/math.Max(1, float64(total)))
 			}
+		}
+	}
+}
+
+// TestSuperhumanIsTheAceWithoutHumanLimits pins the tier design settled
+// 2026-09-08: the machine is not a different pilot, it is the ace with the
+// human dials at zero. Every other dial must match.
+//
+// It covers the skill TABLE. One divergence lives outside it and is deliberate:
+// the jammer policy in hunt.go stays on the machine flag, because giving it to
+// the ace was measured to collapse the symmetric BVR seam (see
+// TestJammerStaysWithTheMachine). That is the exception that proves the rule --
+// it was kept only because a measurement earned it.
+//
+// This exists because divergence is expensive and quiet. #106 spent a full
+// 48-seed sweep discovering that the machine's own BVR shot depth lost 18-29
+// to the ace and only drew once aligned; open (700 v 600) and trigger
+// (0.03 v 0.06) were two more machine-only doctrine numbers that nothing was
+// watching. A new field added to the table that differs between these two
+// rows fails here rather than in a ladder inversion three months later.
+func TestSuperhumanIsTheAceWithoutHumanLimits(t *testing.T) {
+	// The dials that MAY differ, because each is a human limit switched off.
+	human := map[string]bool{
+		"delay":   true, // perception latency
+		"cadence": true, // thinking rate
+		"wander":  true, // aim noise
+		"react":   true, // reaction to an inbound
+		"machine": true, // the flag that switches off the rest
+	}
+	ace, machine := reflect.ValueOf(mind("ace").skill), reflect.ValueOf(mind("superhuman").skill)
+	fields := ace.Type()
+	for at := 0; at < fields.NumField(); at++ {
+		name := fields.Field(at).Name
+		if human[name] {
+			if ace.Field(at).Equal(machine.Field(at)) {
+				t.Errorf("%s is listed as a human limit but the machine carries the ace's value (%v): "+
+					"either the machine is not free of it, or it is not a human limit",
+					name, ace.Field(at))
+			}
+			continue
+		}
+		if !ace.Field(at).Equal(machine.Field(at)) {
+			t.Errorf("%s diverges: ace %v, superhuman %v. If this is a human limit, add it to the list above "+
+				"with the reason; otherwise the tiers have re-acquired a doctrine axis (#106).",
+				name, ace.Field(at), machine.Field(at))
 		}
 	}
 }

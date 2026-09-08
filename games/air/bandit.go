@@ -107,7 +107,19 @@ func (b *Bandit) Menace(words []float64) {
 			position: flight.Vec3{X: words[at], Y: words[at+1], Z: words[at+2]},
 			velocity: flight.Vec3{X: words[at+3], Y: words[at+4], Z: words[at+5]}}
 		if phase := int(words[at+7]); phase >= 0 {
-			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity}
+			// Life and Wrap are not optional (#135). round.Model.Step returns
+			// false on Life <= 0, and round.Lethal's only loop exit is that
+			// return, so a round mirrored with a flat battery made Lethal
+			// answer false for EVERY geometry -- measured 0 credible ticks
+			// across 2/8/18 km launches -- and counterfire's credibility gate
+			// could never be satisfied in single player. The superhuman sat
+			// silent under AMRAAM attack for the whole engagement. Fuel stays
+			// zero deliberately: the client sends no remaining-propellant
+			// word, and re-boosting a round that is already coasting would
+			// flatter its arrival speed (measured: it changes no verdict at
+			// 3, 12 or 30 km, so this is honesty, not tuning).
+			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity,
+				Life: round.Battery, Fuel: 0, Wrap: b.arena.environment.Wrap}
 		} else if phase <= -2 {
 			m.loose = true // seduced onto a flare, or gimballed off and gone ballistic
 		}
