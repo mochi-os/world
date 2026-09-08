@@ -188,3 +188,75 @@ func TestRoundsCeiling(t *testing.T) {
 			i.rounds[0].Index, over)
 	}
 }
+
+// TestJettisonDropsTheRadarMagazine (#132) — arm() seeds TWO magazines from the
+// loadout, a.missiles from stores_rounds and a.amraams from stores_amraams, and
+// Jettison recomputed only the first. The AIM-120 trigger gates on a.amraams
+// alone and fox3() never consults the loadout, so a player who dropped their
+// AMRAAM stations kept firing full-fidelity rounds from an aircraft carrying
+// none — free ordnance from a client frame, in a module whose stated design is
+// server-authoritative weapons. Every AMRAAM ring (4/6, 2/8, 3/7) sits inside
+// the stations Jettison accepts, so no station was out of reach.
+func TestJettisonDropsTheRadarMagazine(t *testing.T) {
+	arm := func(i *instance) *craft {
+		a := i.aircraft[0]
+		a.loadout = stores_normalize(map[string]any{
+			"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"3": map[string]any{"fixture": "pylon", "stores": []any{"9m"}}, // station 3 takes a pylon; a rail there normalizes away
+		})
+		a.missiles = len(stores_rounds(a.loadout))
+		a.amraams = len(stores_amraams(a.loadout))
+		return a
+	}
+
+	i := build(t, "furball", map[string]any{"missiles": true}, 1)
+	a := arm(i)
+	if a.amraams != 2 || a.missiles != 1 {
+		t.Fatalf("the fixture is wrong: amraams=%d missiles=%d, want 2 and 1", a.amraams, a.missiles)
+	}
+	i.Jettison(0, []game.Departure{{Station: 4, What: "stores"}})
+	if a.amraams != 1 {
+		t.Errorf("dropping one AIM-120 station left the radar magazine at %d, want 1", a.amraams)
+	}
+	if a.missiles != 1 {
+		t.Errorf("dropping an AIM-120 station took %d off the HEATER magazine", 1-a.missiles)
+	}
+
+	// Dropping the heater must not touch the radar magazine either: the two
+	// counts are independent, and the arithmetic for one must not read the
+	// other's stations.
+	i.stepped += JETTISON_COOLDOWN + 1
+	i.Jettison(0, []game.Departure{{Station: 3, What: "stores"}})
+	if a.missiles != 0 {
+		t.Errorf("dropping the heater rail left the heater magazine at %d, want 0", a.missiles)
+	}
+	if a.amraams != 1 {
+		t.Errorf("dropping a heater station moved the radar magazine to %d, want 1", a.amraams)
+	}
+
+	// Rounds already FIRED are not aboard, so they must not be counted as
+	// dropped as well. Firing does not rewrite the loadout -- the entry stays
+	// and the counter tracks expenditure -- so the arithmetic has to skip the
+	// front of the firing order, exactly as the heater path skips `fired`.
+	//
+	// Station 4 is first in the AMRAAM firing order, so after one shot its
+	// round is the one already gone. Dropping that station is dropping an
+	// EMPTY rail: the round still aboard at station 6 must survive it. Without
+	// the offset this reads the departed round as a second loss and quietly
+	// takes away a missile the pilot still has.
+	i = build(t, "furball", map[string]any{"missiles": true}, 1)
+	a = arm(i)
+	a.amraams-- // station 4's round is away down the range
+	i.Jettison(0, []game.Departure{{Station: 4, What: "stores"}})
+	if a.amraams != 1 {
+		t.Errorf("dropping the rail whose round was already fired left the magazine at %d, want 1", a.amraams)
+	}
+
+	// ...and dropping what IS still aboard empties it, never past empty.
+	i.stepped += JETTISON_COOLDOWN + 1
+	i.Jettison(0, []game.Departure{{Station: 6, What: "stores"}})
+	if a.amraams != 0 {
+		t.Errorf("dropping the last loaded rail left the magazine at %d, want 0", a.amraams)
+	}
+}

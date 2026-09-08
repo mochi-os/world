@@ -407,6 +407,19 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if fired < 0 {
 		fired = 0
 	}
+	// The AIM-120s are a SECOND magazine (arm seeds a.amraams from
+	// stores_amraams), and dropping their stations has to come off it exactly
+	// as dropping a rail comes off the heaters below. Without this the counter
+	// kept its pre-drop value while the loadout no longer held the rounds, and
+	// the fox3 trigger gates on the counter alone — a full-fidelity AIM-120
+	// from an aircraft carrying none, off a client-sent frame, against a
+	// module whose whole design is server-authoritative weapons. attach()
+	// hid it by clamping the resulting negative `expended` to zero.
+	radar := stores_amraams(a.loadout)
+	expended := len(radar) - a.amraams
+	if expended < 0 {
+		expended = 0
+	}
 	// One jettison per second per jet: every call appends a roster event to every
 	// player's reliable queue, and a client whose queue fills is torn down as
 	// "slow", so an unthrottled jettison would disconnect the whole match.
@@ -446,10 +459,24 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 			gone++
 		}
 	}
+	carried := map[string]bool{}
+	for _, name := range stores_amraams(next) {
+		carried[name] = true
+	}
+	dropped := 0
+	for _, name := range radar[expended:] {
+		if !carried[name] {
+			dropped++
+		}
+	}
 	a.loadout = next
 	a.missiles -= gone
 	if a.missiles < 0 {
 		a.missiles = 0
+	}
+	a.amraams -= dropped
+	if a.amraams < 0 {
+		a.amraams = 0
 	}
 	// The release envelope (#43, NATOPS figure 4-4: 575 KCAS / Mach 0.95, +1.0 to
 	// +2.0 g). A drop outside it is permitted but dents the airframe per offending
