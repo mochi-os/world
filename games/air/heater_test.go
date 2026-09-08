@@ -9,6 +9,7 @@ import (
 	"math"
 	"testing"
 
+	"world/game"
 	"world/games/air/flight"
 	"world/games/air/round"
 )
@@ -194,4 +195,101 @@ func TestHeaterRefusesTheSaturatingBeamShot(t *testing.T) {
 	if !(span > z.Minimum && span <= z.Escape) {
 		t.Errorf("a stern chase at %.0f m should still be a shot, got %+v", span, z)
 	}
+}
+
+// TestHeatZoneCached pins the shape of the #139 fix: the ZONE is cached, the
+// range test against it is not.
+//
+// Heat flies the missile integrator forward to bisect the envelope, and once
+// #107 moved the launch gate off the skill cadence onto trigger()'s every
+// tick, a CPU profile of a 99-bot furball put 46% of all server samples in
+// this one call. Caching it is only safe if the shot DECISION stays on the
+// fast clock -- putting that back on a slow clock is precisely the defect
+// #107 fixed -- so each assertion below covers one half of that bargain.
+func TestHeatZoneCached(t *testing.T) {
+	i, shooter, b := zoning(t)
+
+	// Whether the zone was RECOMPUTED is read off its stamp, not off the
+	// verdict: the verdict also depends on the geometry the arena happens to
+	// have produced, which would make these assertions measure the fight
+	// rather than the cache.
+	recomputed := func(distance float64, tick uint64) bool {
+		before := b.heated
+		i.zoned(shooter, b, distance, tick)
+		return b.heated != before
+	}
+
+	i.zoned(shooter, b, 900, 100) // seed
+	if b.heated != 100 {
+		t.Fatalf("the zone was not stamped with the tick that computed it: heated=%d", b.heated)
+	}
+
+	if recomputed(900, 130) {
+		t.Error("30 ticks on, the zone was recomputed: Heat still runs every tick and #139 is not fixed")
+	}
+
+	// The range comparison must still run per call against the SAME cached
+	// zone -- this is the half of #107 the cache must not undo.
+	b.heat = round.Zone{Minimum: 500, Escape: 1500, Max: 1500}
+	if i.zoned(shooter, b, 400, 130) {
+		t.Error("a range inside Minimum was endorsed: the range test is not applied per call")
+	}
+	if !i.zoned(shooter, b, 900, 130) {
+		t.Error("a range inside the band was refused on the tick a shorter one was correctly refused")
+	}
+
+	// A second past the stamp the envelope is stale and must be rebuilt.
+	if !recomputed(900, 160) {
+		t.Error("the zone survived past its one-second life: a stale envelope is being fired on")
+	}
+
+	// A NEW TARGET invalidates at once rather than waiting out the second --
+	// otherwise the shot is judged against yesterday's aircraft.
+	i.zoned(shooter, b, 900, 200)
+	b.warmed = b.target + 1
+	if !recomputed(900, 201) {
+		t.Error("the zone cached against one target was reused against another")
+	}
+
+	// ANY change in the target's burner invalidates at once. lit sets the
+	// seeker floor (heater.go), so holding a cold envelope across a light-up
+	// refuses exactly the shot the #60/#61 plume doctrine exists to take.
+	//
+	// The small step matters as much as the large one. A 0.25 tolerance band
+	// was tried here first and measured off the tier baseline (ace 13->12
+	// kills, superhuman 14->13, mean fight 15->30 s); exact equality
+	// reproduces the pre-cache numbers byte for byte for 1.1 ms a tick. This
+	// assertion is what stops the band coming back.
+	for _, step := range []float64{0.6, 0.05} {
+		i.zoned(shooter, b, 900, 300)
+		b.glowed = b.glowed + step
+		if !recomputed(900, 301) {
+			t.Errorf("a %.2f change in the target's burner did not invalidate the cached envelope", step)
+		}
+	}
+}
+
+// zoning builds a live joust and hands back a bot with a populated track, so
+// zoned() can be driven directly. Nothing here is synthetic: the craft, the
+// brain and the prey are what the arena actually produced.
+func zoning(t *testing.T) (*instance, *craft, *brain) {
+	t.Helper()
+	bots_live.Store(0)
+	made, err := (&Air{}).Create(game.Session{Identifier: "zoning", Game: "air", Mode: "joust", Seed: 3,
+		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	for tick := uint64(0); tick < 60*20; tick++ {
+		i.Step(tick, nil)
+	}
+	for _, s := range i.slots() {
+		a := i.aircraft[s]
+		if a != nil && a.bot && a.alive && a.brain != nil && a.brain.prey != nil && a.brain.target >= 0 && a.model != nil {
+			return i, a, a.brain
+		}
+	}
+	t.Fatal("no bot reached a populated track in 20 s")
+	return nil, nil, nil
 }

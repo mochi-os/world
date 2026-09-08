@@ -464,6 +464,10 @@ type brain struct {
 	turning   float64     // committed lead-turn direction, +1/-1; 0 = not in a pass
 	zone      round.Zone  // cached AMRAAM DLZ against the current target (hunt.go; refreshed at most once a second)
 	assessed  uint64      // tick the zone was computed
+	heat      round.Zone  // cached AIM-9M launch zone against the current target (air.go zoned; the DLZ's twin, same refresh)
+	heated    uint64      // tick the heat zone was computed
+	warmed    int         // target slot it was computed against: a new target invalidates it at once
+	glowed    float64     // that target's burner at the time: the zone is plume-dependent (#60/#61), so a light-up invalidates it too
 	supported uint64      // tick of this bot's last AMRAAM launch: the crank window opens here
 	cranked   uint64      // tick the BVR overlay last overrode the aim (observability: the seam test asserts it never fires inside the merge)
 	alerted   uint64      // tick an inbound radar round first crossed the Active call; 0 = clear sky
@@ -639,7 +643,7 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
 	limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) *
 		(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
-	if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance) {
+	if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance, tick) {
 		b.loose = true
 	}
 }

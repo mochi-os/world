@@ -529,6 +529,20 @@ type instance struct {
 // small fraction of what the machine could be asked for before.
 const BOTS_MAXIMUM = 200
 
+// ROUNDS_MAXIMUM bounds how many gun rounds one arena holds in flight. Every
+// other per-round collection is capped — missiles at 256, wrecks at 4 — and
+// this one was not, while fly() tests each round against each living aircraft.
+// Measured 2026-09-08: the densest roster the clamps permit (99 bots) peaks at
+// 1,729 rounds over three minutes and spends 113 us a tick flying them, so this
+// ceiling is four times clear of real play and never trims an honest furball.
+// It is here for the case the arithmetic in the entry assumed: rounds arrive at
+// 100/s per firing aircraft and live 4 s, so a roster that all held the trigger
+// — a human can, and the ammunition cheat refills the magazine to let him keep
+// holding it — reaches tens of thousands, where the same pass costs 30 ms
+// against a 16.7 ms tick. Oldest rounds are dropped, which is the right end:
+// they are the closest to expiring anyway.
+const ROUNDS_MAXIMUM = 8000
+
 var bots_live atomic.Int64
 
 // bots_reserve grants up to want bots from the server-wide budget, returning
@@ -1194,6 +1208,9 @@ func (i *instance) guns(dt float64, tick uint64) {
 		// which the instant model could never offer.
 		i.rounds = append(i.rounds, battle.Volley(shooter, burst, i.environment.Seed, uint64(slot), tick)...)
 	}
+	if over := len(i.rounds) - ROUNDS_MAXIMUM; over > 0 {
+		i.rounds = i.rounds[over:]
+	}
 }
 
 // fly advances every gun round one tick and resolves arrivals: each round is
@@ -1335,15 +1352,45 @@ func (i *instance) glow(b *brain) float64 {
 // off the target — six of six in the recorded fight broke lock at 0.5 s.
 // The disciplined tiers fire only inside the no-escape rung; the rest take
 // any shot the seeker can fly.
-func (i *instance) zoned(a *craft, b *brain, distance float64) bool {
+func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool {
 	if b.prey == nil || b.target < 0 || a.model == nil {
 		return false
 	}
-	me := &a.model.State
 	lit := i.glow(b)
-	zone := Heat(round.Target{Position: me.Position, Velocity: me.Velocity},
-		round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
-		b.prey.swing, lit, i.environment.Wrap)
+	// The ZONE is cached; the RANGE test against it is not. Heat bisects the
+	// envelope by flying the missile integrator forward, and once #107 moved
+	// the launch gate off the skill cadence onto trigger()'s every tick, a CPU
+	// profile of a 99-bot furball put 46% of ALL server samples in this one
+	// call — the tick ran 21.3 ms against a 16.7 ms budget. Its AMRAAM twin
+	// (hunt.go) has been refreshed at most once a second all along; this is
+	// the same treatment. What must NOT come back is #107's defect, where the
+	// shot DECISION sat on a slow clock: the envelope is geometry and moves
+	// slowly, so caching it is honest, while the distance comparisons below
+	// still run every tick.
+	//
+	// Two things invalidate it immediately rather than waiting out the second.
+	// A new target, obviously. And ANY change in the target's burner: lit sets
+	// the seeker floor (heater.go), so a stale plume holds the wrong envelope
+	// across exactly the light-up the #60/#61 doctrine fires on.
+	//
+	// The equality is exact, and that is a measured choice rather than a
+	// cautious one. A tolerance band was tried first, on the reasoning that
+	// spool ripple would churn the cache for nothing: at 0.25 it moved the
+	// tier probe off its baseline (ace 13->12 kills, superhuman 14->13, mean
+	// fight 15->30 s), while exact equality reproduces the pre-cache numbers
+	// byte for byte. The band bought 1.1 ms a tick and cost fight outcomes;
+	// this is a CPU fix and has no business changing what the bots do. The
+	// life below is likewise 60 rather than anything shorter because 20, 30
+	// and 60 measured identical — the plume is what drives the refresh here,
+	// not the clock.
+	if b.heated == 0 || tick-b.heated >= 60 || b.warmed != b.target || b.glowed != lit {
+		me := &a.model.State
+		b.heat = Heat(round.Target{Position: me.Position, Velocity: me.Velocity},
+			round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
+			b.prey.swing, lit, i.environment.Wrap)
+		b.heated, b.warmed, b.glowed = tick, b.target, lit
+	}
+	zone := b.heat
 	if distance <= zone.Minimum {
 		return false
 	}

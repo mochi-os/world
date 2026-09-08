@@ -14,6 +14,8 @@ import (
 	"testing"
 
 	"world/game"
+	"world/games/air/battle"
+	"world/games/air/flight"
 )
 
 // TestBotBudgetIsServerWide: the reservation makes the bot cap a server
@@ -152,5 +154,37 @@ func TestJettisonCooldown(t *testing.T) {
 	i.Jettison(0, []game.Departure{{Station: 3, What: "stores"}})
 	if got := len(i.Events()); got != 1 {
 		t.Errorf("a drop past the cooldown raised %d event(s), want 1", got)
+	}
+}
+
+// TestRoundsCeiling pins ROUNDS_MAXIMUM (#138). i.rounds was the one per-tick
+// collection with no bound, while fly() tests every round against every living
+// aircraft: measured at 99 aircraft, 400 rounds costs 289 us a tick and 40,000
+// costs 30.1 ms against a 16.7 ms budget. Real play does not approach that --
+// the densest roster the clamps permit peaks at 1,729 -- so the ceiling exists
+// for the case a roster all holds the trigger, which a human with the
+// ammunition cheat can do indefinitely.
+func TestRoundsCeiling(t *testing.T) {
+	bots_live.Store(0)
+	made, err := (&Air{}).Create(game.Session{Identifier: "ceiling", Game: "air", Mode: "furball",
+		Capacity: 8, Seed: 4, Parameters: map[string]any{"bots": map[string]any{"pilot": 2.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	over := 500
+	for n := 0; n < ROUNDS_MAXIMUM+over; n++ {
+		i.rounds = append(i.rounds, battle.Round{Index: uint64(n), Position: flight.Vec3{Y: 4000}})
+	}
+	i.guns(1.0/60.0, 1)
+	if len(i.rounds) > ROUNDS_MAXIMUM {
+		t.Fatalf("the in-flight collection is still unbounded: %d rounds held, ceiling %d", len(i.rounds), ROUNDS_MAXIMUM)
+	}
+	// The OLDEST go, not the newest: an arriving round is the one a defender
+	// has already had time to avoid, and dropping the freshest would delete
+	// the volley a player just fired.
+	if i.rounds[0].Index < uint64(over) {
+		t.Errorf("the wrong end was trimmed: oldest surviving round has index %d, want at least %d",
+			i.rounds[0].Index, over)
 	}
 }
