@@ -64,3 +64,50 @@ func TestDeterminism(t *testing.T) {
 		}
 	}
 }
+
+// TestSpacedRespawnIsDeterministic (#133) — the spaced respawn point is the
+// mean position of the living aircraft, and it was accumulated by ranging the
+// aircraft MAP. Go randomises map order per range and floating-point addition
+// is not associative, so the spawn moved bit-for-bit between identical runs.
+//
+// The branch is narrow and worth naming: bvr() computes teams and joust starts
+// closed-form and never touches the map, so only a SPACED, unteamed furball
+// reaches the sum. That is why TestBvrWide, a joust, was byte-identical across
+// four 48-seed runs while this was broken.
+//
+// Sizing is measured, not guessed. The defect is intermittent in a thin fight
+// (7 of 8 respawns agreed at 6 bots and 120 ticks, which would make a
+// run-it-twice test flaky-green and worse than no gate); at 20 bots and 400
+// ticks the positions have messy enough mantissas that ZERO of 8 agreed. So
+// this asks for eight respawns and requires all eight to match.
+func TestSpacedRespawnIsDeterministic(t *testing.T) {
+	respawn := func() flight.Vec3 {
+		bots_live.Store(0)
+		made, err := (&Air{}).Create(game.Session{Identifier: "spacedrespawn", Game: "air",
+			Mode: "furball", Capacity: 8, Seed: 3,
+			Parameters: map[string]any{"spaced": true, "bots": map[string]any{"pilot": 20.0}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		defer i.Close()
+		for tick := uint64(0); tick < 400; tick++ {
+			i.Step(tick, nil)
+		}
+		slot := i.slots()[0]
+		a := i.aircraft[slot]
+		if a == nil || a.model == nil {
+			t.Fatal("no craft to respawn")
+		}
+		i.spawn(slot, a.model, a.team)
+		return a.model.State.Position
+	}
+
+	first := respawn()
+	for n := 1; n < 8; n++ {
+		if got := respawn(); got != first {
+			t.Fatalf("respawn %d landed at %v, run 1 landed at %v: the spaced spawn point is not reproducible, "+
+				"so neither is any fight that follows it", n+1, got, first)
+		}
+	}
+}

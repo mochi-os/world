@@ -643,9 +643,17 @@ func (i *instance) bvr(slot int, m *flight.Model, team string) bool {
 		m.State = flight.Level(m, position, inward, bvrspeed, i.tank)
 		return true
 	}
+	// slots(), not a bare range: this is the sum the spaced respawn point is
+	// derived from, and floating-point addition is not associative, so a
+	// randomised map order moves the spawn bit-for-bit between otherwise
+	// identical runs -- and the whole subsequent fight with it. Measured before
+	// the fix: eight respawns into one developed 20-bot fight produced eight
+	// different positions. Every other ordered traversal already went through
+	// slots(); this one was missed (#133).
 	centre, count := flight.Vec3{}, 0
-	for other, b := range i.aircraft {
-		if other == slot || !b.alive || b.model == nil {
+	for _, other := range i.slots() {
+		b := i.aircraft[other]
+		if other == slot || b == nil || !b.alive || b.model == nil {
 			continue
 		}
 		centre = centre.Add(b.model.State.Position)
