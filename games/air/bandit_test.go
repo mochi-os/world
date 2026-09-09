@@ -112,3 +112,38 @@ func TestBanditBvr(t *testing.T) {
 		}
 	}
 }
+
+// TestMirrorShortFrame: the exported entry the panic was found through. Mirror
+// takes a []float64 with no documented length and hands it straight to
+// flight.Decode, so a nil or truncated frame from the wasm bridge used to kill
+// the Go program page-wide rather than being refused. The reflection has to
+// stay flyable afterwards, not merely not crash.
+func TestMirrorShortFrame(t *testing.T) {
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0)
+	b.Spawn(flight.Vec3{X: 2000, Y: 6096}, flight.Vec3{X: -250})
+	reflection := b.arena.aircraft[0]
+
+	words := make([]float64, flight.Size)
+	reflection.model.State.Position = flight.Vec3{X: 40, Y: 6100}
+	reflection.model.State.Encode(words)
+	b.Mirror(words, false, true)
+	flown := reflection.model.State.Position
+
+	b.Mirror(nil, false, true)
+	if reflection.model.State.Attitude != (flight.Quat{W: 1}) {
+		t.Fatalf("a nil frame left attitude %v, want the identity quaternion", reflection.model.State.Attitude)
+	}
+	if reflection.model.State.Gear.Wire != -1 || reflection.model.State.Gear.Contact != -1 {
+		t.Errorf("a nil frame left gear %+v, want the New sentinels", reflection.model.State.Gear)
+	}
+	// The bandit must keep flying against the refused reflection: Step reads it
+	// every tick, and a half-built state is what would fault downstream.
+	for tick := 0; tick < 60; tick++ {
+		b.Step()
+	}
+
+	b.Mirror(words, false, true)
+	if reflection.model.State.Position != flown {
+		t.Fatalf("a full frame after a refused one decoded to %v, want %v", reflection.model.State.Position, flown)
+	}
+}

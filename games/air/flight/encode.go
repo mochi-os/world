@@ -73,8 +73,16 @@ func (s *State) Encode(out []float64) int {
 	return Size
 }
 
-// Decode reads a state written by Encode.
+// Decode reads a state written by Encode. A slice shorter than Size is not a
+// state, so it yields a neutral one rather than an index panic: the words reach
+// here from JavaScript through the wasm bridge, and every index below is
+// unconditional. The sentinels match New - zero would read as catapult 0, wire
+// 0 and contact 0, which are real attachments, and a zero quaternion is not a
+// rotation.
 func Decode(in []float64) State {
+	if len(in) < Size {
+		return State{Attitude: Quat{W: 1}, Gear: GearState{Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}}
+	}
 	s := State{}
 	s.Position = Vec3{in[0], in[1], in[2]}
 	s.Velocity = Vec3{in[3], in[4], in[5]}

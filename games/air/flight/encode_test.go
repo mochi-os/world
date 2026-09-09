@@ -51,3 +51,38 @@ func TestEncode(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeShortFrame: a slice shorter than Size yields a neutral state rather
+// than panicking. Decode is reached from JavaScript through the wasm bridge and
+// indexes 114 words unconditionally, so nil or a truncated frame used to take
+// the whole Go program down with it - found by calling Bandit.Mirror(nil) while
+// writing an unrelated test.
+func TestDecodeShortFrame(t *testing.T) {
+	for _, short := range [][]float64{nil, {}, make([]float64, Size-1)} {
+		state := func() (state State) {
+			defer func() {
+				if panicked := recover(); panicked != nil {
+					t.Fatalf("Decode(%d words) panicked: %v", len(short), panicked)
+				}
+			}()
+			return Decode(short)
+		}()
+		// Not merely "no panic": the state has to be usable. A zero quaternion
+		// is not a rotation, and zero gear sentinels read as attached to
+		// catapult 0, wire 0 and contact 0.
+		if state.Attitude != (Quat{W: 1}) {
+			t.Errorf("Decode(%d words) attitude = %v, want the identity quaternion", len(short), state.Attitude)
+		}
+		if state.Gear.Catapult != -1 || state.Gear.Wire != -1 || state.Gear.Contact != -1 || state.Gear.Stroke != -1 {
+			t.Errorf("Decode(%d words) gear = %+v, want the New sentinels", len(short), state.Gear)
+		}
+	}
+	// The guard must not clip a real frame: Size words still decode.
+	full := make([]float64, Size)
+	model := New(Fighter, Environment{Wrap: 250000}, World{})
+	model.State.Position = Vec3{X: 11, Y: 2200, Z: -37}
+	model.State.Encode(full)
+	if decoded := Decode(full); decoded.Position != model.State.Position {
+		t.Fatalf("a full frame decoded to %v, want %v", decoded.Position, model.State.Position)
+	}
+}
