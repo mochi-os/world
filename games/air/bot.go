@@ -33,6 +33,7 @@ type skill struct {
 	trigger    float64 // the shot's PRICE (#235): the minimum walk-through chance this pilot fires a burst at. Low is loose — the novice hoses at 2%, which is authentic; the pilot is disciplined but under-confident at 12%; the top tiers deliberately take the calculated snapshot (6% / 3%) because against a manoeuvring target the converged solution never comes and expected damage beats expected nothing. (Kept from #215: this axis is DECOUPLED from wander — precision and willingness were once one number and lethality ran backwards up the ladder.)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
+	cap        float64 // how much of the wing this tier will command: g <= cap * (speed/stall)^2, the aero cap that keeps a jet from driving itself into the mush; 0 = no cap, it pulls what it asks for and gets slow without noticing - the rookie's flaw, kept authentic like its missing floor
 	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the pilot half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
@@ -83,9 +84,9 @@ type skill struct {
 // perception, discipline, and trigger-cadence humanities the code applies
 // beyond this table.
 var skills = map[string]skill{
-	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, energy: 0.5},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, energy: 1, geometry: 1},
+	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1},
 	// The superhuman IS the ace with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the ace's 600 and 0.06; neither is a human limit (one is gun
@@ -96,7 +97,23 @@ var skills = map[string]skill{
 	// machine flag. commit stays ace-grade too: strategy re-judged at 1.6 s
 	// like the ace, because a half-second commit just flipped between
 	// near-tied lines and finished none of them.
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, energy: 1, geometry: 1, machine: true},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true},
+}
+
+// capped is the aero cap applied to a commanded g: never far past what the
+// wing gives at this speed, or the demand rides the alpha limiter, thrust
+// feeds induced drag, and the jet mushes at 130 m/s in full burner forever.
+// How far past is the tier's own. The ace keeps a margin under the wing; the
+// pilot commands exactly what it gives; the novice has no cap at all and pulls
+// what it asks for, getting slow without noticing - which is the rookie's
+// flaw, and stays authentic like its missing energy floor. Below the cap's
+// floor of 1.1 g nothing is taken away: a jet must always be able to hold
+// level flight and a little more.
+func (s skill) capped(g, speed, stall float64) float64 {
+	if s.cap <= 0 {
+		return g
+	}
+	return math.Min(g, math.Max(s.cap*(speed/stall)*(speed/stall), 1.1))
 }
 
 // commitment is the manoeuvre set that must be flown through rather than
@@ -2333,15 +2350,12 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 		}
 	}
 
-	// The aero cap, every tier: never command far past what the wing gives at
-	// this speed — beyond it the demand rides the alpha limiter, thrust feeds
-	// induced drag, and the jet mushes at 130 m/s in full burner forever. The
-	// limiter ride is the one licensed exception (#63): its whole point is the
-	// regime past the cap, its rollout was priced there, and the too-slow
-	// bailout still catches a ride that spends below fighting speed.
+	// The aero cap, by tier (skill.capped). The limiter ride is the one
+	// licensed exception (#63): its whole point is the regime past the cap,
+	// its rollout was priced there, and the too-slow bailout still catches a
+	// ride that spends below fighting speed.
 	if b.play != "ride" {
-		stall := pace / math.Sqrt(a.model.Airframe.Limit.Positive)
-		b.g = math.Min(b.g, math.Max(0.85*(speed/stall)*(speed/stall), 1.1))
+		b.g = b.skill.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
 	}
 
 	// Missile request: the launch gates with discipline-scaled margin. The
