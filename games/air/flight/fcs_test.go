@@ -370,3 +370,33 @@ func TestBallisticDeparture(t *testing.T) {
 		t.Fatalf("still tumbling after recovery: p %.2f q %.2f r %.2f rad/s", p, q, r)
 	}
 }
+
+// TestPoisonedActuatorDoesNotReachTheReadout (#136) — the Flap readout was
+// computed as `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a
+// no-op for a non-finite operand: 0*Inf and 0*NaN are both NaN. The term
+// contributed nothing except a path for a poisoned actuator position to reach
+// Flap, which then rides the wire in the encoded state.
+//
+// Nothing reachable poisons an actuator today — number() bars NaN and Inf at
+// the wire (air.go, #174) and Vec3.Normalize guards the zero vector — so this
+// injects the poison directly. That is the point: the guarantee is that a
+// poisoned actuator, however it arose, stops at the actuator.
+func TestPoisonedActuatorDoesNotReachTheReadout(t *testing.T) {
+	for _, poison := range []struct {
+		name  string
+		value float64
+	}{
+		{"NaN", math.NaN()},
+		{"positive infinity", math.Inf(1)},
+		{"negative infinity", math.Inf(-1)},
+	} {
+		m := calm()
+		launch(m, 240)
+		m.State.Fcs.Flaperon.Left = poison.value
+		m.Step(Inputs{Throttle: 0.8})
+		if math.IsNaN(m.State.Fcs.Flap) || math.IsInf(m.State.Fcs.Flap, 0) {
+			t.Errorf("a %s flaperon position reached the Flap readout as %v: the poison escapes the actuator "+
+				"and is encoded into the state that goes on the wire", poison.name, m.State.Fcs.Flap)
+		}
+	}
+}

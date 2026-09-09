@@ -175,10 +175,6 @@ func (m *Model) catapult(s *State, in Inputs) {
 		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 		forward := s.Attitude.Rotate(Vec3{X: 1})
 		swing := forward.X*track.Z - forward.Z*track.X
-		nose := s.Position.Add(s.Attitude.Rotate(m.Airframe.Gear.Nose.Attach.Subtract(m.center)))
-		shuttle := c.world(cat.Position, s.Time)
-		off := Vec3{X: Shortest(nose.X, shuttle.X, m.Environment.Wrap), Z: Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)}
-		cross := off.Subtract(track.Scale(off.X*track.X + off.Z*track.Z))
 		if (in.Yaw > 0.5 || in.Yaw < -0.5) && in.Throttle < 0.3 {
 			s.Gear.Catapult = -1 // tension abort: steering away at idle releases the cat — without this, one Enter press was a one-way door and the jet could never taxi off again
 			s.Gear.Stroke = -2
@@ -189,7 +185,6 @@ func (m *Model) catapult(s *State, in Inputs) {
 		// Fire on straightness alone: the nose-offset gate blocked
 		// convergence-firing, and firing crabbed is the real danger - tire slip at
 		// deck level ROLLS the jet. The timeout refuses beyond ~3.4°.
-		_ = cross
 		if straight || (s.Gear.Stroke < -7 && math.Abs(swing) < 0.06) {
 			s.Gear.Stroke = 0
 		}

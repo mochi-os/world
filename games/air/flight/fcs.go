@@ -462,7 +462,11 @@ func (m *Model) fcs(in Inputs, local Air) {
 	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-differential, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
 	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
 	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*Dt, c.Rate.Slat*d.jam(ChannelSlat)*Dt)
-	f.Flap = f.Flaperon.Left*0 + droopTarget // droop is carried inside the flaperon targets; keep the readout
+	// Was `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a no-op
+	// for a non-finite operand -- 0*Inf and 0*NaN are both NaN -- so that term
+	// contributed nothing except a path for a poisoned actuator position to
+	// reach the Flap readout and ride the wire in the encoded state (#136).
+	f.Flap = droopTarget // droop is carried inside the flaperon targets; keep the readout
 	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt, c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt)
 }
 

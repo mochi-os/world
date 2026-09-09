@@ -2840,7 +2840,6 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// normalisation and the plane gate's roll-first sequencing instead.
 	limited := clamp((speed-0.9*corner(m))/math.Max(0.25*corner(m), 1), 0, 1)
 	ceiling := m.Airframe.Limit.Positive * (1 - 0.2*limited*clamp((math.Abs(rolled)-0.25)/0.75, 0, 1))
-	floor := -want // scale symmetric: forward stick interpolates level→Limit.Negative in the law
 	// The load the demanded lift vector actually represents: gravity support
 	// and the turn, at right angles. Aligned and settled it falls to `level` —
 	// stick centred, wings level, no self-inflicted nose excursion to chase.
@@ -2848,7 +2847,6 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	if want < 0.5 {
 		pitch = clamp((want-level)/3.5, -1, 0) // pushes bypass the lift-plane gate: recovery, not pursuit
 	}
-	_ = floor
 	// Roll rate feeds back, so the jet ARRIVES at the demanded bank instead of
 	// accelerating through it: a pure error term reached the target at full
 	// roll rate every time and flew straight past, and past 140° the sense

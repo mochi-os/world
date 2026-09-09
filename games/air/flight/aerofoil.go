@@ -105,12 +105,14 @@ func Synthesize(s Section) *Table {
 
 // Sample interpolates the polar at alpha (rad).
 func (t *Table) Sample(alpha float64) (cl float64, cd float64, cm float64) {
-	for alpha > math.Pi {
-		alpha -= 2 * math.Pi
-	}
-	for alpha < -math.Pi {
-		alpha += 2 * math.Pi
-	}
+	// Loop-free, for the same reason Shortest is (flight.go): an iterative
+	// reduction runs |alpha|/2pi times, so a large angle is slow and a
+	// non-finite one never terminates at all. Sample sits in the innermost aero
+	// loop -- twice per element per RK4 stage, four stages, four substeps a
+	// tick -- so that is not a slow tick, it is a hung session goroutine, and
+	// the match never recovers. Remainder returns NaN for a non-finite input,
+	// which the i < 0 / i >= entries-1 clamps below absorb (#134).
+	alpha = math.Remainder(alpha, 2*math.Pi)
 	position := (alpha + math.Pi) / resolution
 	i := int(position)
 	if i < 0 {
