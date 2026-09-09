@@ -144,3 +144,48 @@ func TestEngineGuard(t *testing.T) {
 	a.Engines = make([]Engine, 5)
 	New(a, Environment{}, World{})
 }
+
+// TestStoreGuard: a catalogue past the attach mask's reach must fail loudly at
+// construction. Both overruns beyond it are silent - the client drops the low
+// bits of a mask spanning more than a double's mantissa, and Go's own shift
+// yields zero past bit 63 - so the store simply never attaches, weighs or
+// drags, and every test still passes.
+func TestStoreGuard(t *testing.T) {
+	refused := func(count int) (refused bool) {
+		defer func() { refused = recover() != nil }()
+		a := block()
+		a.Stores = make([]Store, count)
+		New(a, Environment{}, World{})
+		return
+	}
+	if refused(Attachments) {
+		t.Fatalf("a catalogue of exactly %d was refused", Attachments)
+	}
+	if !refused(Attachments + 1) {
+		t.Fatalf("a catalogue of %d was accepted", Attachments+1)
+	}
+}
+
+// TestStoreMaskRoundTrips: the ceiling is where it is because the mask crosses
+// to the client as a JavaScript number and comes back composed of added powers
+// of two. This asserts that arithmetic directly: every bit the ceiling allows
+// survives a float64 round trip, and the first bit past it does not - so a
+// ceiling raised without changing how the mask travels fails here rather than
+// in a fight.
+func TestStoreMaskRoundTrips(t *testing.T) {
+	full := uint64(0)
+	for bit := 0; bit < Attachments; bit++ {
+		full |= 1 << uint(bit)
+	}
+	if uint64(float64(full)) != full {
+		t.Fatalf("a full %d-bit mask does not survive a float64: %d became %d", Attachments, full, uint64(float64(full)))
+	}
+	// The shift count is deliberately a variable: as a constant, 1<<64 does not
+	// compile, and a package that fails to build reports a raised ceiling as a
+	// broken test file rather than as the assertion it is.
+	past := Attachments
+	over := full | uint64(1)<<uint(past)
+	if uint64(float64(over)) == over {
+		t.Fatalf("bit %d survives a float64, so the ceiling is too low", past)
+	}
+}

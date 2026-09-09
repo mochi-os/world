@@ -6,6 +6,16 @@
 
 package flight
 
+// Attachments is the largest store catalogue the attach mask can carry; New
+// refuses an airframe with more. The mask is a uint64, but the binding limit is
+// narrower: it crosses the wasm boundary as a JavaScript number, and the client
+// composes it by adding powers of two, so a set spanning more than a double's
+// 53-bit mantissa loses its low bits to rounding. Beyond 64, Go's own shift
+// yields zero for every further index. Both failures are silent - the store
+// never attaches, weighs, drags or appears in a mask, and no test notices -
+// which is why the ceiling is a panic at construction rather than a comment.
+const Attachments = 53
+
 // Airframe is the immutable aircraft definition: geometry, mass, engines,
 // limits. One embedded instance (fighter.go) exists in v1.
 type Airframe struct {

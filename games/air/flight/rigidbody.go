@@ -69,6 +69,9 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	if len(airframe.Engines) > len((&State{}).Engine) {
 		panic("flight: airframe " + airframe.Name + " declares more than four engines — gang them into pods")
 	}
+	if len(airframe.Stores) > Attachments {
+		panic("flight: airframe " + airframe.Name + " declares more stores than the attach mask can carry")
+	}
 	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity}
 	m.State.Attitude = Quat{W: 1}
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
