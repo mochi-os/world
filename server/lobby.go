@@ -31,10 +31,20 @@ const (
 	TIMEOUT_IDLE   = 60 * time.Second
 )
 
-// CONNECTIONS_MAXIMUM caps how many connections either public listener holds
+// LOBBY_CONNECTIONS_MAXIMUM caps how many connections the lobby listener holds
 // open at once. The deadlines bound how long one connection occupies a
-// goroutine, not how many exist. Shared by both listeners.
-const CONNECTIONS_MAXIMUM = 512
+// goroutine, not how many exist.
+//
+// Each public listener carries its OWN budget, sized for what it does:
+// TRANSPORT_CONNECTIONS_MAXIMUM for the game transport, and
+// RESPONDER_CONNECTIONS_MAXIMUM for the ACME responder, which needs far less.
+// One shared name across all three read as a whole-server ceiling and was not
+// one - the counters are per listener, so the true total was the sum. They are
+// also not the same kind of quantity: listener_limit parks excess connections
+// in the accept queue, where the transport refuses them outright, so a single
+// counter would let traffic merely QUEUED on port 80 spend slots the game then
+// refuses.
+const LOBBY_CONNECTIONS_MAXIMUM = 512
 
 // listener_limit caps accepted connections. Excess connections wait in the
 // kernel's accept queue rather than being refused, and the cap is released as
@@ -68,7 +78,7 @@ func lobby_start(fatal chan<- error) error {
 	if err != nil {
 		return fmt.Errorf("lobby listen %s: %w", address, err)
 	}
-	listener = listener_limit(listener, CONNECTIONS_MAXIMUM)
+	listener = listener_limit(listener, LOBBY_CONNECTIONS_MAXIMUM)
 	info("lobby listening on %s", address)
 	if certificate_file != "" || acme_manager != nil {
 		// TLS resolves per handshake through certificate_get, so file

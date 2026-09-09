@@ -30,16 +30,24 @@ import (
 	"github.com/quic-go/webtransport-go"
 )
 
-// connections counts live transport connections, so this path enforces the same
-// ceiling listener_limit gives the TCP listeners. A per-host rate limiter bounds
-// how fast one address may connect, not how many it holds open at once.
+// TRANSPORT_CONNECTIONS_MAXIMUM caps how many game connections this server
+// holds at once. This is the budget that governs play, so it is the one to move
+// when sizing a host for a bigger match count; the lobby and the ACME responder
+// carry their own.
+const TRANSPORT_CONNECTIONS_MAXIMUM = 512
+
+// connections counts live transport connections. Unlike the TCP listeners,
+// which park excess in the accept queue, this path refuses outright - a peer
+// past the ceiling is closed with "busy" rather than kept waiting. A per-host
+// rate limiter bounds how fast one address may connect, not how many it holds
+// open at once.
 var connections atomic.Int64
 
 // transport_admit reserves a connection slot, reporting false when the server is
 // already at capacity. Reserve-then-check rather than check-then-reserve: two
 // simultaneous upgrades must not both pass the last slot.
 func transport_admit() bool {
-	if connections.Add(1) > CONNECTIONS_MAXIMUM {
+	if connections.Add(1) > TRANSPORT_CONNECTIONS_MAXIMUM {
 		connections.Add(-1)
 		return false
 	}

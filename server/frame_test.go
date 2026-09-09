@@ -154,24 +154,24 @@ func TestQuietBetweenFramesIsAllowed(t *testing.T) {
 	close(stream.done)
 }
 
-// TestConnectionsCapped: the UDP path must enforce the same ceiling
-// listener_limit gives the TCP listeners. The per-host rate limiter it already
-// had bounds connection churn, not how many one peer holds open.
+// TestConnectionsCapped: the UDP path enforces its own ceiling, where the TCP
+// listeners get theirs from listener_limit. The per-host rate limiter it
+// already had bounds connection churn, not how many one peer holds open.
 func TestConnectionsCapped(t *testing.T) {
 	connections.Store(0)
 	defer connections.Store(0)
 
-	for i := 0; i < CONNECTIONS_MAXIMUM; i++ {
+	for i := 0; i < TRANSPORT_CONNECTIONS_MAXIMUM; i++ {
 		if !transport_admit() {
-			t.Fatalf("refused connection %d, under the cap of %d", i+1, CONNECTIONS_MAXIMUM)
+			t.Fatalf("refused connection %d, under the cap of %d", i+1, TRANSPORT_CONNECTIONS_MAXIMUM)
 		}
 	}
 	if transport_admit() {
-		t.Fatalf("admitted connection %d, past the cap", CONNECTIONS_MAXIMUM+1)
+		t.Fatalf("admitted connection %d, past the cap", TRANSPORT_CONNECTIONS_MAXIMUM+1)
 	}
 	// A refusal must not consume a slot, or the ceiling ratchets down.
-	if got := connections.Load(); got != CONNECTIONS_MAXIMUM {
-		t.Fatalf("count %d after a refusal, want %d", got, CONNECTIONS_MAXIMUM)
+	if got := connections.Load(); got != TRANSPORT_CONNECTIONS_MAXIMUM {
+		t.Fatalf("count %d after a refusal, want %d", got, TRANSPORT_CONNECTIONS_MAXIMUM)
 	}
 	transport_release()
 	if !transport_admit() {

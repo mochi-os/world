@@ -96,7 +96,7 @@ func certificate_start() error {
 				return
 			}
 			warn("acme responder: %v", certificate_responder(acme_manager.HTTPHandler(nil)).
-				Serve(listener_limit(listener, CONNECTIONS_MAXIMUM)))
+				Serve(certificate_listener(listener)))
 		}()
 		info("certificate: acme, hosts %s", strings.Join(names, " "))
 		return nil
@@ -106,6 +106,22 @@ func certificate_start() error {
 	}
 	go certificate_manager()
 	return nil
+}
+
+// RESPONDER_CONNECTIONS_MAXIMUM caps the ACME responder's accepted connections.
+// Far below the game's budget on purpose: HTTP-01 validation is a handful of
+// short requests, which the CA makes from several vantage points at once, and
+// everything else reaching port 80 is a stranger this listener has no rate
+// limiter in front of. Excess waits in the accept queue rather than being
+// refused, and every slot is bounded by the responder's deadlines, so a full
+// cap delays a validation rather than failing it.
+const RESPONDER_CONNECTIONS_MAXIMUM = 64
+
+// certificate_listener caps what the responder accepts. Split out from
+// certificate_start, like the deadlines below, so a test can assert the budget
+// without binding port 80.
+func certificate_listener(listener net.Listener) net.Listener {
+	return listener_limit(listener, RESPONDER_CONNECTIONS_MAXIMUM)
 }
 
 // certificate_responder builds the HTTP-01 validation listener. It carries the

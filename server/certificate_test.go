@@ -234,3 +234,78 @@ func TestEphemeralGenerationFailureIsFatal(t *testing.T) {
 		t.Error("no ephemeral pair published after a successful generation")
 	}
 }
+
+// TestResponderBudget: the ACME responder gets its OWN, much smaller budget.
+// Every admission point used to read one constant named as if it were a
+// whole-server ceiling, so the listener that answers strangers on port 80 with
+// no rate limiter in front of it was handed the same allowance as the game.
+// This asserts the wiring behaviourally, at the real number: a listener wrapped
+// with the game's constant would accept far past this.
+func TestResponderBudget(t *testing.T) {
+	if RESPONDER_CONNECTIONS_MAXIMUM >= TRANSPORT_CONNECTIONS_MAXIMUM {
+		t.Fatalf("the responder's budget is %d against the game's %d: HTTP-01 validation is a handful of short requests, and this listener has no rate limiter in front of it",
+			RESPONDER_CONNECTIONS_MAXIMUM, TRANSPORT_CONNECTIONS_MAXIMUM)
+	}
+	if RESPONDER_CONNECTIONS_MAXIMUM < 8 {
+		t.Fatalf("the responder's budget is %d: the CA validates from several vantage points at once, and a renewal must not queue behind background port-80 noise",
+			RESPONDER_CONNECTIONS_MAXIMUM)
+	}
+
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	limited := certificate_listener(raw)
+	defer limited.Close()
+
+	accepted := make(chan net.Conn, RESPONDER_CONNECTIONS_MAXIMUM+2)
+	go func() {
+		for {
+			connection, err := limited.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- connection
+		}
+	}()
+
+	// Fill the budget. Dialling always succeeds - the kernel completes the
+	// handshake into the accept queue regardless of the cap - so what is
+	// measured is whether Accept hands the connection to the server.
+	held := make([]net.Conn, 0, RESPONDER_CONNECTIONS_MAXIMUM)
+	for i := 0; i < RESPONDER_CONNECTIONS_MAXIMUM; i++ {
+		dialled, err := net.Dial("tcp", raw.Addr().String())
+		if err != nil {
+			t.Fatalf("dial %d: %v", i+1, err)
+		}
+		defer dialled.Close()
+		select {
+		case connection := <-accepted:
+			held = append(held, connection)
+		case <-time.After(5 * time.Second):
+			t.Fatalf("connection %d was never accepted, under the budget of %d", i+1, RESPONDER_CONNECTIONS_MAXIMUM)
+		}
+	}
+
+	past, err := net.Dial("tcp", raw.Addr().String())
+	if err != nil {
+		t.Fatalf("dial past the budget: %v", err)
+	}
+	defer past.Close()
+	select {
+	case <-accepted:
+		t.Fatalf("a connection was accepted while all %d slots were held: the responder is not capped at its own budget", RESPONDER_CONNECTIONS_MAXIMUM)
+	case <-time.After(250 * time.Millisecond):
+	}
+
+	// And the cap is a concurrency limit, not a permanent ceiling.
+	held[0].Close()
+	select {
+	case <-accepted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiting connection was not accepted after a slot freed: the cap never releases")
+	}
+	for _, connection := range held[1:] {
+		connection.Close()
+	}
+}
