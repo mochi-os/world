@@ -2356,3 +2356,69 @@ func TestBotSlotsStayInSevenBits(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotSkipsBotCores: a bot's core payload is never built. tick.go sends
+// each connected player only cores[their own slot], and a bot has no link and
+// no players entry, so a core built for one was encoded and dropped - a 114-word
+// encode plus a ~570-byte buffer per bot per snapshot, ninety-nine times over at
+// 20 Hz. Humans see bots through the pose blob, not through a core.
+func TestSnapshotSkipsBotCores(t *testing.T) {
+	g := New()
+	made, err := g.Create(game.Session{Identifier: "cores", Game: "air", Mode: "furball", Capacity: 4, Seed: 3,
+		Parameters: map[string]any{"bots": map[string]any{"ace": 3.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	defer i.Close() // the bot budget is process-wide (BOTS_MAXIMUM); leaking it starves later tests
+	if _, err := i.Join(game.Player{Name: "human", Slot: 0}); err != nil {
+		t.Fatal(err)
+	}
+	i.Step(1, nil)
+	blob := i.Snapshot(1)
+	cores, found := blob["cores"].(map[int]any)
+	if !found {
+		t.Fatal("the snapshot carried no cores map")
+	}
+	bots := 0
+	for slot, a := range i.aircraft {
+		if !a.bot {
+			continue
+		}
+		bots++
+		if _, built := cores[slot]; built {
+			t.Errorf("slot %d is a bot and got a core nothing can read", slot)
+		}
+	}
+	if bots == 0 {
+		t.Fatal("no bots in the roster: the assertion above proved nothing")
+	}
+	if _, built := cores[0]; !built {
+		t.Error("the human's own core is missing - the early-out went too far")
+	}
+}
+
+// TestSpentCountsWithoutTheCheat: expenditure is recorded in every match, not
+// only cheated ones. The counter was written INSIDE the ammunition cheat's
+// branch, so in an ordinary fight it stayed zero while its own comment claimed
+// it answered "how much did he shoot" - and the obvious repair (delete it and
+// read rounds-ammunition) is impossible, because under the cheat the magazine
+// refills and that difference is exactly zero. So the write moves out instead.
+func TestSpentCountsWithoutTheCheat(t *testing.T) {
+	i := build(t, "furball", map[string]any{"bots": 1.0}, 1)
+	if i.cheat.ammunition {
+		t.Fatal("this fixture must NOT enable the ammunition cheat")
+	}
+	a := i.aircraft[0]
+	before := a.ammunition
+	steady := map[string]any{"throttle": 0.85, "fire": true}
+	for tick := 1; tick <= 60*2; tick++ {
+		i.Step(uint64(tick), map[int][]game.Input{0: {{Sequence: uint32(tick), Data: steady}}})
+	}
+	if a.ammunition == before {
+		t.Fatal("the trigger was held for two seconds and no rounds left the magazine")
+	}
+	if a.spent != before-a.ammunition {
+		t.Errorf("spent = %d, want %d (rounds that left the magazine)", a.spent, before-a.ammunition)
+	}
+}

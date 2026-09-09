@@ -815,11 +815,14 @@ func spent(b *brain, m *missile, closing float64) bool {
 func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b := a.brain
 	me := &a.model.State
+	// The roster is read ONCE, and the track set once below: slots() allocates
+	// and sorts on every call, and decide reads the two eleven times between them.
+	order := i.slots()
 
 	// Refresh tracks — no faster than the skill's perception delay. Being hit
 	// reveals the shooter; close-aboard tracers reveal a firing attacker.
 	stale := uint64(b.skill.delay * 60)
-	for _, other := range i.slots() {
+	for _, other := range order {
 		c := i.aircraft[other]
 		if other == slot || c == nil || !c.alive || c.model == nil {
 			continue
@@ -926,6 +929,10 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			}
 		}
 	}
+	// Taken HERE, not at the top: the sensing phase above ADDS tracks and the
+	// forget loop just deleted some, so a snapshot from the top would name
+	// contacts this bot no longer holds. Nothing below writes b.known.
+	known := b.surveyed()
 
 	// Target selection: nearest seen contact, weighted against dogpiles,
 	// with 30% hysteresis before switching. In a team fight the dogpile
@@ -934,7 +941,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// the threatened wingman's problem is the section's problem, and a human
 	// teammate is defended exactly like a bot one.
 	attackers := map[int]int{}
-	for _, other := range i.slots() {
+	for _, other := range order {
 		if other == slot {
 			continue // my own engagement is not a dogpile: self-counting made every bot penalize staying on its own target (#144)
 		}
@@ -947,9 +954,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	menacing := map[int]int{} // attacker slot -> the teammate he is running on
 	danger, closest := -1, math.MaxFloat64
 	if a.team != "" && !b.solo {
-		for _, s := range b.surveyed() {
+		for _, s := range known {
 			t := b.known[s]
-			for _, other := range i.slots() {
+			for _, other := range order {
 				mate := i.aircraft[other]
 				if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
 					continue
@@ -997,7 +1004,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// mate's called fight is how the pair enters it together.
 	best, cost := -1, math.MaxFloat64
 	for pass := 0; pass < 2 && best < 0; pass++ {
-		for _, s := range b.surveyed() {
+		for _, s := range known {
 			t := b.known[s]
 			_, distance := i.bearing(me.Position, t.position)
 			if pass == 0 && t.heard && distance > b.tactics.support.span {
@@ -1174,7 +1181,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// almost never thinks of it.
 	if !threatened && a.flared > flare_window {
 		blind := uint64(b.skill.delay*60) * 2
-		for _, s := range b.surveyed() {
+		for _, s := range known {
 			t := b.known[s]
 			direction, distance := i.bearing(me.Position, t.position)
 			if distance > 2600 || a.flares <= flare_load/3 {
@@ -1232,7 +1239,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.shoot, b.loose = false, false
 		b.safed = "evade"
 		away, gap := level(me.Velocity.Normalize()), math.MaxFloat64
-		for _, s := range b.surveyed() {
+		for _, s := range known {
 			if d, span := i.bearing(me.Position, b.known[s].position); span < gap {
 				away, gap = d.Scale(-1), span
 			}
@@ -1417,7 +1424,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	// Defensive check: a known contact behind my 3/9 inside 2 km, nose on me.
 	menace, gap := -1, 2000.0
-	for _, s := range b.surveyed() {
+	for _, s := range known {
 		t := b.known[s]
 		to, span := i.bearing(t.position, me.Position)
 		if span < gap && me.Attitude.Unrotate(to.Scale(-1)).X < -0.2 && t.velocity.Normalize().Dot(to) > 0.6 {
@@ -1459,7 +1466,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	_, sandwich := menacing[b.target]
 	if a.team != "" && !b.solo && menace < 0 && b.target >= 0 && !sandwich && tail > -0.2 {
 		engaged := false
-		for _, other := range i.slots() {
+		for _, other := range order {
 			mate := i.aircraft[other]
 			if other == slot || mate == nil || !mate.alive || mate.model == nil || mate.team != a.team {
 				continue
@@ -1851,7 +1858,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if slot < ours {
 				ours = slot
 			}
-			for _, other := range i.slots() {
+			for _, other := range order {
 				c := i.aircraft[other]
 				if other == slot || other == b.mate || c == nil || !c.alive || c.model == nil || c.brain == nil || c.team != a.team {
 					continue

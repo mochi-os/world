@@ -1192,6 +1192,7 @@ func (i *instance) guns(dt float64, tick uint64) {
 			burst = a.ammunition
 		}
 		a.ammunition -= burst
+		a.spent += burst // every life, not only cheated ones: the field's name is a claim about the whole match
 		if i.cheat.ammunition {
 			// Infinite AMMUNITION, not a gun that stops counting (#258). The
 			// burst is deducted and the magazine topped straight back up, so
@@ -1199,7 +1200,6 @@ func (i *instance) guns(dt float64, tick uint64) {
 			// recorder and the debrief now treat rounds as ground truth
 			// (#238), and a frozen counter feeds them a flat line that reads
 			// as "never fired" rather than "cannot say".
-			a.spent += burst
 			a.ammunition = rounds
 		}
 		state := &a.model.State
@@ -1974,17 +1974,19 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		if me.model == nil {
 			continue
 		}
-		entry := state_payload(&me.model.State)
-		cores[self] = entry["core"]
 		if me.bot {
 			// A bot has no link, so everything below — its interest set, its
 			// sorted neighbours, its missile list, its whole per-recipient
 			// blob — is built and then discarded (#258). With ninety-nine of
 			// them that is about ninety-nine percent of the snapshot's work
-			// thrown away. Its own pose still went into `cores` above, which
-			// is what the humans actually need from it.
+			// thrown away. Its core is not built at all: tick.go sends each
+			// player only cores[their own slot], and a bot has no link and no
+			// players entry, so nothing ever looked its up. Humans see bots
+			// through the pose blob below, not through a core.
 			continue
 		}
+		entry := state_payload(&me.model.State)
+		cores[self] = entry["core"]
 		// Interest management: everyone else sorted by wrap distance; the
 		// nearest `near` every snapshot, the far tail rotated `roving` at a
 		// time so distant contacts still refresh several times a second.

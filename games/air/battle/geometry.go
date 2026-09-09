@@ -14,6 +14,7 @@ package battle
 import (
 	"math"
 	"sort"
+	"sync"
 
 	"world/games/air/flight"
 )
@@ -44,8 +45,25 @@ type Part struct {
 	Warhead float64 // Ordnance: kg of high explosive in the round
 }
 
-// Parts builds the hit geometry for an airframe.
+// Parts is the hit geometry for an airframe, built once and shared. Part is
+// read-only after construction - a strike writes into Body.Damage and
+// Body.Condition, never into the geometry - so every craft flying the airframe
+// reads the same slice instead of rebuilding about a hundred structs on each
+// spawn and respawn.
 func Parts(a *flight.Airframe) []Part {
+	if shared, found := geometry.Load(a); found {
+		return shared.([]Part)
+	}
+	built := parts_build(a)
+	geometry.Store(a, built)
+	return built
+}
+
+// geometry caches Parts per airframe. sync.Map because the airframe set is
+// fixed after start-up: writes stop, reads never contend.
+var geometry sync.Map
+
+func parts_build(a *flight.Airframe) []Part {
 	var parts []Part
 	base := 0
 	for si := range a.Surfaces {

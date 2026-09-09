@@ -64,8 +64,6 @@ func extended(t *Table, a float64, w float64, slope float64) (float64, float64, 
 		return cl, cd, cm
 	}
 	attached := slope * math.Sin(at) * math.Cos(at) / math.Cos(t.Stall) * sign
-	drag := t.Sample // keep the analyzer quiet about unused; placeholder
-	_ = drag
 	cleanCd := 0.006*attached*attached + 0.01
 	cl = cl*(1-w) + attached*w
 	cd = cd*(1-w) + cleanCd*w
