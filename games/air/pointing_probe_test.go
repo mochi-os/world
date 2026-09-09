@@ -245,63 +245,231 @@ func (m *mush) fly(me, foe *flight.State, tick uint64) map[string]any {
 	return data
 }
 
-// TestTierAgainstTheMush is the arm that decides what to do about the slow
-// fight. TestPointingVersusEnergy compared two abstract policies; this puts the
-// REAL tier brains, with their real catalogue and licences, against the real
-// opponent, and asks how much shooting they get to do.
-func TestTierAgainstTheMush(t *testing.T) {
-	if os.Getenv("AIR_POINT") == "" {
-		t.Skip("measurement probe: set AIR_POINT=1")
-	}
-	armed := os.Getenv("AIR_PASSIVE") == ""
-	fmt.Printf("scripted human: armed=%v\n", armed)
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
-		heater, guns, ticks, launches, downed, lost, flares := 0, 0, 0, 0, 0, 0, 0
-		slowest, plays := math.MaxFloat64, map[string]int{}
-		for seed := uint64(1); seed <= 16; seed++ {
-			g := New()
-			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("mush%s%d", level, seed),
-				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-				Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{level: 1.0}}})
-			if err != nil {
-				t.Fatal(err)
-			}
-			i := made.(*instance)
-			if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
-				t.Fatal(err)
-			}
-			bot := -1
-			for slot, a := range i.aircraft {
-				if a != nil && a.brain != nil {
-					bot = slot
-				}
-			}
-			if bot < 0 {
-				t.Fatal("no bot in the session")
-			}
-			// A merge: 2,400 m apart, nose to nose, co-speed.
-			place(i, bot, 0, 2400)
-			me := &i.aircraft[0].model.State
-			me.Velocity = me.Velocity.Scale(-1)
-			me.Attitude = flight.Look(me.Velocity.Normalize())
-			pilot_ := &mush{armed: armed}
-			started := i.aircraft[bot].brain.missiles // the BRAIN's magazine: craft.missiles is the human's
+func (m *mush) spent() (int, int) { return m.fired, m.flared }
 
-			for tick := uint64(0); tick < 90*60; tick++ {
-				i.Step(tick, map[int][]game.Input{0: {{Data: pilot_.fly(me, &i.aircraft[bot].model.State, tick)}}})
-				if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
-					i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
-					break
+// flyer is a scripted opponent: what it flies this tick, and what it has spent.
+type flyer interface {
+	fly(me, foe *flight.State, tick uint64) map[string]any
+	spent() (fired, flared int)
+}
+
+// hornet flies the slow fight the 2026-09-09 recording shows the HOTAS player
+// beating the ace with, which is what the mush is not: an alpha fight WITH
+// energy management. Pull for the nose only when a shot is developing, a
+// measured turn otherwise so the speed builds back, and below the floor the
+// stick comes forward whatever the geometry until the band is bought back in
+// burner. Always toward: nose-to-nose at the merge is the one-circle, and the
+// slow fighter wants it. The recording is this instrument's specification -
+// 49.9% of the fight above 20 deg alpha, mean 290 kt, slowest 157 kt, burner
+// throughout - and the sweep prints the hornet's own signature beside the
+// bot's, so a drift from that recording is seen rather than assumed away.
+type hornet struct {
+	armed     bool
+	regaining bool // below the floor: unloaded until the band is back
+	rested    uint64
+	fired     int
+	flared    int
+}
+
+func (h *hornet) spent() (int, int) { return h.fired, h.flared }
+
+func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
+	toward := foe.Position.Subtract(me.Position)
+	span := toward.Length()
+	if span < 1 {
+		return map[string]any{}
+	}
+	want := toward.Scale(1 / span)
+	axis := me.Attitude.Rotate(flight.Vec3{X: 1})
+	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
+	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
+	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
+	speed := me.Velocity.Length()
+	// BFM, not proportional pursuit: roll the lift vector onto him wherever
+	// he is round the nose - atan2 covers the full circle, so a bandit below
+	// the nose is a roll-and-pull, never a push - and pull in proportion to
+	// how far off the nose he is. The mush's pitch law pushes when he drops
+	// below the nose after a break, which is how it loses the turn.
+	roll := 0.0
+	if aside := want.Subtract(axis.Scale(want.Dot(axis))); aside.Length() > 1e-6 {
+		aside = aside.Normalize()
+		roll = clamp(math.Atan2(aside.Dot(right), aside.Dot(up))*2.5, -1, 1)
+	}
+	// The recording's pilot peaked at 6.0 g on a 7.5 g jet and modulated: the
+	// everyday pull is three quarters of the stick, scheduled down with speed
+	// because nobody holds 6 g at 200 kt - the jet departs (#97) - and the
+	// whole stick is kept for the merge break below.
+	limit := clamp((speed-60)/90, 0.15, 0.85) // 34 deg at 290 kt is what the recording shows, and the schedule has to reach it
+	pitch := clamp(angle/180*math.Pi*3, 0.05, limit)
+	// The merge. Pursuit on a nose-to-nose target is a straight line into his
+	// guns, which is what the mush flies and why it dies at the pass; the
+	// recording's pilot was turning from the first second. Break INTO him
+	// now - lift vector across to his side, the whole pull - and let pursuit
+	// carry the turn once he is off the nose. Toward is the one-circle, and
+	// the slow fighter wants the one-circle.
+	if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); angle < 25 && span < 2600 && closing > 120 {
+		side := want.Dot(right)
+		if math.Abs(side) < 0.05 {
+			side = 1 // dead ahead: any side, but pick one
+		}
+		roll = clamp(side*8, -1, 1)
+		pitch = clamp((speed-70)/100, 0.1, 1) // the whole pull the speed allows: 344 kt at the merge gives the whole stick, a slow later pass does not
+	}
+	// The one thing the mush lacks, and the whole difference between the two
+	// scripts: below the floor the stick comes forward whatever the geometry,
+	// and the band is bought back in burner before the fight resumes. With
+	// hysteresis so it does not flutter at the floor.
+	const floor, band = 115.0, 170.0 // 224 kt and 330 kt: the recording's mean of 290 sits between them
+	if speed < floor {
+		h.regaining = true
+	} else if speed > band {
+		h.regaining = false
+	}
+	if h.regaining {
+		pitch, roll = math.Min(pitch, 0.1), roll*0.3 // unloaded to near 1 g, wings nearly still: the burner does the work
+	}
+	// Full roll stick while slow is crossed controls, and #97 built the
+	// departure that follows: a pilot rolls with the speed he has.
+	roll *= clamp((speed-60)/100, 0.15, 1)
+	if me.Position.Y < 2500 { // the one concession: do not fly into the sea - with the pull the speed allows
+		pitch = math.Max(pitch, math.Min(0.35, limit))
+	}
+	data := map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "reheat": 1.0}
+	if !h.armed {
+		return data
+	}
+	if span < 3500 && tick%45 == 0 {
+		data["flare"] = true
+		h.flared++
+	}
+	data["fire"] = angle < 4 && span < 900
+	if angle < 12 && span > 600 && span < 2500 && tick-h.rested > 120 {
+		data["missile"] = true
+		h.rested = tick
+		h.fired++
+	}
+	return data
+}
+
+// bout is one tier's sweep against one scripted opponent, with the SAME
+// measurements taken on both seats: what the bot got to do, and what the
+// opponent actually flew - the second is how an instrument built from a
+// recording is checked against it. Seat 0 is the bot, seat 1 the opponent.
+type bout struct {
+	seeds, ticks           int
+	downed, lost, launches int
+	flares                 int
+	guns, heater           [2]int     // ticks at gun / heater parameters
+	high                   [2]int     // ticks above 20 deg alpha
+	close, closeHigh       [2]int     // ticks engaged (inside 1,500 m), and of those above 20 deg: the pilot's own doctrine, with the other jet's extensions taken out
+	peak                   [2]float64 // deg
+	speed                  [2]float64 // summed m/s, for the mean
+	slowest                [2]float64 // m/s
+	rides, rebuilds        int        // bot ticks in the limiter ride / rebuilding energy below its floor
+	plays                  map[string]int
+}
+
+// sweep runs one tier against one scripted opponent across the seeds. mode is
+// the session's: "furball" frees the weapons from the first tick, which is the
+// arm #107 was measured on; "joust" HOLDS them until either jet crosses the
+// other's 3/9 line, exactly as the live single-player joust does - and that
+// hold is why a live ace's first shot comes after the pass, not nose-on at two
+// seconds. An instrument standing in for a joust has to be a joust.
+func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int) bout {
+	t.Helper()
+	b := bout{plays: map[string]int{}, slowest: [2]float64{math.MaxFloat64, math.MaxFloat64}}
+	for seed := uint64(1); seed <= uint64(seeds); seed++ {
+		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{level: 1.0}}
+		if missiles {
+			parameters["weapons"] = "fox2"
+		}
+		session := game.Session{Identifier: fmt.Sprintf("slow%s%d", level, seed), Game: "air", Mode: mode, Seed: seed, Parameters: parameters}
+		if mode == "furball" {
+			session.Capacity = 8
+		}
+		g := New()
+		made, err := g.Create(session)
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+			t.Fatal(err)
+		}
+		bot := -1
+		for slot, a := range i.aircraft {
+			if a != nil && a.brain != nil {
+				bot = slot
+			}
+		}
+		if bot < 0 {
+			t.Fatal("no bot in the session")
+		}
+		// A merge: 2,400 m apart, nose to nose, co-speed.
+		place(i, bot, 0, 2400)
+		me := &i.aircraft[0].model.State
+		me.Velocity = me.Velocity.Scale(-1)
+		if entry > 0 {
+			me.Velocity = me.Velocity.Normalize().Scale(entry) // the recording's merge speed, not the bot's spawn speed
+		}
+		me.Attitude = flight.Look(me.Velocity.Normalize())
+		pilot := opponent()
+		started := i.aircraft[bot].brain.missiles // the BRAIN's magazine: craft.missiles is the human's
+		b.seeds++
+		trace := os.Getenv("AIR_TRACE") != "" && seed == 1 // one seed, the opponent's seat, twice a second: what the script commanded and what the jet did
+		for tick := uint64(0); tick < uint64(seconds*60); tick++ {
+			data := pilot.fly(me, &i.aircraft[bot].model.State, tick)
+			if trace && tick%15 == 0 && (tick < 15*60 || i.aircraft[0].model.Alpha() > 0.8) {
+				foe := &i.aircraft[bot].model.State
+				line := foe.Position.Subtract(me.Position)
+				off := math.Acos(clamp(me.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize()), -1, 1)) * 180 / math.Pi
+				his := math.Acos(clamp(foe.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize().Scale(-1)), -1, 1)) * 180 / math.Pi
+				fmt.Printf("    t=%5.2f range %5.0f | him: off %5.1f %3.0f kt alpha %5.1f g %4.1f pitch %5.2f roll %5.2f | bot: off %5.1f %3.0f kt alpha %4.1f %-7s msl %d\n",
+					float64(tick)/60, line.Length(), off, me.Velocity.Length()*1.944, i.aircraft[0].model.Alpha()*180/math.Pi,
+					i.aircraft[0].model.Nz(), data["pitch"], data["roll"],
+					his, foe.Velocity.Length()*1.944, i.aircraft[bot].model.Alpha()*180/math.Pi, i.aircraft[bot].brain.play, i.aircraft[bot].brain.missiles)
+			}
+			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
+			if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
+				i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
+				break
+			}
+			b.ticks++
+			brain := i.aircraft[bot].brain
+			if brain.play != "" {
+				b.plays[brain.play]++
+			}
+			if brain.play == "ride" {
+				b.rides++
+			}
+			if brain.mode == "rebuild" {
+				b.rebuilds++
+			}
+			for seat, jet := range []*craft{i.aircraft[bot], i.aircraft[0]} {
+				other := i.aircraft[0]
+				if seat == 1 {
+					other = i.aircraft[bot]
 				}
-				s := &i.aircraft[bot].model.State
-				line := i.aircraft[0].model.State.Position.Subtract(s.Position)
+				s := &jet.model.State
+				v := s.Velocity.Length()
+				b.speed[seat] += v
+				if v < b.slowest[seat] {
+					b.slowest[seat] = v
+				}
+				alpha := jet.model.Alpha() * 180 / math.Pi
+				if alpha > b.peak[seat] {
+					b.peak[seat] = alpha
+				}
+				if alpha > 20 {
+					b.high[seat]++
+				}
+				line := other.model.State.Position.Subtract(s.Position)
 				span := line.Length()
-				ticks++
-				if v := s.Velocity.Length(); v < slowest {
-					slowest = v
-				}
-				if b := i.aircraft[bot].brain; b != nil && b.play != "" {
-					plays[b.play]++
+				if span < 1500 {
+					b.close[seat]++
+					if alpha > 20 {
+						b.closeHigh[seat]++
+					}
 				}
 				if span < 1 {
 					continue
@@ -309,29 +477,124 @@ func TestTierAgainstTheMush(t *testing.T) {
 				axis := s.Attitude.Rotate(flight.Vec3{X: 1})
 				off := math.Acos(clamp(axis.Dot(line.Scale(1/span)), -1, 1)) * 180 / math.Pi
 				if off < 25 && span > 400 && span < 3000 {
-					heater++
+					b.heater[seat]++
 				}
 				if off < 5 && span > 250 && span < 900 {
-					guns++
+					b.guns[seat]++
 				}
 			}
-			launches += started - i.aircraft[bot].brain.missiles
-			flares += pilot_.flared
-			if i.aircraft[0].model == nil || !i.aircraft[0].alive {
-				downed++
-			}
-			if i.aircraft[bot].model == nil || !i.aircraft[bot].alive {
-				lost++
-			}
-			i.Close()
 		}
+		b.launches += started - i.aircraft[bot].brain.missiles
+		_, flared := pilot.spent()
+		b.flares += flared
+		if i.aircraft[0].model == nil || !i.aircraft[0].alive {
+			b.downed++
+		}
+		if i.aircraft[bot].model == nil || !i.aircraft[bot].alive {
+			b.lost++
+		}
+		i.Close()
+	}
+	return b
+}
+
+// report renders a bout as two lines: the bot's, then the opponent's.
+func report(name, level string, b bout) string {
+	top, best := "", 0
+	for play, n := range b.plays {
+		if n > best {
+			top, best = play, n
+		}
+	}
+	ticks := math.Max(float64(b.ticks), 1)
+	share := func(n int) float64 { return 100 * float64(n) / ticks }
+	mean := func(seat int) float64 { return b.speed[seat] / ticks * 1.944 }
+	engaged := func(seat int) float64 { return 100 * float64(b.closeHigh[seat]) / math.Max(float64(b.close[seat]), 1) }
+	return fmt.Sprintf("%-6s v %-10s killed %2d/%d died %2d/%d fight %4.0f s engaged %4.1f%% | bot  >20deg %5.1f%% (engaged %5.1f%%) peak %4.1f mean %3.0f kt slowest %3.0f | guns %4.1f%% heater %4.1f%% | ride %4.1f%% rebuild %4.1f%% top %s %.0f%% | launched %d\n"+
+		"%-6s   %-10s                                                     | him  >20deg %5.1f%% (engaged %5.1f%%) peak %4.1f mean %3.0f kt slowest %3.0f | guns %4.1f%% heater %4.1f%% | flares %d",
+		name, level, b.downed, b.seeds, b.lost, b.seeds, float64(b.ticks)/60/math.Max(float64(b.seeds), 1), share(b.close[0]),
+		share(b.high[0]), engaged(0), b.peak[0], mean(0), b.slowest[0]*1.944, share(b.guns[0]), share(b.heater[0]), share(b.rides), share(b.rebuilds), top, share(best), b.launches,
+		"", "", share(b.high[1]), engaged(1), b.peak[1], mean(1), b.slowest[1]*1.944, share(b.guns[1]), share(b.heater[1]), b.flares)
+}
+
+// TestTierAgainstTheMush is the arm that decided what to do about the slow
+// fight in #107. TestPointingVersusEnergy compared two abstract policies; this
+// puts the REAL tier brains, with their real catalogue and licences, against
+// the keyboard player, and asks how much shooting they get to do.
+func TestTierAgainstTheMush(t *testing.T) {
+	if os.Getenv("AIR_POINT") == "" {
+		t.Skip("measurement probe: set AIR_POINT=1")
+	}
+	armed := os.Getenv("AIR_PASSIVE") == ""
+	fmt.Printf("scripted human: armed=%v\n", armed)
+	for _, level := range []string{"pilot", "ace", "superhuman"} {
+		b := sweep(t, level, "furball", func() flyer { return &mush{armed: armed} }, true, 0, 16, 90)
 		top, best := "", 0
-		for name, n := range plays {
+		for name, n := range b.plays {
 			if n > best {
 				top, best = name, n
 			}
 		}
 		fmt.Printf("%-11s killed the human %2d/16 | died %2d/16 | launched %2d | mean fight %4.0f s | human flares %3d | slowest %3.0f kt | most-flown %s %.0f%%\n",
-			level, downed, lost, launches, float64(ticks)/60/16, flares, slowest*1.944, top, 100*float64(best)/math.Max(float64(ticks), 1))
+			level, b.downed, b.lost, b.launches, float64(b.ticks)/60/16, b.flares, b.slowest[0]*1.944, top, 100*float64(best)/math.Max(float64(b.ticks), 1))
+	}
+}
+
+// TestTierAgainstTheHornet is #153's instrument. #107 measured the tiers
+// against the mush and the ace won 13 of 16; the same ace then lost the live
+// joust of 2026-09-09 to a player flying slow WITH energy management, a fight
+// no probe flew. Both opponents run here side by side so the difference is
+// one table, and the hornet's own line is checked against the recording it
+// was built from: an instrument that does not fly the fight it claims to fly
+// measures nothing. AIR_TIER narrows to one tier, AIR_WEAPONS=guns takes the
+// missiles away (the 2026-09-09 human-v-human fight was guns only), and
+// AIR_PASSIVE disarms the opponent.
+func TestTierAgainstTheHornet(t *testing.T) {
+	if os.Getenv("AIR_POINT") == "" {
+		t.Skip("measurement probe: set AIR_POINT=1")
+	}
+	armed := os.Getenv("AIR_PASSIVE") == ""
+	missiles := os.Getenv("AIR_WEAPONS") != "guns"
+	tiers := []string{"novice", "pilot", "ace", "superhuman"}
+	if only := os.Getenv("AIR_TIER"); only != "" {
+		tiers = []string{only}
+	}
+	// Each arm carries the rules of the live fight it stands in for. Heaters:
+	// the 2026-09-09 single-player joust-ace, a JOUST, weapons held until the
+	// 3/9 crossing. Guns: the same day's human-v-human match on the standing
+	// server FURBALL, guns only, weapons free from the first tick - the
+	// recording calls it a joust only because the client stamps its forced
+	// cfg.task into the file.
+	mode := "furball"
+	if missiles {
+		mode = "joust"
+	}
+	fmt.Printf("scripted human: armed=%v missiles=%v | %s rules | 16 seeds, 120 s, merge at 2,400 m\n", armed, missiles, mode)
+	for _, level := range tiers {
+		for _, opponent := range []struct {
+			name  string
+			entry float64 // merge speed, m/s; 0 = co-speed with the bot as placed
+			make  func() flyer
+		}{
+			{"mush", 0, func() flyer { return &mush{armed: armed} }},
+			{"hornet", 344 / 1.944, func() flyer { return &hornet{armed: armed} }}, // the recording's 344 kt at the merge
+		} {
+			b := sweep(t, level, mode, opponent.make, missiles, opponent.entry, 16, 120)
+			fmt.Println(report(opponent.name, level, b))
+			if level == "ace" && opponent.name == "hornet" && missiles {
+				// Only the arm the recording was flown on: guns-only fights run
+				// twice as long and the same script rightly regains more.
+				// The instrument's own check, against the recording it stands in for.
+				// Judged while ENGAGED, inside 1,500 m: the recording was a
+				// continuous close fight, and a harness fight the bot spends
+				// extending away from dilutes a whole-fight share with time the
+				// pilot has nothing to pull at.
+				high := 100 * float64(b.closeHigh[1]) / math.Max(float64(b.close[1]), 1)
+				mean := b.speed[1] / math.Max(float64(b.ticks), 1) * 1.944
+				if high < 35 || high > 65 || mean < 240 || mean > 340 || b.peak[1] > 50 {
+					t.Errorf("the hornet flew %.1f%% above 20 deg while engaged (peak %.1f) at a mean of %.0f kt; the recording it stands in for flew 49.9%% (peak 34.2) at 290 kt - recalibrate the script before reading the bot's line", high, b.peak[1], mean)
+				}
+			}
+		}
 	}
 }
