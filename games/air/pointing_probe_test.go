@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"sort"
+	"strconv"
 	"testing"
 
 	"world/game"
@@ -359,13 +361,16 @@ type bout struct {
 	seeds, ticks           int
 	downed, lost, launches int
 	flares                 int
+	burner                 int        // ticks the bot spent in reheat: the throttle law that holds the fast match
+	starving               int        // ticks the bot spent below its energy floor, recovering instead of fighting
+	corner                 float64    // the armed jet's corner speed as the bot prices it, m/s
 	guns, heater           [2]int     // ticks at gun / heater parameters
 	high                   [2]int     // ticks above 20 deg alpha
 	close, closeHigh       [2]int     // ticks engaged (inside 1,500 m), and of those above 20 deg: the pilot's own doctrine, with the other jet's extensions taken out
 	peak                   [2]float64 // deg
 	speed                  [2]float64 // summed m/s, for the mean
 	slowest                [2]float64 // m/s
-	rides, rebuilds        int        // bot ticks in the limiter ride / rebuilding energy below its floor
+	rebuilds               int        // bot ticks rebuilding energy below its floor
 	plays                  map[string]int
 }
 
@@ -436,11 +441,15 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 			}
 			b.ticks++
 			brain := i.aircraft[bot].brain
+			if brain.reheat > 0.5 {
+				b.burner++
+			}
+			if brain.starving {
+				b.starving++
+			}
+			b.corner = corner(i.aircraft[bot].model)
 			if brain.play != "" {
 				b.plays[brain.play]++
-			}
-			if brain.play == "ride" {
-				b.rides++
 			}
 			if brain.mode == "rebuild" {
 				b.rebuilds++
@@ -510,10 +519,10 @@ func report(name, level string, b bout) string {
 	share := func(n int) float64 { return 100 * float64(n) / ticks }
 	mean := func(seat int) float64 { return b.speed[seat] / ticks * 1.944 }
 	engaged := func(seat int) float64 { return 100 * float64(b.closeHigh[seat]) / math.Max(float64(b.close[seat]), 1) }
-	return fmt.Sprintf("%-6s v %-10s killed %2d/%d died %2d/%d fight %4.0f s engaged %4.1f%% | bot  >20deg %5.1f%% (engaged %5.1f%%) peak %4.1f mean %3.0f kt slowest %3.0f | guns %4.1f%% heater %4.1f%% | ride %4.1f%% rebuild %4.1f%% top %s %.0f%% | launched %d\n"+
+	return fmt.Sprintf("%-6s v %-10s killed %2d/%d died %2d/%d fight %4.0f s engaged %4.1f%% | bot  >20deg %5.1f%% (engaged %5.1f%%) peak %4.1f mean %3.0f kt slowest %3.0f | guns %4.1f%% heater %4.1f%% | rebuild %4.1f%% burner %4.1f%% starving %4.1f%% corner %3.0f kt top %s %.0f%% | launched %d\n"+
 		"%-6s   %-10s                                                     | him  >20deg %5.1f%% (engaged %5.1f%%) peak %4.1f mean %3.0f kt slowest %3.0f | guns %4.1f%% heater %4.1f%% | flares %d",
 		name, level, b.downed, b.seeds, b.lost, b.seeds, float64(b.ticks)/60/math.Max(float64(b.seeds), 1), share(b.close[0]),
-		share(b.high[0]), engaged(0), b.peak[0], mean(0), b.slowest[0]*1.944, share(b.guns[0]), share(b.heater[0]), share(b.rides), share(b.rebuilds), top, share(best), b.launches,
+		share(b.high[0]), engaged(0), b.peak[0], mean(0), b.slowest[0]*1.944, share(b.guns[0]), share(b.heater[0]), share(b.rebuilds), share(b.burner), share(b.starving), b.corner*1.944, top, share(best), b.launches,
 		"", "", share(b.high[1]), engaged(1), b.peak[1], mean(1), b.slowest[1]*1.944, share(b.guns[1]), share(b.heater[1]), b.flares)
 }
 
@@ -596,5 +605,129 @@ func TestTierAgainstTheHornet(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestHornetProbe traces ONE seed of a tier against the hornet: what it chose
+// at every re-plan, how every candidate scored, and where `high` - the high
+// yo-yo Chris won the human-v-human match with, nine times over - ranked. The
+// question it answers is whether that play is rehearsed and loses narrowly
+// (the horizon, #169), loses by a mile (the scorer cannot see the slow fight at
+// all), or is never a candidate (a licence). AIR_PROBE_SEED selects the seed,
+// AIR_TIER the tier, AIR_WEAPONS=guns takes the missiles away.
+func TestHornetProbe(t *testing.T) {
+	if os.Getenv("AIR_POINT") == "" {
+		t.Skip("measurement probe: set AIR_POINT=1")
+	}
+	seed := uint64(1)
+	if s := os.Getenv("AIR_PROBE_SEED"); s != "" {
+		if n, err := strconv.Atoi(s); err == nil {
+			seed = uint64(n)
+		}
+	}
+	level := "ace"
+	if only := os.Getenv("AIR_TIER"); only != "" {
+		level = only
+	}
+	missiles := os.Getenv("AIR_WEAPONS") != "guns"
+	mode := "furball"
+	if missiles {
+		mode = "joust"
+	}
+	parameters := map[string]any{"missiles": missiles, "bots": map[string]any{level: 1.0}}
+	if missiles {
+		parameters["weapons"] = "fox2"
+	}
+	session := game.Session{Identifier: "hornetprobe", Game: "air", Mode: mode, Seed: seed, Parameters: parameters}
+	if mode == "furball" {
+		session.Capacity = 8
+	}
+	g := New()
+	made, err := g.Create(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+		t.Fatal(err)
+	}
+	bot := -1
+	for slot, a := range i.aircraft {
+		if a != nil && a.brain != nil {
+			bot = slot
+		}
+	}
+	if bot < 0 {
+		t.Fatal("no bot in the session")
+	}
+	place(i, bot, 0, 2400)
+	me := &i.aircraft[0].model.State
+	me.Velocity = me.Velocity.Normalize().Scale(-344 / 1.944)
+	me.Attitude = flight.Look(me.Velocity.Normalize())
+	foe := &i.aircraft[bot].model.State
+	pilot := &hornet{armed: true}
+	b := i.aircraft[bot].brain
+	fmt.Printf("%s v hornet, seed %d, %s rules, missiles=%v\n", level, seed, mode, missiles)
+	plans, seen, best, rankSum, gapSum := 0, 0, 0, 0, 0.0
+	for tick := uint64(0); tick < 120*60; tick++ {
+		i.Step(tick, map[int][]game.Input{0: {{Data: pilot.fly(me, foe, tick)}}})
+		if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
+			fmt.Printf("t=%.1f END hornet alive=%v bot alive=%v bot kills=%d\n", float64(tick)/60, i.aircraft[0].alive, i.aircraft[bot].alive, i.aircraft[bot].kills)
+			break
+		}
+		if b.picked == tick && b.prey != nil {
+			scores := map[string]float64{}
+			sim := flight.New(i.aircraft[bot].model.Airframe, i.aircraft[bot].model.Environment, i.aircraft[bot].model.World)
+			i.choose(bot, i.aircraft[bot], b, sim, b.prey, tick, b.distance, scores)
+			type e struct {
+				n string
+				s float64
+			}
+			list := []e{}
+			for n, s := range scores {
+				list = append(list, e{n, s})
+			}
+			sort.Slice(list, func(a, c int) bool { return list[a].s > list[c].s })
+			plans++
+			rank, gap := -1, 0.0
+			for k, x := range list {
+				if x.n == "high" {
+					rank, gap = k, list[0].s-x.s
+				}
+			}
+			fmt.Printf("  t=%5.1f PLAN %-7s intent=%-7s |", float64(tick)/60, b.play, b.intent)
+			for k, x := range list {
+				if k >= 4 {
+					break
+				}
+				fmt.Printf(" %s %.2f", x.n, x.s)
+			}
+			if rank < 0 {
+				fmt.Printf(" | high: NOT A CANDIDATE (%d rehearsed)\n", len(list))
+			} else {
+				seen++
+				rankSum += rank
+				gapSum += gap
+				if rank == 0 {
+					best++
+				}
+				fmt.Printf(" | high: rank %d/%d score %.2f gap %.2f\n", rank+1, len(list), scores["high"], gap)
+			}
+		}
+		if tick%(5*60) == 0 {
+			toward := foe.Position.Subtract(me.Position)
+			r := toward.Length()
+			botBehind := math.Acos(clamp(toward.Scale(1/r).Dot(me.Velocity.Normalize().Scale(-1)), -1, 1))*57.3 < 45 && r < 1500
+			hornetBehind := math.Acos(clamp(toward.Scale(-1/r).Dot(foe.Velocity.Normalize().Scale(-1)), -1, 1))*57.3 < 45 && r < 1500
+			fmt.Printf("t=%5.1f range %5.0f | bot %-7s %3.0f kt alpha %4.1f g %3.1f alt %5.0f ft | hornet %3.0f kt alpha %4.1f alt %5.0f ft | bot behind %v, hornet behind %v\n",
+				float64(tick)/60, r, b.play, foe.Velocity.Length()*1.944, i.aircraft[bot].model.Alpha()*57.3, i.aircraft[bot].model.Nz(), foe.Position.Y*3.281,
+				me.Velocity.Length()*1.944, i.aircraft[0].model.Alpha()*57.3, me.Position.Y*3.281, botBehind, hornetBehind)
+		}
+	}
+	if seen > 0 {
+		fmt.Printf("SUMMARY: %d re-plans; high a candidate in %d, best in %d; mean rank %.1f, mean gap to the top %.2f\n",
+			plans, seen, best, float64(rankSum)/float64(seen)+1, gapSum/float64(seen))
+	} else {
+		fmt.Printf("SUMMARY: %d re-plans; high was never a candidate\n", plans)
 	}
 }

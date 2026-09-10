@@ -15,7 +15,11 @@ import (
 // coefficient capped every tier at 85% of what the wing gives, so a novice -
 // whose whole authenticity is getting slow without noticing - flew the same
 // energy discipline as the ace and never mushed, and the slow fight was
-// forbidden to everyone (#153). The wing's g at a speed is (speed/stall)^2.
+// forbidden to everyone (#153): under the wing's g the demand never reaches
+// the limiter, burner thrust beats the drag of the regime it can reach, and
+// every tier fought at 350 kt. The wing's g at a speed is (speed/stall)^2;
+// the flying tiers command half again what it gives, which pins the limiter
+// when a play asks for it and still tapers to a departure guard at the stall.
 func TestAeroCapByTier(t *testing.T) {
 	const demand, stall = 7.5, 60.0 // a full pull, and a 117 kt stall
 	wing := func(speed float64) float64 { return (speed / stall) * (speed / stall) }
@@ -26,22 +30,36 @@ func TestAeroCapByTier(t *testing.T) {
 	if got := novice.capped(demand, slow, stall); got != demand {
 		t.Errorf("novice commanded %.2f g of a %.1f g demand at %.0f m/s: the rookie has no cap, it pulls what it asks for", got, demand, slow)
 	}
-	if want := wing(slow); math.Abs(pilot.capped(demand, slow, stall)-want) > 1e-9 {
-		t.Errorf("pilot commanded %.2f g at %.0f m/s, want exactly the wing's %.2f: no margin, no excess", pilot.capped(demand, slow, stall), slow, want)
-	}
-	if want := 0.85 * wing(slow); math.Abs(ace.capped(demand, slow, stall)-want) > 1e-9 {
-		t.Errorf("ace commanded %.2f g at %.0f m/s, want %.2f: 85%% of the wing, the margin that keeps it out of the mush", ace.capped(demand, slow, stall), slow, want)
+	for _, tier := range []string{"pilot", "ace", "superhuman"} {
+		got, want := skills[tier].capped(demand, slow, stall), 1.5*wing(slow)
+		if math.Abs(got-want) > 1e-9 {
+			t.Errorf("%s commanded %.2f g at %.0f m/s, want %.2f: half again the wing, so a play that asks for more than the wing has rides the limiter into the slow fight", tier, got, slow, want)
+		}
+		if got >= wing(slow)*1.5+1e-9 || got <= wing(slow) {
+			t.Errorf("%s commanded %.2f g at %.0f m/s where the wing gives %.2f: the cap must sit above the wing (or the limiter is never reached) and still cap", tier, got, slow, wing(slow))
+		}
 	}
 	if ace.capped(demand, slow, stall) != machine.capped(demand, slow, stall) {
 		t.Errorf("superhuman %.2f g v ace %.2f g: the superhuman is the ace with the human dials at zero, and the cap is not a human dial",
 			machine.capped(demand, slow, stall), ace.capped(demand, slow, stall))
 	}
 
-	// The ladder is monotone at a slow speed: the less disciplined the tier,
-	// the more it will pull past the wing.
-	if !(novice.capped(demand, slow, stall) > pilot.capped(demand, slow, stall) && pilot.capped(demand, slow, stall) > ace.capped(demand, slow, stall)) {
-		t.Errorf("cap ladder not monotone at %.0f m/s: novice %.2f, pilot %.2f, ace %.2f", slow,
+	// The ladder: the novice pulls past everyone, and the flying tiers share
+	// one coefficient - the slow fight is not a privilege of rank.
+	if !(novice.capped(demand, slow, stall) > pilot.capped(demand, slow, stall) && pilot.capped(demand, slow, stall) == ace.capped(demand, slow, stall)) {
+		t.Errorf("cap ladder wrong at %.0f m/s: novice %.2f, pilot %.2f, ace %.2f", slow,
 			novice.capped(demand, slow, stall), pilot.capped(demand, slow, stall), ace.capped(demand, slow, stall))
+	}
+
+	// The departure guard survives the coefficient: a full pull AT the stall
+	// is refused (1.5 g), and at 1.2 stall the wing's own 1.44 g is all that
+	// is left of a 7.5 g demand plus half - the uncapped superhuman departed
+	// here at 179 degrees alpha, the capped one peaked at 34.
+	if got := ace.capped(demand, stall, stall); math.Abs(got-1.5) > 1e-9 {
+		t.Errorf("ace at the stall commanded %.2f g of %.1f, want 1.5: the guard against a full pull at the stall", got, demand)
+	}
+	if got, want := ace.capped(demand, stall*1.2, stall), 1.5*1.44; math.Abs(got-want) > 1e-9 {
+		t.Errorf("ace at 1.2 stall commanded %.2f g, want %.2f", got, want)
 	}
 
 	// A capped tier is never taken below 1.1 g, however slow: level flight and

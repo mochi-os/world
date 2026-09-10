@@ -181,12 +181,38 @@ var plays = []play{
 		}
 		return order{aim: m.aloft(point.Subtract(flight.Vec3{Y: 300})), g: m.pull, throttle: 1, reheat: 1}
 	}},
-	{"high", 3, 7, func(m *moment) order {
-		o := order{aim: m.aloft(m.lag().Add(flight.Vec3{Y: 450})), g: m.pull * 0.85, throttle: 0.9}
-		if m.closure > 90 {
-			o.brake = 1
+	{"high", 3, 12, func(m *moment) order {
+		// The high yo-yo (#153): climb out of his plane to shed closure, then
+		// come down INSIDE his circle with lead. Staged on state like the
+		// pitch-back, so one law carries both phases and the rollout flies the
+		// whole manoeuvre - hence the long horizon. The old law was the climb
+		// alone, re-aimed 450 m above the lag line at every re-plan, so a
+		// chosen yo-yo became a 7,000-ft zoom to 174 kt and thirty seconds of
+		// recovery; the human who won with this flew nine of 500-1,700 ft and
+		// came down every time. The stager is the vertical speed: once the
+		// nose is down it stays down to the bottom whatever the closure does
+		// on the way, and the next yo-yo starts only from the bottom, with
+		// closure to shed again.
+		rise := m.me.Position.Y - m.prey.Y
+		speed := m.me.Velocity.Length()
+		climbing := m.me.Velocity.Y > 0 || rise <= 0
+		// Stop pulling when the FLOAT will top out where the yo-yo wants it,
+		// not when the jet has already got there: at 150 m/s of vertical speed
+		// the apex is a kilometre above the point the pull stops, whatever is
+		// commanded after, because the wing at 200 kt cannot arrest it. That
+		// is the zoom the old law flew and a rise cap alone still flies.
+		apex := rise
+		if m.me.Velocity.Y > 0 {
+			apex += m.me.Velocity.Y * m.me.Velocity.Y / (2 * 9.81)
 		}
-		return o
+		if climbing && m.closure > 30 && apex < 450 && speed > m.pace*0.6 {
+			o := order{aim: m.aloft(m.lag().Add(flight.Vec3{Y: 450})), g: m.pull * 0.85, throttle: 0.9}
+			if m.closure > 90 {
+				o.brake = 1
+			}
+			return o
+		}
+		return order{aim: m.aloft(m.lead()), g: m.pull, throttle: 1, reheat: 1}
 	}},
 	{"reverse", 3, 0, func(m *moment) order {
 		side := m.grain
@@ -315,16 +341,6 @@ var plays = []play{
 	{"climb", 4, 8, func(m *moment) order {
 		f := m.flat()
 		return order{aim: flight.Vec3{X: f.X, Y: 0.6, Z: f.Z}.Normalize(), g: 3, throttle: 1, reheat: 1}
-	}},
-	{"ride", 3, 6, func(m *moment) order {
-		// The limiter ride (#63): square the nose onto the gun solution and
-		// command double the doctrine ceiling — the FCS alpha limiter, never
-		// the paddle, is the boundary, exactly the transient the player wins
-		// angle fights with. polish()'s aero cap and guard()'s climb lid step
-		// aside for this play alone; the rollout prices the speed the point
-		// donates, so the arbiter only buys it when the shot pays for it, and
-		// choose() offers it only inside a claimed FINISH with a clean six.
-		return order{aim: m.aloft(m.lead()), g: m.pull * 2, throttle: 1}
 	}},
 }
 
@@ -618,9 +634,6 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		if (p.name == "saddle" || p.name == "lag") && distance > 2000 && b.tail > 0.35 && b.nearing*120 < distance-800 {
 			n++      // consume the play's noise index: every surviving play keeps the draw it had ungated, so fights diverge from the old arbitration ONLY where a park would actually have won
 			continue // the parking laws (#69): saddle's speed-match and lag's corner-pace reheat both MIL-park a matched-speed stern chase, and beyond ~2.5 km the rehearsal horizon cannot tell a park from a pursuit — they win on selection noise, stick via incumbency, and bleed the closure press had built. Banned only where they cannot ARRIVE: a far-field stern chase whose closure trend is more than two minutes from gun range. A closing stalk, and any mutual fight, keeps the full repertoire.
-		}
-		if p.name == "ride" && (b.intent != "finish" || prey.velocity.Length() < 170 || !i.serene(slot)) {
-			continue // the point donates the jet's energy: only inside a claimed FINISH, with nothing hunting me, and against a target still fast enough to contest the angles — a crawling one is the saddle's kill (#49)
 		}
 		horizon := base
 		if p.span > 0 && int(p.span*60) > horizon {
