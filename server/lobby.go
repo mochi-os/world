@@ -126,6 +126,11 @@ func lobby_status(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	count, players := sessions_counts()
+	// present is everyone here: the pilots seen on the server page lately plus
+	// the players in a match, who are not polling the page from the cockpit.
+	// players stays what it was - the number flying - so an older client's
+	// "N flying" keeps meaning that.
+	present := presence_count() + players
 	names := []string{}
 	for name := range games {
 		names = append(names, name)
@@ -138,12 +143,47 @@ func lobby_status(w http.ResponseWriter, r *http.Request) {
 		"games":    names,
 		"sessions": count,
 		"players":  players,
+		"present":  present,
 		"address":  transport_address(),
 	}
 	if hash, expires := certificate_hash(); hash != "" {
 		body["certificate"] = map[string]any{"hash": hash, "expires": expires}
 	}
 	lobby_respond(w, http.StatusOK, body)
+}
+
+// presence is the pilots seen on this server's page lately, by token: the
+// match-list poll every few seconds is the sighting, and the status counts
+// the tokens sighted inside the window as players here. A token is the
+// player's own stable offer token, so one player is one entry however many
+// polls they make.
+var presence = map[string]time.Time{}
+var presence_lock sync.Mutex
+
+const presence_window = 20 * time.Second
+
+func presence_touch(pilot string) {
+	if pilot == "" {
+		return
+	}
+	presence_lock.Lock()
+	presence[pilot] = time.Now()
+	presence_lock.Unlock()
+}
+
+// presence_count is the pilots sighted inside the window; older sightings
+// are dropped as they are counted, so the map never outgrows the players
+// who have been here.
+func presence_count() int {
+	presence_lock.Lock()
+	defer presence_lock.Unlock()
+	now := time.Now()
+	for pilot, seen := range presence {
+		if now.Sub(seen) > presence_window {
+			delete(presence, pilot)
+		}
+	}
+	return len(presence)
 }
 
 func lobby_sessions(w http.ResponseWriter, r *http.Request) {
@@ -161,6 +201,7 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		// same token tells the listing which offer is the caller's own.
 		pilot := clean(r.URL.Query().Get("pilot"), 64)
 		sessions_touch(pilot)
+		presence_touch(pilot)
 		lobby_respond(w, http.StatusOK, map[string]any{"sessions": sessions_list(r.URL.Query().Get("game"), pilot)})
 	case http.MethodPost:
 		if !lobby_allow(r) {
