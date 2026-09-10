@@ -181,7 +181,7 @@ var plays = []play{
 		}
 		return order{aim: m.aloft(point.Subtract(flight.Vec3{Y: 300})), g: m.pull, throttle: 1, reheat: 1}
 	}},
-	{"high", 3, 12, func(m *moment) order {
+	{"high", 2, 12, func(m *moment) order {
 		// The high yo-yo (#153): climb out of his plane to shed closure, then
 		// come down INSIDE his circle with lead. Staged on state like the
 		// pitch-back, so one law carries both phases and the rollout flies the
@@ -192,7 +192,11 @@ var plays = []play{
 		// came down every time. The stager is the vertical speed: once the
 		// nose is down it stays down to the bottom whatever the closure does
 		// on the way, and the next yo-yo starts only from the bottom, with
-		// closure to shed again.
+		// closure to shed again. Tier 2, not 3: it is the pilot's only way
+		// up. With every other vertical play at tier 3 or 4 its catalogue
+		// could go flat or DOWN, and against a sinking slow target "300 m
+		// below him in burner" was a dive that never ended - 528 kt mean and
+		// a 120-second fight nobody won.
 		rise := m.me.Position.Y - m.prey.Y
 		speed := m.me.Velocity.Length()
 		climbing := m.me.Velocity.Y > 0 || rise <= 0

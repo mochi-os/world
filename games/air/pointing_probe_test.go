@@ -526,6 +526,29 @@ func report(name, level string, b bout) string {
 		"", "", share(b.high[1]), engaged(1), b.peak[1], mean(1), b.slowest[1]*1.944, share(b.guns[1]), share(b.heater[1]), b.flares)
 }
 
+// TestPilotEngagesTheMush: the pilot tier has a way UP. With every vertical
+// play at tier 3 or 4 its catalogue could go flat or down, and against a
+// sinking slow target its one out-of-plane play - a burner dive to 300 m
+// below him - was a dive that never ended: 528 kt mean, 8% of the engaged
+// fight above 20 degrees alpha, and 120 seconds nobody won (#172). With the
+// high yo-yo at tier 2 the same fight is flown at 357 kt and 34% alpha. The
+// gate is the regime, not the outcome: the mush is a hard gun target for
+// every tier, and a pilot that fights it slow has stopped fleeing it fast.
+func TestPilotEngagesTheMush(t *testing.T) {
+	heavy(t)
+	b := sweep(t, "pilot", "furball", func() flyer { return &mush{armed: true} }, false, 0, 16, 120)
+	ticks := math.Max(float64(b.ticks), 1)
+	mean := b.speed[0] / ticks * 1.944
+	engaged := 100 * float64(b.closeHigh[0]) / math.Max(float64(b.close[0]), 1)
+	t.Logf("pilot v mush, guns: mean %.0f kt, %.1f%% of the engaged fight above 20 deg alpha, killed %d died %d of %d", mean, engaged, b.downed, b.lost, b.seeds)
+	if mean > 450 {
+		t.Errorf("pilot mean %.0f kt against the mush: the fast match - it has no way up and dives in burner (tier-3 yo-yo: 528 kt)", mean)
+	}
+	if engaged < 15 {
+		t.Errorf("pilot %.1f%% of the engaged fight above 20 deg alpha: no slow fight (tier-3 yo-yo: 8%%)", engaged)
+	}
+}
+
 // TestTierAgainstTheMush is the arm that decided what to do about the slow
 // fight in #107. TestPointingVersusEnergy compared two abstract policies; this
 // puts the REAL tier brains, with their real catalogue and licences, against
