@@ -1918,8 +1918,8 @@ func (i *instance) finish(winner int, loser int) {
 	i.results = map[string]any{"winner": winner, "loser": loser, "name": name(winner)}
 }
 
-// Snapshot wire (#81, 100 players): every remote aircraft is a fixed 35-byte
-// binary pose record — CBOR maps with string keys cost ~300 B per player and
+// Snapshot wire (#81, 100 players): every remote aircraft is a fixed
+// pose_record-byte binary pose record — CBOR maps with string keys cost ~300 B per player and
 // burst the QUIC datagram at three. Each recipient gets the NEAREST `near`
 // remotes every snapshot plus `roving` of the far tail round-robin (full far
 // coverage in a fraction of a second at snapshot rate); missiles are the
@@ -1930,6 +1930,11 @@ const (
 	near = 20 // rank at which a remote ENTERS the recipient's sticky near set
 	// wreck_record is the packed derelict: position, attitude, velocity, burn.
 	wreck_record = 34
+	// pose_record is the packed aircraft. The tail uint16 is the gun
+	// expenditure, which is what lets a recipient's recording say how much
+	// anyone else shot: a client can see a neighbour's trigger flag at 20 Hz
+	// but not count a 100 rounds/s belt from it (#163).
+	pose_record = 37
 	// slot_most is the highest slot the missile record can name: the shooter
 	// occupies seven bits because the eighth carries the round's kind (#27).
 	slot_most = 127
@@ -1938,10 +1943,10 @@ const (
 	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
 
-// pose packs one aircraft into the 35-byte wire record.
+// pose packs one aircraft into the pose_record-byte wire record.
 func pose(slot int, a *craft) []byte {
 	s := &a.model.State
-	b := make([]byte, 35)
+	b := make([]byte, pose_record)
 	b[0] = byte(slot)
 	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(s.Position.X)))
 	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(s.Position.Y)))
@@ -1995,6 +2000,12 @@ func pose(slot int, a *craft) []byte {
 		target = a.lock
 	}
 	b[34] = byte(a.emitter<<6) | byte(target)
+	// Cumulative rounds fired this life (#163). Cumulative rather than the
+	// belt remaining because the steps ARE the bursts and they survive
+	// sampling losslessly, and because the ammunition cheat refills the
+	// magazine — a belt reading would then run backwards. Saturates rather
+	// than wrapping: a wrapped counter reads as a burst that never happened.
+	binary.LittleEndian.PutUint16(b[35:], uint16(min(a.spent, 65535)))
 	return b
 }
 
@@ -2117,7 +2128,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			}
 			picked = append(set, far[at:stop]...)
 		}
-		blob := make([]byte, 0, (len(picked)+1)*35)
+		blob := make([]byte, 0, (len(picked)+1)*pose_record)
 		blob = append(blob, pose(self, me)...) // self first: the client's no-prediction fallback reads its own pose from the wire
 		for _, slot := range picked {
 			blob = append(blob, pose(slot, i.aircraft[slot])...)

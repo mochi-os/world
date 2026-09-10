@@ -237,8 +237,11 @@ func TestAir(t *testing.T) {
 
 // TestPair joins two players and expects each in the other's poses - also the
 // guard against snapshot datagrams outgrowing the QUIC MTU, which SendDatagram
-// drops silently. Poses ride their own datagram: 35-byte records, slot in byte
-// 0.
+// drops silently. Poses ride their own datagram: fixed-stride records, slot in
+// byte 0. The stride belongs to the game module (air's pose_record, 37 since
+// the gun expenditure joined it in #163), and the server only carries the
+// blob - so derive it from the frame rather than pinning a number here that
+// silently mis-walks the records when the game changes it.
 func TestPair(t *testing.T) {
 	s, err := sessions_create("air", "joust", "pair test", 4, nil)
 	if err != nil {
@@ -271,8 +274,12 @@ func TestPair(t *testing.T) {
 			continue
 		}
 		blob, _ := message["blob"].([]byte)
+		stride := len(blob) / 2 // this match holds exactly the two joined players
+		if stride == 0 || len(blob)%2 != 0 {
+			continue // a frame carrying one aircraft, or a partial: not the pair we are waiting for
+		}
 		slots := map[int]bool{}
-		for at := 0; at+35 <= len(blob); at += 35 {
+		for at := 0; at+stride <= len(blob); at += stride {
 			slots[int(blob[at])] = true
 		}
 		if slots[mine] && slots[theirs] {

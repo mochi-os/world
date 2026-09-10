@@ -24,7 +24,7 @@ var decoder, _ = cbor.DecOptions{DefaultMapType: reflect.TypeOf(map[string]any(n
 
 // protocol is the wire protocol version, carried in /status and welcome;
 // clients refuse politely on mismatch.
-const protocol = 2 // 2: air's 35-byte pose record — byte 34 carries the radar emitter state (#30)
+const protocol = 3 // 3: air's 37-byte pose record — the uint16 tail carries the gun expenditure (#163); 2 added byte 34, the radar emitter state (#30)
 
 func encode(message map[string]any) ([]byte, error) {
 	return cbor.Marshal(message)

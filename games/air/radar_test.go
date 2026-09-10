@@ -14,8 +14,8 @@ func TestRadarPoseWire(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 
 	fresh := pose(0, i.aircraft[0])
-	if len(fresh) != 35 {
-		t.Fatalf("pose record %d bytes, want 35", len(fresh))
+	if len(fresh) != pose_record {
+		t.Fatalf("pose record %d bytes, want %d", len(fresh), pose_record)
 	}
 	if fresh[34] != 63 {
 		t.Errorf("unreported emitter byte %d, want 63 (silent, no lock)", fresh[34])

@@ -7,6 +7,7 @@
 package air
 
 import (
+	"encoding/binary"
 	"math"
 	"os"
 	"strconv"
@@ -2217,10 +2218,10 @@ func TestSelfPoseDamage(t *testing.T) {
 	poses, _ := snapshot["poses"].(map[int]any)
 	mine, _ := poses[0].(map[string]any)
 	blob, _ := mine["blob"].([]byte)
-	if len(blob) < 35 {
-		t.Fatalf("own pose blob %d bytes, want at least one 35-byte pose", len(blob))
+	if len(blob) < pose_record {
+		t.Fatalf("own pose blob %d bytes, want at least one %d-byte pose", len(blob), pose_record)
 	}
-	self := blob[:35] // self first, by construction
+	self := blob[:pose_record] // self first, by construction
 
 	if got := float64(self[29]) / 255; got < 0.5 || got > 0.7 {
 		t.Errorf("left engine fire byte %.2f, want ~0.6", got)
@@ -2243,12 +2244,49 @@ func TestSelfPoseDamage(t *testing.T) {
 	}
 	other, _ := poses[1].(map[string]any)
 	theirs, _ := other["blob"].([]byte)
-	if len(theirs) < 34 {
+	if len(theirs) < pose_record {
 		t.Fatalf("slot 1 blob %d bytes", len(theirs))
 	}
 	if theirs[26]&32 != 0 || theirs[29] != 0 || theirs[30] != 0 || theirs[31] != 0 {
 		t.Errorf("undamaged jet's own pose reports damage: flags %08b fire %d/%d leak %d",
 			theirs[26], theirs[29], theirs[30], theirs[31])
+	}
+}
+
+// TestPoseExpenditure: the gun expenditure rides the pose (#163). Without it a
+// recipient can see a neighbour's trigger flag at 20 Hz but cannot count a
+// 100 rounds/s belt from it, so a multiplayer recording could not say whether
+// the other human fired at all - in the first human-versus-human match he
+// emptied all 578 rounds and the file showed nothing. Cumulative, so its steps
+// are the bursts and it survives the recorder's sampling losslessly.
+func TestPoseExpenditure(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	read := func(slot int) int {
+		snapshot := i.Snapshot(1)
+		poses, _ := snapshot["poses"].(map[int]any)
+		mine, _ := poses[slot].(map[string]any)
+		blob, _ := mine["blob"].([]byte)
+		if len(blob) < pose_record {
+			t.Fatalf("slot %d pose blob %d bytes, want %d", slot, len(blob), pose_record)
+		}
+		return int(binary.LittleEndian.Uint16(blob[35:])) // self first, by construction
+	}
+	if got := read(0); got != 0 {
+		t.Fatalf("a fresh life reports %d rounds fired, want 0", got)
+	}
+	i.aircraft[0].spent = 578 // the whole M61 magazine, the case the first human match produced
+	if got := read(0); got != 578 {
+		t.Errorf("pose reports %d rounds fired, want 578", got)
+	}
+	if got := read(1); got != 0 {
+		t.Errorf("the other jet's expenditure reads %d, want 0 - the counter is per aircraft", got)
+	}
+
+	// Saturates rather than wrapping: a wrapped counter reads as a burst that
+	// never happened, which is worse than a pinned one.
+	i.aircraft[0].spent = 70000
+	if got := read(0); got != 65535 {
+		t.Errorf("expenditure past the wire's range reports %d, want it pinned at 65535", got)
 	}
 }
 
