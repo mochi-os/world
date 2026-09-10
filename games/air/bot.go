@@ -33,7 +33,7 @@ type skill struct {
 	trigger    float64 // the shot's PRICE (#235): the minimum walk-through chance this pilot fires a burst at. Low is loose — the novice hoses at 2%, which is authentic; the pilot is disciplined but under-confident at 12%; the top tiers deliberately take the calculated snapshot (6% / 3%) because against a manoeuvring target the converged solution never comes and expected damage beats expected nothing. (Kept from #215: this axis is DECOUPLED from wander — precision and willingness were once one number and lethality ran backwards up the ladder.)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
-	cap        float64 // how much of the wing this tier will command: g <= cap * (speed/stall)^2. Above 1 the demand rides the alpha limiter when a play asks for it - the slow fight - while near the stall it still tapers to a departure guard; below 1 the tier can never reach the limiter and fights fast forever. 0 = no cap, it pulls what it asks for and gets slow without noticing - the rookie's flaw, kept authentic like its missing floor
+	cap        float64 // how much of the wing this tier will command: g <= cap * (speed/stall)^2. Below 1 the tier never reaches the alpha limiter and has no slow fight; at or above 1 it does, and the doctrine battery's energy gates fail (see capped). 0 = no cap, it pulls what it asks for and gets slow without noticing - the rookie's flaw, kept authentic like its missing floor
 	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the pilot half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
@@ -85,8 +85,8 @@ type skill struct {
 // beyond this table.
 var skills = map[string]skill{
 	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.5, energy: 0.5},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 1.5, energy: 1, geometry: 1},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1},
 	// The superhuman IS the ace with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the ace's 600 and 0.06; neither is a human limit (one is gun
@@ -97,25 +97,28 @@ var skills = map[string]skill{
 	// machine flag. commit stays ace-grade too: strategy re-judged at 1.6 s
 	// like the ace, because a half-second commit just flipped between
 	// near-tied lines and finished none of them.
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 1.5, energy: 1, geometry: 1, machine: true},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true},
 }
 
 // capped is the aero cap applied to a commanded g: never far past what the
 // wing gives at this speed, or a full pull at the stall rides the alpha
 // limiter with crossed controls and departs. How far past is the tier's own,
-// and the coefficient decides whether the tier has a slow fight at all. A cap
-// under 1 can never reach the limiter: the wing's g at 240 kt is 3.7, 85% of
-// it is the 25-degree regime, thrust beats drag there in burner, and the jet
-// accelerates back to 350 kt every time it relaxes - measured as 0.1% of a
-// fight above 20 degrees alpha and a 120-second stalemate against any slow
-// opponent, whatever the play catalogue did. At 1.5 a play that asks for
-// more than the wing has pins the limiter and gets the 35-degree fight, while
-// the taper still refuses a full pull near the stall (1.5 g at the stall,
-// 2.2 g at 1.2 stall), which is where the uncapped superhuman departed. The
-// novice has no cap at all and pulls what it asks for, getting slow without
-// noticing - which is the rookie's flaw, and stays authentic like its missing
-// energy floor. Below the cap's floor of 1.1 g nothing is taken away: a jet
-// must always be able to hold level flight and a little more.
+// and the coefficient decides whether the tier has a slow fight at all. Under
+// 1 the demand never reaches the limiter: the wing's g at 240 kt is 3.7, 85%
+// of it is the 25-degree regime, thrust beats drag there in burner, and the
+// jet accelerates back to 350 kt every time it relaxes - measured as 0.1% of
+// a fight above 20 degrees alpha against a slow opponent. At 1.5 the ace
+// fought at 280 kt and 45% alpha and the doctrine battery lost seven gates:
+// the perch donated, the jet lingered beneath it, the ace was tracked under
+// pressure, the superhuman fell below the ace on guns and BVR, and the pilot
+// out-gunned the ace against a jinker; 1.2 and a cap lifted only inside the
+// close fight failed the same gates. The energy doctrine those gates guard
+// and the slow fight are in tension at this one number, and the number stays
+// where the gates are green. The novice has no cap at all and pulls what it
+// asks for, getting slow without noticing - the rookie's flaw, kept authentic
+// like its missing energy floor. Below the cap's floor of 1.1 g nothing is
+// taken away: a jet must always be able to hold level flight and a little
+// more.
 func (s skill) capped(g, speed, stall float64) float64 {
 	if s.cap <= 0 {
 		return g

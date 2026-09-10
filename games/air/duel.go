@@ -209,7 +209,15 @@ var plays = []play{
 		if m.me.Velocity.Y > 0 {
 			apex += m.me.Velocity.Y * m.me.Velocity.Y / (2 * 9.81)
 		}
-		if climbing && m.closure > 30 && apex < 450 && speed > m.pace*0.6 {
+		// The pull starts on an overshoot threat: closing on a target more
+		// than sixty degrees off its tail. A tail chase closing at forty is a
+		// shot forming, not a threat, and closure alone would climb out of it.
+		aspect := 0.0
+		if his := m.velocity.Length(); his > 1 {
+			aspect = m.velocity.Scale(1 / his).Dot(m.direction)
+		}
+		threat := m.closure > 40 && aspect < 0.5
+		if climbing && threat && apex < 450 && speed > m.pace*0.6 {
 			o := order{aim: m.aloft(m.lag().Add(flight.Vec3{Y: 450})), g: m.pull * 0.85, throttle: 0.9}
 			if m.closure > 90 {
 				o.brake = 1
@@ -626,6 +634,21 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
 	// for the top tiers, enough for a reversal's payoff to show through the
 	// point-progress term without quadrupling the rehearsal budget.
+	// The horizon must outlive the manoeuvres it judges — in REAL seconds,
+	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
+	// for the top tiers, enough for a reversal's payoff to show through the
+	// point-progress term without quadrupling the rehearsal budget. One
+	// window per candidate, each play on its own span: judging every rival
+	// over the LONGEST span on offer (so a yo-yo and the pursuit it competes
+	// with are compared alike, #169/#174) fixed the yo-yo's dominance - its
+	// share of a slow fight fell from 57% to 18-36%, the ace's heater arm
+	// against the hornet went 9/4 to 14/0, and the #107 anchor's pilot and
+	// superhuman rows rose to 11/4 and 16/0 - but it cost the BVR rung the
+	// gates exist to hold: the wide missile ladder read superhuman 19-29
+	// against the ace where per-play windows read 18-21, and narrowing the
+	// common window to 1,200 m passed the ladder while giving the anchor gain
+	// back (9/6, 13/2). Measured three ways and declined; the asymmetry it
+	// closes is real and wants a scorer that prices it, not a longer look.
 	base := 60*2 + 30*b.skill.library
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
 	for _, p := range plays {

@@ -704,6 +704,10 @@ func TestBvrJoust(t *testing.T) {
 // TestSpaced (#32): spaced open respawns re-enter half the separation from
 // the fight's centre of mass, approaching it; anchored team spawns hold each
 // side at its own anchor, the full separation from the other's.
+// TestSpaced: the anchored-sides rule, and what an open match does instead of
+// it. The flag once spaced open re-entries at half the derived separation;
+// arrivals there are now placed clear of the fight (spawn_test.go covers the
+// placement itself, this covers the real Join path and the teams anchors).
 func TestSpaced(t *testing.T) {
 	made, err := (&Air{}).Create(game.Session{Mode: "furball", Seed: 7, Parameters: map[string]any{"missiles": true, "spaced": true}})
 	if err != nil {
@@ -716,15 +720,20 @@ func TestSpaced(t *testing.T) {
 	if _, err := i.Join(game.Player{Name: "two", Slot: 1}); err != nil {
 		t.Fatalf("join: %v", err)
 	}
-	// The second joiner spaces off the first: half the separation away,
-	// pointed back at the fight.
+	// "spaced" is a TEAMS rule now: it anchors the two walls, and an open
+	// match ignores it, because every arrival there is placed clear of the
+	// fight and pointed at it whether the flag is set or not. The second
+	// joiner therefore enters at the gun clearance, not the half-separation
+	// this once asserted - close enough that the fight is a turn away, far
+	// enough that nobody arrives inside a pipper.
 	a, b := i.aircraft[0], i.aircraft[1]
-	if d := i.span(a.model, b.model); math.Abs(d-separation()/2) > 2000 {
-		t.Fatalf("spaced join entered %.0f m out, want ~%.0f", d, separation()/2)
+	d := i.span(a.model, b.model)
+	if d < clearance || d > 4*clearance {
+		t.Fatalf("the second joiner entered %.0f m from the first, want between %.0f and %.0f", d, clearance, 4*clearance)
 	}
 	sight, _ := i.bearing(b.model.State.Position, a.model.State.Position)
 	if sight.Dot(b.model.State.Attitude.Rotate(flight.Vec3{X: 1})) < 0.9 {
-		t.Fatalf("the spaced entry does not approach the fight")
+		t.Fatalf("the entry does not approach the fight")
 	}
 
 	teams, err := (&Air{}).Create(game.Session{Mode: "teams", Seed: 7, Parameters: map[string]any{"missiles": true, "spaced": true}})

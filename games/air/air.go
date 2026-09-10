@@ -33,6 +33,12 @@ import (
 const (
 	altitude = 4572 // 15,000 ft — the merge altitude
 	ring     = 2778 // spawn radius (1.5 NM)
+	// clearance is how far a jet entering an open match is placed from the
+	// nearest jet already fighting: past the gun's reach, so nobody arrives
+	// inside somebody's pipper, and no further, so the fight is a turn away
+	// rather than a transit. A gun solution lives inside 900 m; 2 km is four
+	// seconds of closure at merge speed, which is the look and the roll.
+	clearance = 2000.0
 	// The bots' world is SEA LEVEL ONLY, deliberately (2026-07-29). flight.World
 	// carries Fields (island height, coast outline, paved strips) and a Carrier,
 	// and none of it is populated here: every bot flies against a flat sea.
@@ -163,8 +169,8 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 	if start, _ := session.Parameters["start"].(string); start == "bvr" && mode == "joust" {
 		i.apart = separation() // the BVR joust (#32): the pair opens the full derived distance apart
 	}
-	if spaced, _ := session.Parameters["spaced"].(bool); spaced && mode != "joust" {
-		i.apart = separation() // spaced/anchored spawns (#32): open respawns at half this, team anchors the full width
+	if spaced, _ := session.Parameters["spaced"].(bool); spaced && mode == "teams" {
+		i.apart = separation() // anchored sides (#32): each team's wall at its own anchor, the full width apart
 	}
 	if cheats, found := session.Parameters["cheats"].(map[string]any); found {
 		i.cheat.invulnerable, _ = cheats["invulnerable"].(bool)
@@ -615,6 +621,89 @@ func (i *instance) spawn(slot int, m *flight.Model, team string) {
 	m.State = flight.Level(m, position, inward, speed, i.tank)
 }
 
+// enter places a jet ARRIVING at a fight already under way - a player joining
+// mid-match, or a life after a death - as against spawn(), which lays out the
+// start of a match. In an open match an arrival is placed clear of everyone's
+// guns and pointed at the fight: spawn's ring is drawn round the world's
+// centre, so as a furball drifts it drops a re-entry inside somebody's pipper
+// or a minute's transit away, whichever the wandering happens to give. The
+// separated shapes and the team walls keep their own geometry, which is the
+// match's shape rather than a re-entry.
+func (i *instance) enter(slot int, m *flight.Model, team string) {
+	if team == "" && i.mode != "joust" {
+		if position, facing, found := i.clearing(slot); found {
+			m.State = flight.Level(m, position, facing, speed, i.tank)
+			return
+		}
+	}
+	i.spawn(slot, m, team)
+}
+
+// clearing places an open-match arrival outside everyone's gun reach and
+// reports whether it found one: candidate bearings on the golden angle round
+// the fight's centre of mass, the merge ring first and further out if the
+// inner one is crowded, taking the first that stands `clearance` from every
+// living jet and the roomiest tried if none does. The nose points at the
+// fight, so a life begins with a look and a turn in, never in a pipper. An
+// empty room has nothing to clear and the caller's merge ring stands.
+func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
+	// slots(), not a bare range, and for the same reason bvr() uses it (#133):
+	// floating-point addition is not associative, so a randomised map order
+	// would move the spawn - and the whole fight after it - between runs.
+	centre, count := flight.Vec3{}, 0
+	for _, other := range i.slots() {
+		b := i.aircraft[other]
+		if other == slot || b == nil || !b.alive || b.model == nil {
+			continue
+		}
+		centre = centre.Add(b.model.State.Position)
+		count++
+	}
+	if count == 0 {
+		return flight.Vec3{}, flight.Vec3{}, false
+	}
+	centre = centre.Scale(1 / float64(count))
+	nearest := func(at flight.Vec3) float64 {
+		least := math.MaxFloat64
+		for _, other := range i.slots() {
+			b := i.aircraft[other]
+			if other == slot || b == nil || !b.alive || b.model == nil {
+				continue
+			}
+			if span := shortest(at, b.model.State.Position, i.environment.Wrap).Length(); span < least {
+				least = span
+			}
+		}
+		return least
+	}
+	best, room := flight.Vec3{}, -1.0
+	for step := 0; step < 24; step++ {
+		// The golden angle spreads the candidates, and the slot's own offset
+		// spreads two players re-entering on the same tick.
+		angle := float64(slot+step) * 2.399963
+		at := flight.Vec3{X: centre.X, Y: altitude, Z: centre.Z}
+		radius := ring + float64(step/8)*clearance
+		at.X += math.Cos(angle) * radius
+		at.Z += math.Sin(angle) * radius
+		if i.environment.Wrap > 0 {
+			at.X = flight.Shortest(0, at.X, i.environment.Wrap)
+			at.Z = flight.Shortest(0, at.Z, i.environment.Wrap)
+		}
+		if space := nearest(at); space > room {
+			best, room = at, space
+		}
+		if room >= clearance {
+			break
+		}
+	}
+	facing := shortest(best, centre, i.environment.Wrap)
+	facing.Y = 0
+	if facing.Length() < 1 {
+		facing = flight.Vec3{X: 1}
+	}
+	return best, facing.Normalize(), true
+}
+
 // bvr places a spawn for the separated match shapes (#32) and reports
 // whether it did: the joust pair head-on across the full derived separation;
 // anchored team walls, each side line abreast at its own anchor facing the
@@ -769,7 +858,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 	}
 	m := flight.New(airframe, i.environment, flight.World{Sea: sea})
-	i.spawn(player.Slot, m, team)
+	i.enter(player.Slot, m, team)
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
 	// told about; the client's persisted choice is never echoed back.
@@ -1047,7 +1136,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
 					a.model = flight.New(respawned, i.environment, flight.World{Sea: sea})
 				}
-				i.spawn(slot, a.model, a.team)
+				i.enter(slot, a.model, a.team)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
 				a.rearm() // full grant again, tanks refilled — every spawn is a fresh request/clamp cycle (#17)

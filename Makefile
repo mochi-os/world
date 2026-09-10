@@ -100,6 +100,14 @@ docker-scan: docker-local
 test-doctrine:
 	AIR_DOCTRINE=1 go test -timeout 120m ./games/air/
 
+# The five gates that turned red first when the aero cap moved (2026-09-10):
+# the prey era, the two-way guns ladder, gunnery against evasion, the
+# conceded-height exposure and the Nash defection - nine minutes against the
+# battery's eighty. Run after every doctrine edit and before any ruling is put
+# to the user; the full battery stays the commit gate.
+test-doctrine-quick:
+	AIR_DOCTRINE=1 go test -timeout 40m -run 'TestDoctrineUnderHumanPressure$$|TestLadderDuel$$|TestJink$$|TestPounceExposure$$|TestSpiralDefection$$' ./games/air/
+
 # Race detection. games/air runs ~257 s uninstrumented, so it overruns the 600 s
 # default under -race and the largest package in the tree never got race
 # coverage at all. -short skips the envelope sweeps; the timeout covers the
