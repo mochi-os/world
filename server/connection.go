@@ -229,7 +229,22 @@ func connection_inputs(message map[string]any) []game.Input {
 		if !found {
 			continue
 		}
-		inputs = append(inputs, game.Input{Sequence: uint32(number(data, "sequence")), Data: data})
+		// The client's own step count for this sample (#176). ABSENT is not
+		// zero: a client that never sends the field predates it, and every one
+		// of its samples was worth a tick, so it reads as one. Clamped because
+		// the wire promises nothing - a hostile client asking for a hundred
+		// steps would be asking for a hundred ticks of physics from one sample.
+		steps := substeps // a whole tick: what every sample was worth before the field existed
+		if _, sent := data["steps"]; sent {
+			steps = int(number(data, "steps"))
+			if steps < 0 {
+				steps = 0
+			}
+			if steps > 30 {
+				steps = 30 // the same cap the client's own core applies to a tab-throttle spiral
+			}
+		}
+		inputs = append(inputs, game.Input{Sequence: uint32(number(data, "sequence")), Steps: steps, Data: data})
 	}
 	return inputs
 }

@@ -64,9 +64,8 @@ func session_run(s *session, g game.Game) {
 				session_orders(s)
 				gathered := map[int][]game.Input{}
 				for slot, p := range s.players {
-					if len(p.queue) > 0 {
-						gathered[slot] = p.queue
-						p.queue = nil
+					if taken := player_drain(p); len(taken) > 0 {
+						gathered[slot] = taken
 					}
 				}
 				s.tick++
@@ -139,10 +138,15 @@ func session_orders(s *session) {
 				if p := session_owner(s, o); p != nil {
 					p.seen = time.Now()
 					for _, in := range o.inputs {
-						if after(in.Sequence, p.sequence) || len(p.queue) == 0 {
+						// The duplicate test reads the RECEIVED high-water mark;
+						// p.sequence now means APPLIED and is advanced by the
+						// drain below (#176). The batch re-sends the last few
+						// samples for loss tolerance, so this is what keeps a
+						// resend from being flown twice.
+						if after(in.Sequence, p.received) || len(p.queue) == 0 {
 							p.queue = append(p.queue, in)
-							if after(in.Sequence, p.sequence) {
-								p.sequence = in.Sequence
+							if after(in.Sequence, p.received) {
+								p.received = in.Sequence
 							}
 						}
 					}
@@ -395,4 +399,52 @@ func session_close(s *session, reason string) {
 		closer.Close()
 	}
 	session_end(s, reason)
+}
+
+// substeps is how many fixed model steps make one server tick. The flight core
+// integrates at 240 Hz and the games step it four times per 60 Hz tick, which
+// is also what the client's own step counter counts - so a sample's Steps is
+// in these units, not in ticks (#176).
+const substeps = 4
+
+// player_drain spends one tick of world time on the player's queued input, and
+// returns the samples that become the game's this tick (#176).
+//
+// The client integrates each control sample for a whole number of fixed steps
+// and records that count against its prediction ring. The server flies it for
+// the same number, so the state a snapshot acknowledges is the state the
+// prediction actually reached. Before this every queued sample landed in one
+// tick and all but the last were flown for zero, and the client reconciled
+// that travel away as if it were a prediction error - 23.8-38.8 m per frame at
+// 583 kt on the live server.
+//
+// The budget is carried in SUB-steps, not ticks, because a sample worth two of
+// them is worth half a tick and the remainder has to survive to the next one.
+// p.sequence is what the snapshot acknowledges, so it advances here, on
+// application, and never at receive time.
+func player_drain(p *player) []game.Input {
+	taken := []game.Input{}
+	for p.credit < substeps && len(p.queue) > 0 {
+		in := p.queue[0]
+		p.queue = p.queue[1:]
+		taken = append(taken, in)
+		p.sequence = in.Sequence // APPLIED, and it is this the snapshot acknowledges
+		p.credit += in.Steps
+		// A sample worth no steps is acknowledged for its edges and costs
+		// nothing: no time passed on the client, so none passes here.
+	}
+	if p.credit >= substeps {
+		p.credit -= substeps
+	} else {
+		p.credit = 0 // nothing queued to cover this tick: do not bank a debt
+	}
+	// A backlog after a stall is caught up rather than metered out, which would
+	// trail the player by the depth of the queue. The counts still decide the
+	// order and the acknowledgement; only the catch-up is immediate.
+	if len(p.queue) > 8 {
+		taken = append(taken, p.queue...)
+		p.sequence = p.queue[len(p.queue)-1].Sequence
+		p.queue, p.credit = nil, 0
+	}
+	return taken
 }

@@ -27,8 +27,10 @@ func games_register(g game.Game) { games[g.Name()] = g }
 type player struct {
 	game.Player
 	link     link         // nil once disconnected
-	sequence uint32       // highest input sequence applied (acknowledged in snapshots)
+	sequence uint32       // highest input sequence APPLIED (acknowledged in snapshots)
+	received uint32       // highest input sequence RECEIVED, for the duplicate test (#176): the two used to be one field, so a sample was acknowledged the instant it arrived and the client reconciled against a state the server had not yet stepped it into
 	queue    []game.Input // inputs since the last step
+	credit   int          // fixed sub-steps already bought by samples applied (#176), carried between ticks: a sample worth two of the four in a tick cannot be rounded away
 	seen     time.Time    // last input received — the application-level liveness signal
 	talked   []time.Time  // recent chat sends (#84): the flood limiter's window
 }
