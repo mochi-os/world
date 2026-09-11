@@ -71,7 +71,25 @@ func main() {
 		fmt.Println("no session id in response")
 		return
 	}
-	fmt.Printf("match %s at %s — connecting %d clients\n", created.Session, created.Address, *clients)
+	// The wire version comes from the server, as a real client's does (#184).
+	// This tool used to carry its own copy of the number, which silently went
+	// stale the first time the record changed and left the load harness unable
+	// to join at all - a duplicated constant nobody re-reads.
+	speaks := 0
+	if answer, err := insecure.Get(*lobby + "/status"); err == nil {
+		var status struct {
+			Protocol int `json:"protocol"`
+		}
+		json.NewDecoder(answer.Body).Decode(&status)
+		answer.Body.Close()
+		speaks = status.Protocol
+	}
+	if speaks == 0 {
+		fmt.Println("no protocol version in /status: the server is too old to say, and guessing one only produces refusals")
+		return
+	}
+
+	fmt.Printf("match %s at %s — connecting %d clients on protocol %d\n", created.Session, created.Address, *clients, speaks)
 
 	measure_from := time.Now().Add(*warmup)
 	stop_at := measure_from.Add(*duration)
@@ -83,7 +101,7 @@ func main() {
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			run_client(id, created.Session, created.Address, &stats[id], measure_from, stop_at, &connected)
+			run_client(id, created.Session, created.Address, speaks, &stats[id], measure_from, stop_at, &connected)
 		}(c)
 		time.Sleep(3 * time.Millisecond) // stagger joins so it isn't a thundering herd
 	}
@@ -92,7 +110,7 @@ func main() {
 	report(stats, *duration)
 }
 
-func run_client(id int, session, address string, st *stat, measure_from, stop_at time.Time, connected *int64) {
+func run_client(id int, session, address string, speaks int, st *stat, measure_from, stop_at time.Time, connected *int64) {
 	d := webtransport.Dialer{TLSClientConfig: &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -106,7 +124,7 @@ func run_client(id int, session, address string, st *stat, measure_from, stop_at
 		return
 	}
 	// framed join
-	join, _ := cbor.Marshal(map[string]any{"kind": "join", "session": session, "name": fmt.Sprintf("load%03d", id), "protocol": 2})
+	join, _ := cbor.Marshal(map[string]any{"kind": "join", "session": session, "name": fmt.Sprintf("load%03d", id), "protocol": speaks})
 	head := make([]byte, 4)
 	binary.BigEndian.PutUint32(head, uint32(len(join)))
 	stream.Write(head)
