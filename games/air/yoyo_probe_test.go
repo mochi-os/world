@@ -63,7 +63,7 @@ func TestHighYoyoCompletes(t *testing.T) {
 		var trail []string // the episode's play and rise, sampled twice a second, for the trace
 		pulling := false   // in the yo-yo's first phase last tick: a climb starts when this turns true
 		for tick := uint64(0); tick < 120*60; tick++ {
-			i.Step(tick, map[int][]game.Input{0: {{Data: pilot.fly(me, foe, tick)}}})
+			i.Step(tick, map[int][]game.Input{0: {{Data: pilot.fly(me, foe, inbound(i, 0), tick)}}})
 			if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
 				break
 			}

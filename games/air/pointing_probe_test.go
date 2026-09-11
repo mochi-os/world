@@ -204,7 +204,7 @@ type mush struct {
 // lose to. When armed it also SHOOTS, because a mush that holds fire measures
 // only whether the bot can kill a punchbag; the fights being explained are
 // ones the human won.
-func (m *mush) fly(me, foe *flight.State, tick uint64) map[string]any {
+func (m *mush) fly(me, foe *flight.State, _ []threat, tick uint64) map[string]any { // the mush does not defend: it is the fixed-doctrine yardstick, and #177 measures conversion against it
 	toward := foe.Position.Subtract(me.Position)
 	span := toward.Length()
 	if span < 1 {
@@ -249,9 +249,30 @@ func (m *mush) fly(me, foe *flight.State, tick uint64) map[string]any {
 
 func (m *mush) spent() (int, int) { return m.fired, m.flared }
 
+// threat is an inbound round as the PILOT can see it: a smoke trail with a
+// position and a velocity. Deliberately NOT the seeker's state - a pilot
+// cannot know whether the thing still has lock, only whether it is still
+// coming at him - so a script that defends on this is defending on what a
+// human had (#168).
+type threat struct {
+	position flight.Vec3
+	velocity flight.Vec3
+}
+
+// inbound collects the rounds flying at one seat, for the scripts to defend on.
+func inbound(i *instance, seat int) []threat {
+	var out []threat
+	for _, m := range i.flying {
+		if m.target == seat {
+			out = append(out, threat{position: m.position, velocity: m.velocity})
+		}
+	}
+	return out
+}
+
 // flyer is a scripted opponent: what it flies this tick, and what it has spent.
 type flyer interface {
-	fly(me, foe *flight.State, tick uint64) map[string]any
+	fly(me, foe *flight.State, threats []threat, tick uint64) map[string]any
 	spent() (fired, flared int)
 }
 
@@ -271,11 +292,13 @@ type hornet struct {
 	rested    uint64
 	fired     int
 	flared    int
+	beam      flight.Vec3 // the break being flown, latched (#168)
+	until     uint64      // and the tick it may be re-picked at
 }
 
 func (h *hornet) spent() (int, int) { return h.fired, h.flared }
 
-func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
+func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	span := toward.Length()
 	if span < 1 {
@@ -285,8 +308,70 @@ func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
 	axis := me.Attitude.Rotate(flight.Vec3{X: 1})
 	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
+	// THE BREAK (#168). The live pilot beat a heater pair with the break alone
+	// and never touched a flare; this script could not, because it could not
+	// see a missile at all - and its one-circle doctrine turns it TOWARD the
+	// shooter, which is the aspect a seeker most wants. Put the round on the
+	// 3/9 line instead: the beam is where the line-of-sight rate is highest
+	// and the gimbal runs out. The beam direction is the component of the
+	// current flight path perpendicular to the round, so the turn taken is
+	// always the shorter one, and it becomes the thing the jet flies at -
+	// every law below (lift vector onto it, pull by how far off it is, the
+	// alpha ceiling) then applies unchanged.
+	breaking := false
+	if nearest, span := (*threat)(nil), math.Inf(1); true {
+		for k := range threats {
+			line := threats[k].position.Subtract(me.Position)
+			d := line.Length()
+			// Closing only: a round that has already gone past is not a threat,
+			// and turning into it would be the error the break exists to avoid.
+			if d < span && d < 4000 && threats[k].velocity.Subtract(me.Velocity).Dot(line) < 0 {
+				nearest, span = &threats[k], d
+			}
+		}
+		if nearest != nil {
+			// COMMITTED, like the plays the bot itself commits to. A round
+			// passing close swings its bearing through ninety degrees in under
+			// a second, so a beam recomputed every tick is a target that spins
+			// - the jet chases it, and that chatter departs the airframe
+			// exactly as the lift-vector chatter did before it (the pilot arm
+			// peaked at 99.7 degrees the first time this was flown uncommitted).
+			// A pilot picks a direction and holds it until the thing is past.
+			if tick >= h.until || h.beam.Length() < 0.5 {
+				toward := nearest.position.Subtract(me.Position).Normalize()
+				if flightPath := me.Velocity; flightPath.Length() > 1 {
+					v := flightPath.Normalize()
+					beam := v.Subtract(toward.Scale(v.Dot(toward)))
+					if beam.Length() <= 1e-3 {
+						// Dead on the nose (or dead astern): no beam is defined,
+						// and flying the degenerate zero would be flying at it.
+						// A pilot picks a side; take the wing line.
+						beam = me.Attitude.Rotate(flight.Vec3{Z: 1})
+					}
+					if beam.Length() > 1e-3 {
+						h.beam, h.until = beam.Normalize(), tick+90 // a second and a half of committed break
+					}
+				}
+			}
+			if h.beam.Length() > 0.5 {
+				want, breaking = h.beam, true
+			}
+		} else {
+			h.beam = flight.Vec3{} // nothing inbound: the next round gets a fresh decision
+		}
+	}
 	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
 	speed := me.Velocity.Length()
+	// The wind in body axes gives alpha: X forward, Y up. Read once, used by the
+	// regain trigger, the roll fade and the pull ceiling below. Past about eighty
+	// degrees the forward component vanishes, and reading a bare zero there would
+	// RELEASE every limit at the one attitude that most needs them - the ceiling
+	// switching off the moment the jet departs is how a tumble sustains itself.
+	// No forward wind means the wing is not flying: treat it as past everything.
+	riding := 90.0
+	if body := me.Attitude.Unrotate(me.Velocity); body.X > 1 {
+		riding = math.Atan2(-body.Y, body.X) * 180 / math.Pi
+	}
 	// BFM, not proportional pursuit: roll the lift vector onto him wherever
 	// he is round the nose - atan2 covers the full circle, so a bandit below
 	// the nose is a roll-and-pull, never a push - and pull in proportion to
@@ -309,7 +394,7 @@ func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
 	// now - lift vector across to his side, the whole pull - and let pursuit
 	// carry the turn once he is off the nose. Toward is the one-circle, and
 	// the slow fighter wants the one-circle.
-	if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); angle < 25 && span < 2600 && closing > 120 {
+	if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); !breaking && angle < 25 && span < 2600 && closing > 120 {
 		side := want.Dot(right)
 		if math.Abs(side) < 0.05 {
 			side = 1 // dead ahead: any side, but pick one
@@ -322,9 +407,16 @@ func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
 	// and the band is bought back in burner before the fight resumes. With
 	// hysteresis so it does not flutter at the floor.
 	const floor, band = 115.0, 170.0 // 224 kt and 330 kt: the recording's mean of 290 sits between them
-	if speed < floor {
+	// Speed ALONE is too late a trigger. A jet decelerating out of a manoeuvre
+	// arrives at the floor already deep in alpha, and from there a nose-down
+	// command at 1 g cannot arrest it: the guns arm's seed 1 was at 40 degrees
+	// and 211 kt when the floor fired, pushed to a commanded -0.40, and went
+	// 47, 54, 65, 77 regardless - a tail-slide with the stick forward. Alpha
+	// is the earlier signal, and the recording's pilot peaked at 34.2: past
+	// thirty the unload starts whatever the speed says.
+	if speed < floor || riding > 32 {
 		h.regaining = true
-	} else if speed > band {
+	} else if speed > band && riding < 20 {
 		h.regaining = false
 	}
 	if h.regaining {
@@ -343,12 +435,21 @@ func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
 	// heater arm, peak 103 degrees): above 30 degrees the roll is unloaded to
 	// a nudge and the pull does the turning.
 	roll *= clamp((speed-60)/100, 0.15, 1)
-	{
-		body := me.Attitude.Unrotate(me.Velocity) // the wind in body axes: X forward, Y up
-		if body.X > 1 {
-			alpha := math.Atan2(-body.Y, body.X) * 180 / math.Pi
-			roll *= clamp((36-alpha)/8, 0.1, 1)
-		}
+	roll *= clamp((36-riding)/8, 0.1, 1)
+	// And the PULL, which that fix left unbounded. Scheduling the stick on
+	// speed alone cannot catch a runaway, because the jet is still fast when
+	// the alpha departs: at a 45 m pass the target swings from 40 to 120
+	// degrees off the nose in three quarters of a second, the angle term asks
+	// for everything, and three quarters of the stick at 247 kt tumbled the
+	// jet through 46, 55, 68 to 86 degrees alpha before the 224 kt floor could
+	// fire (seed 16 of the heater arm, t=49.5-52.0; seed 11 the same at 101
+	// degrees). A departed opponent is not a yardstick - it is killed for
+	// free, and the ace's 15/16 was partly that. The recording's pilot peaked
+	// at 34.2 degrees and never rode the limiter, so the stick eases toward
+	// it. Positive pull only: the regain's nose-down must not be weakened by
+	// the very alpha it exists to unload.
+	if pitch > 0 {
+		pitch *= clamp((44-riding)/10, 0.08, 1)
 	}
 	if me.Position.Y < 2500 { // the one concession: do not fly into the sea - with the pull the speed allows
 		pitch = math.Max(pitch, math.Min(0.35, limit))
@@ -357,12 +458,20 @@ func (h *hornet) fly(me, foe *flight.State, tick uint64) map[string]any {
 	if !h.armed {
 		return data
 	}
-	if span < 3500 && tick%45 == 0 {
+	// Flares go out at a ROUND, not on a timer. The old cadence burned one
+	// every 0.75 s whenever the bandit was inside 3.5 km - about a thousand a
+	// sweep - where the pilot this script stands in for dispensed ZERO in the
+	// whole fight and still beat the pair thrown at him. He was not disciplined
+	// so much as unthreatened: the rounds went ballistic 175 m away. Now that
+	// the script can see what is actually inbound (#168) it can do what he did.
+	if breaking && tick%30 == 0 {
 		data["flare"] = true
 		h.flared++
 	}
-	data["fire"] = angle < 4 && span < 900
-	if angle < 12 && span > 600 && span < 2500 && tick-h.rested > 120 {
+	// Defending is not shooting: the recording's pilot took his shots at 73.5
+	// and 77.0 s, long after the pair at 8.3 s had gone by.
+	data["fire"] = !breaking && angle < 4 && span < 900
+	if !breaking && angle < 12 && span > 600 && span < 2500 && tick-h.rested > 120 {
 		data["missile"] = true
 		h.rested = tick
 		h.fired++
@@ -444,14 +553,24 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 		}
 		trace := os.Getenv("AIR_TRACE") != "" && seed == traced // one seed (AIR_TRACE_SEED, default 1), the opponent's seat, twice a second: what the script commanded and what the jet did
 		peakHis := 0.0                                          // the opponent's peak alpha this seed: a scripted human that departs is the script's defect, and this says which seed to trace
+		rack := i.aircraft[bot].brain.missiles                  // the magazine, so the trace can stop on the event it exists to explain (#168): a launch
 		for tick := uint64(0); tick < uint64(seconds*60); tick++ {
-			data := pilot.fly(me, &i.aircraft[bot].model.State, tick)
-			if trace && tick%15 == 0 && (tick < 15*60 || i.aircraft[0].model.Alpha() > 0.8) {
+			data := pilot.fly(me, &i.aircraft[bot].model.State, inbound(i, 0), tick)
+			// A launch is printed WHENEVER it happens, not only inside the
+			// opening window: the shot's range and aspect are the whole
+			// question when a harness kill is compared with a live one (#168).
+			shot := i.aircraft[bot].brain.missiles < rack
+			rack = i.aircraft[bot].brain.missiles
+			if trace && (shot || (tick%15 == 0 && (tick < 15*60 || i.aircraft[0].model.Alpha() > 0.8))) {
 				foe := &i.aircraft[bot].model.State
 				line := foe.Position.Subtract(me.Position)
 				off := math.Acos(clamp(me.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize()), -1, 1)) * 180 / math.Pi
 				his := math.Acos(clamp(foe.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize().Scale(-1)), -1, 1)) * 180 / math.Pi
-				fmt.Printf("    t=%5.2f range %5.0f | him: off %5.1f %3.0f kt alpha %5.1f g %4.1f pitch %5.2f roll %5.2f | bot: off %5.1f %3.0f kt alpha %4.1f %-7s msl %d\n",
+				mark := " "
+				if shot {
+					mark = "*" // a round left the rail on this tick
+				}
+				fmt.Printf("   %st=%5.2f range %5.0f | him: off %5.1f %3.0f kt alpha %5.1f g %4.1f pitch %5.2f roll %5.2f | bot: off %5.1f %3.0f kt alpha %4.1f %-7s msl %d\n", mark,
 					float64(tick)/60, line.Length(), off, me.Velocity.Length()*1.944, i.aircraft[0].model.Alpha()*180/math.Pi,
 					i.aircraft[0].model.Nz(), data["pitch"], data["roll"],
 					his, foe.Velocity.Length()*1.944, i.aircraft[bot].model.Alpha()*180/math.Pi, i.aircraft[bot].brain.play, i.aircraft[bot].brain.missiles)
@@ -639,6 +758,13 @@ func TestTierAgainstTheHornet(t *testing.T) {
 		} {
 			b := sweep(t, level, mode, opponent.make, missiles, opponent.entry, 16, 120)
 			fmt.Println(report(opponent.name, level, b))
+			if opponent.name == "hornet" && b.peak[1] > 50 {
+				// Every tier's arm, not just the ace's (#168). The script is the
+				// same script on all four, so a departure anywhere is the
+				// script's defect - and reading only the ace's row let a 99.7
+				// degree pilot-arm departure through.
+				t.Errorf("the hornet departed against the %s: peak %.1f deg, and a tumbling opponent is killed for free rather than beaten", level, b.peak[1])
+			}
 			if level == "ace" && opponent.name == "hornet" && missiles {
 				// Only the arm the recording was flown on: guns-only fights run
 				// twice as long and the same script rightly regains more.
@@ -649,7 +775,7 @@ func TestTierAgainstTheHornet(t *testing.T) {
 				// pilot has nothing to pull at.
 				high := 100 * float64(b.closeHigh[1]) / math.Max(float64(b.close[1]), 1)
 				mean := b.speed[1] / math.Max(float64(b.ticks), 1) * 1.944
-				if high < 35 || high > 65 || mean < 240 || mean > 340 || b.peak[1] > 50 {
+				if high < 35 || high > 65 || mean < 240 || mean > 340 {
 					t.Errorf("the hornet flew %.1f%% above 20 deg while engaged (peak %.1f) at a mean of %.0f kt; the recording it stands in for flew 49.9%% (peak 34.2) at 290 kt - recalibrate the script before reading the bot's line", high, b.peak[1], mean)
 				}
 			}
@@ -719,7 +845,7 @@ func TestHornetProbe(t *testing.T) {
 	fmt.Printf("%s v hornet, seed %d, %s rules, missiles=%v\n", level, seed, mode, missiles)
 	plans, seen, best, rankSum, gapSum := 0, 0, 0, 0, 0.0
 	for tick := uint64(0); tick < 120*60; tick++ {
-		i.Step(tick, map[int][]game.Input{0: {{Data: pilot.fly(me, foe, tick)}}})
+		i.Step(tick, map[int][]game.Input{0: {{Data: pilot.fly(me, foe, inbound(i, 0), tick)}}})
 		if !i.aircraft[0].alive || !i.aircraft[bot].alive || i.aircraft[0].model == nil || i.aircraft[bot].model == nil {
 			fmt.Printf("t=%.1f END hornet alive=%v bot alive=%v bot kills=%d\n", float64(tick)/60, i.aircraft[0].alive, i.aircraft[bot].alive, i.aircraft[bot].kills)
 			break
@@ -778,5 +904,72 @@ func TestHornetProbe(t *testing.T) {
 			plans, seen, best, float64(rankSum)/float64(seen)+1, gapSum/float64(seen))
 	} else {
 		fmt.Printf("SUMMARY: %d re-plans; high was never a candidate\n", plans)
+	}
+}
+
+// TestHornetBreaks pins the defence the script gained in #168. The live pilot
+// beat a heater pair with the break alone and never touched a flare, and the
+// script could not reproduce that because it could not see a missile: its
+// one-circle doctrine turned it TOWARD the shooter, which is the aspect a
+// seeker most wants. With a round inbound it must now turn across the threat
+// line - the beam, where the line-of-sight rate is highest - and it must spend
+// a flare on the round rather than on a timer.
+func TestHornetBreaks(t *testing.T) {
+	// Flying north, wings level, at the recording's merge speed.
+	north := flight.Vec3{X: 1}
+	me := &flight.State{
+		Position: flight.Vec3{Y: 5000},
+		Velocity: north.Scale(344 / 1.944),
+		Attitude: flight.Look(north),
+	}
+	// The bandit well ahead and outside the merge window, so the script is
+	// flying ordinary pursuit rather than its merge break: that is the
+	// behaviour the defensive break has to override.
+	foe := &flight.State{Position: flight.Vec3{X: 4000, Y: 5000}, Velocity: north.Scale(-300)}
+
+	pull := func(data map[string]any, key string) float64 {
+		if v, ok := data[key].(float64); ok {
+			return v
+		}
+		return 0
+	}
+
+	// Undefended: it flies at him, which is the whole one-circle doctrine.
+	calm := &hornet{armed: true}
+	quiet := calm.fly(me, foe, nil, 0)
+	if pull(quiet, "roll") > 0.3 {
+		t.Errorf("with nothing inbound the script rolled %.2f: it should be flying its own fight", pull(quiet, "roll"))
+	}
+	if quiet["flare"] == true {
+		t.Error("dispensed a flare with nothing inbound: the recording's pilot spent zero all fight")
+	}
+
+	// A round closing from forty-five degrees off the right bow. The beam is
+	// then a large turn away from the current flight path, so a jet that breaks
+	// correctly rolls HARD; a round already ON the beam would need no turn at
+	// all, which is why the geometry here is off the bow and not abeam.
+	round := threat{position: flight.Vec3{X: 1500, Y: 5000, Z: 1500}, velocity: flight.Vec3{X: -420, Z: -420}}
+	shy := &hornet{armed: true}
+	broke := shy.fly(me, foe, []threat{round}, 0)
+	if math.Abs(pull(broke, "roll")) < 0.5 {
+		t.Errorf("rolled only %.2f with a round 1,500 m off the beam: that is not a break", pull(broke, "roll"))
+	}
+	if pull(broke, "pitch") <= 0 {
+		t.Errorf("pitch %.2f while breaking: the break is a PULL", pull(broke, "pitch"))
+	}
+	if broke["flare"] != true {
+		t.Error("no flare against an inbound round: flares go out at a round, not on a timer")
+	}
+	if broke["missile"] == true || broke["fire"] == true {
+		t.Error("shot back while defending: the recording's pilot took his shots at 73.5 s, long after the pair at 8.3 s had gone by")
+	}
+
+	// A round that has already gone past is not a threat, and turning into it
+	// would be the error the break exists to avoid.
+	past := threat{position: flight.Vec3{X: 1500, Y: 5000, Z: 1500}, velocity: flight.Vec3{X: 420, Z: 420}}
+	gone := &hornet{armed: true}
+	after := gone.fly(me, foe, []threat{past}, 0)
+	if after["flare"] == true {
+		t.Error("flared at a round flying away: the closure test is what keeps the magazine for the ones that matter")
 	}
 }

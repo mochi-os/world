@@ -59,7 +59,7 @@ func (s *turning) fly(m, _ *flight.Model, _ uint64) flight.Inputs { return s.t.f
 type mushed struct{ m *mush }
 
 func (w *mushed) fly(m, foe *flight.Model, tick uint64) flight.Inputs {
-	data := w.m.fly(&m.State, &foe.State, tick)
+	data := w.m.fly(&m.State, &foe.State, nil, tick) // a single-jet gun instrument: no rounds in the air to defend on
 	number := func(key string) float64 {
 		if v, ok := data[key].(float64); ok {
 			return v
