@@ -617,6 +617,28 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			samples++
 		}
 	}
+	// MEASURED AND DECLINED (#153, 2026-09-10): pricing what a line SPENDS.
+	// appraise scores energy as a LEVEL - hungry fires only once already slow,
+	// edge only once already behind - so a rollout about to trade its whole
+	// airspeed for a moment's angle scores as well as one that keeps it, and a
+	// 2.5-4 s horizon never sees the bill arrive. The obvious remedy is a window
+	// term here: specific energy at the line's end against its start, on the
+	// corner-speed scale, discounted by what the line converts. Built, and
+	// measured over the five quick gates at three aero caps:
+	//
+	//   cap 0.85/1.0 no term  5/5   (the committed tree)
+	//   cap 0.85/1.0 + term   4/5   guns ladder inverted, superhuman lost 3-1
+	//   cap 1.2      + term   3/5   and the ace shot down 2 of 24 - a real defence loss
+	//   cap 1.5      no term  1/5
+	//   cap 1.5      + term   3/5   best of the arms: ladder, jink and pounce bought back
+	//
+	// It cannot land. At the committed cap it costs a gate outright; at every
+	// raised cap the ace is tracked 57-67% against the 20% bar while CONVERTING
+	// 0.0% - the same figure as every point in history. The slow fight the cap
+	// unlocks is trackable without being lethal, so there is nothing on the
+	// other side of the trade. Fading the tariff by range moved which gates
+	// broke (jink against pounce) and never the total. Do not rebuild it: the
+	// counter-offence is #73's unbuilt capability, not a mispriced one.
 	return score / samples, offence / samples
 }
 
