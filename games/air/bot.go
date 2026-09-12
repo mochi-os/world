@@ -453,6 +453,7 @@ type brain struct {
 	decided   uint64  // last decision tick
 	known     map[int]*track
 	prey      *track         // the target's track at decision time (steer aims/fires against it)
+	residual  flight.Vec3    // integrated pointing error while tracking (#42): a proportional-only aim loop settles at drift/gain and cannot reach zero, so the standing miss is integrated out. Zeroed the moment tracking lapses, so it can never carry into a manoeuvre
 	distance  float64        // to the target at decision time
 	tail      float64        // pursuit geometry at decision time: 1 = square behind him, -1 = head-on
 	ceded     uint64         // tick the overhead cede began (#64), 0 = sky clear
@@ -621,6 +622,16 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 // corner approximates the airframe's corner speed at the current weight and
 // altitude: the 1 g stall (the same CLmax≈1.55 the carrier maths uses) scaled
 // by √n. ISA troposphere density inline — flight's air() is package-private.
+// The aim integrator's two constants (#42). `walk` is how fast the standing
+// error is integrated out, per 60 Hz decision; `settle` caps what it may add to
+// the aim, so a lapse in the track or a target that reverses cannot leave a
+// wound-up bias pointing at nothing. Both were swept on TestGunSolutionBotSeat
+// against the sustained turner and chosen on measurement, not taste.
+const (
+	walk   = 0.006
+	settle = 0.20
+)
+
 func corner(m *flight.Model) float64 {
 	// The TRUE flown mass (#253): the stores work hung up to ~900 kg of
 	// missiles and racks on armed jets, and a brain that referenced the
@@ -2473,6 +2484,11 @@ func boost(speed, pace, offset float64) float64 {
 func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	s := &m.State
 	b.tracking = false // re-earned every tick: a latched track would settle the wings for the whole fight
+	defer func() {
+		if !b.tracking {
+			b.residual = flight.Vec3{} // never carries into a manoeuvre (#42)
+		}
+	}()
 	speed := math.Max(s.Velocity.Length(), 1)
 	aim, want := b.aim, b.g
 
@@ -2551,7 +2567,13 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 		want = math.Max(want, b.skill.pull*0.9)
 	}
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 && tick >= b.dodge {
-		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*1.15 && direction.Dot(aim) > 0.94 {
+		// The refinement reaches the whole gun envelope, not its inner half
+		// (#42). At open*1.15 - 690 m for the ace - it switched OFF across
+		// most of 600-900 m, which is exactly where scripted lead pursuit does
+		// its best work (42% on solution against this bot's 2.7%), and every
+		// play that is trying to point lost 5-9x across that boundary while
+		// `lag`, which is not trying, was unaffected.
+		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*1.5 && direction.Dot(aim) > 0.94 {
 			b.tracking = true
 			// Aim PAST the solution by twice the residual: the pursuit law
 			// is proportional-only, so against a drifting lead direction it
@@ -2561,7 +2583,21 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 			// standing error by three; the cone above bounds the input, so
 			// the boost cannot wrench the jet.
 			nose := s.Attitude.Rotate(flight.Vec3{X: 1})
-			aim = direction.Scale(3).Subtract(nose.Scale(2)).Normalize()
+			// ...and INTEGRATE what the triple leaves behind (#42). The triple
+			// was calibrated against that 0.7 degree residual; measured in the
+			// gun envelope against a sustained turner it is 6.0 degrees, nine
+			// times the figure above, so dividing by three lands the nose at
+			// ~9 degrees - 91% of samples inside 20 degrees and 2.3% inside 5,
+			// piled up just outside firing tolerance. Nulling 6 degrees
+			// proportionally needs nine times the gain, which would wrench the
+			// jet; an integral reaches zero at the gain the airframe already
+			// flies. Clamped, so it can bias the aim but never own it.
+			miss := direction.Subtract(nose.Scale(direction.Dot(nose)))
+			b.residual = b.residual.Add(miss.Scale(walk))
+			if size := b.residual.Length(); size > settle {
+				b.residual = b.residual.Scale(settle / size)
+			}
+			aim = direction.Scale(3).Subtract(nose.Scale(2)).Add(b.residual).Normalize()
 			// The walk needs authority: compose sizes the turn by the
 			// pointing error against this ceiling, and the approach plays
 			// fly low ones — under which a one-degree residual closes at a
