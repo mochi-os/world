@@ -363,7 +363,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 				theta := entry * math.Pi / 180
 				at := flight.Vec3{X: -start * math.Cos(theta), Y: height, Z: start * math.Sin(theta)}
 				me := build(at, flight.Vec3{X: 1}, speed+60/1.944)
-				b := &brain{skill: skills["ace"]}
+				b := &brain{skill: skills["ace"], tactics: standard()}
 				// steer()'s fine-tracking loop - the block that drives the
 				// pipper onto the lead point and is THE gun-solution refinement
 				// - is gated on b.shoot, b.prey, b.magazine and the two timers.
@@ -491,6 +491,138 @@ func TestGunSolutionBotSeat(t *testing.T) {
 			}
 			fmt.Printf("%-8s %-9s %8d %8.1f deg %8.1f%% %8.1f%%\n", name, band, len(v),
 				sorted[len(sorted)/2], 100*float64(on5)/float64(len(v)), 100*float64(on20)/float64(len(v)))
+		}
+	}
+}
+
+// TestGunSolutionAimSweep: pick aim.walk and aim.settle on measurement (#42).
+// The integral exists because the tracking loop is proportional-only and settles
+// at drift over gain; walk is how fast it integrates the residual out, settle is
+// the ceiling on what it may add. Too small and the standing error survives; too
+// large and the loop hunts, or a lapsed track leaves a wound-up bias.
+//
+// Conversion is the headline, but not alone: `slowest` is the energy check. An
+// over-driven integral buys the nose by spending the jet, which reads well here
+// and loses fights everywhere else, so a cell that converts well while bleeding
+// the pursuer below corner speed is a worse answer than a duller one that does not.
+//
+// MEASURED 2026-09-12, press v the level turner pooled over 400-900 m, on<5deg:
+//
+//	              settle 0.10   0.20   0.35
+//	integral off       3.0%   3.0%   3.0%
+//	walk 0.002         3.3%   8.4%   8.2%
+//	walk 0.004         4.2%  16.7%  21.5%
+//	walk 0.006         6.1%  21.6%  26.7%
+//	walk 0.010         8.4%  27.3%  29.8%
+//	walk 0.016        19.1%  30.7%  30.2%     <- peak
+//	walk 0.024           -   27.8%  28.2%
+//	walk 0.032           -   26.4%  25.0%
+//	walk 0.048           -   20.4%  15.5%
+//	walk 0.070           -   19.6%  12.0%
+//
+// 0.016 is an INTERIOR optimum, not the edge of a grid: conversion falls away
+// above it and the median pointing error degrades with it (7.2 -> 9.2 deg by
+// 0.070). settle 0.20 and 0.35 tie at the peak, so the tighter clamp wins - the
+// same conversion with less authority for a wound-up bias. settle 0.10 is too
+// tight to matter at any walk.
+func TestGunSolutionAimSweep(t *testing.T) {
+	if os.Getenv("AIR_POINT") == "" {
+		t.Skip("measurement probe: set AIR_POINT=1")
+	}
+	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m.State.Position, m.State.Velocity = at, facing.Normalize().Scale(speed)
+		m.State.Attitude = flight.Look(facing.Normalize())
+		m.State.Gear.Extension = 0
+		m.Stores(0)
+		m.State.Fuel = 2450
+		m.State.Engine[0] = flight.EngineState{Spool: 1, Reheat: 1}
+		m.State.Engine[1] = flight.EngineState{Spool: 1, Reheat: 1}
+		return m
+	}
+	var law func(*moment) order
+	for _, p := range plays {
+		if p.name == "press" {
+			law = p.law
+		}
+	}
+	height, speed := 15000/3.281, 250.0/1.944
+	// one cell: press against the turner from every entry, at this doc
+	cell := func(doc tactics) (on5, median, slowest float64) {
+		var offs []float64
+		slowest = math.MaxFloat64
+		for _, start := range []float64{400, 600, 900} {
+			for _, entry := range []float64{15, 30, 60, 90} {
+				you := &turning{&turner{speed: speed, share: 1}}
+				target := build(flight.Vec3{Y: height}, flight.Vec3{X: 1}, speed)
+				theta := entry * math.Pi / 180
+				me := build(flight.Vec3{X: -start * math.Cos(theta), Y: height, Z: start * math.Sin(theta)},
+					flight.Vec3{X: 1}, speed+60/1.944)
+				b := &brain{skill: skills["ace"], tactics: doc}
+				b.shoot, b.magazine, b.quiet, b.dodge = true, 578, 0, 0
+				b.prey = &track{}
+				sampleP, sampleV, sampled := target.State.Position, target.State.Velocity, uint64(0)
+				var held flight.Inputs
+				for tick := 0; tick < 240*60; tick++ {
+					slow := uint64(tick / 4)
+					target.Step(you.fly(target, me, slow))
+					if float64(slow-sampled)/60 >= 0.25 {
+						b.ring = circle(sampleP, sampleV, sampled, target.State.Position, target.State.Velocity, slow)
+						sampleP, sampleV, sampled = target.State.Position, target.State.Velocity, slow
+					}
+					swing := target.State.Velocity.Subtract(b.prey.velocity).Scale(60)
+					if b.prey.when == 0 {
+						swing = flight.Vec3{}
+					}
+					*b.prey = track{when: slow, position: target.State.Position, velocity: target.State.Velocity,
+						swing: swing, nose: target.State.Attitude.Rotate(flight.Vec3{X: 1})}
+					m := moment{me: &me.State, prey: target.State.Position, velocity: target.State.Velocity,
+						ring: b.ring, pace: corner(me), pull: b.skill.pull}
+					m.derive()
+					o := law(&m)
+					b.aim, b.g, b.throttle, b.reheat, b.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
+					if tick%4 == 0 {
+						held = b.steer(me, slow)
+					}
+					me.Step(held)
+					if v := me.State.Velocity.Length(); v < slowest {
+						slowest = v
+					}
+					line := target.State.Position.Subtract(me.State.Position)
+					span := line.Length()
+					if span < 400 || span >= 900 || span < 1 {
+						continue
+					}
+					axis := me.State.Attitude.Rotate(flight.Vec3{X: 1})
+					offs = append(offs, math.Acos(clamp(axis.Dot(line.Scale(1/span)), -1, 1))*180/math.Pi)
+				}
+			}
+		}
+		if len(offs) == 0 {
+			return 0, math.NaN(), slowest * 1.944
+		}
+		sort.Float64s(offs)
+		n := 0
+		for _, x := range offs {
+			if x < 5 {
+				n++
+			}
+		}
+		return 100 * float64(n) / float64(len(offs)), offs[len(offs)/2], slowest * 1.944
+	}
+
+	fmt.Println("\naim.walk / aim.settle sweep: press v the level turner, 400-900 m, on<5deg | median off | slowest")
+	base := standard()
+	off := base
+	off.aim.walk, off.aim.settle = 0, 0
+	on5, mid, slow := cell(off)
+	fmt.Printf("  integral OFF          %5.1f%%  %5.1f deg  %4.0f kt\n", on5, mid, slow)
+	for _, settle := range []float64{0.10, 0.20, 0.35} {
+		for _, walk := range []float64{0.002, 0.006, 0.016, 0.032, 0.070} {
+			doc := base
+			doc.aim.walk, doc.aim.settle = walk, settle
+			on5, mid, slow := cell(doc)
+			fmt.Printf("  walk %.3f settle %.2f  %5.1f%%  %5.1f deg  %4.0f kt\n", walk, settle, on5, mid, slow)
 		}
 	}
 }

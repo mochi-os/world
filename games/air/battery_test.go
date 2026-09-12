@@ -39,6 +39,12 @@ import (
 // loudly, not silently measure the baseline.
 func amend(t *tactics, name string, value float64) bool {
 	switch name {
+	case "aim.walk":
+		t.aim.walk = value
+	case "aim.settle":
+		t.aim.settle = value
+	case "aim.reach":
+		t.aim.reach = value
 	case "drag.pace":
 		t.drag.pace = value
 	case "drag.span":

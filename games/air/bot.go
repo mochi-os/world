@@ -165,6 +165,11 @@ func elapsed(tick, when, since uint64) bool { return when == 0 || tick-when > si
 // (library, cadence, wander, pull, discipline) is deliberately NOT here:
 // tiers are a constraint the tuning respects, never a variable it moves.
 type tactics struct {
+	aim struct {
+		walk   float64 // how fast the tracking loop integrates out its standing error, per 60 Hz decision (#42)
+		settle float64 // ceiling on what that integral may add to the aim, so a lapsed track cannot leave a wound-up bias pointing at nothing
+		reach  float64 // how far past skill.open the fine-tracking refinement still runs, as a multiple
+	}
 	drag struct {
 		pace float64 // drag-when-spent below this fraction of corner speed
 		span float64 // ... and only beyond this separation, m (closer, the break is mandatory)
@@ -283,6 +288,19 @@ func standard() tactics {
 	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
 	// hands him the saddle, so the break stays mandatory. Measured at 200 seeds
 	// the tighter threshold improves the section's survival edge over solo.
+	// aim.walk / aim.settle / aim.reach (#42): the tracking loop's integral and
+	// how far past skill.open the refinement runs. walk and settle were SWEPT on
+	// TestGunSolutionAimSweep against the level sustained turner - that test's
+	// header carries the table - and 0.016 is an interior optimum, not a grid
+	// edge: conversion falls away above it. settle 0.20 and 0.35 tie there, so
+	// the tighter clamp is taken. Confirmed on the full gate suite and on the
+	// 24-seed battery, where seven of nine metrics improve monotonically with
+	// walk; the exception is defense up_survival, which FALLS 8.9 -> 6.6 -> 4.9,
+	// because that scenario measures a lone pilot's survival against two aces
+	// and better-aiming aces kill it sooner. That is a gunnery improvement
+	// reading as a defensive regression, and the metric's direction deserves a
+	// ruling rather than an assumption - it is reported, not gated.
+	t.aim.walk, t.aim.settle, t.aim.reach = 0.016, 0.20, 1.5
 	t.drag.pace, t.drag.span = 0.68, 720
 	t.bag.reach, t.bag.bend = 10000, 0.8
 	t.spiral.nose, t.spiral.span, t.spiral.floor, t.spiral.saddle, t.spiral.hold = 0.90, 1400, 2300, 2, 150
@@ -622,16 +640,6 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 // corner approximates the airframe's corner speed at the current weight and
 // altitude: the 1 g stall (the same CLmax≈1.55 the carrier maths uses) scaled
 // by √n. ISA troposphere density inline — flight's air() is package-private.
-// The aim integrator's two constants (#42). `walk` is how fast the standing
-// error is integrated out, per 60 Hz decision; `settle` caps what it may add to
-// the aim, so a lapse in the track or a target that reverses cannot leave a
-// wound-up bias pointing at nothing. Both were swept on TestGunSolutionBotSeat
-// against the sustained turner and chosen on measurement, not taste.
-const (
-	walk   = 0.006
-	settle = 0.20
-)
-
 func corner(m *flight.Model) float64 {
 	// The TRUE flown mass (#253): the stores work hung up to ~900 kg of
 	// missiles and racks on armed jets, and a brain that referenced the
@@ -2573,7 +2581,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 		// its best work (42% on solution against this bot's 2.7%), and every
 		// play that is trying to point lost 5-9x across that boundary while
 		// `lag`, which is not trying, was unaffected.
-		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*1.5 && direction.Dot(aim) > 0.94 {
+		if direction, _, span, _ := b.pipper(m, tick); span < b.skill.open*b.tactics.aim.reach && direction.Dot(aim) > 0.94 {
 			b.tracking = true
 			// Aim PAST the solution by twice the residual: the pursuit law
 			// is proportional-only, so against a drifting lead direction it
@@ -2593,9 +2601,9 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 			// jet; an integral reaches zero at the gain the airframe already
 			// flies. Clamped, so it can bias the aim but never own it.
 			miss := direction.Subtract(nose.Scale(direction.Dot(nose)))
-			b.residual = b.residual.Add(miss.Scale(walk))
-			if size := b.residual.Length(); size > settle {
-				b.residual = b.residual.Scale(settle / size)
+			b.residual = b.residual.Add(miss.Scale(b.tactics.aim.walk))
+			if size := b.residual.Length(); size > b.tactics.aim.settle {
+				b.residual = b.residual.Scale(b.tactics.aim.settle / size)
 			}
 			aim = direction.Scale(3).Subtract(nose.Scale(2)).Add(b.residual).Normalize()
 			// The walk needs authority: compose sizes the turn by the
