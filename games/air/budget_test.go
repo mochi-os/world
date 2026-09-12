@@ -29,6 +29,7 @@ func TestBudget(t *testing.T) {
 			t.Fatal(err)
 		}
 		i := made.(*instance)
+		defer i.Close() // the bot budget is process-wide; a 99-ace roster left unreleased starves every later bot-spawning test in the binary (#208)
 		var spent []float64
 		for tick := uint64(0); tick < 900; tick++ {
 			start := time.Now()

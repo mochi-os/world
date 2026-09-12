@@ -221,6 +221,7 @@ var batteries = []battery{
 		// The #138 shape: a mixed-skill 2v4 with missiles. Teamwork's yield.
 		i := arena("section", seed, doc, true,
 			map[string]any{"ace": 2.0}, map[string]any{"pilot": 4.0})
+		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		for tick := uint64(0); tick < 60*300; tick++ {
 			i.Step(tick, nil)
 		}
@@ -231,6 +232,7 @@ var batteries = []battery{
 		// The same 2v4 guns-only: the missile envelope out of the picture.
 		i := arena("skirmish", seed, doc, false,
 			map[string]any{"ace": 2.0}, map[string]any{"pilot": 4.0})
+		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		for tick := uint64(0); tick < 60*300; tick++ {
 			i.Step(tick, nil)
 		}
@@ -243,6 +245,7 @@ var batteries = []battery{
 		// kills between maneuvering bots essentially never land.
 		i := arena("defense", seed, doc, true,
 			map[string]any{"pilot": 1.0}, map[string]any{"ace": 2.0})
+		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		var lone *craft
 		hunters := []*craft{}
 		for _, slot := range i.slots() {
@@ -270,6 +273,7 @@ var batteries = []battery{
 		// turn, circle plan, and stalemate displacement own this one.
 		i := arena("merge", seed, doc, false,
 			map[string]any{"ace": 2.0}, map[string]any{"ace": 2.0})
+		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		limit := uint64(60 * 300)
 		for tick := uint64(0); tick < limit; tick++ {
 			i.Step(tick, nil)
@@ -284,6 +288,7 @@ var batteries = []battery{
 		// rounds to the kill measure the saddle and closure discipline.
 		i := arena("gunnery", seed, doc, false,
 			map[string]any{"ace": 1.0}, map[string]any{"drone": 1.0})
+		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		var shooter, drone *craft
 		for _, slot := range i.slots() {
 			if a := i.aircraft[slot]; a.brain != nil {
@@ -315,6 +320,20 @@ func TestBattery(t *testing.T) {
 	if n, err := strconv.Atoi(os.Getenv("AIR_SEEDS")); err == nil && n > 0 {
 		seeds = n
 	}
+	// The budget is process-wide and finite (BOTS_MAXIMUM), and a scenario that
+	// forgets to give its share back does not fail - it quietly starves every
+	// later one until Create grants ZERO bots and the setup dereferences a nil
+	// craft. That leak capped this battery at nine seeds and went unnoticed for
+	// as long as it existed, while #46 was asking for 24-48 (#208). Measured,
+	// not asserted by reading: the budget has to come back.
+	opening := bots_live.Load()
+	defer func() {
+		if leaked := bots_live.Load() - opening; leaked != 0 {
+			each := float64(leaked) / float64(max(seeds, 1))
+			t.Errorf("leaked %d of the %d-bot budget, %.0f per seed: a scenario is not calling Close, and the battery starves past %.0f seeds",
+				leaked, BOTS_MAXIMUM, each, math.Floor(float64(BOTS_MAXIMUM)/math.Max(each, 1)))
+		}
+	}()
 	doc := standard()
 	if raw := os.Getenv("AIR_TACTICS"); raw != "" {
 		overrides := map[string]float64{}
