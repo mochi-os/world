@@ -15,6 +15,25 @@ import (
 )
 
 // fcs turns stick commands into surface commands and slews the actuators.
+// droopRun moves the trailing edge toward its commanded angle at the flap
+// drive's own rate instead of snapping to it (#199). The surfaces are driven by
+// a motor through transmissions, not by a fast servo, so a selection takes
+// seconds; retraction is quicker because airloads help it home rather than
+// fight it. The AUTO schedule passes through the same limit, which is right —
+// the trailing edge cannot follow an alpha change faster than it can move.
+func (m *Model) droopRun(target float64, c *Control) float64 {
+	if !m.droopInit {
+		m.droop, m.droopInit = target, true
+		return m.droop
+	}
+	rate := c.Rate.Droop.Extend
+	if target < m.droop {
+		rate = c.Rate.Droop.Retract
+	}
+	m.droop += clamp(target-m.droop, -rate*Dt, rate*Dt)
+	return m.droop
+}
+
 func (m *Model) fcs(in Inputs, local Air) {
 	c := &m.Airframe.Control
 	f := &m.State.Fcs
@@ -125,6 +144,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// actually flying.
 			droopTarget *= c.Droop.Half
 		}
+		droopTarget = m.droopRun(droopTarget, c) // the commanded angle is what the switch and the schedule ask for; this is what is actually out there
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
 		// The level-flight alpha from the airframe's own statics rather than a
@@ -395,7 +415,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// AUTO manoeuvring flaps: the trailing edge droops with alpha and
 		// washes out with dynamic pressure — the FCS reshapes the wing
 		// through a turn, exactly as the real jet's AUTO flap mode does.
-		droopTarget = clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
+		droopTarget = m.droopRun(clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit)*clamp(1-pressure/c.Flap.Pressure, 0, 1), c)
 		// NATOPS 2.8.4.8: airborne in AUTO FLAPS UP the speedbrake retracts itself
 		// above 6.0 g or 28° alpha. The game's brake command is maintained, so the
 		// board re-extends when the condition clears.

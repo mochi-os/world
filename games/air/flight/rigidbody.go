@@ -29,10 +29,12 @@ type Model struct {
 	// FCS law memory - unencoded, NOT part of the snapshot: a restore re-derives
 	// it on the next step, and the client core is a corrected predictor, so one
 	// re-derivation inside the hysteresis band is harmless.
-	pa      bool
-	lawInit bool
-	halfleg bool // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
-	launder float64
+	pa        bool
+	lawInit   bool
+	halfleg   bool    // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
+	droop     float64 // trailing-edge droop actually flying, rad — the command is slewed into this at the drive's rate (#199)
+	droopInit bool    // the first step SNAPS: a Case II spawn is handed over established on FULL, and running its flaps down from clean would be a visible lie
+	launder   float64
 
 	// PA level-flight datum secant (#86) - unencoded like the law memory: the
 	// scratch model exists because Evaluate composes its own state and must

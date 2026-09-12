@@ -74,6 +74,27 @@ func build() *flight.Airframe {
 	a.Control.Rate.Rudder = 75 * math.Pi / 180
 	a.Control.Rate.Slat = 0.6
 	a.Control.Rate.Brake = 1.0
+	// The trailing edge runs; it does not snap (#199). Calibrated to TIME rather
+	// than to degrees per second, because this model's droop range is not the
+	// real one: Droop.Angle above is 26 deg, the angle whose LIFT matches the
+	// approach numbers, where NATOPS labels the surface 30 HALF / 45 FULL. What
+	// the pilot experiences is the seconds, so the seconds are what is matched.
+	//
+	// The transit time is an ESTIMATE from comparable powered trailing edges -
+	// quicker than the F-14's big Fowler flaps at about eight seconds, slower
+	// than the F-16's flaperons at two or three - and it is not sourced: four
+	// searches found the F/A-18 flap system described (a hydraulic motor driving
+	// transmissions through a servo with electrical position feedback) but no
+	// published transit time. Five seconds out, four back; retraction is quicker
+	// because airloads help it home rather than fight it.
+	//
+	// Cross-check that the bracket is sane: with no limit at all, a SELECTION was
+	// measured slewing at 1.17 rad/s (67 deg/s), plainly unphysical, while the
+	// AUTO schedule's own fastest tracking under a hard pull measured 0.193 rad/s
+	// (11 deg/s) - within a factor of two of these limits. So the limit leaves the
+	// schedule broadly as it was and removes only the snap.
+	a.Control.Rate.Droop.Extend = a.Control.Droop.Angle / 5
+	a.Control.Rate.Droop.Retract = a.Control.Droop.Angle / 4
 	a.Wave.Hump = 0.025 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
 	a.Wave.Body = 0.085
 

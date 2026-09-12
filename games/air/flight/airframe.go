@@ -150,5 +150,8 @@ type Control struct {
 		Flaperon struct{ Down, Up float64 } // flaperon/aileron travel (positive = trailing edge down)
 		Rudder   float64
 	}
-	Rate struct{ Stabilator, Flaperon, Rudder, Slat, Brake float64 } // actuator slew, rad/s (Brake in fraction/s)
+	Rate struct { // actuator slew, rad/s (Brake in fraction/s)
+		Stabilator, Flaperon, Rudder, Slat, Brake float64
+		Droop                                     struct{ Extend, Retract float64 } // trailing edge: it is a drive motor through transmissions, not a fast servo, and airloads help it home
+	}
 }
