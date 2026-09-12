@@ -1748,16 +1748,89 @@ func TestMissilePn(t *testing.T) {
 	}
 }
 
-// TestMissileGimbal: a target that drags the line of sight past the seeker
-// gimbal breaks the lock — the missile goes ballistic and never fuses.
-func TestMissileGimbal(t *testing.T) {
-	i, target, m := missileRange(t, flight.Vec3{X: 1400, Y: 3000, Z: 60}, flight.Vec3{X: -80, Z: 320})
-	fly(i, target, 10)
-	if !m.loose && target.condition.Damager == 0 {
-		t.Fatal("the beam drag neither broke the lock nor missed")
+// aim places a target span metres away, off radians off the shooter's nose,
+// flying aspect radians away from straight-away — aspect 0 is a pure tail
+// chase, pi/2 a square beam. The shooter is at the origin on +X in
+// missileRange, so the polar form is the readable one for a launch geometry.
+func aim(span, off, aspect, speed float64) (flight.Vec3, flight.Vec3) {
+	place := flight.Vec3{X: span * math.Cos(off), Y: 3000, Z: span * math.Sin(off)}
+	return place, flight.Vec3{X: speed * math.Cos(off+aspect), Z: speed * math.Sin(off+aspect)}
+}
+
+// TestMissileTrack: a close crossing target saturates the seeker's 20°/s
+// track ceiling — the lock breaks, the round goes ballistic, and the fuse
+// stays live for the pass.
+//
+// This was called TestMissileGimbal and fired at 1,401 m. It never tested the
+// gimbal: measured at its own break the cone read 0.9766 against its 0.766
+// limit, so the gate that actually fired was the track ceiling, and the test
+// would have stayed green through any change to the cone it was named for.
+// The gate is asserted explicitly below so it cannot drift again. The gimbal's
+// real work is the post-seduction re-acquisition check in pursue(), which is
+// where a lock genuinely falls out of the cone.
+func TestMissileTrack(t *testing.T) {
+	frames, m, closest := seek(t, 552, 12*math.Pi/180, 45*math.Pi/180, 200, 0)
+	at, gate := broke(frames)
+	if !m.loose {
+		t.Fatal("a 45° crosser at 552 m should saturate the 20°/s track ceiling")
 	}
-	if target.condition.Damager == 0 && !m.loose {
-		t.Fatal("expected a broken lock")
+	// The gate is named, not assumed. Asserting only "the lock broke" is what
+	// let the old test drift: it read as a gimbal test for months while the
+	// track ceiling did all the work.
+	if gate != "track" {
+		t.Fatalf("the lock broke on the %s gate, not the track ceiling: cone %.4f (limit %.4f), rate %.4f (limit %.2f)",
+			gate, at.cone, missile_gimbal, at.rate, missile_track)
+	}
+	if closest < missile_fuse {
+		t.Fatalf("a round loose at %.0f m should not have arrived, closest %.1f m", at.span, closest)
+	}
+}
+
+// TestMissileSight: the round's boresight reference is taken from where the
+// ROUND is, not where the jet is. launch() places the missile 3 m ahead of the
+// aircraft but used to seed m.sight from the aircraft's own position, and now
+// that the track rate is judged from the first frame (#207) that 3 m reads as
+// a slew the seeker never made.
+func TestMissileSight(t *testing.T) {
+	// OFF the nose on purpose: 3 m along a boresight that already points at the
+	// target is 3 m of pure range and no angle at all, so a dead-ahead target
+	// cannot tell the two reference points apart.
+	place, velocity := aim(600, 25*math.Pi/180, 0, 200)
+	i, _, _ := missileRange(t, place, velocity)
+	i.flying = i.flying[:0] // drop missileRange's hand-built round; this tests launch()
+	shooter := i.aircraft[0]
+	if !i.launch(0, shooter) {
+		t.Fatal("the shooter could not acquire a target dead ahead at 900 m")
+	}
+	m := i.flying[len(i.flying)-1]
+	want, _ := i.bearing(m.position, i.aircraft[m.target].model.State.Position)
+	if off := math.Acos(clamp(m.sight.Dot(want), -1, 1)) * 180 / math.Pi; off > 0.01 {
+		t.Errorf("the launch sight is %.3f° off the round's own bearing — it was referenced from the jet, not the round", off)
+	}
+}
+
+// TestMissileCoast is #207's gate. The seeker and the fins work from
+// separation; only the FUSE waits for missile_arm. Gating the whole guidance
+// block on missile_arm left the round flying straight for 0.6 s while the
+// line-of-sight rate went un-nulled — and because that rate goes as crossing
+// speed over range, closing AMPLIFIED it (measured 1.7x-4.5x, worst at the
+// shortest ranges). The first frame the seeker was allowed to look it was
+// judged on the amplified value and broke the lock. Every one of nine rounds
+// in a twelve-minute joust broke at exactly 0.6 s, none fused, and the
+// accepted envelope at 552 m had collapsed to 12.5° of aspect.
+//
+// The battery could not see it: every other shot here is fired at 1,401 m or
+// beyond, where the launch rate is a third of the ceiling and 0.6 s of coast
+// cannot amplify it past.
+func TestMissileCoast(t *testing.T) {
+	place, velocity := aim(700, 10*math.Pi/180, 45*math.Pi/180, 200)
+	i, target, m := missileRange(t, place, velocity)
+	fly(i, target, 10)
+	if m.loose {
+		t.Fatalf("the lock broke at %.2f s on a 45° crosser at 700 m — guidance is not running from separation", m.flew)
+	}
+	if target.condition.Damager != 0 {
+		t.Fatal("the round held its lock all the way and still did not arrive")
 	}
 }
 
@@ -2041,10 +2114,18 @@ func TestBlastCredits(t *testing.T) {
 	if len(i.flying) > 0 {
 		t.Fatal("the missile never fused or timed out within 15 s")
 	}
+	// A burst INSIDE the lethal radius is not an itemised wound: battle.Blast
+	// returns kill=true with a single "explode" event, and pursue() raises
+	// every event except that one, so a DESTROYED jet carries no surface
+	// damage, no leak and no engine loss at all. Counting only wounds
+	// therefore reads the warhead's best outcome as a dud — which is what
+	// happened when #207 let the round guide from separation and this shot
+	// moved from a fringe wound to an outright kill.
 	damage := &i.aircraft[1].model.State.Damage
-	wounded := damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0 || i.aircraft[1].condition.Killed
-	if !wounded {
-		t.Fatal("the warhead fused without wounding the target")
+	wounded := damage.Engine[0]+damage.Engine[1] > 0 || damage.Leak > 0 || total(damage.Element) > 0
+	destroyed := !i.aircraft[1].alive || i.aircraft[1].condition.Killed
+	if !wounded && !destroyed {
+		t.Fatal("the warhead fused without wounding or destroying the target")
 	}
 	if i.aircraft[1].condition.Damager != 0 {
 		t.Fatalf("the blast wound is credited to %d, want shooter 0", i.aircraft[1].condition.Damager)

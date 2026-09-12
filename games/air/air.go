@@ -101,7 +101,7 @@ const (
 	missile_dragk  = 5.0e-5 // base drag: dv/dt = -k·v² (about -45 m/s² at Mach 2.7)
 	missile_life   = 20.0   // s battery/coolant; energy death usually wins first
 	missile_fuse   = 12.0   // m, proximity fuse envelope (battle grades the warhead inside)
-	missile_arm    = 0.6    // s of flight before the fuse (and the guidance) arms
+	missile_arm    = 0.6    // s of flight before the FUSE arms; the seeker and the fins work from separation (#207)
 	missile_range  = 5000.0 // rear-aspect acquisition range (m); weak head-on
 	missile_cone   = 0.866  // cos of the acquisition half-angle (~30°)
 	missile_gimbal = 0.766  // cos of the ±40° seeker gimbal — beyond it the lock breaks
@@ -1519,11 +1519,16 @@ func (i *instance) launch(slot int, a *craft) bool {
 	}
 	i.launched++
 	separation := a.model.State.Velocity.Add(forward.Scale(30)) // off the rail at aircraft speed; the motor does the rest
-	sight, _ := i.bearing(a.model.State.Position, i.aircraft[best].model.State.Position)
+	// The boresight reference is taken from where the ROUND is, not where the
+	// jet is: the two are 3 m apart, and now that the track rate is judged
+	// from the first frame (#207) a sight referenced 3 m astern reads as a
+	// one-frame slew the seeker never made.
+	place := a.model.State.Position.Add(forward.Scale(3))
+	sight, _ := i.bearing(place, i.aircraft[best].model.State.Position)
 	i.flying = append(i.flying, &missile{
 		shooter:  slot,
 		target:   best,
-		position: a.model.State.Position.Add(forward.Scale(3)),
+		position: place,
 		velocity: separation,
 		life:     missile_life,
 		burn:     missile_boost,
@@ -1773,7 +1778,17 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			}
 		}
 
-		if mark != nil && m.flew > missile_arm {
+		// The seeker looks and the fins fly from the instant of separation,
+		// NOT from missile_arm — that gate belongs to the fuse alone (#207).
+		// Suppressing guidance for the first 0.6 s left the line-of-sight rate
+		// un-nulled while the range closed, so it GREW (measured 1.7x-4.5x,
+		// worst at the shortest ranges), and the first frame the seeker was
+		// allowed to look it was judged on the amplified value and broke.
+		// Every lock in a twelve-minute joust broke on the track ceiling at
+		// exactly 0.6 s; the accepted envelope at 552 m was 12.5° of aspect.
+		// A real 9M is locked and growling before launch: what unlocks after
+		// separation is the fins, and the seeker head was never blind.
+		if mark != nil {
 			direction, _ := i.bearing(m.position, *mark)
 			// The seeker: gimbal cone off the velocity axis, and a track-rate
 			// ceiling. Beyond either the lock breaks — ballistic, fuse live.
@@ -1813,11 +1828,6 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				if m.burn <= 0 && tracking && speed < target.model.State.Velocity.Length()+60 && closing < 40 {
 					continue
 				}
-			}
-		} else if m.flew <= missile_arm {
-			// Not yet armed: fly out straight; remember the boresight LOS.
-			if mark != nil {
-				m.sight, _ = i.bearing(m.position, *mark)
 			}
 		}
 

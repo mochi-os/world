@@ -170,35 +170,36 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				return true
 			}
 		}
-		if m.flew > missile_arm {
-			direction := shortest(m.position, virtual.Position, wrap).Normalize()
-			axis := m.velocity.Normalize()
-			if direction.Dot(axis) < missile_gimbal {
-				m.loose = true
+		// Seeker and fins from separation, fuse from missile_arm — the same
+		// split pursue() flies (#207). The two must move together: this is
+		// what every rung of the ladder bisects over and what the launch gate
+		// consults, so a predictor one release out of step with the weapon
+		// would score doctrine against a round nobody fires.
+		sight := shortest(m.position, virtual.Position, wrap).Normalize()
+		axis := m.velocity.Normalize()
+		if sight.Dot(axis) < missile_gimbal {
+			m.loose = true
+		}
+		rate := sight.Subtract(m.sight).Scale(1 / dt)
+		rate = rate.Subtract(sight.Scale(rate.Dot(sight)))
+		if rate.Length() > missile_track {
+			m.loose = true
+		}
+		m.sight = sight
+		if !m.loose {
+			closing := math.Abs(virtual.Velocity.Subtract(m.velocity).Dot(sight))
+			accel := rate.Scale(missile_n * closing)
+			limit := missile_g * 9.81 * clamp(speed/600, 0.15, 1)
+			if pull := accel.Length(); pull > limit {
+				accel = accel.Scale(limit / pull)
 			}
-			rate := direction.Subtract(m.sight).Scale(1 / dt)
-			rate = rate.Subtract(direction.Scale(rate.Dot(direction)))
-			if rate.Length() > missile_track {
-				m.loose = true
+			m.velocity = m.velocity.Add(accel.Scale(dt))
+			speed = m.velocity.Length()
+			bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
+			m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
+			if m.burn <= 0 && speed < virtual.Velocity.Length()+60 && closing < 40 {
+				return false // energy death: coasting below convergence speed, opening
 			}
-			m.sight = direction
-			if !m.loose {
-				closing := math.Abs(virtual.Velocity.Subtract(m.velocity).Dot(direction))
-				accel := rate.Scale(missile_n * closing)
-				limit := missile_g * 9.81 * clamp(speed/600, 0.15, 1)
-				if pull := accel.Length(); pull > limit {
-					accel = accel.Scale(limit / pull)
-				}
-				m.velocity = m.velocity.Add(accel.Scale(dt))
-				speed = m.velocity.Length()
-				bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
-				m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
-				if m.burn <= 0 && speed < virtual.Velocity.Length()+60 && closing < 40 {
-					return false // energy death: coasting below convergence speed, opening
-				}
-			}
-		} else {
-			m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
 		}
 		if m.loose {
 			// Ballistic, fuse live: it may still pass close, but a lost

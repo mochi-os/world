@@ -60,13 +60,36 @@ func TestHeatZone(t *testing.T) {
 			t.Errorf("%s: the ladder is out of order: %+v", name, z)
 		}
 	}
-	// A cold target square on the beam is not a shot at any range (#104). The
-	// seeker can acquire one only inside 750 m, and the crossing rate at that
-	// range saturates its 20 deg/s track ceiling before the round arrives, so
-	// the band's inner edge closes over its outer edge. The ladder says so by
-	// reporting no zone rather than a span its own round refuses to fly.
-	if beam.Max > 0 {
-		t.Errorf("a cold beam target should offer no shot at all, got %+v", beam)
+	// A cold target square on the beam is a NARROW shot, capped by what the
+	// seeker can see rather than by what the round can fly: acquisition stops
+	// at 750 m against an unlit crosser, and the fuse-arming floor sits at
+	// 628 m, so the whole band is about 120 m wide.
+	//
+	// This used to assert no shot at all, on the reasoning that the crossing
+	// rate at 750 m saturates the 20 deg/s track ceiling (#104). It does not:
+	// 205 m/s across 750 m is 0.273 rad/s, 15.7 deg/s, comfortably inside. The
+	// ceiling only appeared to bite because guidance was suppressed for the
+	// round's first 0.6 s, so the line-of-sight rate went un-nulled and grew
+	// past the limit before the seeker was allowed to look (#207). With the
+	// round guiding from separation the shot is real, and the live weapon
+	// flies it: measured closest approach 2.9 m at 628, 2.8 m at 700, 5.0 m
+	// at 750.
+	//
+	// What #104 was actually defending is asserted directly below instead, and
+	// it is the stronger claim: the ladder must never report a span its own
+	// round refuses to fly.
+	if beam.Max <= 0 || beam.Minimum >= beam.Max {
+		t.Errorf("a cold beam target should offer a narrow near-band shot, got %+v", beam)
+	}
+	if math.Abs(beam.Max-missile_range*0.15) > 50 {
+		t.Errorf("the cold beam ceiling should be the acquisition cap (%.0f m), got %.0f", missile_range*0.15, beam.Max)
+	}
+	// #104's real invariant: every range the ladder endorses must arrive.
+	beamward := shortest(shooter.Position, place(math.Pi/2).Position, 0).Normalize()
+	for _, trial := range []float64{beam.Minimum, (beam.Minimum + beam.Max) / 2, beam.Max} {
+		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false) {
+			t.Errorf("the ladder endorses %.0f m on a cold beam but its own round refuses it: %+v", trial, beam)
+		}
 	}
 	// The zone is the SEEKER's, not the kinematics': the acquisition cap is
 	// what pulls a stern shot out to the full reach.
