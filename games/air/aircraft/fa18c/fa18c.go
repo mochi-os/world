@@ -47,7 +47,8 @@ func build() *flight.Airframe {
 
 	// Same F/A-18 CAS family as the F: identical schedules and throws.
 	a.Control.Onspeed = 8.1 * math.Pi / 180
-	a.Control.Flyaway = 16 * math.Pi / 180 // the catapult longitudinal trim board (#154): 16° nose up to 44,000 lb, 17° to 48,000, 19° above — the game's 34,400 lb launch sits in the 16° row. At 12° the hands-off flyaway spent the surplus on speed instead of climb (12.2° pitch, 539 kt / 712 m at t+25 s; at 16°: 16.1°, 506 kt / 933 m — TestFlyawayProfile). The 12° era was tuned against the post-launch pitch-down reports, since fixed properly in the law (the reference-chase and gear-transit holds in fcs.go)
+	a.Control.Flyaway = 16 * math.Pi / 180                // catapult launch trim, stabilator nose up (NATOPS figure 8-1): 16° to 44,000 lb, 17° to 48,000, 19° above
+	a.Control.Capture = a.Control.Flyaway - 6*math.Pi/180 // NATOPS 8.2.8: trim settings between 10° and 18° nose up correspond linearly to reference AOAs between 4° and 12°
 	a.Control.Blowdown = 35000
 	a.Control.Gearing.Pitch = 0.42
 	a.Control.Gearing.Roll = 0.35

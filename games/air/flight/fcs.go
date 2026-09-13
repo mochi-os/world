@@ -72,6 +72,24 @@ func (m *Model) fcs(in Inputs, local Air) {
 	if !in.Gear && calibrated > 92.6 && in.Flap < 1 {
 		m.halfleg = false // the clean-up ended the takeoff leg
 	}
+	// The catapult takeoff trim (NATOPS 8.2.5): the stabilator is set before the
+	// shot for the flyaway, and at the end of the stroke its moment is what
+	// rotates the jet off the bow. The launch bar holds the deck attitude down
+	// the stroke, so the trim bites once the bar leaves the shuttle, and the
+	// flyaway law inherits it when the wheels leave the deck. Untrimmed, the
+	// ground law's zero surface left the deck at under 1 degree of alpha and the
+	// jet sank 14 ft light and 40 ft at full fuel, where NATOPS has little to
+	// no sink below 44,000 lb. Airborne, the trim is a reference alpha
+	// (NATOPS 8.2.8): the FCS rotates the jet to it and holds it hands off
+	// until the configuration changes.
+	if m.State.Gear.Catapult >= 0 && m.State.Gear.Stroke >= 0 {
+		m.launch = true
+	} else if !m.State.Gear.Wow {
+		m.flyaway = m.flyaway || m.launch
+		m.launch = false
+	} else if !m.launch {
+		m.flyaway = false
+	}
 	// Weight on wheels selects the ground gains whatever the switch says —
 	// the real FCS changes gains on the WoW switch, and the alpha-follow that
 	// keeps the stabilator sane on deck lives in the PA branch. Held for half
@@ -82,7 +100,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 	} else {
 		m.rolling = math.Max(0, m.rolling-Dt)
 	}
-	pa := in.Flap >= 1 || m.halfleg || m.rolling > 0
+	// NATOPS 11.1.1: above approximately 240 KCAS the flight controls switch
+	// to the AUTO mode regardless of the FLAP switch position. The band either
+	// side of it keeps a speed held on the line from flipping the law.
+	if calibrated > 126 {
+		m.fast = true
+	} else if calibrated < 121 {
+		m.fast = false
+	}
+	pa := ((in.Flap >= 1 || m.halfleg) && !m.fast) || m.rolling > 0
 	if !m.lawInit {
 		m.pa = pa // initialisation is NOT a law change: leaving m.pa at its zero value made the first step of every fresh model read as a flip and launder the trim for its first two seconds (TestTrap's scripted pass missed the wires)
 		m.lawInit = true
@@ -91,6 +117,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		m.launder = 2 // a deliberate configuration change still re-learns its trim behind the demand faders
 	}
 	m.pa = pa
+	if !pa {
+		m.flyaway = false
+	}
 	if extension := m.State.Gear.Extension; extension > 0.02 && extension < 0.98 {
 		m.launder = math.Max(m.launder, Dt) // gear in transit keeps the laundering alive step by step — expiring WITH the transit, exactly like the old transit-gated decay, and without stacking a second rate on top of a law-flip launder
 	}
@@ -175,6 +204,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		anchor := c.Droop.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
 		blend := clamp((0.80*anchor-need)/(0.18*anchor), 0, 1)
 		level := c.Onspeed - blend*math.Max(c.Onspeed-grade, 0)
+		if m.flyaway {
+			level = c.Capture
+		}
 		// Full authority, as the real PA law gives (#86): the alpha/g limiter
 		// is an up-and-away feature, and NATOPS's gear/flaps +2.0/0 g is a
 		// placard the pilot observes, not a wire — the old fixed 9-degree span
@@ -186,20 +218,29 @@ func (m *Model) fcs(in Inputs, local Air) {
 			span = level + 5*math.Pi/180
 		}
 		demand := level + fine*span + f.Datum
-		// Flyaway attitude capture: hands-off after a catapult shot the real
-		// FCS settles at the trim-board flyaway datum (c.Flyaway, 16°) rather than riding approach alpha
-		// into a full-burner zoom. Binds only when pitch exceeds the datum;
-		// the approach (low attitude, low power) never feels it.
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		pitch := math.Asin(clamp(forward.Y, -1, 1))
 		f.Reference = pitch // keep the attitude-hold datum CURRENT: crossing the 130 m/s law boundary otherwise handed the UA hold a stale deck pitch, and it flew the nose back down from the flyaway attitude ("suddenly pitches down" a few seconds after launch)
-		capture := a + (c.Flyaway - pitch)
-		if in.Throttle > 0.85 {
-			// Launch/waveoff power: the flyaway datum is an ATTRACTION, not just a cap -
-			// the hands-off climb tops out below it otherwise.
-			demand = math.Max(demand, math.Min(capture, c.Onspeed+2*math.Pi/180))
+		// Stick-free past the approach band the auto-trim holds the FLIGHT PATH
+		// (NATOPS 11.1.1 flies AUTO's 1 g law above ~240 KCAS whatever the flap
+		// switch says). The level-flight alpha below it is open loop, and on its
+		// own a dirty jet fast on the downwind drifted into a climb that
+		// steepened until it stalled over the top. The datum is level flight,
+		// which the blend has always meant, and the stick or trim sets another
+		// path. The hold pulls as hard as a sink needs but pushes little, so
+		// excess power still climbs as the approach law's does, rather than
+		// running the dirty jet out to its drag speed. The catapult flyaway is
+		// an alpha capture and holds no path.
+		flying := clamp(math.Abs(stick)*3.3, 0, 1)
+		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
+		if m.flyaway || blend == 0 {
+			m.path = 0
+		} else if flying > 0 || in.Trim != 0 {
+			m.path = gamma
 		}
-		demand = math.Min(demand, math.Max(capture, 0)+fine*(22*math.Pi/180)) // the capture yields to a DELIBERATE pull: at neutral stick it pins the flyaway attitude, but its stick opening (22°) outruns the main demand's (9°), so pulling past ~half stick clears the cap entirely — it no longer fought the climb-out (post-launch "unresponsive then suddenly alive")
+		if !m.flyaway {
+			demand += blend * (1 - flying) * clamp((m.path-gamma)*2, -1.5*math.Pi/180, 4*math.Pi/180)
+		}
 		if m.State.Gear.Wow {
 			// Ground mode: the alpha law would wind the stabilator full nose-up down the
 			// stroke (deck alpha is far below approach alpha) and rotate the jet off the
@@ -212,6 +253,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 				demand -= 2.5 * math.Pi / 180
 			}
 			f.Integral = 0
+			if m.launch && m.State.Gear.Catapult < 0 {
+				f.Integral = c.Flyaway // the takeoff trim, trailing edge up, off the shuttle
+			}
 			f.Reference = pitch // leave the deck holding the deck attitude
 		}
 		errorTerm := (demand-a)*2.2 - q*1.8
@@ -289,12 +333,6 @@ func (m *Model) fcs(in Inputs, local Air) {
 				chase = 0 // configuration change in transit: hold the datum FIRM — the trim is re-learning (decayed across the law switch), and chasing the un-trimmed sag walked the flyaway climb down to bare-airframe trim (the post-launch sudden pitch-down)
 			}
 			f.Reference += clamp(theta-f.Reference, -chase, chase)
-			if in.Throttle > 0.85 && m.State.Position.Y < 150 {
-				// Launch/waveoff in the CLEAN law too: hands-off at high power near the
-				// water, the datum eases up to the flyaway attitude.
-				f.Reference = math.Min(math.Max(f.Reference, theta), math.Max(f.Reference, c.Flyaway-0.5*math.Pi/180)) // never yank it above where it is heading
-				f.Reference += clamp(c.Flyaway-f.Reference, 0, 0.07*Dt)
-			}
 		}
 		hold := clamp((f.Reference-theta)*2.0, -0.35, 0.35) - q*0.7 - clamp((a-0.30)*1.5, 0, 0.5)
 		demand := level

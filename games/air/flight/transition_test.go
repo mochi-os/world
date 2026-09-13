@@ -262,34 +262,114 @@ func TestApproachPowerHold(t *testing.T) {
 
 // TestPatternHold: gear down faster than on-speed - the downwind leg - must be
 // flyable hands-off. The PA law's neutral demand is the level-flight alpha of
-// the current configuration, not on-speed.
+// the current configuration, not on-speed, and stick-free it holds level: the
+// open-loop alpha alone climbed away, and a 16° pitch cap that hid it left
+// the jet climbing 5,000 fpm.
 func TestPatternHold(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 110, 2500)
-	climbed, worst := 0.0, 0.0
+	climbed, sank, worst := 0.0, 0.0, 0.0
 	for i := 0; i < 240*70; i++ {
 		// Speed hold to isolate the pitch law, ceilinged at 0.8: a pattern pilot
-		// carries pattern power — crossing 0.85 raises the waveoff attraction by
-		// design, and an 85 m/s CLEAN spawn (near-stall, alpha 12.7°) drove the
-		// hold through that gate and measured the waveoff, not the pattern.
+		// carries pattern power, and an 85 m/s CLEAN spawn (near-stall, alpha
+		// 12.7°) drove the hold to full power and measured a waveoff instead.
 		throttle := clamp(0.5+(110-m.State.Velocity.Length())*0.05, 0.1, 0.8)
 		m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
-		if i > 240*60 { // past gear extension, the law-change laundering, and the droop's configuration balloon — real-jet behaviour whose energy tail decays for most of a minute at pattern power
-			if vy := m.State.Velocity.Y; vy > climbed {
-				climbed = vy
-			}
+		if i > 240*60 { // past gear extension, the law-change laundering, and the droop's configuration balloon
+			climbed = math.Max(climbed, m.State.Velocity.Y)
+			sank = math.Min(sank, m.State.Velocity.Y)
 			v := m.State.Attitude.Unrotate(m.State.Velocity)
 			if a := alpha(v) * 180 / math.Pi; a > worst {
 				worst = a
 			}
 		}
 	}
-	_ = climbed
-	// Alpha is the whole claim. No climb bound here: the scenario's crude
-	// proportional speed hold rings against the configuration transient, so a
-	// vertical-speed bound would measure the test's throttle law, not the FCS.
+	t.Logf("gear down at 110 m/s: alpha up to %.1f°, vertical speed %.1f to %.1f m/s", worst, sank, climbed)
 	if worst > 5 {
 		t.Errorf("neutral stick at 110 m/s gear-down settled at %.1f° alpha — the law is commanding on-speed, not level flight", worst)
+	}
+	if climbed > 2.5 || sank < -2.5 {
+		t.Errorf("neutral stick at 110 m/s gear-down is not holding level: %.1f to %.1f m/s", sank, climbed)
+	}
+}
+
+// TestHandsWaveoff: NATOPS 8.2.13 - on the waveoff "apply military/afterburner
+// power and effect a slight nose rotation to stop the rate of descent". The
+// rotation is the pilot's: hands off, the approach law holds its alpha and
+// the power stops the sink, with no automatic pitch-up to a flyaway attitude.
+// Selecting HALF on the way loses the droop's lift, and the jet accelerating
+// out of the approach band in the sink it gathered must level out, not hold
+// that descent.
+func TestHandsWaveoff(t *testing.T) {
+	for _, flap := range []float64{1, 2} {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		s, throttle := Approach(m, Vec3{Y: 150}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
+		m.State = s
+		for i := 0; i < 240*3; i++ {
+			m.Step(Inputs{Throttle: throttle, Gear: true, Flap: flap})
+		}
+		highest := -math.Pi
+		for i := 0; i < 240*10; i++ {
+			m.Step(Inputs{Throttle: 1, Gear: true, Flap: flap})
+			highest = math.Max(highest, math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1)))
+		}
+		t.Logf("flap %.0f: pitch up to %.1f°, final vertical speed %.1f m/s at %.0f m", flap, highest*180/math.Pi, m.State.Velocity.Y, m.State.Position.Y)
+		if highest > 10*math.Pi/180 {
+			t.Errorf("flap %.0f: hands-off waveoff pitched to %.1f°", flap, highest*180/math.Pi)
+		}
+		if m.State.Velocity.Y < -1 {
+			t.Errorf("flap %.0f: hands-off waveoff still sinking %.1f m/s after ten seconds of full power", flap, m.State.Velocity.Y)
+		}
+	}
+}
+
+// TestAutoMode: NATOPS 11.1.1 - "if airspeed exceeds approximately 240 KCAS
+// the flight controls automatically switch to the AUTO mode regardless of the
+// FLAP switch position". The band either side of it keeps a speed held on the
+// line from flipping the law back and forth.
+func TestAutoMode(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 100}, Vec3{X: 1}, 110, 2500)
+	fly := func(speed float64) bool {
+		m.State.Velocity = m.State.Velocity.Normalize().Scale(speed)
+		m.Step(Inputs{Throttle: 0.8, Gear: true, Flap: 1})
+		return m.pa
+	}
+	for _, step := range []struct {
+		speed float64
+		pa    bool
+		why   string
+	}{
+		{110, true, "HALF at 214 KCAS flies the approach law"},
+		{130, false, "HALF at 253 KCAS is past the switch"},
+		{123, false, "239 KCAS on the way down is still inside the band"},
+		{119, true, "231 KCAS hands the approach law back"},
+		{124, true, "241 KCAS on the way up is still inside the band"},
+	} {
+		if got := fly(step.speed); got != step.pa {
+			t.Errorf("%.0f m/s: approach law %v, want %v (%s)", step.speed, got, step.pa, step.why)
+		}
+	}
+}
+
+// TestLowPass: the up-and-away law is hands-off 1 g flight (NATOPS 2.8.2.8),
+// so a full-power pass near the water holds its attitude. The hold's datum
+// used to creep to a 16° flyaway attitude below 150 m at high power, and a
+// low pass pitched up on its own.
+func TestLowPass(t *testing.T) {
+	for _, speed := range []float64{120, 200} {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 100}, Vec3{X: 1}, speed, 2500)
+		start := math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1))
+		rise := 0.0
+		for i := 0; i < 240*20; i++ {
+			m.Step(Inputs{Throttle: 1})
+			rise = math.Max(rise, math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1))-start)
+		}
+		t.Logf("%.0f m/s: pitch rose %.1f°", speed, rise*180/math.Pi)
+		if rise > 1*math.Pi/180 {
+			t.Errorf("%.0f m/s: a hands-off full-power pass pitched up %.1f°", speed, rise*180/math.Pi)
+		}
 	}
 }
 

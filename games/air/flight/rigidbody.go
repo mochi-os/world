@@ -30,8 +30,12 @@ type Model struct {
 	// it on the next step, and the client core is a corrected predictor, so one
 	// re-derivation inside the hysteresis band is harmless.
 	pa        bool
+	fast      bool // above the ~240 KCAS AUTO-mode switch, with hysteresis
 	lawInit   bool
 	halfleg   bool    // takeoff flap HALF latched on deck, held through the clean-up climb whatever the gear handle does (#44 regression: droop halved at gear-up)
+	launch    bool    // the catapult takeoff trim is set: from the stroke until the wheels leave the deck
+	flyaway   bool    // airborne off a catapult shot: the PA law holds the trimmed reference alpha until the law changes or the wheels touch
+	path      float64 // PA flight-path hold datum, rad: the stick-free auto-trim past the approach band
 	droop     float64 // trailing-edge droop actually flying, rad — the command is slewed into this at the drive's rate (#199)
 	droopInit bool    // the first step SNAPS: a Case II spawn is handed over established on FULL, and running its flaps down from clean would be a visible lie
 	launder   float64

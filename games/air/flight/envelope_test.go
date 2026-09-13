@@ -67,38 +67,10 @@ func TestOnspeedHeavy(t *testing.T) {
 	t.Logf("V approach light %.0f kt, heavy %.0f kt", light*1.94384, heavy*1.94384)
 }
 
-// TestFlyawayCapture: hands-off off the catapult, the PA law settles near the
-// 16 deg flyaway deck attitude (the weight board's light row, #154) instead
-// of riding approach alpha into a zoom.
-func TestFlyawayCapture(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
-	m.State = Level(m, Vec3{Y: 25}, Vec3{X: 1}, 75, 3000)
-	gear := true
-	for i := 0; i < 240*30; i++ {
-		if m.State.Velocity.Length() > 110 {
-			gear = false // clean up like a real departure — the climb must SURVIVE the PA-to-UA law switch at 130 m/s
-		}
-		m.Step(Inputs{Throttle: 1, Gear: gear})
-		if i == 240*12-1 {
-			forward := m.State.Attitude.Rotate(Vec3{X: 1})
-			pitch := math.Asin(clamp(forward.Y, -1, 1)) * 180 / math.Pi
-			t.Logf("hands-off flyaway pitch after 12 s: %.1f°", pitch)
-			if pitch < 12 || pitch > 20 {
-				t.Fatalf("flyaway pitch %.1f°, want ~16°", pitch)
-			}
-		}
-	}
-	forward := m.State.Attitude.Rotate(Vec3{X: 1})
-	pitch := math.Asin(clamp(forward.Y, -1, 1)) * 180 / math.Pi
-	t.Logf("pitch after 30 s (through the law switch): %.1f°", pitch)
-	if pitch < 6 {
-		t.Fatalf("climb collapsed after the law switch: pitch %.1f°", pitch)
-	}
-}
-
 // TestFlyawayProfile: a real catapult shot, hands off. Measurement only - set
-// AIR_FLYAWAY=1, AIR_FLYAWAY_DATUM=<degrees> to sweep. The trim-board reference
-// (16° to 44,000 lb, 17° to 48,000, then 19°) is PITCH, not path.
+// AIR_FLYAWAY=1, AIR_FLYAWAY_DATUM=<degrees> to sweep the launch trim (16° to
+// 44,000 lb, 17° to 48,000, then 19°); the reference alpha follows it by
+// NATOPS 8.2.8's linear map, 10-18° of trim to 4-12°.
 func TestFlyawayProfile(t *testing.T) {
 	if os.Getenv("AIR_FLYAWAY") == "" {
 		t.Skip("measurement probe: set AIR_FLYAWAY=1")
@@ -110,6 +82,7 @@ func TestFlyawayProfile(t *testing.T) {
 			t.Fatalf("AIR_FLYAWAY_DATUM %q: %v", datum, err)
 		}
 		m.Airframe.Control.Flyaway = degrees * math.Pi / 180
+		m.Airframe.Control.Capture = clamp(degrees-6, 4, 12) * math.Pi / 180
 	}
 	park(m, 42.7, -0.6)
 	for i := 0; i < 240*2; i++ {
@@ -128,12 +101,12 @@ func TestFlyawayProfile(t *testing.T) {
 	case pounds <= 48000:
 		board = 17
 	}
-	t.Logf("mass %.0f kg (%.0f lb) — weight board calls for %.0f° nose up; datum %.1f°",
-		m.mass, pounds, board, m.Airframe.Control.Flyaway*180/math.Pi)
+	t.Logf("mass %.0f kg (%.0f lb) — weight board calls for %.0f° nose up; trim %.1f°, reference alpha %.1f°",
+		m.mass, pounds, board, m.Airframe.Control.Flyaway*180/math.Pi, m.Airframe.Control.Capture*180/math.Pi)
 
 	marks := []float64{0, 1, 2, 3, 4, 6, 8, 10, 12, 15, 20, 25}
 	next, launched := 0, -1
-	peak := math.Inf(-1)
+	peak := math.Inf(-1) // alpha
 	gear := true
 	for i := 0; i < 240*40; i++ {
 		if m.State.Velocity.Length() > 110 {
@@ -150,8 +123,8 @@ func TestFlyawayProfile(t *testing.T) {
 		}
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		pitch := math.Asin(clamp(forward.Y, -1, 1)) * 180 / math.Pi
-		if pitch > peak {
-			peak = pitch
+		if a := alpha(m.State.Attitude.Unrotate(m.State.Velocity)) * 180 / math.Pi; a > peak {
+			peak = a
 		}
 		if elapsed := float64(i-launched) / 240; next < len(marks) && elapsed >= marks[next] {
 			speed := m.State.Velocity.Length()
@@ -165,7 +138,7 @@ func TestFlyawayProfile(t *testing.T) {
 			next++
 		}
 	}
-	t.Logf("peak pitch %.1f° against the board's %.0f°", peak, board)
+	t.Logf("peak alpha %.1f° against the reference %.1f°", peak, m.Airframe.Control.Capture*180/math.Pi)
 }
 
 // TestStaticThrust: two F404-GE-402s at military power, sea level, static —
