@@ -40,9 +40,12 @@ func TestHeaterEmployment(t *testing.T) {
 		wins             map[string]int
 		missiles, rounds map[string]int // kills by heater, kills by gun
 		carriage         []string       // what each side was still lugging when the guns decided it
-		envelope, asked  map[string]int // ticks each side sat in a legal launch envelope, and how many it could ask on
-		threat           map[string]int // ticks each side had a round in the air tracking it
-		blocked          map[string]int // which single condition denied the shot, when only one did
+		flown            []int          // ticks each seed's fight actually lasted (#212): the fight ENDS at the first
+		//                                 death, so every tick counter below is a share of a DURATION THAT MOVES,
+		//                                 and a change that shortens fights shrinks them all without touching doctrine
+		envelope, asked map[string]int // ticks each side sat in a legal launch envelope, and how many it could ask on
+		threat          map[string]int // ticks each side had a round in the air tracking it
+		blocked         map[string]int // which single condition denied the shot, when only one did
 	}
 
 	books := map[string]*record{}
@@ -86,7 +89,9 @@ func TestHeaterEmployment(t *testing.T) {
 			// The fight ENDS at the first death, as TestLadderDuel scores it: pooling
 			// respawn kills measures spawn-camping as if it were doctrine.
 			finished := false
+			flew := uint64(0)
 			for tick := uint64(0); tick < 60*240 && !finished; tick++ {
+				flew = tick + 1
 				i.Step(tick, nil)
 				flying := map[uint64]bool{}
 				for _, m := range i.flying {
@@ -141,54 +146,39 @@ func TestHeaterEmployment(t *testing.T) {
 						}
 					}
 				}
-				// How often does the top tier sit in a launch envelope it never
-				// asks to use? The missile request rides on b.shoot, which is
-				// the GUN decision — so heater geometry outside gun range can
-				// be structurally unaskable.
+				// What did the LAUNCH RULE actually decide this tick? Read off
+				// trigger()'s own record (#212) rather than restating its
+				// conditions here. The inline copy this replaces still tested
+				// the pre-#48 rear-aspect heuristic that trigger's comment says
+				// was deliberately removed, so it reported envelope 0.0% for
+				// bots that were firing twenty rounds apiece - every head-on
+				// shot failed a condition the bot had stopped applying.
+				//
+				// The rule short-circuits, so this is a FUNNEL and each tick
+				// lands in exactly one bucket, named for the FIRST condition
+				// that failed. That also keeps zoned()'s brain-side ladder
+				// cache untouched: re-asking it here would refresh it on ticks
+				// the bot never would and move the fights being measured.
 				for _, slot := range i.slots() {
-					c, foe := i.aircraft[slot], (*craft)(nil)
-					if c == nil || c.brain == nil || !c.alive || c.model == nil {
+					c := i.aircraft[slot]
+					if c == nil || c.brain == nil || !c.alive || c.model == nil || c.brain.missiles == 0 {
 						continue
 					}
-					for _, other := range i.slots() {
-						if other != slot && i.aircraft[other] != nil && i.aircraft[other].alive && i.aircraft[other].model != nil {
-							foe = i.aircraft[other]
+					b := c.brain
+					switch {
+					case b.gate.when != tick || !b.gate.live:
+						book.blocked[tier[slot]+" no intent"]++
+					case !b.gate.reach:
+						book.blocked[tier[slot]+" out of reach"]++
+					case !b.gate.pointed:
+						book.blocked[tier[slot]+" nose off"]++
+					case !b.gate.zoned:
+						book.blocked[tier[slot]+" ladder refused"]++
+					default:
+						book.envelope[tier[slot]]++
+						if b.shoot {
+							book.asked[tier[slot]]++
 						}
-					}
-					if foe == nil || c.brain.missiles == 0 {
-						continue
-					}
-					b, me := c.brain, &c.model.State
-					direction, distance := i.bearing(me.Position, foe.model.State.Position)
-					v := foe.model.State.Velocity
-					if v.Length() < 1 {
-						continue
-					}
-					aspect := direction.Dot(v.Normalize())
-					nose := me.Attitude.Rotate(flight.Vec3{X: 1})
-					margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
-					limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*max(0, aspect)) *
-						(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
-					rear := aspect > b.tactics.missile.tail
-					near := distance < b.tactics.missile.span && distance < limit
-					pointed := nose.Dot(direction) > margin
-					if !rear || !near || !pointed {
-						// Which ONE condition is denying the shot? Counting only the
-						// lone blocker names the binding constraint; a tick failing
-						// three of them says nothing about which to relax.
-						switch {
-						case !rear && near && pointed:
-							book.blocked[tier[slot]+" aspect only"]++
-						case rear && !near && pointed:
-							book.blocked[tier[slot]+" range only"]++
-						case rear && near && !pointed:
-							book.blocked[tier[slot]+" nose only"]++
-						}
-						continue
-					}
-					book.envelope[tier[slot]]++
-					if b.shoot {
-						book.asked[tier[slot]]++
 					}
 				}
 				// Book the kill the tick a jet stops flying, and credit the
@@ -234,6 +224,7 @@ func TestHeaterEmployment(t *testing.T) {
 			for _, s := range live {
 				book.shots = append(book.shots, *s)
 			}
+			book.flown = append(book.flown, int(flew))
 			i.Close()
 		}
 	}
@@ -274,6 +265,25 @@ func TestHeaterEmployment(t *testing.T) {
 	for _, name := range order {
 		book := books[name]
 		fmt.Printf("\n=== %s (16 seeds) ===\n", name)
+		// The denominator, printed before anything measured against it (#212).
+		total, shortest, longest := 0, 1<<30, 0
+		for _, n := range book.flown {
+			total += n
+			if n < shortest {
+				shortest = n
+			}
+			if n > longest {
+				longest = n
+			}
+		}
+		share := func(ticks int) float64 {
+			if total == 0 {
+				return 0
+			}
+			return 100 * float64(ticks) / float64(total)
+		}
+		fmt.Printf("  fights lasted %.1f s mean (%.1f-%.1f s), %d ticks flown in all - every share below is of THAT\n",
+			float64(total)/60/float64(len(book.flown)), float64(shortest)/60, float64(longest)/60, total)
 		tiers := []string{}
 		for tier := range book.wins {
 			tiers = append(tiers, tier)
@@ -301,11 +311,11 @@ func TestHeaterEmployment(t *testing.T) {
 			if len(mine) > 0 {
 				rate = 100 * float64(hits) / float64(len(mine))
 			}
-			fmt.Printf("  %-11s kills: %d by heater, %d by gun | %3d rounds fired, %4.1f%% arrived | %4d ticks in a legal envelope (%.2f s per fight)\n",
-				tier, book.missiles[tier], book.rounds[tier], len(mine), rate, book.envelope[tier], float64(book.envelope[tier])/60/16)
-			fmt.Printf("              under threat for %d ticks (%.1f s per fight)\n", book.threat[tier], float64(book.threat[tier])/60/16)
-			for _, why := range []string{"aspect only", "range only", "nose only"} {
-				fmt.Printf("              denied by %-12s %5d ticks (%.1f s per fight)\n", why, book.blocked[tier+" "+why], float64(book.blocked[tier+" "+why])/60/16)
+			fmt.Printf("  %-11s kills: %d by heater, %d by gun | %3d rounds fired, %4.1f%% arrived | legal envelope %5.1f%% of the fight (%d ticks)\n",
+				tier, book.missiles[tier], book.rounds[tier], len(mine), rate, share(book.envelope[tier]), book.envelope[tier])
+			fmt.Printf("              under threat        %5.1f%% (%d ticks)\n", share(book.threat[tier]), book.threat[tier])
+			for _, why := range []string{"no intent", "out of reach", "nose off", "ladder refused"} {
+				fmt.Printf("              stopped at %-14s %5.1f%% (%d ticks)\n", why, share(book.blocked[tier+" "+why]), book.blocked[tier+" "+why])
 			}
 		}
 		for _, line := range book.carriage {

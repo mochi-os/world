@@ -112,7 +112,22 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	if closing < 0 {
 		closing = 0
 	}
-	zone.Minimum = math.Max(300, closing*(missile_arm+0.5))
+	// The floor also has to buy the round a SEDUCTION it can survive (#213).
+	// reaches() above cannot price flares - it says so - so before this the
+	// ladder scored a close head-on shot purely on kinematics and endorsed it.
+	// Measured across 16 fights, the superhuman then took twenty of them at a
+	// mean 733 m, half were decoyed and NOT ONE arrived: a seduced seeker
+	// stares at the lure for flare_blind seconds, and a round with less flight
+	// than that remaining when the flare goes off is simply gone.
+	//
+	// So the round must carry flare_blind seconds of closure as well as its
+	// arming time, weighted by how likely the seduction actually is at this
+	// aspect and plume. That is self-scaling in the way a tuned constant would
+	// not be: head-on against a cold jet the chance is 0.41 and the floor
+	// climbs by six tenths of a second of closure, while dead astern it is
+	// 0.19 against a closure near zero and the floor barely moves, which is
+	// the one shot in the recorded fight that DID work.
+	zone.Minimum = math.Max(300, closing*(missile_arm+0.5+seduction(tail, lit)*flare_blind))
 	// The band's own inner edge, where it sits outside the fuse floor. Both
 	// rungs contribute: the disciplined tiers fire inside Escape and everyone
 	// else inside Max, and a single Minimum has to be honest for both.

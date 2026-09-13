@@ -485,6 +485,7 @@ type brain struct {
 	brake     float64
 	shoot     bool       // guns solution may be attempted this period
 	loose     bool       // one-shot missile request, consumed by think()
+	gate      gate       // what the launch rule decided this tick, for instruments only (#212) — nothing in the bot reads it back
 	drop      bool       // one-shot flare request
 	bloom     bool       // one-shot chaff request (#43): the split programme spends the chaff magazine against a radar round and the flare magazine against a heater
 	dispensed int        // countermeasures requested against the current threat episode: the programme's own count, reset when the threat clears
@@ -675,11 +676,36 @@ func corner(m *flight.Model) float64 {
 // -- it refused to consult it. #48's whole intent was that the launch gate
 // read the heater ladder, and since #104 the ladder is honest about what the
 // seeker can actually hold, so the heuristic in front of it is redundant.
+// gate is what the launch rule decided, recorded AS trigger() decides it so an
+// instrument can report the real thing (#212). The heater probe used to keep
+// its own copy of these conditions inline, which drifted: it still tested the
+// pre-#48 rear-aspect heuristic the comment above says was removed, so it read
+// a bot that was emptying its rack as permanently out of envelope.
+//
+// Recorded rather than recomputed on purpose. zoned() caches the ladder ON THE
+// BRAIN, keyed to the tick, so a probe that asked the question on its own
+// account would refresh that cache on ticks the bot never would and change the
+// flying it was there to measure. The conditions short-circuit exactly as the
+// launch does, so `zoned` is only meaningful when reach and pointed both hold
+// - which is precisely when the funnel reaches it.
+type gate struct {
+	when    uint64 // tick this was evaluated
+	live    bool   // trigger got as far as the geometry (it returns early with no intent, or on a degenerate track)
+	reach   bool   // inside the seeker's aspect-weighted acquisition range
+	pointed bool   // nose inside the discipline-scaled margin
+	zoned   bool   // the heater ladder says the round arrives from here
+}
+
+// open reports the gate letting a round go: all three conditions, as the
+// launch itself tests them.
+func (g gate) open() bool { return g.live && g.reach && g.pointed && g.zoned }
+
 func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	b := a.brain
 	if b == nil || a.model == nil || b.prey == nil || b.target < 0 || b.missiles <= 0 {
 		return
 	}
+	b.gate = gate{when: tick}
 	heat := clamp((i.glow(b)-0.5)*2, 0, 1)
 	if !b.shoot && !(heat > 0 && (b.mode == "saddle" || b.mode == "press")) {
 		return
@@ -699,7 +725,13 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
 	limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) *
 		(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
-	if distance < limit && nose.Dot(direction) > margin && i.zoned(a, b, distance, tick) {
+	b.gate.live = true
+	b.gate.reach = distance < limit
+	b.gate.pointed = nose.Dot(direction) > margin
+	if b.gate.reach && b.gate.pointed {
+		b.gate.zoned = i.zoned(a, b, distance, tick)
+	}
+	if b.gate.open() {
 		b.loose = true
 	}
 }

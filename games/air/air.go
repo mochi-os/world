@@ -110,6 +110,7 @@ const (
 	missile_n      = 3.5    // the proportional-navigation constant
 	flare_window   = 0.8    // s after a flare drop in which it can decoy
 	flare_reject   = 0.55   // the 9M's counter-countermeasures: flares work this fraction as often
+	flare_blind    = 1.5    // s a seduced seeker spends on the lure before it gives up — a round with less flight than this left when it bites is simply lost (#213)
 	flare_load     = 40     // flares carried per life, every dispenser: the legacy Hornet's two ALE-47 buckets hold 60 cartridges between them, loaded here for the air-to-air fight (#43) — the bots' was bottomless before this
 	chaff_load     = 20     // and the chaff share of those 60: a mid-course defence the notch does most of the work for, so the smaller half of the load
 )
@@ -1373,6 +1374,29 @@ func (i *instance) fly(dt float64, tick uint64) {
 	i.rounds = alive
 }
 
+// seduction is the chance a flare drop takes the seeker on this pass, for a
+// FRESH round: aspect-graded (a flare competes with the tailpipe, so it works
+// best from the front and worst from dead astern) and tempered by the 9M's
+// counter-countermeasures, with a lit burner halving it because the plume
+// outshines the decoy.
+//
+// tail is how square the line of sight is to the target's own axis, 1 dead
+// astern and 0 head-on; lit is its achieved reheat.
+//
+// This is shared ON PURPOSE. pursue() rolls against it when a flare actually
+// goes off, and the launch zone prices it into the floor (#213) — the whole
+// point is that the shot the doctrine endorses and the shot the weapon flies
+// are judged by ONE formula. Restating it in the caller is how the heater
+// probe's envelope model drifted into measuring a rule nobody followed
+// (#212); it is not a mistake worth making twice.
+func seduction(tail, lit float64) float64 {
+	decoy := (0.35 + 0.40*(1-clamp(tail, 0, 1))) * flare_reject
+	if lit > 0.05 {
+		decoy *= 0.5
+	}
+	return decoy
+}
+
 // bearing returns the unit minimum-image direction and distance from a to b.
 func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) {
 	dx := flight.Shortest(a.X, b.X, i.environment.Wrap)
@@ -1680,10 +1704,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				m.window = true
 				direction, _ := i.bearing(m.position, target.model.State.Position)
 				tail := direction.Dot(target.model.State.Attitude.Rotate(flight.Vec3{X: 1}))
-				decoy := (0.35 + 0.40*(1-clamp(tail, 0, 1))) * flare_reject
-				if target.latest.Reheat > 0.05 {
-					decoy *= 0.5 // the burner is the brightest thing in view
-				}
+				decoy := seduction(tail, target.latest.Reheat)
 				// Diminishing returns, not independent coin flips. Every flare
 				// used to get its own full roll, so a jet dispensing
 				// continuously stacked ten of them in front of one round and
@@ -1695,7 +1716,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				decoy *= math.Pow(0.5, float64(m.rejected))
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
 					m.lure = target.model.State.Position.Add(flight.Vec3{Y: -30})
-					m.blind = 1.5
+					m.blind = flare_blind
 					tracking = false
 					m.sight, _ = i.bearing(m.position, m.lure) // the seeker is ON the flare now: re-reference the track, or the aim-point swap reads as an LOS-rate spike and breaks the lock at the seduction instant
 					i.events = append(i.events, map[string]any{"kind": "decoy", "slot": m.target})

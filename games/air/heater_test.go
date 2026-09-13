@@ -316,3 +316,43 @@ func zoning(t *testing.T) (*instance, *craft, *brain) {
 	t.Fatal("no bot reached a populated track in 20 s")
 	return nil, nil, nil
 }
+
+// TestHeatFlare: the zone floor prices the seduction reaches() cannot fly
+// (#213). The ladder flies a virtual round with no flares - it says so - so it
+// used to score a close head-on shot on kinematics alone and endorse it. In a
+// measured 16-fight sample the superhuman took twenty such shots at a mean
+// 733 m, half were decoyed and none arrived, and the fight collapsed from 98 s
+// to 14 s because the merge decided it.
+func TestHeatFlare(t *testing.T) {
+	// The seduction model's shape, which the floor leans on and pursue() rolls
+	// against. Both callers share the one function on purpose (#212).
+	if front, astern := seduction(0, 0), seduction(1, 0); front <= astern {
+		t.Errorf("a flare competes with the tailpipe: it should decoy better head-on (%.3f) than astern (%.3f)", front, astern)
+	}
+	if cold, lit := seduction(0, 0), seduction(0, 1); lit >= cold {
+		t.Errorf("a lit burner outshines the decoy: lit %.3f should be under cold %.3f", lit, cold)
+	}
+
+	shooter := round.Target{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: 205}}
+	place := func(vx float64) round.Target {
+		return round.Target{Position: flight.Vec3{X: 3000, Y: 4000}, Velocity: flight.Vec3{X: vx}}
+	}
+	// Head-on and cold is the worst case: maximum closure, maximum decoy
+	// chance, so the round must carry flare_blind seconds of closure on top of
+	// its arming time or a seduction inside the last second is unrecoverable.
+	front := Heat(shooter, place(-205), flight.Vec3{}, 0, 0)
+	bare := 410 * (missile_arm + 0.5)
+	if front.Minimum <= bare {
+		t.Errorf("a cold head-on floor of %.0f m prices no seduction at all: kinematics alone give %.0f m", front.Minimum, bare)
+	}
+	if want := 410 * (missile_arm + 0.5 + seduction(0, 0)*flare_blind); math.Abs(front.Minimum-want) > 60 {
+		t.Errorf("the cold head-on floor is %.0f m, not the %.0f m the seduction model asks for", front.Minimum, want)
+	}
+	// Astern the flare is weakest AND the closure is slight, so the floor is
+	// left alone - that is the shot the recorded fight actually converted.
+	astern := Heat(shooter, place(205), flight.Vec3{}, 0, 0)
+	if astern.Minimum >= front.Minimum {
+		t.Errorf("astern floor %.0f m should sit well under the head-on floor %.0f m", astern.Minimum, front.Minimum)
+	}
+	t.Logf("floors: head-on %.0f m (kinematics alone %.0f), astern %.0f m", front.Minimum, bare, astern.Minimum)
+}
