@@ -206,6 +206,42 @@ func TestLadderDuel(t *testing.T) {
 			}
 			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
 				arm, strong, weak, wins, losses, draws, mean)
+			// HOW LONG THE FIGHT LASTS is a gate now (#213). A weapon change
+			// quartered the top-tier fight - 98 s to 14 s on the heater probe,
+			// 76.8 s to 14.2 s here - while every ordering gate below stayed
+			// green, because ordering is all they ask about. The number was
+			// printed on the line above all along and nothing read it.
+			//
+			// The floors catch a COLLAPSE, they do not assert an ideal. The
+			// ruling of 2026-09-13 is that even 90 s is "quite short", since a
+			// real fight spirals to the deck and that takes time - so a floor
+			// here is the bottom of the honest range, not a target. These sims
+			// are seeded and deterministic, so the margin guards against
+			// legitimate tuning drift rather than noise.
+			//
+			// Measured on the tree one commit before #207, which is the last
+			// point every arm was known good: guns 187.1 s (ace v pilot) and
+			// 150.3 s (superhuman v ace); missiles 25.3 s and 76.8 s.
+			floor := 75.0 // guns: half of the slower of the two arms
+			if missiles {
+				floor = 35.0 // missiles: half of 76.8, and 62.7 s clears it today
+			}
+			if missiles && strong == "ace" {
+				// THE ONE EXCEPTION, and it is a known open finding rather than
+				// a relaxation: this arm fell 25.3 -> 10.1 s across #207 and
+				// #213's flare pricing does not reach it, because the ace's
+				// shots at the pilot go out head-on at a mean 1,591 m - far
+				// outside any launch floor. #215 carries the diagnosis (the
+				// pilot tier flies 78-88% lit, so it is lockable at that range)
+				// and must either fix it or rule it correct; until then the
+				// floor holds the line where it actually stands so a FURTHER
+				// collapse is still caught.
+				floor = 8.0
+			}
+			if mean > 0 && mean < floor {
+				t.Errorf("%s: %s kills %s in %.1f s mean, under the %.0f s floor - the fight is being decided at the merge rather than fought (#213)",
+					arm, strong, weak, mean, floor)
+			}
 			// The gate is inversion only: these pairings mostly draw, so "the better
 			// tier must win" would sit red on honest fights. It must fire on a regime,
 			// not one seed - two fights of daylight, three for the chaotic missile arm.

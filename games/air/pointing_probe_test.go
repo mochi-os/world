@@ -425,7 +425,24 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// from 200 kt into an 80-degree tail-slide (the self-check's peak of
 		// 82-153 degrees, three configurations running) - a pilot pushes the
 		// nose down first and lets the burner do the work.
+		// The push is the MORE FORWARD of two demands: put the nose on the
+		// horizon, AND unload the wing. Scaling on attitude alone stalls the
+		// recovery exactly where it is needed (#214): traced at 60-62 degrees
+		// alpha and 230 kt with the nose already near the horizon, the
+		// attitude term faded -0.40 -> -0.29 -> 0 as axis.Y fell, the wing
+		// stayed departed, and the jet held past 60 degrees for 2,820 ticks of
+		// one sweep. Alpha is what has to come down; the horizon is where the
+		// nose goes afterwards. Full forward stick by 45 degrees.
 		pitch, roll = clamp(-axis.Y*1.5, -0.4, 0.1), roll*0.3
+		// From the regain's OWN trigger, not below it. At 25 degrees this
+		// unload bit into the high-alpha fighting the script exists to
+		// reproduce - measured 29.2% above 20 degrees where the recording flew
+		// 49.9%, which failed the calibration check two lines of output later.
+		// The recording peaked at 34.2, so anything that fires inside the
+		// thirties is arguing with the profile rather than saving the jet.
+		if riding > 32 {
+			pitch = math.Min(pitch, clamp(-(riding-32)/15, -1, 0))
+		}
 	}
 	// Full roll stick while slow is crossed controls, and #97 built the
 	// departure that follows: a pilot rolls with the speed he has - and not
@@ -451,7 +468,17 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	if pitch > 0 {
 		pitch *= clamp((44-riding)/10, 0.08, 1)
 	}
-	if me.Position.Y < 2500 { // the one concession: do not fly into the sea - with the pull the speed allows
+	// The one concession: do not fly into the sea, with the pull the speed
+	// allows - but never over the regain or the alpha ceiling above it. A
+	// departed wing does not lift, so a pull commanded here cannot raise the
+	// nose; it would hold the jet in the stall it is leaving.
+	//
+	// Conditioning it was tried FIRST as the fix for #214 and measured INERT -
+	// the departures reproduced to the same peaks (110.1 and 71.9 degrees),
+	// because the departures happen at 2,900-4,600 m where this guard never
+	// fires. Kept anyway as correct in its own right; the actual cause was the
+	// regain unloading on attitude rather than alpha, fixed above.
+	if me.Position.Y < 2500 && !h.regaining && riding < 30 {
 		pitch = math.Max(pitch, math.Min(0.35, limit))
 	}
 	data := map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "reheat": 1.0}
@@ -494,6 +521,7 @@ type bout struct {
 	high                   [2]int     // ticks above 20 deg alpha
 	close, closeHigh       [2]int     // ticks engaged (inside 1,500 m), and of those above 20 deg: the pilot's own doctrine, with the other jet's extensions taken out
 	peak                   [2]float64 // deg
+	departed               [2]int     // ticks past 45 deg: a TUMBLE is time spent there, which a peak cannot tell from a transient (#214)
 	speed                  [2]float64 // summed m/s, for the mean
 	slowest                [2]float64 // m/s
 	rebuilds               int        // bot ticks rebuilding energy below its floor
@@ -612,6 +640,9 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 				alpha := jet.model.Alpha() * 180 / math.Pi
 				if alpha > b.peak[seat] {
 					b.peak[seat] = alpha
+				}
+				if alpha > 45 {
+					b.departed[seat]++
 				}
 				if alpha > 20 {
 					b.high[seat]++
@@ -758,12 +789,32 @@ func TestTierAgainstTheHornet(t *testing.T) {
 		} {
 			b := sweep(t, level, mode, opponent.make, missiles, opponent.entry, 16, 120)
 			fmt.Println(report(opponent.name, level, b))
-			if opponent.name == "hornet" && b.peak[1] > 50 {
+			// A TUMBLE IS TIME SPENT DEPARTED, not a peak (#214). The peak
+			// gate could not tell a 47-second tumble from a 0.15-second
+			// transient, and both read as "departed": before the regain was
+			// taught to unload on alpha the script spent 2,820 ticks past 60
+			// degrees in a single sweep, and after it 142 ticks past 45 across
+			// all sixteen fights - 2.4 seconds in total, which is a hard pull
+			// overshooting and coming back, exactly what the recording's pilot
+			// did at 34.2 degrees. Judging the peak kept the gate red on a
+			// script that had stopped tumbling, which would have driven the
+			// next fix at a defect that was already closed.
+			//
+			// Half a second PER FIGHT is the line, and the arms either side of
+			// it are why: the pilot arm sits at 2.4 s over sixteen fights
+			// (0.15 s each - a hard pull overshooting and coming back, which is
+			// what the recording's pilot did at 34.2 degrees), a genuinely
+			// tumbling arm reads 29.2 s (1.8 s each), and the unfixed script
+			// read 47 s in a single sweep. An order of magnitude separates a
+			// transient from a tumble, so the line sits between them rather
+			// than near either.
+			if opponent.name == "hornet" && b.departed[1] > 60*8 {
 				// Every tier's arm, not just the ace's (#168). The script is the
 				// same script on all four, so a departure anywhere is the
 				// script's defect - and reading only the ace's row let a 99.7
 				// degree pilot-arm departure through.
-				t.Errorf("the hornet departed against the %s: peak %.1f deg, and a tumbling opponent is killed for free rather than beaten", level, b.peak[1])
+				t.Errorf("the hornet tumbled against the %s: %.1f s past 45 deg over 16 fights (peak %.1f), and a tumbling opponent is killed for free rather than beaten",
+					level, float64(b.departed[1])/60, b.peak[1])
 			}
 			if level == "ace" && opponent.name == "hornet" && missiles {
 				// Only the arm the recording was flown on: guns-only fights run
