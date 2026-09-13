@@ -364,6 +364,10 @@ func TestGunSolutionBotSeat(t *testing.T) {
 		}
 		pool := make([][]float64, len(bands))
 		var command, tracking, total, inside, outside []float64
+		// The fine-tracking boost's real reach, derived from the tactics the bot
+		// actually flies (skill.open * aim.reach) so this can never again report
+		// a boundary the bot has stopped applying.
+		edge := skills["ace"].open * standard().aim.reach
 		sumThrottle, sumBrake, sumG, budget := 0.0, 0.0, 0.0, 0
 		// The terminal discipline's own accounting (#42). press spends its
 		// overtake on RANGE alone - goal := clamp((distance-250)*0.15, 0, 45)
@@ -434,13 +438,28 @@ func TestGunSolutionBotSeat(t *testing.T) {
 					// COMMANDING the wrong direction, or is the jet failing to
 					// reach what it commands? `ideal` is the same lead point
 					// TestGunSolution's scripted law flies to.
-					// split at 690 m = skill.open*1.15, the range gate on
-					// steer()'s fine-tracking boost: inside it the boost runs,
-					// outside it there is no refinement at all
-					if span >= 400 && span < 690 {
+					// Split at the fine-tracking boost's ACTUAL reach, read from
+					// the tactics rather than written down here. This used to be
+					// hardcoded at 690 m with the halves labelled "boost ON" and
+					// "boost OFF", which was true when aim.reach was 1.15 and has
+					// been false since #42 raised it to 1.5 - the boost now runs
+					// to 900 m for the ace and the probe was reporting a gate the
+					// bot had stopped applying. The conversion difference across
+					// the old line is real and survives (press 40.2% inside,
+					// 11.8% outside), but it is a RANGE effect, not a gate, and
+					// the stale label sent a reader hunting for a switch that is
+					// not there. Same defect as #212: derive the boundary, never
+					// restate it.
+					//
+					// With reach at 1.5 the boost now covers the WHOLE 400-900 m
+					// window, so the old split had an empty outer half. The
+					// comparison that still means something is boosted against
+					// beyond-the-boost, which is why the outer bucket runs to
+					// 1,500 m rather than stopping at 900.
+					if span >= 400 && span < edge {
 						inside = append(inside, math.Acos(clamp(lead(s, &target.State, true).Subtract(s.Position).Normalize().Dot(axis), -1, 1))*180/math.Pi)
 					}
-					if span >= 690 && span < 900 {
+					if span >= edge && span < 1500 {
 						outside = append(outside, math.Acos(clamp(lead(s, &target.State, true).Subtract(s.Position).Normalize().Dot(axis), -1, 1))*180/math.Pi)
 					}
 					if span >= 400 && span < 900 {
@@ -499,8 +518,8 @@ func TestGunSolutionBotSeat(t *testing.T) {
 				}
 				return 100 * float64(n) / float64(len(v))
 			}
-			fmt.Printf("  %-6s boost gate: 400-690 m (boost ON) %5.1f%% on solution | 690-900 m (boost OFF) %5.1f%%\n",
-				name, share(inside), share(outside))
+			fmt.Printf("  %-6s fine-track reach %.0f m: 400-%.0f m (boosted) %5.1f%% on solution | %.0f-1500 m (beyond it) %5.1f%%\n",
+				name, edge, edge, share(inside), edge, share(outside))
 			pct := func(n, d int) float64 {
 				if d == 0 {
 					return math.NaN()
