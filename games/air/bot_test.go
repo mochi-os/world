@@ -30,8 +30,17 @@ func TestGateRecord(t *testing.T) {
 			// Re-run the gate on this tick's state and check the record it
 			// leaves against the request it makes. Saved and restored so the
 			// probe question does not become a shot the bot never took.
+			// Zero the record with a sentinel first. Re-running trigger is NOT
+			// idempotent once the live path has already fired this tick: think()
+			// consumes b.loose and launches, the magazine drops, and the second
+			// call hits the `b.missiles <= 0` early return WITHOUT touching
+			// b.gate - leaving the live call's record (open, this tick) against
+			// the reset b.loose, which reads as a disagreement that never
+			// happened. The sentinel makes "my call did not evaluate" visible
+			// instead of borrowing the previous answer. Found when a scorer
+			// change made the bots fire more and exposed it.
 			loose, keep := b.loose, b.gate
-			b.loose = false
+			b.loose, b.gate = false, gate{when: ^uint64(0)}
 			i.trigger(slot, c, tick)
 			if b.gate.when == tick && b.gate.open() != b.loose {
 				t.Fatalf("tick %d slot %d: the gate records open=%v while the launch request is %v (%+v)",

@@ -340,6 +340,15 @@ func TestGunSolutionBotSeat(t *testing.T) {
 	kt := 250.0
 	speed := kt / 1.944
 
+	// READ THE SHARE UNDER 5 DEGREES, NOT THE MEAN ERROR (#42, 2026-09-13).
+	// The aim integrator took press from 1.8% to 37.9% on solution at 400-600 m
+	// while the MEAN nose-off over 400-900 m did not move at all (6.1 -> 6.2
+	// deg). Both are true: the mean over the wider band is dominated by
+	// 600-900 m, where conversion is still 9.6%, and an integrator does not
+	// shrink the average error - it moves the distribution across the firing
+	// threshold. At 400-600 m the median went 9.0 -> 6.2 deg and the share
+	// inside tolerance went up twentyfold. A tuning change judged on the mean
+	// would have been read as doing nothing.
 	fmt.Println("\nBOT SEAT: one named play, held for the whole run, against the same level turner")
 	fmt.Printf("%-8s %-9s %8s %12s %9s %9s\n", "play", "band", "samples", "median off", "on<5deg", "on<20deg")
 	for _, name := range []string{"press", "saddle", "high", "lag"} {
@@ -356,6 +365,13 @@ func TestGunSolutionBotSeat(t *testing.T) {
 		pool := make([][]float64, len(bands))
 		var command, tracking, total, inside, outside []float64
 		sumThrottle, sumBrake, sumG, budget := 0.0, 0.0, 0.0, 0
+		// The terminal discipline's own accounting (#42). press spends its
+		// overtake on RANGE alone - goal := clamp((distance-250)*0.15, 0, 45)
+		// knows nothing about where the nose is - so this asks what that costs:
+		// how much of the close-in time is spent PARKED (closure under 10 m/s)
+		// with the nose still a long way off, which is parking abeam rather
+		// than finishing.
+		parkedOn, parkedOff, closeOn, closeOff := 0, 0, 0, 0
 		for _, start := range starts {
 			for _, entry := range entries {
 				you := &turning{&turner{speed: speed, share: 1}}
@@ -444,6 +460,23 @@ func TestGunSolutionBotSeat(t *testing.T) {
 						sumG += o.g
 						budget++
 					}
+					// Inside the finishing gap, is the overtake being spent
+					// with the nose on or with it abeam?
+					if span < 900 {
+						closure := s.Velocity.Subtract(target.State.Velocity).Dot(line.Scale(1 / span))
+						parked := math.Abs(closure) < 10
+						if off < 30 {
+							closeOn++
+							if parked {
+								parkedOn++
+							}
+						} else {
+							closeOff++
+							if parked {
+								parkedOff++
+							}
+						}
+					}
 					for bi := 0; bi < len(bands); bi++ {
 						if span >= edges[bi] && span < edges[bi+1] {
 							pool[bi] = append(pool[bi], off)
@@ -468,6 +501,14 @@ func TestGunSolutionBotSeat(t *testing.T) {
 			}
 			fmt.Printf("  %-6s boost gate: 400-690 m (boost ON) %5.1f%% on solution | 690-900 m (boost OFF) %5.1f%%\n",
 				name, share(inside), share(outside))
+			pct := func(n, d int) float64 {
+				if d == 0 {
+					return math.NaN()
+				}
+				return 100 * float64(n) / float64(d)
+			}
+			fmt.Printf("  %-6s inside 900 m: nose ON  (<30 deg) %6d ticks, parked (|closure|<10) %5.1f%% | nose OFF %6d ticks, parked %5.1f%%\n",
+				name, closeOn, pct(parkedOn, closeOn), closeOff, pct(parkedOff, closeOff))
 			mid := func(v []float64) float64 { u := append([]float64(nil), v...); sort.Float64s(u); return u[len(u)/2] }
 			fmt.Printf("  %-6s 400-900 m: commanded aim off the ideal lead %5.1f deg | nose off the COMMAND %5.1f deg | nose off the ideal %5.1f deg | throttle %.2f brake %.2f g %.1f\n",
 				name, mid(command), mid(tracking), mid(total), sumThrottle/float64(budget), sumBrake/float64(budget), sumG/float64(budget))

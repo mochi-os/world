@@ -227,15 +227,27 @@ func TestLadderDuel(t *testing.T) {
 				floor = 35.0 // missiles: half of 76.8, and 62.7 s clears it today
 			}
 			if missiles && strong == "ace" {
-				// THE ONE EXCEPTION, and it is a known open finding rather than
-				// a relaxation: this arm fell 25.3 -> 10.1 s across #207 and
-				// #213's flare pricing does not reach it, because the ace's
-				// shots at the pilot go out head-on at a mean 1,591 m - far
-				// outside any launch floor. #215 carries the diagnosis (the
-				// pilot tier flies 78-88% lit, so it is lockable at that range)
-				// and must either fix it or rule it correct; until then the
-				// floor holds the line where it actually stands so a FURTHER
-				// collapse is still caught.
+				// THE ONE EXCEPTION, and it is now a CONFIRMED property of the
+				// matchup rather than an open defect (#215). This arm fell
+				// 25.3 -> 10.1 s across #207 and #213's flare pricing does not
+				// reach it, because the ace's shots at the pilot go out head-on
+				// at a mean 1,591 m, far outside any launch floor. Instrumented
+				// at the release itself over 88 launches: the ace shoots a LIT
+				// pilot on 50% of its releases against 18% the other way, and
+				// on the long head-on shots the pilot is at full reheat - which
+				// is what makes it acquirable at that range at all
+				// (missile_range*(0.15+0.35*lit) needs lit >= 0.48 for 1,591 m).
+				// The pilot tier flies 78-88% in burner and a working missile
+				// punishes that. So a fast kill here is the weak tier being
+				// weak, not the weapon or the doctrine being wrong.
+				// The floor still holds the line where the arm actually stands,
+				// so a FURTHER collapse is caught. Do NOT widen the flare
+				// pricing to reach 1.6 km to "fix" this: it would suppress
+				// legitimate long shots at genuinely lit targets, which is what
+				// the weapon is for. Whether the pilot tier should have
+				// self-plume discipline at all is a catalogue question (#42) -
+				// there is no burner knob, the tier difference comes from which
+				// plays they fly, several of which hardcode reheat: 1.
 				floor = 8.0
 			}
 			if mean > 0 && mean < floor {

@@ -135,6 +135,21 @@ var plays = []play{
 			// Terminal closure discipline: park at the finishing gap with the
 			// overtake spent — arriving hot blows through the saddle and turns
 			// the kill into another run-in from a mile out.
+			//
+			// REFUTED 2026-09-13, recorded here so it is not rebuilt (#42). The
+			// standing suspicion was that this law spends the overtake on RANGE
+			// alone - goal knows nothing about where the nose is - and so parks
+			// the jet abeam, which would fit the field's negative median closure
+			// inside 900 m. Measured in the bot seat over 124,000 ticks inside
+			// the finishing gap, it does the OPPOSITE:
+			//     nose ON  (<30 deg)  103,483 ticks, parked (|closure|<10) 56.1%
+			//     nose OFF (>30 deg)   21,150 ticks, parked                 6.2%
+			// It spends the overtake when it holds the solution and keeps it
+			// when it does not. saddle behaves the same (52.2% / 4.6%). The
+			// geometry does the work the law does not: the jet only ARRIVES
+			// here with the nose on, so a range-only goal is not the defect it
+			// looked like, and making it angle-aware would be tuning against a
+			// measurement that says the behaviour is already right.
 			goal := clamp((m.distance-250)*0.15, 0, 45)
 			o.throttle = clamp(0.7-(m.closure-goal)*0.006, 0.2, 1)
 			o.reheat = 0
@@ -474,6 +489,11 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 // appraise scores one instant of a rehearsed future. Positive is a fight
 // being won: his tail toward my pointed nose inside the gun band. Negative is
 // a fight being lost: his nose behind my tail, or the sea arriving.
+// keen is the exponent on the nose term in appraise's offence (#42). Two is
+// the historical value and is nearly flat across the whole useful range; see
+// the comment at its use. SWEEP THIS, do not guess it.
+const keen = 6.0
+
 func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit) (float64, float64) {
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
@@ -490,7 +510,38 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	ahead := lhat.Dot(vhat) // 1: he is ahead of my path, -1: behind me
 	band := clamp((r-60)/190, 0, 1) * clamp((1500-r)/800, 0, 1)
 	near := clamp((2500-r)/1500, 0, 1)
-	offence := clamp(rear, 0, 1) * clamp(point, 0, 1) * clamp(point, 0, 1) * band
+	// The nose term is sharpened past its old square (#42). Squared, it could
+	// not tell a gun solution from "roughly pointed": 0 deg scores 1.00, 5 deg
+	// (the firing tolerance) 0.99 and 20 deg 0.88, so a play holding 3 deg and
+	// one holding 18 outscored each other by a tenth while one fires and the
+	// other never does. That flatness did not matter while the tracking loop
+	// left a standing error nothing could convert; now that the aim integrator
+	// takes press to 37.9% inside tolerance at 400-600 m (was 1.8%), the scorer
+	// is the thing that cannot see it, and the ace still spends 63% of a fight
+	// in `high`.
+	//
+	// keen is the exponent, named so it can be swept rather than guessed - the
+	// lesson of 283b565, where two constants shipped claiming a sweep that had
+	// never been run. At 6 the half-value sits at 19 deg instead of 32.
+	//
+	// THE STATED REASON FOR THIS CHANGE WAS REFUTED BY ITS OWN MEASUREMENT, and
+	// it is kept on the result rather than the argument. The expectation was
+	// that rewarding conversion would move the ace out of `high` and into
+	// `press`. The opposite happened - high went 63% -> 68% - and in hindsight
+	// that is obvious: `high` is the REPOSITIONING play, the yo-yo exists to
+	// put the nose on, so rewarding nose-on more sharply favours the manoeuvre
+	// that best achieves it. Do not re-argue the mix from this term.
+	//
+	// What it did measure, all gates green:
+	//   tier ladder, pilot arm (the trustworthy one - the hornet is a
+	//     transient there, not the tumble of #214)   11 killed/4 died -> 15/0
+	//   wide missiles superhuman v ace, the marginal top rung   23-21 -> 27-21
+	//   wide guns ace v pilot, fights reaching a decision       9-2/37 no result
+	//                                                        -> 12-5/31
+	//   guns superhuman v ace                          6-4 -> 4-3, and mean
+	//     time to kill 150 -> 101 s: the one arm that softened, inside noise at
+	//     sixteen seeds and still positive and well clear of the #213 floor.
+	offence := clamp(rear, 0, 1) * math.Pow(clamp(point, 0, 1), keen) * band
 	threat := clamp(-rear, 0, 1) * clamp(-ahead, 0, 1) * near
 	// The head-on trade (#45): `threat` prices him BEHIND me, so a mutual nose-on
 	// pass scored zero danger and the arbiter learned that jousting at the merge
