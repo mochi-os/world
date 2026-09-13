@@ -998,6 +998,19 @@ func TestTierAgainstTheHornet(t *testing.T) {
 				// continuous close fight, and a harness fight the bot spends
 				// extending away from dilutes a whole-fight share with time the
 				// pilot has nothing to pull at.
+				// RULING 2026-09-13 (user): 34.8% is accepted as the honest limit
+				// and the 35% floor STAYS. #214's departure half is fixed - every
+				// arm is clean and the engaged peak fell from 105 degrees to 32.1
+				// - and five separate levers on the share (unload trigger, unload
+				// gain, an alpha rate term, the regain's exit speed, the throttle)
+				// were each measured to buy it only by spending departure margin.
+				// What is left looks like the ceiling of a 0.85 stick limit at
+				// these speeds, not a defect with a fix waiting.
+				//
+				// So this check is EXPECTED RED at 34.8 until the scripted human
+				// is made to fight harder without departing. That is deliberate,
+				// and it is the one known-failing check in the package: anything
+				// else going red here is a real regression, not this.
 				high := 100 * float64(b.closeHigh[1]) / math.Max(float64(b.close[1]), 1)
 				mean := b.speed[1] / math.Max(float64(b.ticks), 1) * 1.944
 				if high < 35 || high > 65 || mean < 240 || mean > 340 {
