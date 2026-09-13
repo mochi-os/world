@@ -1,6 +1,7 @@
 package air
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -935,6 +936,38 @@ func TestTierAgainstTheHornet(t *testing.T) {
 	// leak exactly, one test along. heavy() buys this for the sweep's own tests.
 	bots_live.Store(0)
 	t.Cleanup(func() { bots_live.Store(0) })
+
+	// Doctrine overrides, so this ladder can be swept the way TestBattery is.
+	// The ladder's bots are built inside New()/Create() and take the PACKAGE
+	// doctrine (bot.go: `tactics: doctrine`), so amending that is what reaches
+	// them - AIR_TACTICS was parsed only inside TestBattery, and a sweep run
+	// against this test silently used the defaults for every cell.
+	//
+	// The refusal below is the POSITIVE CONTROL, and it is the whole point of
+	// this block. A knob that is inert at its default makes a good negative
+	// control, but it CANNOT distinguish "this value has no effect" from "this
+	// value never arrived": both print identical numbers. A discount sweep over
+	// 1.0/0.97/0.93 read the same to the digit on all four arms and looked like
+	// a clean refutation of the idea; it was an unset variable. Refusing an
+	// override that changes nothing makes that failure loud instead of
+	// plausible.
+	if raw := os.Getenv("AIR_TACTICS"); raw != "" {
+		overrides := map[string]float64{}
+		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+			t.Fatalf("AIR_TACTICS: %v", err)
+		}
+		before := doctrine
+		t.Cleanup(func() { doctrine = before })
+		for name, value := range overrides {
+			if !amend(&doctrine, name, value) {
+				t.Fatalf("AIR_TACTICS: unknown constant %q", name)
+			}
+		}
+		if doctrine == before {
+			t.Fatalf("AIR_TACTICS %s left the doctrine unchanged - the override did not reach the bots", raw)
+		}
+		t.Logf("AIR_TACTICS applied: %s", raw)
+	}
 	armed := os.Getenv("AIR_PASSIVE") == ""
 	missiles := os.Getenv("AIR_WEAPONS") != "guns"
 	tiers := []string{"novice", "pilot", "ace", "superhuman"}

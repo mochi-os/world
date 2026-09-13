@@ -711,6 +711,17 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
 	// for the top tiers, enough for a reversal's payoff to show through the
 	// point-progress term without quadrupling the rehearsal budget. One
+	// REFUTED 2026-09-13, so it is not rebuilt: discounting distant rollout
+	// samples does NOT price the asymmetry. Each sample was weighted
+	// d^(seconds) with `samples` accumulating the weights, which renormalises
+	// every play over ITS OWN window - so the discount pulls each play's mean
+	// toward its own early samples equally and never changes a 12 s window's
+	// standing RELATIVE to a 4 s one. Self-cancelling by construction, and the
+	// guns arm agreed: over d = 1.0/0.97/0.93/0.88 the yo-yo's share held at
+	// 52-65% (it ROSE on the ace arm, 58 -> 65) and kills read 7/8/5/7, which
+	// is noise. Pricing the span needs a shape that does not renormalise per
+	// play - and a shape that does not is the sum-versus-mean problem again.
+	//
 	// window per candidate, each play on its own span: judging every rival
 	// over the LONGEST span on offer (so a yo-yo and the pursuit it competes
 	// with are compared alike, #169/#174) fixed the yo-yo's dominance - its
