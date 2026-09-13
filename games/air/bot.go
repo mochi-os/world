@@ -1672,6 +1672,39 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		}
 	}
 
+	// A gun attack that is CONVERTING is not abandoned mid-solution (#42).
+	//
+	// Measured in the bot seat, one named play held for a whole run against a
+	// level turner: press converts 35.6% of the time at 400-900 m and points
+	// within 20 degrees for 92% of samples; saddle 36.1%, high 33.0%. The live
+	// ace in a real fight points within 20 degrees for 0-3% of samples at
+	// EVERY range. Same laws, same airframe, same tracking loop - so the
+	// catalogue can point and the defect is that nothing protects a conversion
+	// once it has started. Every play in `commitment` above is defensive or
+	// disengaging (break, extend, rebuild, scissors) and not one of the four
+	// plays that can actually point is in it: the arbiter may take the stick
+	// off a live solution at the next re-plan, while it may not interrupt a
+	// disengagement.
+	//
+	// The hold keys on b.tracking, which steer() re-earns from the pipper every
+	// tick, so it is self-limiting - the moment the solution lapses the flag
+	// clears and the arbiter is free again. That is why this is not done by
+	// adding the four plays to `commitment`: that set is unconditional once
+	// entered, and it would glue the jet to a hopeless chase as readily as to a
+	// winning one.
+	//
+	// It sits AFTER the energy floor deliberately. Placed with the commitment
+	// guard it would skip the floor's return as well, and the jet would hold a
+	// gun solution straight through the speed at which it is meant to break off
+	// and rebuild - trading this defect for #206's. A threat behind or an
+	// inbound missile still breaks it, exactly as they break a committed
+	// manoeuvre.
+	if b.tracking && menace < 0 {
+		if _, urgent := menacing[b.target]; !urgent {
+			return
+		}
+	}
+
 	// Carry the committed lead turn THROUGH the pass. Without this the turn
 	// ends the instant closure goes negative, the mode leaves neutral, and the
 	// pursuit law starts chasing a bandit who is now behind the wing - so the
