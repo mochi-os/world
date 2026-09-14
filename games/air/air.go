@@ -147,12 +147,23 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 			weapons = "guns"
 		}
 	}
+	// The map: its collision geometry is what every model in the match flies
+	// against, and what the lobby serves the clients for their prediction.
+	name, _ := session.Parameters["map"].(string)
+	if name == "" {
+		name = "midway"
+	}
+	chart, found := chart_load(name)
+	if !found {
+		return nil, fmt.Errorf("map %q: not carried", name)
+	}
 	i := &instance{
 		mode:        mode,
 		weapons:     weapons,
 		missiles:    weapons != "guns",
 		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
 		aircraft:    map[int]*craft{},
+		chart:       chart,
 	}
 	if mode == "teams" {
 		i.score = map[string]int{"red": 0, "blue": 0}
@@ -280,7 +291,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				} else if team == "" {
 					team = []string{"red", "blue"}[total%2] // sideless counts in a team match: alternate
 				}
-				m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
+				m := flight.New(aircraft.Get("fa18c"), i.environment, i.chart.world)
 				i.spawn(slot, m, team)
 				title := fmt.Sprintf("%s%s %d", string(w.level[0]-32), w.level[1:], n)
 				if team != "" {
@@ -509,6 +520,7 @@ type instance struct {
 		fuel         bool // the tank never depletes — humans and bots alike
 	}
 	aircraft map[int]*craft
+	chart    *chart // the map: the world every model flies against, and its name and hash for the welcome
 	flying   []*missile
 	rounds   []battle.Round // gun rounds in flight: spawned by guns(), flown and resolved by fly() (#real-TOF)
 	wrecks   []*wreck
@@ -858,7 +870,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 			}
 		}
 	}
-	m := flight.New(airframe, i.environment, flight.World{Sea: sea})
+	m := flight.New(airframe, i.environment, i.chart.world)
 	i.enter(player.Slot, m, team)
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
@@ -896,7 +908,8 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 	}
 	waiting := i.mode == "joust" && !i.started
-	welcome := map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode}
+	welcome := map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
+		"map": map[string]any{"name": i.chart.name, "hash": i.chart.hash}}
 	if i.mode == "teams" {
 		welcome["team"] = team
 		welcome["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
@@ -1135,7 +1148,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			if a.wait <= 0 {
 				if a.model == nil { // the previous airframe left as a wreck
 					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
-					a.model = flight.New(respawned, i.environment, flight.World{Sea: sea})
+					a.model = flight.New(respawned, i.environment, i.chart.world)
 				}
 				i.enter(slot, a.model, a.team)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet

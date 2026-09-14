@@ -100,6 +100,10 @@ func (m *Model) probes(s *State) {
 		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
+		if m.World.struck(point, m.Environment.Wrap) {
+			s.Gear.Contact = i // a building or a mast is solid at any speed
+			return
+		}
 		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)
 		if found && point.Y <= height {
 			// The probes judge contact at FLYING speed — that is what cartwheels

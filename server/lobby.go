@@ -62,6 +62,7 @@ func lobby_start(fatal chan<- error) error {
 	mux.HandleFunc("/sessions", lobby_sessions)
 	mux.HandleFunc("/withdraw", lobby_withdraw)
 	mux.HandleFunc("/chat", lobby_chat)
+	mux.HandleFunc("/maps/", lobby_map)
 	address := fmt.Sprintf("%s:%d", ini_string("lobby", "listen", ""), ini_int("lobby", "port", 4433))
 	server := &http.Server{
 		Addr:              address,
@@ -103,6 +104,37 @@ func lobby_cors(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 	return false
+}
+
+// mapper is the optional game interface for map geometry: a game that
+// carries its maps serves them here, so a client flies its prediction against
+// the very geometry the server collides it with. The game validates the name.
+type mapper interface {
+	Map(name string) ([]byte, bool)
+}
+
+// lobby_map serves one map's geometry: GET /maps/<name>.
+func lobby_map(w http.ResponseWriter, r *http.Request) {
+	if lobby_cors(w, r) {
+		return
+	}
+	if !lobby_browse(r) {
+		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/maps/")
+	for _, g := range games {
+		if m, ok := g.(mapper); ok {
+			if body, found := m.Map(name); found {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Cache-Control", "public, max-age=3600")
+				w.WriteHeader(http.StatusOK)
+				w.Write(body)
+				return
+			}
+		}
+	}
+	lobby_respond(w, http.StatusNotFound, map[string]any{"error": "map"})
 }
 
 func lobby_respond(w http.ResponseWriter, status int, body map[string]any) {

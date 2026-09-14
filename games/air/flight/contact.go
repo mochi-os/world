@@ -19,6 +19,23 @@ type World struct {
 	Sea     float64 // water surface height; open sea has no landable surface
 	Fields  []Field
 	Carrier *Carrier // nil for pure-airfield sessions
+	Prisms  []Prism  // buildings, the carrier's island: solids the probes must not meet
+	Posts   []Post   // masts and lights
+}
+
+// Prism is a building: a solid over its footprint polygon up to Top, from
+// whatever ground it stands on. Post is a mast or a light: a cylinder about
+// its axis. Neither is a surface anything rolls on - meeting one is a crash,
+// which the hosts read off the crash probes.
+type Prism struct {
+	Outline []Vec3 // footprint polygon, x/z
+	Top     float64
+}
+
+type Post struct {
+	Position Vec3 // the axis, x/z
+	Radius   float64
+	Top      float64
 }
 
 // Field is one island group: paved strips over soft ground.
@@ -144,4 +161,30 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 		}
 	}
 	return 0, 0, Vec3{}, false
+}
+
+// struck reports whether a world point is inside a prism or a post, each
+// taken at its minimum image so a seam hides nothing.
+func (w *World) struck(p Vec3, wrap float64) bool {
+	for pi := range w.Prisms {
+		prism := &w.Prisms[pi]
+		if p.Y > prism.Top || len(prism.Outline) < 3 {
+			continue
+		}
+		at := prism.Outline[0]
+		if inside(Vec3{X: at.X + Shortest(at.X, p.X, wrap), Z: at.Z + Shortest(at.Z, p.Z, wrap)}, prism.Outline) {
+			return true
+		}
+	}
+	for pi := range w.Posts {
+		post := &w.Posts[pi]
+		if p.Y > post.Top {
+			continue
+		}
+		dx, dz := Shortest(post.Position.X, p.X, wrap), Shortest(post.Position.Z, p.Z, wrap)
+		if dx*dx+dz*dz <= post.Radius*post.Radius {
+			return true
+		}
+	}
+	return false
 }
