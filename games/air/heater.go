@@ -249,6 +249,15 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				// Flying on as now means holding his present turn: the
 				// velocity rotates at his measured rate, speed held, the
 				// same local curve the arbiter's evolve() extrapolates.
+				//
+				// That parity was FALSE until 2026-09-13, and this rung was the
+				// one in the right: evolve() extrapolated at constant acceleration,
+				// a parabola, which at 5 g over a 12 s rollout put its phantom
+				// 3,154 m from a real turn - further than the jet had flown. The
+				// per-step rotation below is what a turning jet actually does, and
+				// evolve() now flies the same arc (#42). Change them together: a
+				// launch zone and the doctrine that consults it disagreeing about
+				// where the target will be is how #212 happened.
 				virtual.Velocity = heading.Add(turn.Scale(dt / speed)).Normalize().Scale(speed)
 			}
 		}

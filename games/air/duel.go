@@ -376,11 +376,52 @@ var plays = []play{
 // preserved rather than integrated. The circle estimate is deliberately not
 // used here - it judges standing on his turn and picks the lag point.
 func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
-	position := t.position.Add(t.velocity.Scale(dt)).Add(t.swing.Scale(0.5 * dt * dt))
-	velocity := t.velocity.Add(t.swing.Scale(dt))
-	if speed := t.velocity.Length(); speed > 1 && velocity.Length() > 1 {
-		velocity = velocity.Normalize().Scale(speed)
+	// A turning jet flies an ARC, not a parabola. This used to extrapolate at
+	// constant acceleration - position += v*dt + swing*dt^2/2 - which is a
+	// parabola, and the error grows with dt^2 while a real turn curves back on
+	// itself. Measured against an integrated 240 Hz turn at 350 kt:
+	//
+	//            2 s     4 s     8 s      12 s
+	//     3 g      6 m    51 m   397 m   1,289 m
+	//     5 g     17 m   139 m  1,043 m  3,154 m
+	//     7 g     34 m   268 m  1,879 m  5,132 m
+	//
+	// At 5 g over a 12 s rollout the phantom sat 3,154 m from the real jet
+	// while it had travelled 2,160 m: the error EXCEEDED the distance flown.
+	// The old model was sound to about two seconds and fiction at twelve.
+	//
+	// That is the whole span asymmetry #42 has been chasing, and it is a
+	// defect rather than a design choice: `high` is rehearsed over 12 s and
+	// every other play over ~4, so the longest-window play was the one scored
+	// against the worst phantom - and a yo-yo's payoff is exactly the part
+	// that needs the opponent to be where you predicted. It also explains both
+	// declined repairs recorded in choose(): a common longest window helped
+	// because it stopped judging anything at 12 s, and it cost the BVR rung
+	// because a BVR target flies straight, where swing is near zero, the error
+	// vanishes and a long look is genuinely informative.
+	//
+	// The arc below is closed-form and costs a sine and a cosine - this is the
+	// hottest path in the bot (one call per rollout tick per candidate), so it
+	// must not become a second simulation. Only the component of swing across
+	// the velocity turns the jet; the along-track part would change speed, and
+	// the old code discarded that too by renormalising.
+	speed := t.velocity.Length()
+	if speed <= 1 {
+		return t.position.Add(t.velocity.Scale(dt)), t.velocity
 	}
+	ahead := t.velocity.Scale(1 / speed)
+	across := t.swing.Subtract(ahead.Scale(t.swing.Dot(ahead)))
+	pull := across.Length()
+	if pull < 0.01 { // straight enough that the arc and the line agree
+		return t.position.Add(t.velocity.Scale(dt)), t.velocity
+	}
+	inward := across.Scale(1 / pull)
+	turn := pull / speed * dt // radians swept
+	radius := speed / (pull / speed)
+	position := t.position.
+		Add(ahead.Scale(radius * math.Sin(turn))).
+		Add(inward.Scale(radius * (1 - math.Cos(turn))))
+	velocity := ahead.Scale(speed * math.Cos(turn)).Add(inward.Scale(speed * math.Sin(turn)))
 	return position, velocity
 }
 
@@ -733,6 +774,23 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// common window to 1,200 m passed the ladder while giving the anchor gain
 	// back (9/6, 13/2). Measured three ways and declined; the asymmetry it
 	// closes is real and wants a scorer that prices it, not a longer look.
+	//
+	// RE-TESTED 2026-09-13 against the corrected evolve() and declined AGAIN,
+	// which settles more than the window. The suspicion was that both halves of
+	// the original result were artefacts of the parabola phantom: that it
+	// helped only by refusing to judge anything at 12 s, where the phantom was
+	// fiction, and hurt BVR only because a straight-flying target has no
+	// prediction error to fix. With the phantom honest at EVERY horizon it
+	// still breaks the dominance (top `high` 54-66% -> 18-31%, press and
+	// saddle taking over) and the bots still get WORSE: heater ace 15 -> 11
+	// kills, superhuman 16 -> 11 and now dying 3, guns total 5 -> 3, and the
+	// fight degrades enough to drive the scripted hornet into a 69.5 s tumble
+	// (3.70% of the time flown against a 1.00% limit).
+	//
+	// So `high`'s dominance is NOT what limits conversion. It is dominant
+	// because it earns it, and taking the arbiter off it costs kills - which
+	// refutes #174's premise from a second direction and closes the line of
+	// enquiry that treated the play mix as the defect.
 	base := 60*2 + 30*b.skill.library
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
 	for _, p := range plays {

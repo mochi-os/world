@@ -97,6 +97,22 @@ var skills = map[string]skill{
 	// machine flag. commit stays ace-grade too: strategy re-judged at 1.6 s
 	// like the ace, because a half-second commit just flipped between
 	// near-tied lines and finished none of them.
+	//
+	// CADENCE 12 WAS TRIED AND REFUSED (#216, 2026-09-14). On the corrected
+	// rollout (evolve() flying an arc rather than a parabola) the superhuman's
+	// 60 Hz re-planning reads as a liability: measured against the ace, duel
+	// guns went 3-5 -> 4-2 and duel missiles 3-13 -> 8-8 with cadence at the
+	// ace's 12, and the wide missile ladder passed at 21-26. The reasoning was
+	// #215's ("ace cadence 8 -> 12 took kills 4/12 -> 7/12, deliberate
+	// decisions beat twitchy ones") applied one tier up.
+	//
+	// It is still REFUSED, because TestSuperhumanIsTheAceWithoutHumanLimits
+	// names cadence a human limit - thinking rate - and a machine that thinks
+	// at a human's rate is not a machine. The gate is the design, and a
+	// measurement that improves a ladder is not a licence to redefine what the
+	// tier IS. If the finding is to be acted on, it belongs in something the
+	// machine may honestly carry - the commitment that governs how long a plan
+	// survives, not the rate at which the jet is allowed to think.
 	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true},
 }
 

@@ -273,6 +273,39 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	}
 	if a.amraams > 0 && a.emitter == 2 && a.lock == target && i.free() && spaced {
 		want := b.zone.Escape + d.depth*math.Max(b.zone.Max-b.zone.Escape, 0)
+		// THE SHOT HAS A HEADING, not just a range (#217). The window above is
+		// pure range, and fox3() checks the magazine, the emitter, the lock and
+		// the team - nothing anywhere in the AMRAAM path asked where the target
+		// sat relative to the nose. Measured over 12 BVR seeds, superhuman v
+		// ace: both released at the same distance (13,282 m against 13,735 m)
+		// and the same depth in the window (51% against 40%), but the machine
+		// fired with the target 40.9 degrees off the nose against the ace's
+		// 22.9, and converted 0.057 kills per round against 0.209. A round
+		// inherits the shooter's velocity (round.New), so one released well off
+		// boresight turns hard off the rail and spends the energy it needed for
+		// the endgame.
+		//
+		// The limit READS THE LADDER rather than picking a degree: round.Ladder
+		// already flies a virtual round and reports the ranges from which it
+		// arrives, so shrinking the usable window by the cosine of the angle
+		// asks that same question of this heading - a shot 40 degrees off must
+		// be that much closer to carry. It is the heater gate's lesson (#48,
+		// #47: a launch gate that reads only tone or only range endorses shots
+		// the weapon cannot fly), and it is a DOCTRINE number shared by every
+		// tier, not a tier axis - #106 established that BVR shot quality cannot
+		// be one.
+		if nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1}); span > 1 {
+			if line, _ := i.bearing(a.model.State.Position, prey.model.State.Position); line.Dot(nose) > 0 {
+				// Half the cosine's bite, not all of it. The full cos(off) fixed
+				// the top rung (superhuman v ace 1-5 -> 5-1) but cost the ace
+				// six wins against the pilot at 48 seeds (33-13 -> 27-21): an
+				// off-angle shot is worse, not worthless, and the AMRAAM has a
+				// datalink and its own radar to recover what the turn costs.
+				want *= 0.5 + 0.5*line.Dot(nose)
+			} else {
+				want = 0 // behind the wing there is no shot at all
+			}
+		}
 		if span <= want && span >= b.zone.Minimum && i.fox3(slot, a) {
 			if !i.cheat.ammunition {
 				a.amraams--
