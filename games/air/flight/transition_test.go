@@ -268,13 +268,16 @@ func TestApproachPowerHold(t *testing.T) {
 func TestPatternHold(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 110, 2500)
-	climbed, sank, worst := 0.0, 0.0, 0.0
+	climbed, sank, worst, balloon := 0.0, 0.0, 0.0, 0.0
 	for i := 0; i < 240*70; i++ {
 		// Speed hold to isolate the pitch law, ceilinged at 0.8: a pattern pilot
 		// carries pattern power, and an 85 m/s CLEAN spawn (near-stall, alpha
 		// 12.7°) drove the hold to full power and measured a waveoff instead.
 		throttle := clamp(0.5+(110-m.State.Velocity.Length())*0.05, 0.1, 0.8)
 		m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
+		if i < 240*15 { // the gear and flaps running out: their lift change is the balloon
+			balloon = math.Max(balloon, m.State.Velocity.Y)
+		}
 		if i > 240*60 { // past gear extension, the law-change laundering, and the droop's configuration balloon
 			climbed = math.Max(climbed, m.State.Velocity.Y)
 			sank = math.Min(sank, m.State.Velocity.Y)
@@ -284,12 +287,20 @@ func TestPatternHold(t *testing.T) {
 			}
 		}
 	}
-	t.Logf("gear down at 110 m/s: alpha up to %.1f°, vertical speed %.1f to %.1f m/s", worst, sank, climbed)
+	t.Logf("gear down at 110 m/s: alpha up to %.1f°, vertical speed %.1f to %.1f m/s, balloon %.1f m/s", worst, sank, climbed, balloon)
 	if worst > 5 {
 		t.Errorf("neutral stick at 110 m/s gear-down settled at %.1f° alpha — the law is commanding on-speed, not level flight", worst)
 	}
-	if climbed > 2.5 || sank < -2.5 {
+	// Level, not merely bounded: proportional alone left a metre a second of
+	// climb standing, 200 ft a minute down a downwind.
+	if climbed > 0.5 || sank < -0.5 {
 		t.Errorf("neutral stick at 110 m/s gear-down is not holding level: %.1f to %.1f m/s", sank, climbed)
+	}
+	// The flaps' lift arrives faster than the hold's nose-down authority could
+	// answer, and the selection ballooned 6 m/s; the hold pushes as hard as it
+	// pulls while the gear or flaps are running, which halves that.
+	if balloon > 4.0 {
+		t.Errorf("selecting gear and flaps at 110 m/s ballooned %.1f m/s", balloon)
 	}
 }
 

@@ -173,6 +173,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// actually flying.
 			droopTarget *= c.Droop.Half
 		}
+		commanded := droopTarget
 		droopTarget = m.droopRun(droopTarget, c) // the commanded angle is what the switch and the schedule ask for; this is what is actually out there
 		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
@@ -234,12 +235,23 @@ func (m *Model) fcs(in Inputs, local Air) {
 		flying := clamp(math.Abs(stick)*3.3, 0, 1)
 		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
 		if m.flyaway || blend == 0 {
-			m.path = 0
+			m.path, m.drift = 0, 0
 		} else if flying > 0 || in.Trim != 0 {
-			m.path = gamma
+			m.path, m.drift = gamma, 0
+		} else {
+			m.drift = clamp(m.drift+(m.path-gamma)*0.5*Dt, -2*math.Pi/180, 2*math.Pi/180)
 		}
 		if !m.flyaway {
-			demand += blend * (1 - flying) * clamp((m.path-gamma)*2, -1.5*math.Pi/180, 4*math.Pi/180)
+			if extension := m.State.Gear.Extension; (extension > 0.02 && extension < 0.98) || math.Abs(commanded-droopTarget) > 0.5*math.Pi/180 {
+				m.settle = 3
+			} else {
+				m.settle = math.Max(0, m.settle-Dt)
+			}
+			push := 1.5 * math.Pi / 180
+			if m.settle > 0 {
+				push = 4 * math.Pi / 180
+			}
+			demand += blend * (1 - flying) * clamp((m.path-gamma)*2+m.drift, -push, 4*math.Pi/180)
 		}
 		if m.State.Gear.Wow {
 			// Ground mode: the alpha law would wind the stabilator full nose-up down the

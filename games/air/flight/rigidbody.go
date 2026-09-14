@@ -36,6 +36,8 @@ type Model struct {
 	launch    bool    // the catapult takeoff trim is set: from the stroke until the wheels leave the deck
 	flyaway   bool    // airborne off a catapult shot: the PA law holds the trimmed reference alpha until the law changes or the wheels touch
 	path      float64 // PA flight-path hold datum, rad: the stick-free auto-trim past the approach band
+	settle    float64 // s left of the path hold's full push authority after the gear or flaps last moved
+	drift     float64 // the path hold's integrated error, rad of alpha: the steady offset proportional alone left as a climb
 	droop     float64 // trailing-edge droop actually flying, rad — the command is slewed into this at the drive's rate (#199)
 	droopInit bool    // the first step SNAPS: a Case II spawn is handed over established on FULL, and running its flaps down from clean would be a visible lie
 	launder   float64
