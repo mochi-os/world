@@ -50,6 +50,7 @@ func build() *flight.Airframe {
 	a.Control.Flyaway = 16 * math.Pi / 180                // catapult launch trim, stabilator nose up (NATOPS figure 8-1): 16° to 44,000 lb, 17° to 48,000, 19° above
 	a.Control.Capture = a.Control.Flyaway - 6*math.Pi/180 // NATOPS 8.2.8: trim settings between 10° and 18° nose up correspond linearly to reference AOAs between 4° and 12°
 	a.Control.Blowdown = 35000
+	a.Forebody = 4.3 // the widest station (2.7 m²) plus the LEX: with the published fins this lands the HARV basic-F-18 Cy_beta and Cn_beta at once (sideslip_test.go)
 	a.Control.Gearing.Pitch = 0.42
 	a.Control.Gearing.Roll = 0.35
 	a.Control.Gearing.Yaw = 0.52
@@ -201,11 +202,15 @@ func build() *flight.Airframe {
 			Kind: flight.Stabilator, Side: side, Area: 3.5, Span: 2.0, Ratio: 3.0, Oswald: 0.8,
 			Channel: flight.Symmetric,
 		}, 3, span{0.9, 2.9, side}, chord{2.1, 1.05}, sweep{-5.5, -6.3}, twist{}, &tail, 0, 0.42))
-		// Twin canted fins with trailing-edge rudders.
+		// Twin canted fins with trailing-edge rudders: the published 9.68 m² of
+		// fin between them, and at 30% chord the published 1.45 m² of rudder;
+		// the height and chords follow the area at the same taper. Ratio stays
+		// the calibrated effective aspect ratio (the fuselage end-plates a fin).
+		// Sized 2026-09-14 against the HARV basic-F-18 sideslip derivatives.
 		fin := strips(flight.Surface{
-			Kind: flight.Fin, Side: side, Area: 3.1, Span: 1.55, Ratio: 1.6, Oswald: 0.7,
+			Kind: flight.Fin, Side: side, Area: 4.84, Span: 2.4, Ratio: 1.6, Oswald: 0.7,
 			Channel: flight.Rudder,
-		}, 3, span{0, 1.45, side}, chord{2.4, 1.3}, sweep{-4.9, -5.6}, twist{}, &blade, 0.30, 0.52)
+		}, 3, span{0, 2.3, side}, chord{2.75, 1.45}, sweep{-4.9, -5.6}, twist{}, &blade, 0.30, 0.52)
 		for i := range fin.Elements {
 			e := &fin.Elements[i]
 			rise := e.Position.Z * side

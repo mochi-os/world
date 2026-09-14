@@ -563,10 +563,17 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	// Signs under the -side rudder geometry (positive rudder yaws the nose LEFT):
 	// +damped follows r, -b steers away from beta, -interconnect follows the roll,
 	// and the PEDAL term is negated because +pedal is "nose right" everywhere
-	// else. The pedal commands rudder DIRECTLY; damper and beta fade.
+	// else. The pedal commands rudder DIRECTLY; damper and beta fade. The
+	// damper and coordination gains were retuned (2026-09-14, from 1.2 and
+	// 3.4) when the fins went to their published area and the forebody got
+	// its flight-measured side force: the old gains over-drove the bigger
+	// rudder into a saturated sideslip oscillation through the deck burble
+	// on a crosswind pass and slowed the post-departure recovery, and a
+	// coordination gain above 2 made the bots' merge rolls unreadable
+	// (TestMergeRoll) - the sweep that settled them is in the task record.
 	throw := m.Airframe.Control.Throw.Rudder
 	weight := 1 - 0.75*math.Abs(pedal)
-	return clamp(-pedal*throw*0.85+(damped*1.2-b*3.4-interconnect)*weight, -throw, throw)
+	return clamp(-pedal*throw*0.85+(damped*2.4-b*1.7-interconnect)*weight, -throw, throw)
 }
 
 // Approaching reports the trailing-edge droop and slat floor the PA law

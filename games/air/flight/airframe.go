@@ -28,6 +28,7 @@ type Airframe struct {
 	Default   uint64                                                                  // the attach mask New arms (the catalog holds every legal fitment; a bare New flies this subset)
 	Mass      struct{ Empty, Fuel float64 }                                           // kg; Fuel = internal capacity
 	Control   Control                                                                 // control-law data the shared law flies with
+	Forebody  float64                                                                 // m²: the cross-section the slender-body side force at sideslip works on - the widest station plus what the LEX add, calibrated to the flight-measured Cy_beta; 0 falls back to the nose station's own area
 	Wave      struct{ Hump, Body float64 }                                            // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
 	Inertia   Mat3                                                                    // empty aircraft, about empty CG (frames.go axis mapping)
 	Center    Vec3                                                                    // empty CG, body, from datum

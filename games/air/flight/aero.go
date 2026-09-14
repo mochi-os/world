@@ -297,9 +297,16 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		force = force.Add(Vec3{Y: normal * math.Sin(bodyAlpha) * math.Abs(math.Sin(bodyAlpha))})
 		force = force.Add(Vec3{Z: -normal * math.Sin(bodyBeta) * math.Abs(math.Sin(bodyBeta))})
 		if bi == 0 {
-			// Slender-body potential lift on the nose station.
+			// Slender-body potential lift on the nose station. At sideslip the
+			// force works on the forebody's full cross-section, LEX included -
+			// the F-18's side force lives in its forebody (HARV Cy_beta) - where
+			// the pitch-plane term keeps the nose station it was calibrated on.
+			forebody := a.Forebody
+			if forebody <= 0 {
+				forebody = station.Area
+			}
 			force = force.Add(Vec3{Y: pressure * station.Area * 2 * math.Sin(bodyAlpha) * math.Cos(bodyAlpha)})
-			force = force.Add(Vec3{Z: -pressure * station.Area * 2 * math.Sin(bodyBeta) * math.Cos(bodyBeta)})
+			force = force.Add(Vec3{Z: -pressure * forebody * 2 * math.Sin(bodyBeta) * math.Cos(bodyBeta)})
 		}
 		total.Force = total.Force.Add(force)
 		total.Moment = total.Moment.Add(r.Cross(force))

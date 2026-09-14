@@ -182,8 +182,11 @@ func TestPedalRollsAtHighAlpha(t *testing.T) {
 	if high := differential(0.55, 1); high < 0.02 {
 		t.Fatalf("full pedal at 31 deg alpha must move the rolling surfaces: %.3f rad differential", high)
 	}
-	if low := differential(0.05, 1); low > 0.01 {
-		t.Fatalf("pedal at 3 deg alpha commands no roll: %.3f rad differential", low)
+	// At low alpha the interconnect is off: what differential remains is the
+	// roll damper trimming the dihedral roll the pedal's sideslip induces (Cl_beta
+	// at its flight-measured value), a small fraction of the interconnect's.
+	if high, low := differential(0.55, 1), differential(0.05, 1); low > 0.15*high {
+		t.Fatalf("pedal at 3 deg alpha commands roll: %.3f rad differential against %.3f at 31 deg", low, high)
 	}
 }
 
