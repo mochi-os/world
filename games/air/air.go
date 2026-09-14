@@ -1171,6 +1171,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
 		}
 	}
+	i.midair(dt)
 	i.merge()
 	i.guns(dt, tick)
 	i.fly(dt, tick)
@@ -1895,7 +1896,12 @@ func mask(a *flight.Airframe, element []float64) int {
 
 // kill downs a victim; by is the killer's slot or -1 for the environment.
 // In joust mode the first kill finishes the match.
-func (i *instance) kill(victim int, by int) {
+func (i *instance) kill(victim int, by int) { i.fell(victim, by, "", -1) }
+
+// fell is the death itself: the scoring, the respawn wait, the kill event -
+// carrying the cause and the other party when there is one to name, as a
+// midair has - and the joust's end, which a midair decides for itself.
+func (i *instance) fell(victim int, by int, cause string, other int) {
 	a := i.aircraft[victim]
 	if a == nil || !a.alive {
 		return
@@ -1920,11 +1926,14 @@ func (i *instance) kill(victim int, by int) {
 		"kind": "kill", "slot": victim, "by": by,
 		"position": []float64{a.model.State.Position.X, a.model.State.Position.Y, a.model.State.Position.Z},
 	}
+	if cause != "" {
+		event["cause"], event["other"] = cause, other
+	}
 	if i.score != nil {
 		event["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
 	}
 	i.events = append(i.events, event)
-	if i.mode == "joust" && !i.finished {
+	if i.mode == "joust" && !i.finished && cause != "midair" {
 		winner := by
 		if winner < 0 { // flew into the sea: the other player wins
 			for slot := range i.aircraft {
