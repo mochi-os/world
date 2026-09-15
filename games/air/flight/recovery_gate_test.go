@@ -38,10 +38,16 @@ func TestPitchRecovery(t *testing.T) {
 		for i := 0; i < 240*2; i++ {
 			m.Step(in)
 		}
-		// Pull to the target alpha (bounded: some cells never reach it).
+		// Pull to the target alpha, or as far as the limiter allows before a
+		// third of the entry speed is gone. The cells above the limiter's 40
+		// degrees used to pull for the full twelve seconds instead, down to
+		// 70 kt, where the unswept-wing model tumbled out of the stall of its
+		// own accord and the "recovery" was that tumble, not the push; a jet
+		// that sits at the limiter instead needs the push while it is still
+		// at the speed the cell names.
 		in.Pitch = 1
 		reached := 0.0
-		for i := 0; i < 240*12 && m.Alpha()*180/math.Pi < want; i++ {
+		for i := 0; i < 240*12 && m.Alpha()*180/math.Pi < want && m.State.Velocity.Length() > kcas/1.94384*2/3; i++ {
 			m.Step(in)
 			reached = math.Max(reached, m.Alpha()*180/math.Pi)
 		}

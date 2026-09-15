@@ -58,6 +58,7 @@ type Surface struct {
 	Vortex    float64 // Polhamus Kv (0 = no vortex lift)
 	Breakdown float64 // vortex breakdown alpha, rad
 	Channel   Channel
+	Sweep     float64 // rad, aft sweep of the aerodynamic-centre line the elements' span axes lie along
 	Elements  []Element
 }
 

@@ -221,10 +221,16 @@ func build() *flight.Airframe {
 		for i := range fin.Elements {
 			e := &fin.Elements[i]
 			rise := e.Position.Z * side
-			e.Position = flight.Vec3{X: e.Position.X, Y: 0.95 + rise*math.Cos(cant), Z: side * (0.85 + rise*math.Sin(cant))}
+			e.Position = flight.Vec3{X: e.Position.X, Y: 0.3 + rise*math.Cos(cant), Z: side * (0.85 + rise*math.Sin(cant))} // the fin roots sit a little above the wing plane the datum and CG share (the shoulder wing tops the fuselage, the fins stand on the fillet behind it); at 0.95 they carried the whole dihedral effect the unswept wing gave none of, and overshot by half once it did
 			e.Axis = flight.Vec3{Y: side * math.Cos(cant), Z: math.Sin(cant)}
 			e.Normal = flight.Vec3{Y: math.Sin(cant), Z: -side * math.Cos(cant)}
+			e.Aerofoil = flight.Synthesize(blade)
 		}
+		// The fins keep unswept axes and the plain section polar: a low-aspect
+		// fin is no simple-sweep surface, and swept it weathercocked a tenth
+		// harder at low alpha and a fifth harder in the landing configuration,
+		// outside the flight scatter the fins were sized against.
+		fin.Sweep = 0
 		a.Surfaces = append(a.Surfaces, fin)
 	}
 	// The C's dorsal speedbrake between the fins: the panel the airframe's
@@ -269,7 +275,19 @@ type twist struct{ root, tip float64 } // built-in incidence, rad
 
 // strips fills a surface with n equal-span trapezoid elements.
 func strips(s flight.Surface, n int, sp span, ch chord, sw sweep, tw twist, section *flight.Section, flap float64, limit float64) flight.Surface {
-	polar := flight.Synthesize(*section)
+	// The elements' span axes lie along the swept aerodynamic-centre line, so
+	// each section sees the flow normal to it: at sideslip the leading panel
+	// unsweeps and lifts more, the trailing one less, and the swept wing's
+	// dihedral effect, its share of the weathercock and its earlier stall on
+	// the trailing side all emerge. Unswept axes (before 2026-09-15) gave the
+	// wing no sideslip effects at all; the fins carried the whole dihedral
+	// effect and it could not grow with lift the way the flight data does.
+	// The section polar is the calibrated body-frame one mapped into the
+	// section frame (flight.Swept), so the surface keeps its lift curve, stall
+	// and all, at zero sideslip.
+	s.Sweep = math.Atan2(sw.root-sw.tip, sp.tip-sp.root)
+	across := math.Cos(s.Sweep)
+	polar := flight.Swept(*section, s.Sweep)
 	s.Slope = section.Slope
 	width := (sp.tip - sp.root) / float64(n)
 	total := 0.0
@@ -286,7 +304,7 @@ func strips(s flight.Surface, n int, sp span, ch chord, sw sweep, tw twist, sect
 			Chord:     c,
 			Incidence: tw.root + (tw.tip-tw.root)*f,
 			Normal:    flight.Vec3{Y: 1},
-			Axis:      flight.Vec3{Z: 1},
+			Axis:      flight.Vec3{X: -sp.side * math.Sin(s.Sweep), Z: across}, // +Z on both sides, so flow × axis is up for both
 			Aerofoil:  polar,
 			Flap:      flap,
 			Limit:     limit,

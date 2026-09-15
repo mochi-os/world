@@ -103,6 +103,48 @@ func Synthesize(s Section) *Table {
 	return t
 }
 
+// Swept is a section's polar seen from a strip whose span axis is swept back
+// by the given angle: the section meets only the flow normal to its axis, so
+// at a body alpha it sees the section alpha atan(tan alpha / cos sweep) on the
+// share cos² alpha cos² sweep + sin² alpha of the dynamic pressure. The table
+// is the body-frame polar mapped point by point through that, so at zero
+// sideslip the strip reproduces the calibrated curve to the last degree of
+// stall, and the sweep shows only where sideslip changes the effective sweep
+// of the two panels - the dihedral effect and the weathercock of a swept wing.
+func Swept(s Section, sweep float64) *Table {
+	body := Synthesize(s)
+	across := math.Cos(sweep)
+	t := &Table{Stall: math.Atan(math.Tan(s.Stall) / across)}
+	for i := 0; i < entries; i++ {
+		sectional := -math.Pi + float64(i)*resolution
+		// Fold to the forward half plane, map, and fold back: reversed flow
+		// mirrors the same way.
+		a := sectional
+		reversed := false
+		if a > math.Pi/2 {
+			a = math.Pi - a
+			reversed = true
+		} else if a < -math.Pi/2 {
+			a = -math.Pi - a
+			reversed = true
+		}
+		alpha := math.Atan(math.Tan(a) * across)
+		share := math.Cos(alpha)*math.Cos(alpha)*across*across + math.Sin(alpha)*math.Sin(alpha)
+		if reversed {
+			if alpha >= 0 {
+				alpha = math.Pi - alpha
+			} else {
+				alpha = -math.Pi - alpha
+			}
+		}
+		cl, cd, cm := body.Sample(alpha)
+		t.lift[i] = cl / share
+		t.drag[i] = cd / share
+		t.moment[i] = cm / share
+	}
+	return t
+}
+
 // Sample interpolates the polar at alpha (rad).
 func (t *Table) Sample(alpha float64) (cl float64, cd float64, cm float64) {
 	// Loop-free, for the same reason Shortest is (flight.go): an iterative

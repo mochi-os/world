@@ -52,6 +52,128 @@ func TestSideslipDerivatives(t *testing.T) {
 	}
 }
 
+// derivative measures Cy_beta, Cn_beta and Cl_beta per degree for a model at
+// a state, from a 2 degree slip.
+func derivative(m *Model, base State, local Air) (cy, cn, cl float64) {
+	S, b := m.Airframe.Reference.Area, m.Airframe.Reference.Span
+	v := base.Velocity.Length()
+	q := 0.5 * local.Density * v * v
+	s := slipped(base, 2)
+	var total Forces
+	m.aero(&s, &total, local)
+	return total.Force.Z / (q * S) / 2, -total.Moment.Y / (q * S * b) / 2, total.Moment.X / (q * S * b) / 2
+}
+
+// scheduled applies the leading-edge flap schedule the FCS would fly at the
+// state's alpha, which the static Level trim leaves at zero.
+func scheduled(m *Model, s State) State {
+	c := &m.Airframe.Control
+	a := alpha(s.Attitude.Unrotate(s.Velocity))
+	s.Fcs.Slat = clamp(c.Slat.Slope*(a-c.Slat.Offset), 0, c.Slat.Limit)
+	return s
+}
+
+// TestSweptWing: the wing's elements lie along the swept aerodynamic-centre
+// line, so at sideslip the leading panel unsweeps and lifts more and the
+// trailing one less - the swept wing's own dihedral effect, rolling the jet
+// away from the slip and growing with its lift coefficient as simple sweep
+// theory has it (about -0.2·CL·tan Λ per radian, a fifth to a third of the
+// whole jet's). Before, every axis ran straight out the side and the wings
+// gave exactly nothing. The whole jet, flaps scheduled, stays inside the
+// flight scatter from 4 to 7 degrees alpha (NASA/TP-1999-206573 figure 15);
+// past 10 degrees the model's wing section is into its stall blend and the
+// differential fades, which the envelope calibration owns.
+func TestSweptWing(t *testing.T) {
+	a := *Fighter
+	a.Surfaces = nil
+	for _, s := range Fighter.Surfaces {
+		if s.Kind == Wing {
+			a.Surfaces = append(a.Surfaces, s)
+		}
+	}
+	a.Body = nil
+	a.Stores = nil
+	wings := New(&a, Environment{}, World{})
+	whole := New(Fighter, Environment{}, World{})
+	local := Atmosphere(1000, whole.Environment)
+	fast := scheduled(whole, Level(whole, Vec3{Y: 1000}, Vec3{X: 1}, 175, 2500))
+	slow := scheduled(whole, Level(whole, Vec3{Y: 1000}, Vec3{X: 1}, 130, 2500))
+	_, cn, low := derivative(wings, fast, local)
+	_, _, high := derivative(wings, slow, local)
+	degrees := func(s State) float64 { return alpha(s.Attitude.Unrotate(s.Velocity)) * 180 / math.Pi }
+	t.Logf("wings alone: Cl_beta %+.5f/deg at %.1f deg alpha, %+.5f at %.1f; Cn_beta %+.5f", low, degrees(fast), high, degrees(slow), cn)
+	if low > -0.0001 || high > -0.0004 {
+		t.Errorf("the wings alone give Cl_beta %+.5f/deg at %.1f deg alpha and %+.5f at %.1f, want the swept wing's dihedral effect: below -0.0001 and -0.0004", low, degrees(fast), high, degrees(slow))
+	}
+	if high > low {
+		t.Errorf("the wings' dihedral effect shrinks from %+.5f to %+.5f/deg as alpha rises from %.1f to %.1f, want it growing with lift", low, high, degrees(fast), degrees(slow))
+	}
+	if cn < 0 {
+		t.Errorf("the wings alone give Cn_beta %+.5f/deg, want the leading panel's extra drag to weathercock, not the reverse", cn)
+	}
+	for _, s := range []State{fast, slow} {
+		cy, cn, cl := derivative(whole, s, local)
+		t.Logf("whole jet at %.1f deg alpha: Cy_beta %+.5f Cn_beta %+.5f Cl_beta %+.5f per deg", degrees(s), cy, cn, cl)
+		if cy > -0.012 || cy < -0.016 || cn < 0.0014 || cn > 0.0022 || cl > -0.0013 || cl < -0.0025 {
+			t.Errorf("at %.1f deg alpha: Cy_beta %+.5f Cn_beta %+.5f Cl_beta %+.5f per deg, want -0.012..-0.016, +0.0014..+0.0022, -0.0013..-0.0025 (flight)", degrees(s), cy, cn, cl)
+		}
+	}
+}
+
+// TestSweptFrames: the swept strips change nothing at zero sideslip. The
+// calibrated terms in the aero pass - drag-due-to-lift, the polar break,
+// camber, vortex lift, the compressibility - are written on the body frame,
+// and the swept section's coefficients, alpha and pressure convert to it on
+// the way in; get one wrong and the whole jet's lift curve moves by several
+// percent. The pins are the unswept model's values, clean with the slats out
+// at 134 m/s and 6,000 m.
+func TestSweptFrames(t *testing.T) {
+	m := New(Fighter, Environment{}, World{})
+	local := Atmosphere(6000, m.Environment)
+	v := 134.0
+	q := 0.5 * local.Density * v * v
+	S := m.Airframe.Reference.Area
+	for _, want := range []struct{ degrees, lift, moment float64 }{{30, 1.820, -0.2467}, {40, 2.146, -0.2944}} {
+		incidence := want.degrees * math.Pi / 180
+		s := State{Attitude: Quat{W: 1}, Position: Vec3{Y: 6000}, Velocity: Vec3{X: v * math.Cos(incidence), Y: -v * math.Sin(incidence)}, Fuel: 3000, Gear: GearState{Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}}
+		s.Fcs.Slat = 25 * math.Pi / 180
+		var total Forces
+		m.aero(&s, &total, local)
+		lift := (total.Force.Y*math.Cos(incidence) + total.Force.X*math.Sin(incidence)) / (q * S)
+		moment := total.Moment.Z / (q * S * 4)
+		if math.Abs(lift-want.lift) > 0.01*want.lift || math.Abs(moment-want.moment) > 0.03*math.Abs(want.moment) {
+			t.Errorf("clean at %.0f deg alpha: CL %.4f Cm %+.4f, want %.3f and %+.4f within 1%% and 3%% (the unswept model)", want.degrees, lift, moment, want.lift, want.moment)
+		}
+	}
+}
+
+// TestApproachWeathercock: in the landing configuration at the alpha of a
+// slow approach the jet still weathercocks into a slip - the fins are not in
+// any wake there. Swept fin strips lost it: simple sweep theory has the
+// upward flow at alpha running along an aft-swept span axis, a quarter of
+// the fins' side force gone by 16 degrees, and the weathercock went negative
+// with the jet spiralling off hands-off in the on-speed settle.
+func TestApproachWeathercock(t *testing.T) {
+	m := New(Fighter, Environment{}, World{})
+	local := Atmosphere(400, m.Environment)
+	base := Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, 2500)
+	q := 0.5 * local.Density * 72 * 72
+	droop, slat := m.Approaching(q)
+	base.Fcs.Flaperon = Pair{Left: droop, Right: droop}
+	base.Fcs.Flap = droop
+	base.Fcs.Slat = slat
+	base.Gear.Extension = 1
+	cy, cn, cl := derivative(m, base, local)
+	a := alpha(base.Attitude.Unrotate(base.Velocity)) * 180 / math.Pi
+	t.Logf("landing configuration at %.1f deg alpha: Cy_beta %+.5f Cn_beta %+.5f Cl_beta %+.5f per deg", a, cy, cn, cl)
+	if cn < 0.0010 {
+		t.Errorf("landing configuration at %.1f deg alpha: Cn_beta %+.5f/deg, want the weathercock to hold (above +0.0010)", a, cn)
+	}
+	if cl > -0.002 || cl < -0.008 {
+		t.Errorf("landing configuration at %.1f deg alpha: Cl_beta %+.5f/deg, want the dihedral effect between -0.002 and -0.008", a, cl)
+	}
+}
+
 // TestSideslipDrag: what a slip costs, all of it emergent - the fins' lift
 // tilting into induced drag, the fuselage crossflow, the nose - so the rise is
 // gated rather than set. At 130 m/s trimmed, 10 deg of sideslip is a quarter

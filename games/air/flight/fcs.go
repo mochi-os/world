@@ -571,9 +571,14 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	// on a crosswind pass and slowed the post-departure recovery, and a
 	// coordination gain above 2 made the bots' merge rolls unreadable
 	// (TestMergeRoll) - the sweep that settled them is in the task record.
+	// Retuned again 2026-09-15 (from 2.4 and 1.7) when the wing strips took
+	// their sweep and the dihedral effect began growing with alpha: the same
+	// sweep found the superhuman bandit reversing its merge roll past the
+	// readable once a merge with the old gains, and only this pair kept the
+	// crosswind, approach-roll and departure gates as well.
 	throw := m.Airframe.Control.Throw.Rudder
 	weight := 1 - 0.75*math.Abs(pedal)
-	return clamp(-pedal*throw*0.85+(damped*2.4-b*1.7-interconnect)*weight, -throw, throw)
+	return clamp(-pedal*throw*0.85+(damped*2.0-b*1.2-interconnect)*weight, -throw, throw)
 }
 
 // Approaching reports the trailing-edge droop and slat floor the PA law

@@ -133,18 +133,29 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				if surface.Kind == Stabilator {
 					w = w.Subtract(e.Normal.Scale(w.Length() * wash)) // the same tilt pass 2 applies
 				}
+				across := sweep(e)
 				angle, shift := m.section(s, surface, e, w)
-				raw := angle + shift*0.5
+				raw := angle + shift*0.5/math.Sqrt(across) // the flap's incidence share is set streamwise: the swept section sees it over cos
 				hold := retention(surface, ei, coupled(surface))
 				if surface.Kind == Wing {
 					hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9)
 				}
-				cl, _, _ := extended(e.Aerofoil, raw, hold, surface.Slope)
+				sectional, _, _ := extended(e.Aerofoil, raw, hold, surface.Slope/math.Sqrt(across))
+				// The induced flow is the surface's whole vortex system, shared by
+				// both panels, so its loading takes the symmetric share of the
+				// pressure - cos² of the sweep at small alpha, more as the normal
+				// flow grows - and not a panel's own sideslip advantage, which fed
+				// straight back as that panel's downwash and cancelled the dihedral
+				// effect the sweep had just made.
+				level := Vec3{X: w.X, Y: w.Y}
+				plane := level.Subtract(e.Axis.Scale(level.Dot(e.Axis)))
+				cl := sectional * plane.Dot(plane) / math.Max(level.Dot(level), 1e-9) // the surface's reference coefficient, which the camber and vortex terms are written on
+				body := unswept(raw, across)
 				if shift != 0 {
-					cl += surface.Slope * shift * 0.55 * math.Cos(clamp(raw, -1.2, 1.2))
+					cl += surface.Slope * shift * 0.55 * math.Cos(clamp(body, -1.2, 1.2))
 				}
 				if surface.Vortex > 0 {
-					extra, _ := vortex(surface.Vortex, surface.Breakdown, raw)
+					extra, _ := vortex(surface.Vortex, surface.Breakdown, body)
 					cl += extra
 				}
 				cl *= m.State.Damage.element(m.base[si] + ei) // damaged elements stop lifting in BOTH passes, so the induced wash tracks the damaged loading. Dead elements keep their AREA in this mean and the aspect ratio stays full-span: right for scattered hole damage (circulation drops, span doesn't), but a contiguous tip amputation hands the survivors the tips' downwash relief, and with the FCS alpha backstop gating the flown onset by alpha the sink onset INVERTS ~6% under clean symmetric clipping — accepted (see TestWingLossStalls; the honest alternative is a span-tracking effective aspect ratio)
@@ -223,32 +234,49 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			if surface.Kind == Stabilator {
 				downwash += wash
 			}
-			section = section.Subtract(e.Normal.Scale(speed * downwash))
+			section = section.Subtract(e.Normal.Scale(w.Length() * downwash)) // the induced velocity is normal to the surface and scales with the whole flow, so a swept section's alpha drops by the induced angle over cos of its sweep
 			speed = section.Length()
 			pressure = 0.5 * local.Density * speed * speed
+			// A swept element's section sees only the flow normal to its axis:
+			// its dynamic pressure runs cos² of the sweep below the surface's
+			// reference and its coefficients 1/cos² above, and its polar is
+			// rescaled to match (fa18c.go strips). The calibrated terms below -
+			// drag-due-to-lift, the polar break, camber, vortex lift and the
+			// compressibility - are all written on the REFERENCE coefficients
+			// and the body alpha and Mach, so they convert on the way in.
+			across := sweep(e)
 			angle, shift := m.section(s, surface, e, section)
-			effective := angle + shift*0.5
+			effective := angle + shift*0.5/math.Sqrt(across) // the flap's incidence share is set streamwise: the swept section sees it over cos
+			body := unswept(effective, across)
 			hold := retention(surface, ei, coupled(surface))
 			if surface.Kind == Wing {
 				hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9) // slats keep the wing attached
 			}
-			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope)
-			cd += surface.Induced * cl * cl // calibrated drag-due-to-lift the emergent tilt under-prices
-			if over := math.Abs(cl) - 1.1; over > 0 {
-				cd += 0.07 * over * over // the polar break: past cl ~1.1 the real polar departs the parabola (separation growth the parabolic K cannot price). Lets the mid-cl K sit at its EM-plateau fit (0.14, fa18c.go) without freeing the high-cl stations past the chart bands (TestEnvelopeMap 250 kt / 15,000 ft)
+			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope/math.Sqrt(across))
+			// The calibrated terms are priced on the body dynamic pressure, so
+			// they carry no sweep-at-sideslip sensitivity of their own: the
+			// potential lift's is the dihedral effect; a flap's camber or the
+			// vortex system riding the section pressure as well doubled it.
+			tilted := w.Subtract(e.Normal.Scale(w.Length() * downwash)) // the flow the element meets, downwash and all, without the section's spanwise lean: the body frame the calibrated terms and the hump's Mach were written in
+			plain := 0.5 * local.Density * tilted.Dot(tilted)
+			boost := plain / pressure
+			reference := cl * pressure / plain                    // the surface's reference coefficient, on the pressure share the section sees
+			cd += surface.Induced * reference * reference * boost // calibrated drag-due-to-lift the emergent tilt under-prices
+			if over := math.Abs(reference) - 1.1; over > 0 {
+				cd += 0.07 * over * over * boost // the polar break: past cl ~1.1 the real polar departs the parabola (separation growth the parabolic K cannot price). Lets the mid-cl K sit at its EM-plateau fit (0.14, fa18c.go) without freeing the high-cl stations past the chart bands (TestEnvelopeMap 250 kt / 15,000 ft)
 			}
 			// Camber lift: the half of the flap deflection that raises CLmax
 			// rather than spending stall margin; rolls off in deep stall.
 			if shift != 0 {
-				cl += surface.Slope * shift * 0.55 * math.Cos(clamp(effective, -1.2, 1.2))
-				cd += 0.01 * shift * shift
+				cl += surface.Slope * shift * 0.55 * math.Cos(clamp(body, -1.2, 1.2)) * boost
+				cd += 0.01 * shift * shift * boost
 			}
 			if surface.Vortex > 0 {
-				extra, suction := vortex(surface.Vortex, surface.Breakdown, effective)
-				cl += extra
-				cd += suction
+				extra, suction := vortex(surface.Vortex, surface.Breakdown, body)
+				cl += extra * boost
+				cd += suction * boost
 			}
-			slope, wave, shift := compress(speed/local.Sound, cl, a.Wave.Hump)
+			slope, wave, shift := compress(tilted.Length()/local.Sound, cl*across, a.Wave.Hump)
 			// Prandtl-Glauert amplifies attached potential flow, not a
 			// separated wake: fade the slope factor out across the stall, or
 			// the transonic lift-loss at the break doubles and the swept-wing
@@ -257,15 +285,23 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				slope = 1 + (slope-1)*clamp(1-(at-e.Aerofoil.Stall)/0.1, 0, 1)
 			}
 			cl *= slope
-			cd += wave
-			cm += shift
+			cd += wave * boost
+			cm += shift * boost
 			cl *= m.State.Damage.element(m.base[si] + ei)
-			flow := section.Normalize()
-			lift := flow.Cross(e.Axis).Normalize()
-			if lift.Dot(e.Normal) < 0 {
-				lift = lift.Scale(-1)
-			}
-			force := lift.Scale(pressure * e.Area * cl).Add(flow.Scale(pressure * e.Area * cd))
+			// The lift stands perpendicular to the flow the element meets, in
+			// the plane of that flow and the surface normal: for an unswept
+			// strip that is flow × axis, and for a swept one it keeps the lift
+			// upright rather than leaning it in the plane normal to the swept
+			// axis, which shed cos of the lean at high alpha and lost the
+			// pitch-recovery gates a second.
+			flow := tilted.Normalize()
+			lift := e.Normal.Subtract(flow.Scale(e.Normal.Dot(flow))).Normalize()
+			// The profile drag runs along the flow the element meets, tilted by
+			// the induced downwash like the lift (at a low-aspect surface's
+			// tilt that costs real lift), but not along the section flow: a
+			// swept section's flow leans spanwise, and drag laid along it sheds
+			// cos of the sweep and leaves a spanwise push.
+			force := lift.Scale(pressure * e.Area * cl).Add(tilted.Normalize().Scale(pressure * e.Area * cd))
 			total.Force = total.Force.Add(force)
 			total.Moment = total.Moment.Add(r.Cross(force))
 			total.Moment = total.Moment.Add(lift.Cross(flow).Scale(pressure * e.Area * e.Chord * cm))
@@ -321,6 +357,19 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	total.Force = total.Force.Add(flow.Scale(pressure * m.State.Damage.Drag))
 }
 
+// sweep is cos² of an element's sweep: the share of the dynamic pressure
+// its section sees, from the span axis's lean out of the lateral plane. One
+// for an unswept element.
+func sweep(e *Element) float64 {
+	return math.Max(1-e.Axis.X*e.Axis.X, 0.05)
+}
+
+// unswept maps a section alpha back to the body alpha it came from, for the
+// terms calibrated on the body angle.
+func unswept(sectional float64, across float64) float64 {
+	return math.Atan(math.Tan(clamp(sectional, -1.5, 1.5)) * math.Sqrt(across))
+}
+
 // incidence is the effective section angle of attack: geometry, control
 // deflection, and any induced correction.
 func (m *Model) incidence(s *State, surface *Surface, e *Element, w Vec3, correction float64) float64 {
@@ -338,12 +387,12 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 	raw := math.Atan2(plane.Dot(e.Normal), plane.Dot(chord))
 	shift := 0.0
 	switch surface.Channel {
-	case Symmetric: // all-moving: deflection IS incidence, full authority
+	case Symmetric: // all-moving: deflection IS incidence, full authority - pivoting about a lateral axis, the swept section sees it over cos of the sweep
+		deflection := s.Fcs.Stabilator.Right
 		if surface.Side < 0 {
-			raw += s.Fcs.Stabilator.Left
-		} else {
-			raw += s.Fcs.Stabilator.Right
+			deflection = s.Fcs.Stabilator.Left
 		}
+		raw += deflection / math.Sqrt(sweep(e))
 	case Differential:
 		// The flaperon actuator ALREADY carries the PA droop (fcs.go slews it
 		// toward droop±differential; Fcs.Flap is a readout only). Adding Flap
@@ -368,5 +417,5 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 		}
 		shift = Effectiveness(e.Flap) * deflection
 	}
-	return raw + e.Incidence, shift
+	return raw + e.Incidence/math.Sqrt(sweep(e)), shift // the twist is set streamwise; the swept section sees it over cos of the sweep
 }
