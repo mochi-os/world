@@ -151,6 +151,7 @@ type Control struct {
 		Down, Up float64                    // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
 		Flaperon struct{ Down, Up float64 } // flaperon/aileron travel (positive = trailing edge down)
 		Rudder   float64
+		Brake    float64 // speed brake panel travel, rad: its drag goes with sin² of the deflection, so the fraction the FCS reports is not the fraction of the drag
 	}
 	Rate struct { // actuator slew, rad/s (Brake in fraction/s)
 		Stabilator, Flaperon, Rudder, Slat, Brake float64

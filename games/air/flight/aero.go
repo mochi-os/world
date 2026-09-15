@@ -202,8 +202,15 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			}
 			pressure := 0.5 * local.Density * speed * speed
 			if surface.Kind == Brake {
+				// A panel hinged out of the flow: the plate's normal-force drag times
+				// sin² of its deflection, so half travel is a third of the drag, not
+				// half. An airframe that declares no travel keeps the linear stand-in.
 				_, cd, _ := e.Aerofoil.Sample(0)
-				drag := section.Normalize().Scale(pressure * e.Area * cd * s.Fcs.Speedbrake)
+				open := s.Fcs.Speedbrake
+				if throw := a.Control.Throw.Brake; throw > 0 {
+					open = math.Pow(math.Sin(throw*s.Fcs.Speedbrake), 2)
+				}
+				drag := section.Normalize().Scale(pressure * e.Area * cd * open)
 				total.Force = total.Force.Add(drag)
 				total.Moment = total.Moment.Add(r.Cross(drag))
 				continue

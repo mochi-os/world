@@ -71,11 +71,12 @@ func build() *flight.Airframe {
 	a.Control.Throw.Flaperon.Down = 45 * math.Pi / 180 // aileron/flaperon travel (NATOPS/HARV: 45° trailing-edge down, 25° up; rate 100°/s)
 	a.Control.Throw.Flaperon.Up = 25 * math.Pi / 180
 	a.Control.Throw.Rudder = 30 * math.Pi / 180 // ±30° rudder travel (NATOPS/HARV)
+	a.Control.Throw.Brake = 60 * math.Pi / 180  // the speed brake panel's travel (HARV simulation model: 0-60°)
 	a.Control.Rate.Stabilator = 40 * math.Pi / 180
 	a.Control.Rate.Flaperon = 100 * math.Pi / 180
 	a.Control.Rate.Rudder = 75 * math.Pi / 180
 	a.Control.Rate.Slat = 0.6
-	a.Control.Rate.Brake = 1.0
+	a.Control.Rate.Brake = 0.4 // the panel takes 2.5 s to full travel (NASA TM-110216: 60/2.5 deg/s no-load rate limit; NATOPS: 3 s maximum)
 	// The trailing edge runs; it does not snap (#199). Calibrated to TIME rather
 	// than to degrees per second, because this model's droop range is not the
 	// real one: Droop.Angle above is 26 deg, the angle whose LIFT matches the
@@ -220,11 +221,16 @@ func build() *flight.Airframe {
 		}
 		a.Surfaces = append(a.Surfaces, fin)
 	}
-	// The C's dorsal speedbrake between the fins.
+	// The C's dorsal speedbrake between the fins: the panel the airframe's
+	// own model carries, 0.84 m across by 2.13 m long, hinged out to 60°, so
+	// its drag is the plate's at sin² of the travel (aero.go) - 1.5 m² of drag
+	// area fully out. It was an 0.8 m² plate deployed in a second before
+	// 2026-09-15; the jet's actuator takes 2.5 s (NASA TM-110216's 60/2.5
+	// deg/s no-load rate limit; NATOPS: 3 s maximum).
 	a.Surfaces = append(a.Surfaces, flight.Surface{
-		Kind: flight.Brake, Area: 0.8, Span: 1, Ratio: 1, Oswald: 1, Channel: flight.Spoiler,
+		Kind: flight.Brake, Area: 1.7, Span: 1, Ratio: 1, Oswald: 1, Channel: flight.Spoiler,
 		Elements: []flight.Element{{
-			Position: flight.Vec3{X: -3.5, Y: 0.8}, Area: 0.8, Chord: 1,
+			Position: flight.Vec3{X: -3.5, Y: 0.8}, Area: 1.7, Chord: 1,
 			Normal: flight.Vec3{Y: 1}, Axis: flight.Vec3{Z: 1}, Aerofoil: flight.Synthesize(flight.Section{Slope: 0, Stall: 0.3, Drag: 1.2, Ratio: 1}),
 		}},
 	})
