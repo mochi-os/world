@@ -190,10 +190,11 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		i.cheat.fuel, _ = cheats["fuel"].(bool)
 		i.environment.Cheat.Fuel = i.cheat.fuel // the flight core itself freezes the tank — every model made from this environment (bots here, humans at Join) inherits it, and the client's wasm core mirrors it from the welcome
 	}
-	i.tank = fuel
-	if pounds := number(session.Parameters, "fuel"); pounds > 0 {
-		i.tank = clamp(pounds/2.2046, 500, 4900) // the UI speaks pounds like the IFEI; the sim burns kilograms
-	}
+	// The match's fuel is now only a DEFAULT — for bots, which have no join
+	// request, and for a client that sends none. Every human takes the load
+	// they asked for at Join. It is read through the same bound as theirs, so
+	// there is one rule about what the tank holds rather than two.
+	i.tank = stores_fuel(session.Parameters, fuel, fuel)
 	// Practice bots: the parameter is a per-level count map {"drone": n,
 	// "novice": n, ...} — the match creator chooses how many of each. A bare
 	// number still means drones (test-harness convenience). Bots fill slots
@@ -292,12 +293,12 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 					team = []string{"red", "blue"}[total%2] // sideless counts in a team match: alternate
 				}
 				m := flight.New(aircraft.Get("fa18c"), i.environment, i.chart.world)
-				i.spawn(slot, m, team)
+				i.spawn(slot, m, team, i.tank)
 				title := fmt.Sprintf("%s%s %d", string(w.level[0]-32), w.level[1:], n)
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
 				}
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), lock: -1}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), tank: i.tank, lock: -1}
 				b.arm()
 				b.rearm()
 				i.aircraft[slot] = b
@@ -350,6 +351,7 @@ type craft struct {
 	missiles   int         // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
 	amraams    int         // AIM-120s left this life (#27): its own magazine, in the amraams() firing order
 	loadout    loadout     // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
+	tank       float64     // this craft's own spawn fuel, kg: the player's own request at Join, the match default for bots. Remembered because a respawn runs through enter(), not Join, and would otherwise revert to the match's load
 	release    float64     // sim seconds since this craft's last missile left the rail (large when none)
 	ejected    bool        // eject edge consumed this life
 	wait       float64     // seconds until respawn (air mode)
@@ -614,8 +616,8 @@ func (i *instance) slots() []int {
 // head-on (the joust pair); later slots spread by the golden angle. Sides
 // spawn in opposing 120° arcs — red centred on one bearing, blue opposite —
 // so a team match opens as a line-abreast wall meeting a wall.
-func (i *instance) spawn(slot int, m *flight.Model, team string) {
-	if i.apart > 0 && i.bvr(slot, m, team) {
+func (i *instance) spawn(slot int, m *flight.Model, team string, tank float64) {
+	if i.apart > 0 && i.bvr(slot, m, team, tank) {
 		return
 	}
 	angle := float64(slot) * math.Pi
@@ -631,7 +633,7 @@ func (i *instance) spawn(slot int, m *flight.Model, team string) {
 	}
 	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
-	m.State = flight.Level(m, position, inward, speed, i.tank)
+	m.State = flight.Level(m, position, inward, speed, tank)
 }
 
 // enter places a jet ARRIVING at a fight already under way - a player joining
@@ -642,14 +644,14 @@ func (i *instance) spawn(slot int, m *flight.Model, team string) {
 // or a minute's transit away, whichever the wandering happens to give. The
 // separated shapes and the team walls keep their own geometry, which is the
 // match's shape rather than a re-entry.
-func (i *instance) enter(slot int, m *flight.Model, team string) {
+func (i *instance) enter(slot int, m *flight.Model, team string, tank float64) {
 	if team == "" && i.mode != "joust" {
 		if position, facing, found := i.clearing(slot); found {
-			m.State = flight.Level(m, position, facing, speed, i.tank)
+			m.State = flight.Level(m, position, facing, speed, tank)
 			return
 		}
 	}
-	i.spawn(slot, m, team)
+	i.spawn(slot, m, team, tank)
 }
 
 // clearing places an open-match arrival outside everyone's gun reach and
@@ -724,7 +726,7 @@ func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
 // fight's centre of mass, approaching it — every life begins with a commit
 // under the RWR rather than a merge. An empty open room falls back to the
 // merge ring (nothing to space from).
-func (i *instance) bvr(slot int, m *flight.Model, team string) bool {
+func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) bool {
 	radius := i.apart / 2
 	if team != "" {
 		base := 0.0
@@ -735,14 +737,14 @@ func (i *instance) bvr(slot int, m *flight.Model, team string) bool {
 		across := flight.Vec3{X: -inward.Z, Z: inward.X}
 		position := flight.Vec3{X: math.Cos(base) * radius, Y: bvraltitude, Z: math.Sin(base) * radius}
 		position = position.Add(across.Scale(float64((slot%9)-4) * 500)) // line abreast, not a queue
-		m.State = flight.Level(m, position, inward, bvrspeed, i.tank)
+		m.State = flight.Level(m, position, inward, bvrspeed, tank)
 		return true
 	}
 	if i.mode == "joust" {
 		angle := float64(slot) * math.Pi
 		position := flight.Vec3{X: math.Cos(angle) * radius, Y: bvraltitude, Z: math.Sin(angle) * radius}
 		inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
-		m.State = flight.Level(m, position, inward, bvrspeed, i.tank)
+		m.State = flight.Level(m, position, inward, bvrspeed, tank)
 		return true
 	}
 	// slots(), not a bare range: this is the sum the spaced respawn point is
@@ -772,7 +774,7 @@ func (i *instance) bvr(slot int, m *flight.Model, team string) bool {
 		position.X = flight.Shortest(0, position.X, i.environment.Wrap)
 		position.Z = flight.Shortest(0, position.Z, i.environment.Wrap)
 	}
-	m.State = flight.Level(m, position, away.Scale(-1), bvrspeed, i.tank)
+	m.State = flight.Level(m, position, away.Scale(-1), bvrspeed, tank)
 	return true
 }
 
@@ -871,11 +873,16 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 	}
 	m := flight.New(airframe, i.environment, i.chart.world)
-	i.enter(player.Slot, m, team)
+	// The player's own fuel (2026-09-15), bounded by the airframe's tank and
+	// nothing else: their weight-versus-endurance trade to make and to pay
+	// for. It must be settled BEFORE enter() lays the jet down, and remembered
+	// on the craft, because a respawn re-enters without a join request.
+	tank := stores_fuel(player.Stores, airframe.Mass.Fuel, i.tank)
+	i.enter(player.Slot, m, team, tank)
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
 	// told about; the client's persisted choice is never echoed back.
-	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.weapons)}
+	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.weapons), tank: tank}
 	a.arm()
 	a.rearm()
 	i.aircraft[player.Slot] = a
@@ -899,7 +906,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 		for _, slot := range i.slots() {
 			b := i.aircraft[slot]
-			i.spawn(slot, b.model, b.team)
+			i.spawn(slot, b.model, b.team, b.tank)
 			b.model.State.Damage = flight.DamageState{}
 			b.arm()
 			b.rearm()
@@ -1161,7 +1168,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
 					a.model = flight.New(respawned, i.environment, i.chart.world)
 				}
-				i.enter(slot, a.model, a.team)
+				i.enter(slot, a.model, a.team, a.tank)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
 				a.rearm() // full grant again, tanks refilled — every spawn is a fresh request/clamp cycle (#17)

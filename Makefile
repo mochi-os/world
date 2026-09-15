@@ -1,4 +1,4 @@
-version = 1.6
+version = 2.0
 
 # Generation time stamped into the published manifest.
 generated := $(shell date +%s)
@@ -45,8 +45,14 @@ run1: all
 
 # The default suite. The multi-minute bot doctrine sweeps are opt-in
 # (AIR_DOCTRINE), as are TestBattery / TestLethality; everything else runs.
+# An explicit budget, not Go's inherited default (#222). The air package is
+# minutes long even with the doctrine sweeps gated - TestHuntSeam alone is
+# 137 s - and when an overrun hits the default 10 min it surfaces as a timeout
+# panic in the middle of whichever test was unlucky, not as a named failure.
+# Saying the number here makes an overrun mean "the suite got slower", which is
+# a thing to look at, rather than "one test is over its share".
 test:
-	go test ./...
+	go test -timeout 20m ./...
 
 # Vulnerability scanning. Mirrors core's targets and the jobs in
 # .github/workflows/security.yml, so local and CI findings agree.

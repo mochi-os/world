@@ -141,6 +141,18 @@ func TestHuntBvrJoust(t *testing.T) {
 // alive, each inbound round's closest approach, and rounds defeated. Jammer
 // trade too.
 func TestHuntDefence(t *testing.T) {
+	// A doctrine sweep, and gated like the other ten (#222): 4 tiers x 6 seeds
+	// x a 300 s limit is 24 full BVR fights, measured at 693 s - more than the
+	// 10 minutes Go allows the WHOLE package, so leaving it ungated made
+	// `make test` unpassable and presented as a timeout panic mid-fight rather
+	// than a named failure.
+	//
+	// What it uniquely holds is statistical - the tier ladder's two ends, over
+	// 24 fights - which is exactly what a sweep is for. The behavioural rule it
+	// also happens to check, that only the machine tier arms a jammer, is
+	// covered in full and in milliseconds by TestJammerStaysWithTheMachine
+	// below, so nothing fast is lost by moving this behind the gate.
+	heavy(t)
 	type outcome struct {
 		alive    float64 // s the defender lasted (full fight = the limit)
 		faced    int     // inbound radar rounds launched at the defender

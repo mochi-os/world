@@ -514,7 +514,7 @@ func TestBotBlind(t *testing.T) {
 	ace := i.aircraft[99]
 	// A human-slot craft glued to the ace's blind cone: behind and below.
 	m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-	i.spawn(0, m, "")
+	i.spawn(0, m, "", i.tank)
 	shadow := &craft{player: game.Player{Name: "shadow", Slot: 0}, kind: "fa18c", model: m, alive: true, flared: 1e9}
 	shadow.arm()
 	i.aircraft[0] = shadow

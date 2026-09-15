@@ -132,6 +132,23 @@ func stores_strip(lo loadout) loadout {
 	return out
 }
 
+// stores_fuel reads the player's own fuel request, in pounds, from the same
+// join map the loadout rides in: stores_normalize walks stations 1..9 and
+// ignores every other key, so "fuel" passes through it untouched and needs no
+// protocol change to carry.
+//
+// The bound is the airframe's, not the creator's (2026-09-15): a player takes
+// whatever the tank holds, and underperforming or running out on a load they
+// chose is theirs to pay for. Absent — old clients, and bots, which have no
+// join request at all — takes the match's own default.
+func stores_fuel(raw map[string]any, capacity float64, standard float64) float64 {
+	pounds := number(raw, "fuel") // shared with the session parameters: the wire integer, and NaN/Inf already barred (#174)
+	if pounds <= 0 {
+		return standard
+	}
+	return math.Min(pounds/2.2046, capacity) // the UI speaks pounds like the IFEI; the sim burns kilograms
+}
+
 // stores_grant is the join-time clamp: normalize the request and apply the
 // match's loadout class (#32). A join with NO request gets the armed wingtips -
 // current clients always send all nine stations, so empty means absent, not

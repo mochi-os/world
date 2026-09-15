@@ -99,7 +99,7 @@ func TestSpacedRespawnIsDeterministic(t *testing.T) {
 		if a == nil || a.model == nil {
 			t.Fatal("no craft to respawn")
 		}
-		i.spawn(slot, a.model, a.team)
+		i.spawn(slot, a.model, a.team, a.tank)
 		return a.model.State.Position
 	}
 

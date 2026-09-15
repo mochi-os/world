@@ -55,7 +55,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 	// same tick must both clear the fight and each other's bearing.
 	for _, slot := range []int{20, 21, 22} {
 		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-		i.enter(slot, m, "")
+		i.enter(slot, m, "", i.tank)
 		span, who := nearest(m)
 		if span < clearance {
 			t.Errorf("slot %d spawned %.0f m from slot %d: inside the %.0f m gun clearance", slot, span, who, clearance)
@@ -76,7 +76,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 		i.aircraft[slot].alive = false
 	}
 	m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-	i.enter(0, m, "")
+	i.enter(0, m, "", i.tank)
 	if span := math.Hypot(m.State.Position.X, m.State.Position.Z); math.Abs(span-ring) > 1 {
 		t.Errorf("the first jet into an empty room spawned %.0f m from the centre, want the %d m merge ring", span, ring)
 	}
@@ -86,7 +86,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 	i.aircraft[slots[0]].alive = true
 	i.aircraft[slots[0]].model.State.Position = knot
 	start := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-	i.spawn(3, start, "")
+	i.spawn(3, start, "", i.tank)
 	if span := math.Hypot(start.State.Position.X, start.State.Position.Z); math.Abs(span-ring) > 1 {
 		t.Errorf("a start-of-match spawn stood %.0f m from the centre, want the %d m merge ring", span, ring)
 	}
@@ -112,7 +112,7 @@ func TestSpawnSpreadsUnderCrowding(t *testing.T) {
 		i.aircraft[slot].model.State.Position = flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
 	}
 	m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
-	i.enter(30, m, "")
+	i.enter(30, m, "", i.tank)
 	least := math.MaxFloat64
 	for _, slot := range slots {
 		if span := shortest(m.State.Position, i.aircraft[slot].model.State.Position, i.environment.Wrap).Length(); span < least {
