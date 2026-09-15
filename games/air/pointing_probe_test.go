@@ -517,7 +517,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// stayed departed, and the jet held past 60 degrees for 2,820 ticks of
 		// one sweep. Alpha is what has to come down; the horizon is where the
 		// nose goes afterwards. Full forward stick by 45 degrees.
-		pitch, roll = clamp(-axis.Y*1.5, -0.4, 0.1), roll*0.3
+		pitch, roll = math.Min(clamp(-axis.Y*1.5, -0.4, 0.1), clamp((goal-riding)/8, -1, limit)), roll*0.3
 		h.branch = "regain"
 		// From the regain's OWN trigger, not below it. At 25 degrees this
 		// unload bit into the high-alpha fighting the script exists to
@@ -543,9 +543,55 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// argued with the high-alpha fighting the script exists to reproduce.
 		// This does not: how hard the jet pushes AFTER deciding to unload says
 		// nothing about how much time it spends above twenty degrees before.
-		// No threshold unload here any more: the regulator above already
-		// commands nose-down whenever alpha is past its target, and stacking a
-		// second law on top is what made the previous arrangement untunable.
+		// No threshold unload here any more, and no third law: what this takes
+		// is the MORE FORWARD of the attitude demand and THE REGULATOR'S OWN
+		// command, which the regain used to discard. That was the defect. The
+		// regulator does command nose-down whenever alpha is past target - the
+		// note that stood here said so and concluded nothing more was needed -
+		// but this branch then OVERWROTE pitch with the attitude term, so its
+		// output was computed and thrown away for the whole of every regain.
+		// Traced against the ace (AIR_DEPART=1): alpha ran 37.1 -> 45.1 over
+		// half a second at 279 -> 266 kt while the stick sat at +0.07 falling
+		// to +0.01 - still PULLING, on a wing already past the limiter, which
+		// is the "stick nearly centred while its own script believed it was
+		// regaining" failure this very block was written to end. Flooring the
+		// attitude term with the regulator gives -0.88 at 37 degrees and the
+		// full -1 by 45, which is what the text above promises, and it adds no
+		// law that was not already running.
+		//
+		// IT DOES NOT CLOSE THE DEPARTURE GATE, and the reason matters for
+		// whoever looks next: re-traced with the push working, alpha still
+		// ramped 25.4 -> 45.1 in 1.4 s at a near-constant 14 deg/s while the
+		// stick swept +0.58 -> -1.00 straight through it, and the ramp NEVER
+		// BENT. At 270 kt and forty degrees the drag swamps full burner and
+		// the velocity vector falls away faster than the nose can follow, so
+		// the stabilator has nothing to work with - TestPitchRecovery clears
+		// alpha 40 at 300 kt WINGS LEVEL, which is not this. The departure is
+		// an energy and attitude state, not a control law, and no stick demand
+		// reaches it. Measured 2.21% -> 2.22% of fight time past 45 degrees.
+		//
+		// Triggering the regain EARLIER on alpha rate (half a second of lead)
+		// was then measured and is REFUSED: the regain overrides the regulator
+		// wholesale, so firing sooner buys regain time out of exactly the
+		// high-alpha fighting this script exists to reproduce. The ace arm got
+		// WORSE (2.22% -> 2.82%), the pilot arm began tumbling at all (1.03%,
+		// peak 178.4), and the calibration collapsed - novice share 24.4% ->
+		// 11.8%, mean speed 353 -> 429 kt, pilot 408 -> 478 kt. That is the
+		// eighth shape in this family to trade one arm for another.
+		//
+		// WHAT RESTORING IT COSTS, measured alone on cbe8af7 against a clean
+		// baseline: both gates pass either way and TestLadderDuel reads an
+		// identical 31.7 s, but the ARMS move a long way - the ace kills this
+		// script 10/16 where it killed 6/16 and dies 4/16 where it died 7/16,
+		// the fight shortens 83 -> 57 s, and the script's peak alpha drops
+		// 26.6 -> 19.3 with its time above twenty degrees going 0.5% -> 0.0%.
+		// That is the mechanism working as designed and it makes the scripted
+		// opponent WEAKER, which is a real price: high-alpha fighting is what
+		// this script exists to reproduce. Kept anyway, because the code it
+		// replaces asserted this mechanism in two comments while not
+		// containing it, and a tier ladder re-derived against an instrument
+		// that contradicts its own documentation measures nothing anyone can
+		// reason about. Re-derive the tiers with this IN PLACE (#216).
 	}
 	// Full roll stick while slow is crossed controls, and #97 built the
 	// departure that follows: a pilot rolls with the speed he has - and not
