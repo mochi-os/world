@@ -20,6 +20,8 @@ import (
 
 const (
 	capture  = 5.0    // m: catapult attach radius around the shuttle
+	lateral  = 2.0    // m: how far off the track line the nose gear may be for the slot to gather it onto the shuttle (TestTaxiUpSlow rolls in 1.5 m off)
+	aligned  = 0.978  // cos of the heading the crew will hook up at: within ~12° of the track
 	tension  = 3000.0 // N per metre of cable payout (at the reference weight setting)
 	absorb   = 8000.0 // N·s/m of payout rate (at the reference weight setting)
 	greatest = 4.2e5  // cable tension ceiling, N (at the reference weight setting): sized so a mid-weight engagement nets ~300 kN ≈ 2.4 g and ~100 m of runout, the Mk 7 class — at 6e5 the wire pulled 4.7 g and crushed the nose gear to a fuselage strike; at 3e5 the setting-scaled pull fell to 220 kN and the runout ran 156 m off the angle deck (#72 scenario 9)
@@ -85,20 +87,22 @@ func (m *Model) holdback(s *State, total *Forces) {
 	m.apply(s, gather, Vec3{X: point.X, Y: s.Position.Y + (point.Y-s.Position.Y)*power, Z: point.Z}, total)
 	forward := s.Attitude.Rotate(Vec3{X: 1})
 	swing := forward.X*track.Z - forward.Z*track.X // + when nose is left of track
-	if s.Gear.Stroke <= -3 {
-		// TENSION: a yaw trim squares the jet before the shot, soft-started over ~1.2
-		// s off the tension clock (elapsed = -3 - Stroke). Heavily overdamped; the 4
-		// s timeout covers slow convergence.
-		ramp := clamp((-3-s.Gear.Stroke)/1.2, 0.1, 1)
-		total.Moment = total.Moment.Add(Vec3{Y: -swing * 1.6e6 * ramp}.Subtract(Vec3{Y: s.Omega.Y * 2.2e6})) // NEGATIVE: +Y yaw is nose LEFT and swing is + when the nose is left of track, so correction is -swing (the + form fed the crab — proven by telemetry: swing GREW under tension; the sign was masked for months by pre-aligned spawns). Strong enough to overwhelm tire grip by design
-		// The FIRE decision lives in events (the once-per-step state pass) —
-		// force functions run on trial integrator substates and a Stroke
-		// mutation here is silently discarded.
-		return
-	}
-	// Nose-down-the-track trim on top of the emergent rolling alignment.
-	trim := clamp(1-velocity.Length()/2.0, 0, 1)                                                              // fades in through the final creep: while rolling fast the nose-point tow self-aligns the body like a trailer (caster) and a yaw torque only fights it; below ~2 m/s the wheels still roll enough to yaw, and the trim squares the last few degrees before tire grip locks the pose
-	total.Moment = total.Moment.Add(Vec3{Y: -swing * 1.2e6 * trim}.Subtract(Vec3{Y: s.Omega.Y * 8e5 * trim})) // -swing: see the tension note; strength doubled — the regularised tire friction yields slowly and the weaker trim parked offset arrivals 12° crabbed
+	// The bar in the slot holds the nose gear straight down the track: a
+	// squaring couple from the moment of attach, heavily overdamped, so any
+	// crab the hookup leaves is gone at idle before the power comes up. A
+	// crabbed jet under thrust is a jackknife - the restraint at the nose, the
+	// push at the tail - and what holds it, tyre grip at deck level, rolls the
+	// airframe: a 20° crab leaned 10° at mil, 25° went over. It used to run
+	// only in TENSION, after the launch request, with a weak speed-faded trim
+	// before that which left a rolling hookup 18° crabbed six seconds later.
+	// NEGATIVE: +Y yaw is nose LEFT and swing is + when the nose is left of
+	// track, so the correction is -swing (the + form fed the crab - proven by
+	// telemetry: swing GREW under tension; the sign was masked for months by
+	// pre-aligned spawns). Strong enough to overwhelm tire grip by design. The
+	// FIRE decision lives in events (the once-per-step state pass) - force
+	// functions run on trial integrator substates and a Stroke mutation here
+	// is silently discarded.
+	total.Moment = total.Moment.Add(Vec3{Y: -swing * 2.4e6}.Subtract(Vec3{Y: s.Omega.Y * 3.3e6}))
 }
 
 // stroke is the catapult throw: a constant force along the track while the

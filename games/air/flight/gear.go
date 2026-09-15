@@ -139,8 +139,12 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	}
 	force = force.Add(roll.Scale(-grip * normal * along / math.Max(math.Abs(along), knee)))
 	corner := cornering * (1 - 0.6*harm)
-	if nose && s.Gear.Catapult >= 0 && s.Gear.Stroke < 0 {
-		corner = cornering * 0.2 // hookup: the nosewheel mostly casters while the bar rides the slot (full grip fights the lateral tow and parks the jet crabbed) — but not freely: some cornering keeps lateral damping in the nose, or the capture rolls and wobbles
+	if s.Gear.Catapult >= 0 && s.Gear.Stroke < 0 {
+		if nose {
+			corner = cornering * 0.2 // hookup: the nosewheel mostly casters while the bar rides the slot (full grip fights the lateral tow and parks the jet crabbed) — but not freely: some cornering keeps lateral damping in the nose, or the capture rolls and wobbles
+		} else {
+			corner = cornering * 0.3 // the bar squares the jet about the shuttle and the mains scrub, as they do under a tow bar: at full grip they held a parked 5° crab against the squaring couple, and the crab it left at mil was what the tyres turned into roll
+		}
 	}
 	force = force.Add(side.Scale(-corner * normal / math.Max(side.Length(), regular)))
 	m.apply(s, force, point, total)

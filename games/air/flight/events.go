@@ -160,11 +160,14 @@ func (m *Model) catapult(s *State, in Inputs) {
 			if dx*dx+dz*dz >= capture*capture {
 				continue
 			}
-			// The crew only hook up an ALIGNED aircraft: attaching on proximity alone
-			// yanks a crossing jet sideways into the gates.
+			// The crew only hook up an ALIGNED aircraft, its nose gear on the track
+			// line and pointing down it - the launch bar has to drop into the
+			// shuttle. A 25° gate on proximity alone let the slot haul a crossing
+			// jet's nose sideways, which swung it into a 20° crab that mil power
+			// then rolled over (the holdback is a jackknife under thrust).
 			heading := c.Heading + c.Catapults[i].Heading
 			track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
-			if forward.X*track.X+forward.Z*track.Z < 0.9 { // within ~25°
+			if math.Abs(dx*track.Z-dz*track.X) > lateral || forward.X*track.X+forward.Z*track.Z < aligned {
 				continue
 			}
 			s.Gear.Catapult = i
