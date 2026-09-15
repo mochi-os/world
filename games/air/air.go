@@ -1995,11 +1995,16 @@ const (
 	near = 20 // rank at which a remote ENTERS the recipient's sticky near set
 	// wreck_record is the packed derelict: position, attitude, velocity, burn.
 	wreck_record = 34
-	// pose_record is the packed aircraft. The tail uint16 is the gun
+	// pose_record is the packed aircraft. The uint16 at 35 is the gun
 	// expenditure, which is what lets a recipient's recording say how much
 	// anyone else shot: a client can see a neighbour's trigger flag at 20 Hz
-	// but not count a 100 rounds/s belt from it (#163).
-	pose_record = 37
+	// but not count a 100 rounds/s belt from it (#163). Bytes 37-38 are his
+	// alpha and g (#164) — the two debrief channels that CANNOT be recovered
+	// from the pose stream, since #44 measured a derived nose disagreeing with
+	// recorded AOA by up to 80 degrees, and the only two that still fit the
+	// datagram: 27 poses at 39 bytes plus six missiles is ~1.2 kB, and the
+	// near/roving sizes below are what pay for anything wider.
+	pose_record = 39
 	// slot_most is the highest slot the missile record can name: the shooter
 	// occupies seven bits because the eighth carries the round's kind (#27).
 	slot_most = 127
@@ -2071,6 +2076,14 @@ func pose(slot int, a *craft) []byte {
 	// magazine — a belt reading would then run backwards. Saturates rather
 	// than wrapping: a wrapped counter reads as a burst that never happened.
 	binary.LittleEndian.PutUint16(b[35:], uint16(min(a.spent, 65535)))
+	// Alpha in whole degrees and the g meter at a tenth (#164). int8 each, and
+	// both SATURATE rather than wrap: a wrapped departure would read as a
+	// gentle pull that never happened, which is the failure the gun counter
+	// above is also written to avoid. The 7.5 g limiter and the paddle
+	// override both sit well inside 12.7, and 1 degree of alpha is the
+	// resolution a debrief reads a turn at.
+	b[37] = byte(int8(clamp(a.model.Alpha()*180/math.Pi, -127, 127)))
+	b[38] = byte(int8(clamp(a.model.Nz()*10, -127, 127)))
 	return b
 }
 
