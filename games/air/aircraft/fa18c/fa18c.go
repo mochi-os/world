@@ -51,6 +51,12 @@ func build() *flight.Airframe {
 	a.Control.Capture = a.Control.Flyaway - 6*math.Pi/180 // NATOPS 8.2.8: trim settings between 10° and 18° nose up correspond linearly to reference AOAs between 4° and 12°
 	a.Control.Blowdown = 35000
 	a.Forebody = 4.3 // the widest station (2.7 m²) plus the LEX: with the published fins this lands the HARV basic-F-18 Cy_beta and Cn_beta at once (sideslip_test.go)
+
+	// The M61 port on the nose top - the server's hitscan muzzle and the
+	// client's tracer origin - and the M61A1's published 3,818 lbf average
+	// recoil at 6,000 rpm.
+	a.Gun = flight.Gun{Position: flight.Vec3{X: 6.53, Y: 0.43}, Recoil: 16984}
+
 	a.Control.Gearing.Pitch = 0.42
 	a.Control.Gearing.Roll = 0.35
 	a.Control.Gearing.Yaw = 0.52

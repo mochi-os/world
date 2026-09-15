@@ -128,6 +128,9 @@ func bandit_step(this js.Value, arguments []js.Value) any {
 	if fleet[0].used {
 		bandit.Wound(fleet[0].damage, fleet[0].condition) // hulk 0 IS the bandit: its damage authority feeds the brain and the flight model
 	}
+	if len(arguments) > 1 {
+		bandit.Load(arguments[1].Int()) // the client's belt: the recoil follows the rounds it actually has
+	}
 	fire, flare, launch, heater, chaff := bandit.Step()
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()

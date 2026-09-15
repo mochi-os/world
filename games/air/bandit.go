@@ -164,13 +164,19 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff 
 	}
 	b.arena.events = b.arena.events[:0]
 	for substep := 0; substep < 4; substep++ {
-		b.craft.model.Step(b.craft.latest)
+		b.craft.model.Step(b.craft.latest) // the brain reads its belt (Load) and never presses dry, so its sample is the core's
 	}
 	b.craft.flared += 1.0 / 60
 	b.craft.clouded += 1.0 / 60
 	b.craft.release += 1.0 / 60
 	return b.craft.latest.Fire, flare, launch, heater, chaff
 }
+
+// Load sets the bandit's magazine. The single-player client keeps the belt
+// (its fire_gun spends it, round by round, the same counter the HUD reads)
+// and mirrors it in before each frame, so the core's recoil stops when the
+// tracers do.
+func (b *Bandit) Load(rounds int) { b.craft.ammunition = rounds }
 
 // State exposes the bandit's flight state for the client to render.
 func (b *Bandit) State() *flight.State { return &b.craft.model.State }

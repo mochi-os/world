@@ -960,6 +960,17 @@ func (i *instance) merge() {
 	}
 }
 
+// trigger is the craft's inputs as the flight core should see them: the fire
+// flag only while rounds actually leave - a loaded drum, and the weapons free
+// (a joust holds them until the merge) - so the core's recoil follows the gun
+// rather than the button. The server steps every jet through this; the
+// single-player bandit's brain reads its belt itself and never presses dry.
+func (a *craft) trigger(free bool) flight.Inputs {
+	in := a.latest
+	in.Fire = in.Fire && a.ammunition > 0 && free
+	return in
+}
+
 // input converts a wire sample into flight inputs.
 func input(data map[string]any) flight.Inputs {
 	flag := func(key string) bool { v, _ := data[key].(bool); return v }
@@ -1162,8 +1173,9 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 			continue
 		}
+		fed := a.trigger(i.free())
 		for substep := 0; substep < 4; substep++ {
-			a.model.Step(a.latest) // 4 × Dt (1/240) per 60 Hz tick
+			a.model.Step(fed) // 4 × Dt (1/240) per 60 Hz tick
 		}
 		// The damage cascade: fires feed or starve on the throttle, fuel
 		// fires run their fuse, weakened wings shed under g.

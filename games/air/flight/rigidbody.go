@@ -322,6 +322,7 @@ func (m *Model) forces(s *State, in Inputs, local Air) Forces {
 	total := Forces{}
 	m.aero(s, &total, local)
 	m.propulsion(s, &total, local)
+	m.recoil(in, &total)
 	m.contact(s, in, &total)
 	m.stroke(s, &total)
 	return total

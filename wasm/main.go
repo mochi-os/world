@@ -17,7 +17,7 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (2 brake, 4 gear, 8 hook, 16 launch, 32 override; bit 1 retired — reheat moved to slot 8, analog),
+//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire),
 //	6 sequence, 7 steps
 //
 // Output buffer layout: flight.Size encoded state words, then
@@ -230,6 +230,7 @@ func controls() (flight.Inputs, int) {
 		Reset:      flags&128 != 0,
 		Dump:       flags&1 != 0, // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
 		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
+		Fire:       flags&1024 != 0, // the trigger while rounds leave: the client gates it on its own magazine, the core kicks back
 		Sequence:   uint32(input[6]),
 	}
 	steps := int(input[7])

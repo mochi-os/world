@@ -28,6 +28,7 @@ type Airframe struct {
 	Default   uint64                                                                  // the attach mask New arms (the catalog holds every legal fitment; a bare New flies this subset)
 	Mass      struct{ Empty, Fuel float64 }                                           // kg; Fuel = internal capacity
 	Control   Control                                                                 // control-law data the shared law flies with
+	Gun       Gun                                                                     // the cannon: where it fires from and what it kicks back with
 	Forebody  float64                                                                 // m²: the cross-section the slender-body side force at sideslip works on - the widest station plus what the LEX add, calibrated to the flight-measured Cy_beta; 0 falls back to the nose station's own area
 	Wave      struct{ Hump, Body float64 }                                            // transonic wave-drag character: per-element hump peak, body peak (area-ruling quality)
 	Inertia   Mat3                                                                    // empty aircraft, about empty CG (frames.go axis mapping)
@@ -132,6 +133,15 @@ type Strut struct {
 	Stiffness float64 // N/m
 	Damping   float64 // N·s/m
 	Steer     float64 // max steering angle, rad (nosewheel)
+}
+
+// Gun is the cannon's place and its recoil: the average force it kicks back
+// with while firing, aft along the body axis at the port, from published gun
+// data (the M61A1's 3,818 lbf at 6,000 rpm). Zero: no gun, or one whose kick
+// is not modelled.
+type Gun struct {
+	Position Vec3    // the port, body, from datum
+	Recoil   float64 // N, average while firing
 }
 
 // Control is the airframe-specific control-law data: schedules, throws, and
