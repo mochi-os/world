@@ -1229,7 +1229,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if b.alert == 0 {
 			b.alert = tick
 		}
-		if float64(tick-b.alert) >= b.skill.react*60 {
+		if float64(tick-b.alert) >= math.Max(b.skill.react, threat_confirm)*60 {
 			b.mode = "evade"
 			b.press = 0
 			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
