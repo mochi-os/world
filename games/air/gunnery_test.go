@@ -190,6 +190,7 @@ func TestLadderDuel(t *testing.T) {
 						done = true
 					case top.model == nil || !top.alive:
 						losses++
+						times = append(times, float64(tick)/60)
 						done = true
 					}
 				}
@@ -206,6 +207,17 @@ func TestLadderDuel(t *testing.T) {
 			}
 			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
 				arm, strong, weak, wins, losses, draws, mean)
+			// EVERY DECIDED FIGHT IS TIMED, IN BOTH DIRECTIONS (#216). This
+			// averaged only the STRONG side's wins, which at an inverted rung is
+			// three fights - and the claim it makes ("the fight is being decided
+			// at the merge") is about the pairing, not about who won. The
+			// commit-by-commit walk of this arm caught it: e6c5262 and 550f6b3
+			// carry an IDENTICAL 3-13 record while the mean moves 49.6 to 37.4,
+			// a swing carried by three samples, one of which was a midair. So the
+			// check was noisiest exactly where it matters most, at the rung that
+			// had inverted. Timing the losses too takes this arm from 9 to 15
+			// samples.
+			//
 			// HOW LONG THE FIGHT LASTS is a gate now (#213). A weapon change
 			// quartered the top-tier fight - 98 s to 14 s on the heater probe,
 			// 76.8 s to 14.2 s here - while every ordering gate below stayed
@@ -221,7 +233,21 @@ func TestLadderDuel(t *testing.T) {
 			//
 			// Measured on the tree one commit before #207, which is the last
 			// point every arm was known good: guns 187.1 s (ace v pilot) and
-			// 150.3 s (superhuman v ace); missiles 25.3 s and 76.8 s.
+			// 150.3 s (superhuman v ace); missiles 25.3 s and 76.8 s. Those were
+			// wins-only means, and the floors halve them.
+			//
+			// RE-JUSTIFIED on the repaired basis (#216, 2026-09-16), and the
+			// numbers are KEPT rather than re-derived. Every decided fight now
+			// reads: guns 135.4 and 125.2, missiles 40.8 and 47.1. Halving those
+			// would give 23.5 and 62.6 - LOWER than the 35 and 75 standing here,
+			// because timing the losses raises the mean. The standing values are
+			// therefore stricter than the rule that produced them, which is the
+			// right direction for a collapse detector, so they stay. Do not
+			// "correct" them downward to match the arithmetic.
+			//
+			// The missiles superhuman-v-ace arm read 34.1 s and FAILED under the
+			// old wins-only mean over nine fights; over all fifteen it is 47.1.
+			// The shortfall was the sample, not a collapse.
 			floor := 75.0 // guns: half of the slower of the two arms
 			if missiles {
 				floor = 35.0 // missiles: half of 76.8, and 62.7 s clears it today
