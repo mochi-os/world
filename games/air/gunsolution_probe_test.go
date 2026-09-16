@@ -226,10 +226,40 @@ func TestGunSolutionByRange(t *testing.T) {
 		name  string
 		ahead bool
 		hold  bool
-	}{{"pure", false, false}, {"lead", true, false}, {"hold", true, true}}
+	}{{"pure", false, false}, {"lead", true, false}, {"hold", true, true}, {"mirror", false, true}}
 	kt := 250.0
 	speed := kt / 1.944
 
+	// `mirror` is pure pursuit WITH the energy hold - deliberately the exact
+	// policy TestPointingVersusEnergy's holder flies, since lead(s, foe, false)
+	// returns foe.Position unchanged and both probes steer through aimed().
+	// It exists to settle a contradiction that was recorded against #42 for
+	// nine days: that probe has the holder WINNING the gun fight (0.96% pointer
+	// against 1.42% holder, 2.52% holder-on-holder) while this one had it 3-4x
+	// worse at pointing, and the two were read as irreconcilable. They are not
+	// the same measurement. `hold` here is LEAD pursuit plus the hold, and this
+	// sweep flies a scripted turner that never reacts - where easing the pull
+	// can only cost tracking, because nothing punishes you for spending energy.
+	// The joust is mutual, and there the pointer bleeds itself into a target.
+	// This row puts the same policy in both harnesses so the comparison is
+	// between like and like. MEASURED, and the contradiction dissolves:
+	//   on<20deg, pooled          <250  250-400  400-600  600-900  900-1500
+	//     pure   (no hold)       68.6%    66.0%    77.0%    62.2%     63.4%
+	//     mirror (pure + hold)   14.2%    23.1%    20.4%    25.6%     28.5%
+	//     hold   (lead + hold)   14.8%    30.0%    21.4%    26.7%     32.5%
+	// The 15-34% is REAL and it is that policy - but it is what the hold costs
+	// against a target that never reacts, where nothing punishes you for
+	// spending energy. The aim law is NOT the cause: mirror and hold read the
+	// same, so pure-versus-lead barely matters once the hold is on.
+	// In the joust the same policy wins, and the slowest-speed column says why:
+	// at the 2,400 m / 350 kt entry the pointer takes heater parameters 41.2% of
+	// the fight against the holder's 17.8% - it really does point better - and
+	// bleeds to 30 kt doing it, while the holder sits at 210 and takes the guns
+	// column 5.0% to 1.8%. Holder-on-holder is 4.6% guns against
+	// pointer-on-pointer's 1.8%, every holder cell ending at its entry speed.
+	// So the two probes agree about the POLICY and differ about what winning
+	// means. Neither is wrong; they are not comparable, and #42 recorded them
+	// as irreconcilable for nine days on that mistake.
 	fmt.Println("\ngun solution BY RANGE: level sustained turner at 250 kt, pursuer +60 kt, 60 s, 240 Hz")
 	fmt.Println("entry sweep - share of each run with the nose within 5 deg at 250-900 m, by ENTRY range")
 	fmt.Printf("%-6s %s\n", "law", "  250 m   400 m   600 m   900 m  1500 m")
