@@ -293,6 +293,31 @@ func TestLadderDuel(t *testing.T) {
 				t.Errorf("%s: %s lost to %s %d-%d: the ladder is inverted where it matters, in a two-way fight",
 					arm, strong, weak, losses, wins)
 			}
+			// DECISIVENESS (#42). Ordering and fight length were both gated and
+			// the NO-RESULT column was not, so a change could stop the fights
+			// being decided at all and pass. Measured: a range gate on the
+			// rehearsal horizon took this guns pairing from 9-3 with four no
+			// results to 2-1 with THIRTEEN - twelve decided fights down to three
+			// - and TestLadderDuel stayed green, because 2-1 is not an inversion
+			// and 111.9 s clears the floor. Nothing read the third number.
+			//
+			// The allowances are each arm's measured baseline plus room, not an
+			// ideal: guns ace-v-pilot sits at 12 of 16 and that IS this pairing
+			// (the ace converts four; #42 item 1 carries why, and it is a
+			// precision problem rather than an arbitration one). The superhuman
+			// arm sits at 4, so its line is where the refuted shape's 13 is
+			// caught with margin either side.
+			stale := 6 // missiles: both arms measured 1 of 16
+			if !missiles {
+				stale = 9 // guns superhuman v ace: measured 4
+				if strong == "ace" {
+					stale = 14 // guns ace v pilot: measured 12
+				}
+			}
+			if draws > stale {
+				t.Errorf("%s: %s v %s left %d of 16 undecided against an allowance of %d: the pairing has stopped finishing fights",
+					arm, strong, weak, draws, stale)
+			}
 		}
 	}
 }
