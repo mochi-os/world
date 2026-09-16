@@ -2636,6 +2636,33 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	// committed pull for the rounds' time of flight; the window's own stamp
 	// picks the quadrant, so successive dodges go different ways and a
 	// patient shooter still cannot time it.
+	//
+	// HOLDING IT FOR THE ROUNDS' TIME OF FLIGHT WAS MEASURED AND REFUSED (#216,
+	// 2026-09-16). The gap it was built on is REAL: the machine's cue is wider
+	// (it mirrors the whole firing solution out to 1,200 m where the ace waits
+	// for 45 m inside 900), so under the human-pressure scenario it jinks from a
+	// mean 996 m against the ace's 622 m, where the rounds take 1.08 s and this
+	// window gives 0.98 - 61% of the machine's jinks expire before the burst
+	// arrives against the ace's 11%, and it is shot down twice in 24 from the
+	// opening pass at 1.4 and 1.8 s while the ace is never hit. Extending the
+	// window to `transit` (already computed in flinch for the cue) makes it
+	// WORSE: shot down 2 -> 3. A longer pull in ONE direction is easier to
+	// track, not harder - the shooter re-aims onto the new line inside the
+	// window, which is the same reasoning that made the held quadrant beat the
+	// old two-sinusoid weave. Everything else was inert (machine-defence gate,
+	// both missile rungs and guns ace-v-pilot bit-identical; guns superhuman
+	// v ace 9-3-4 at 129.3 s -> 10-4-2 at 140.4, TestJink green either way).
+	// The machine's two deaths remain UNEXPLAINED: a fix wants a mechanism that
+	// changes WHERE the jink goes, not how long it lasts.
+	//
+	// AND THE LONGER WINDOW EXPOSED A LATENT HAZARD, which is the more useful
+	// half of that measurement: the THIRD death was not a shooting at all but
+	// an uncredited crash at 714 m, 117 s in. This override runs in steer(),
+	// and polish() has already called guard() by then - so the jink is the one
+	// aim path the terrain floor does NOT bound, and a held pull at 0.9 of the
+	// tier's g simply flies the jet down. At the shipped window no such death
+	// appeared in 48 fights, so it is latent rather than active; anything that
+	// lengthens a jink must bound it against the deck first.
 	if tick < b.dodge {
 		// The pull goes where the lift already points — the jet loads in a
 		// third of a second there, where any other direction costs a roll
