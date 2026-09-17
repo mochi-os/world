@@ -135,6 +135,17 @@ var skills = map[string]skill{
 // like its missing energy floor. Below the cap's floor of 1.1 g nothing is
 // taken away: a jet must always be able to hold level flight and a little
 // more.
+//
+// WHAT 0.85 ITSELF COSTS, measured 2026-09-17 (#42) - the alternatives above
+// are priced and this was not: below corner the ace commands 86% of the
+// pilot's g, so the tier ladder INVERTS wherever a fight is held slow. In the
+// twelve undecided guns fights the ace averages 388 kt and holds its nose
+// inside 20 degrees for 1% of its time in the gun window, against the pilot's
+// 43%; in the four it wins it averages 462 kt, where the cap is inert and it
+// out-pulls the pilot, and holds 49%. TestTheAceOutTurnsThePilotOnlyAboveCorner
+// pins the crossover. No arbitration remedy can reach past this: a scorer
+// cannot outvote a g limit, which is why the range-gated horizon lifted the
+// ace's stalemate solution share only 0.02% -> 0.83%.
 func (s skill) capped(g, speed, stall float64) float64 {
 	if s.cap <= 0 {
 		return g

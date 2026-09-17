@@ -621,7 +621,15 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// and pricing them as fungible is what let the bot dive out of deadlocked
 	// spirals and donate the perch every piloted fight was lost through (the
 	// Nash-equilibrium defection, recording 01a0496dbd0a: co-altitude lag at
-	// t=96, low at t=104, dead at t=157). Relative and zero-sum, dead beyond
+	// t=96, low at t=104, dead at t=157). ITS WEIGHT IS LOAD-BEARING, measured
+	// 2026-09-17 (#42): halving it to 0.225 does what the guns stalemate wants -
+	// the ace's stalemate speed rises 388 -> 414 kt, its solution share 0.02%
+	// -> 0.64%, one fight of twelve converts - and fails two quick gates doing
+	// it, the perch donated 256,989 m.s against the fixed band's ~126,000 and
+	// the missile rung inverted, superhuman losing to the ace 10-5. The height
+	// reward and the slow fight are in tension here exactly as the aero cap is
+	// at capped(), and this number stays where the gates are green too.
+	// Relative and zero-sum, dead beyond
 	// 2.5 km, dwarfed by the offence terms in a genuine conversion — and
 	// scaled by the energy-read skill: the novice authentically cannot price
 	// it. Sits outside the posture weights, like the deck penalties — and
@@ -747,22 +755,7 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// The horizon must outlive the manoeuvres it judges — in REAL seconds,
 	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
 	// for the top tiers, enough for a reversal's payoff to show through the
-	// point-progress term without quadrupling the rehearsal budget.
-	// The horizon must outlive the manoeuvres it judges — in REAL seconds,
-	// now that the rollout clock is honest: 2.5 s for the novice up to 4 s
-	// for the top tiers, enough for a reversal's payoff to show through the
 	// point-progress term without quadrupling the rehearsal budget. One
-	// REFUTED 2026-09-13, so it is not rebuilt: discounting distant rollout
-	// samples does NOT price the asymmetry. Each sample was weighted
-	// d^(seconds) with `samples` accumulating the weights, which renormalises
-	// every play over ITS OWN window - so the discount pulls each play's mean
-	// toward its own early samples equally and never changes a 12 s window's
-	// standing RELATIVE to a 4 s one. Self-cancelling by construction, and the
-	// guns arm agreed: over d = 1.0/0.97/0.93/0.88 the yo-yo's share held at
-	// 52-65% (it ROSE on the ace arm, 58 -> 65) and kills read 7/8/5/7, which
-	// is noise. Pricing the span needs a shape that does not renormalise per
-	// play - and a shape that does not is the sum-versus-mean problem again.
-	//
 	// window per candidate, each play on its own span: judging every rival
 	// over the LONGEST span on offer (so a yo-yo and the pursuit it competes
 	// with are compared alike, #169/#174) fixed the yo-yo's dominance - its
@@ -774,6 +767,17 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// common window to 1,200 m passed the ladder while giving the anchor gain
 	// back (9/6, 13/2). Measured three ways and declined; the asymmetry it
 	// closes is real and wants a scorer that prices it, not a longer look.
+	//
+	// REFUTED 2026-09-13, so it is not rebuilt: discounting distant rollout
+	// samples does NOT price the asymmetry. Each sample was weighted
+	// d^(seconds) with `samples` accumulating the weights, which renormalises
+	// every play over ITS OWN window - so the discount pulls each play's mean
+	// toward its own early samples equally and never changes a 12 s window's
+	// standing RELATIVE to a 4 s one. Self-cancelling by construction, and the
+	// guns arm agreed: over d = 1.0/0.97/0.93/0.88 the yo-yo's share held at
+	// 52-65% (it ROSE on the ace arm, 58 -> 65) and kills read 7/8/5/7, which
+	// is noise. Pricing the span needs a shape that does not renormalise per
+	// play - and a shape that does not is the sum-versus-mean problem again.
 	//
 	// RE-TESTED 2026-09-13 against the corrected evolve() and declined AGAIN,
 	// which settles more than the window. The suspicion was that both halves of
