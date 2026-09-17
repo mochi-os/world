@@ -119,11 +119,16 @@ func TestBvrLadder(t *testing.T) {
 		if r.closest > 20000 {
 			t.Fatalf("%s v %s never closed inside 20 km: degenerate never-closing play (closest %.0f m)", pair[0], pair[1], r.closest)
 		}
-		// Raw spend only gates pairings where both sides have the discipline to hold
-		// rounds (0.7 and up). The novice's full ripple is its authentic toolkit, and
-		// the pilot's long fights legitimately empty the rack.
-		if pair[1] != "novice" && pair[1] != "pilot" && r.spent > 44 {
-			t.Fatalf("%s v %s dumped magazines: %d of 48 AMRAAMs spent", pair[0], pair[1], r.spent)
-		}
+		// MAGAZINE DISCIPLINE IS NOT GATED HERE, and six seeds is why (#225).
+		// Spend is capped at 48, two aces average 6.69 a fight with a deviation
+		// of 1.43 (48-seed measurement), so six fights centre on 40 and the cap
+		// itself stands only 2.2 deviations up. The gate that used to sit here,
+		// at 44, was 1.25 deviations above the mean - about one run in nine red
+		// on the draw alone, which is exactly how it read 45 and failed at
+		// cbe8af7 and 44 and passed at HEAD with nothing tuned in between. No
+		// threshold under the cap was quiet enough to be worth having, so the
+		// judgement moved to TestBvrWide, where 24 seeds put the cap 4.5
+		// deviations up and a three-deviation allowance fits beneath it. The
+		// spend is still PRINTED above: the number was always the useful part.
 	}
 }
