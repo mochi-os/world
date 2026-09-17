@@ -503,6 +503,49 @@ func TestStaleOffer(t *testing.T) {
 	}
 }
 
+// TestWithdrawEmptyMatch: the owner's withdraw retires their unjoined offer and
+// their flown match once it stands empty, and spares the match somebody is
+// flying, a permanent match, and every other pilot's.
+func TestWithdrawEmptyMatch(t *testing.T) {
+	cases := []*session{
+		{identifier: "withdraw-offer", owner: "a", created: time.Now()},
+		{identifier: "withdraw-empty", owner: "a", joined: true, created: time.Now()},
+		{identifier: "withdraw-flying", owner: "a", joined: true, connected: 1, created: time.Now()},
+		{identifier: "withdraw-permanent", owner: "a", joined: true, permanent: true, created: time.Now()},
+		{identifier: "withdraw-other", owner: "b", joined: true, created: time.Now()},
+	}
+	sessions_lock.Lock()
+	for _, s := range cases {
+		sessions[s.identifier] = s
+	}
+	sessions_lock.Unlock()
+	defer func() {
+		sessions_lock.Lock()
+		for _, s := range cases {
+			delete(sessions, s.identifier)
+		}
+		sessions_lock.Unlock()
+	}()
+
+	if count := sessions_withdraw("a"); count != 2 {
+		t.Errorf("withdraw flagged %d sessions, want the offer and the empty match", count)
+	}
+
+	sessions_lock.RLock()
+	defer sessions_lock.RUnlock()
+	if !cases[0].withdrawn {
+		t.Error("the unjoined offer was not flagged")
+	}
+	if !cases[1].withdrawn {
+		t.Error("the empty flown match was not flagged: its creator cannot remove it")
+	}
+	for _, s := range cases[2:] {
+		if s.withdrawn {
+			t.Errorf("%s was flagged and should not be", s.identifier)
+		}
+	}
+}
+
 // TestListingRulesCopied (#21): spec.Parameters is the same map object the game
 // instance holds, so the listing must carry a creation-time snapshot. Mutating
 // parameters after Create must not change or race what the lobby advertises.

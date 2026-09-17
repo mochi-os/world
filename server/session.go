@@ -320,9 +320,13 @@ func sessions_own(s *session, owner string) {
 	sessions_lock.Unlock()
 }
 
-// sessions_withdraw flags every live offer held by this pilot. Creating a new
-// match calls it first — one offer at a time, and the new one replaces the
-// old — as does leaving the server page or joining somebody else's match.
+// sessions_withdraw flags every live offer held by this pilot, and every match
+// of theirs that stands empty: the creator flies their own match the moment it
+// is made, which ends its life as an offer, and without this the match they
+// then left would sit in every list until the idle sweep. A match somebody is
+// flying is theirs now, not the creator's to close. Creating a new match calls
+// it first — one offer at a time, and the new one replaces the old — as does
+// leaving the server page or joining somebody else's match.
 func sessions_withdraw(owner string) int {
 	if owner == "" {
 		return 0
@@ -330,7 +334,7 @@ func sessions_withdraw(owner string) int {
 	count := 0
 	sessions_lock.Lock()
 	for _, s := range sessions {
-		if s.owner == owner && !s.joined && !s.permanent && !s.withdrawn {
+		if s.owner == owner && (!s.joined || s.connected == 0) && !s.permanent && !s.withdrawn {
 			s.withdrawn = true
 			count++
 		}
