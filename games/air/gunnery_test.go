@@ -271,9 +271,21 @@ func TestLadderDuel(t *testing.T) {
 				// pricing to reach 1.6 km to "fix" this: it would suppress
 				// legitimate long shots at genuinely lit targets, which is what
 				// the weapon is for. Whether the pilot tier should have
-				// self-plume discipline at all is a catalogue question (#42) -
-				// there is no burner knob, the tier difference comes from which
-				// plays they fly, several of which hardcode reheat: 1.
+				// self-plume discipline at all was a catalogue question (#42),
+				// and it is RULED 2026-09-16: it should NOT, and the tier keeps
+				// flying lit. Three reasons, none of which a measurement would
+				// have settled. bot.go's burner clause says it outright - the low
+				// tiers keep advertising, which is authentic and is how they die -
+				// so the behaviour is deliberate rather than an oversight. #215
+				// separately ruled the fast kill it produces not a defect, having
+				// instrumented 88 launches: the ace shoots a LIT pilot on 50% of
+				// its releases against 18% the other way. And there is no per-tier
+				// burner knob to turn - discipline is gated on library >= 3 and
+				// eleven plays hardcode reheat: 1, so giving the pilot a plume
+				// policy means either a fourth skill axis or rewriting those plays,
+				// a large change to remove a weakness the tier is SUPPOSED to have.
+				// Do not reopen without a NEW reason; the pilot dying to its own
+				// plume is the design working.
 				floor = 8.0
 			}
 			if mean > 0 && mean < floor {

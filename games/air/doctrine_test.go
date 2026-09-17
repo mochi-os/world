@@ -257,6 +257,35 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		}
 		fmt.Println()
 		fmt.Printf("  override audit: %v\n", audit)
+		// BOTH tiers are watched now (#223). This clause was scoped `level ==
+		// "ace"`, so the superhuman arm ran, printed, and was never checked -
+		// and it is shot down TWICE where the ace it is defined as a superset
+		// of is shot down not at all. Measured rather than assumed: neither
+		// tier can flinch here at all (the first guard refuses beyond 1,200 m
+		// and the scripted attacker kills from 1,201, so every evaluation of
+		// both fatal fights ended there), the two traces are identical to a
+		// tenth of a g until the burst lands, and giving the machine the ace's
+		// wander of 0.007 takes it from 2 of 24 to 0 of 24. So the machine dies
+		// because it flies a PERFECTLY CLEAN LINE that a held trigger converges
+		// on, which is the residue of the phenomenon bot.go's jink comment
+		// already records - that same scenario killed it 8 of 24 before #46's
+		// held quadrant, and this is what is left. The one thing that removes
+		// it is wander, and TestSuperhumanIsTheAceWithoutHumanLimits names
+		// wander a human limit, so it is not available. The allowance is
+		// therefore the measured honest value per tier, not an ideal.
+		allowed := 1 // the ace: measured 0, with a fight of slack
+		if level == "superhuman" {
+			// Zero slack is deliberate here and is safe BECAUSE these sims are
+			// seeded and deterministic: 2 is what the tier reads today, and a
+			// third death is a real change rather than noise. Negative-controlled
+			// against the refuted jink-window shape (#216), which takes this arm
+			// to exactly 3.
+			allowed = 2
+		}
+		if lost > allowed {
+			t.Errorf("%s was shot down in %d of 24 by the crude script against an allowance of %d: the defence regressed",
+				level, lost, allowed)
+		}
 		if level == "ace" {
 			// The gate carries only the DEFENCE claims it can honestly make (#65):
 			// the old outcome clause counted being shot down as an outcome, so the
@@ -272,9 +301,6 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			// pursuer never exhibits, and REVERSING it is an unbuilt capability
 			// (its one flaw is sight loss under g), tracked as its own task. A
 			// gate red at birth is a demand, not a regression guard.
-			if lost > 1 {
-				t.Errorf("ace was shot down in %d of 24 by the crude script: the defence regressed", lost)
-			}
 			if 100*float64(tracked)/math.Max(1, float64(total)) > 20 {
 				t.Errorf("ace tracked in the attacker's rear quarter %.0f%% of the fight: the prey era is returning", 100*float64(tracked)/math.Max(1, float64(total)))
 			}

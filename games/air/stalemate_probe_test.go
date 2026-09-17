@@ -20,7 +20,9 @@ type fight struct {
 	closest          float64
 	near             [2]int     // ticks inside 900 m
 	solution         [2]int     // ticks with the nose within 5 deg at 250-900 m
-	rounds           [2]int     // rounds fired
+	rounds           [2]int     // rounds fired (craft.spent: cumulative, and the one counter the ammunition cheat cannot confuse)
+	hits             [2]int     // rounds that LANDED, counted off the kill pipeline's own "hit" events
+	bursts           [2]int     // firing passes: runs of consecutive ticks with the trigger down
 	slowest, fastest [2]float64 // m/s
 	speed            [2]float64 // summed
 	modes            [2]map[string]int
@@ -78,6 +80,8 @@ func TestStalemateAttribution(t *testing.T) {
 			f.chosen[a] = map[string]*pick{}
 		}
 		start := [2]int{side[0].spent, side[1].spent}
+		was := [2]int{side[0].spent, side[1].spent}
+		firing := [2]bool{}
 		for tick := uint64(0); tick < 60*240 && !f.decided; tick++ {
 			i.Step(tick, nil)
 			for a, c := range side {
@@ -90,7 +94,38 @@ func TestStalemateAttribution(t *testing.T) {
 				break
 			}
 			f.ticks++
+			// Hits are ground truth, not a reconstruction: air.go raises one
+			// "hit" event per strike carrying the victim, the shooter and the
+			// rounds in it. Drain them here so the count is per fight.
+			for _, event := range i.events {
+				if event["kind"] != "hit" {
+					continue
+				}
+				by, ok := event["by"].(int)
+				if !ok {
+					continue
+				}
+				count, _ := event["count"].(int)
+				if count == 0 {
+					count = 1
+				}
+				for a, c := range side {
+					if i.aircraft[by] == c {
+						f.hits[a] += count
+					}
+				}
+			}
+			i.events = i.events[:0]
 			for a, c := range side {
+				if c.spent > was[a] {
+					if !firing[a] {
+						f.bursts[a]++
+						firing[a] = true
+					}
+				} else {
+					firing[a] = false
+				}
+				was[a] = c.spent
 				s := &c.model.State
 				speed := s.Velocity.Length()
 				f.speed[a] += speed
@@ -136,7 +171,7 @@ func TestStalemateAttribution(t *testing.T) {
 	report := func(label string, pick func(fight) bool) {
 		var n int
 		var ended, closest float64
-		var near, solution, rounds [2]float64
+		var near, solution, rounds, hits, bursts [2]float64
 		var slow, fast, mean [2]float64
 		modes := [2]map[string]int{{}, {}}
 		for _, f := range all {
@@ -151,6 +186,8 @@ func TestStalemateAttribution(t *testing.T) {
 				near[a] += 100 * float64(f.near[a]) / span
 				solution[a] += 100 * float64(f.solution[a]) / span
 				rounds[a] += float64(f.rounds[a])
+				hits[a] += float64(f.hits[a])
+				bursts[a] += float64(f.bursts[a])
 				slow[a] += f.slowest[a] * 1.944
 				fast[a] += f.fastest[a] * 1.944
 				mean[a] += f.speed[a] / span * 1.944
@@ -168,12 +205,31 @@ func TestStalemateAttribution(t *testing.T) {
 		for a, who := range []string{"ace  ", "pilot"} {
 			fmt.Printf("  %s inside 900 m %5.1f%% | on solution %5.2f%% | rounds %5.0f | speed mean %3.0f slowest %3.0f fastest %3.0f kt\n",
 				who, near[a]/d, solution[a]/d, rounds[a]/d, mean[a]/d, slow[a]/d, fast[a]/d)
+			// What the rounds DO (#42). The 5 deg solution share is a 52 m cone
+			// at 600 m and cannot tell a hit from a near miss; these three can.
+			fmt.Printf("        rounds landed %4.0f of %4.0f (%4.1f%%) | firing passes %4.1f | rounds per pass %4.0f\n",
+				hits[a]/d, rounds[a]/d, 100*hits[a]/math.Max(1, rounds[a]), bursts[a]/d,
+				rounds[a]/math.Max(1, bursts[a]))
 			fmt.Printf("        modes: %s\n", strings.Join(topThree(modes[a]), "  "))
 			fmt.Printf("        regime: %s\n", strings.Join(regimes(all, pick, a), "  "))
 		}
 	}
 	report("DECIDED", func(f fight) bool { return f.decided })
 	report("STALEMATE", func(f fight) bool { return !f.decided })
+	// POSITIVE CONTROL for the hit counter. The decided fights end in a gun
+	// kill, so rounds MUST have landed in them: a zero here means the "hit"
+	// events are not reaching the probe, which would otherwise read as the far
+	// more interesting "every round misses" - the exact false finding this
+	// measurement exists to avoid.
+	landed := 0
+	for _, f := range all {
+		if f.decided {
+			landed += f.hits[0] + f.hits[1]
+		}
+	}
+	if landed == 0 {
+		t.Fatal("no rounds landed in any DECIDED fight: the hit events are not reaching the probe")
+	}
 	if len(all) != 16 {
 		t.Fatalf("wanted 16 fights, drove %d", len(all))
 	}
