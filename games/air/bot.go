@@ -2655,14 +2655,19 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	// The machine's two deaths remain UNEXPLAINED: a fix wants a mechanism that
 	// changes WHERE the jink goes, not how long it lasts.
 	//
-	// AND THE LONGER WINDOW EXPOSED A LATENT HAZARD, which is the more useful
-	// half of that measurement: the THIRD death was not a shooting at all but
-	// an uncredited crash at 714 m, 117 s in. This override runs in steer(),
-	// and polish() has already called guard() by then - so the jink is the one
-	// aim path the terrain floor does NOT bound, and a held pull at 0.9 of the
-	// tier's g simply flies the jet down. At the shipped window no such death
-	// appeared in 48 fights, so it is latent rather than active; anything that
-	// lengthens a jink must bound it against the deck first.
+	// THAT LONGER WINDOW ALSO PRODUCED AN UNCREDITED CRASH at 714 m, 117 s in,
+	// and the reading first recorded here - that the jink is the one aim path
+	// the terrain floor does not bound, because polish() has already called
+	// guard() before steer() runs - WAS WRONG (#224, corrected 2026-09-17).
+	// steer() carries a deck recovery of its own above this block, and that
+	// branch RETURNS, so the jink is unreachable while a recovery is live.
+	// Measured across 80 fights: the jink ran 14,368 ticks, its lowest at
+	// 814 m, and ZERO of them below 900 m descending; the recovery fired
+	// 33,595 ticks and won the stick in all 486 where a jink also wanted it.
+	// TestRecoveryOutranksTheJink holds that ordering. So the crash was not the
+	// jink escaping the floor - it was a jink long enough to leave the jet in
+	// a state the recovery could no longer save, which is a reason not to
+	// lengthen the window rather than a hole in the guard.
 	if tick < b.dodge {
 		// The pull goes where the lift already points — the jet loads in a
 		// third of a second there, where any other direction costs a roll
