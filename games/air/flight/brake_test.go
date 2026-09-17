@@ -60,3 +60,41 @@ func TestBrakeTravel(t *testing.T) {
 		t.Errorf("speed brake fully out after %.2f s, want 2.2..2.8", reached)
 	}
 }
+
+// TestBrakeOnDeck: NATOPS 2.8.4.8 - the speedbrake operates normally on the
+// ground, and the landing configuration retracts it only in flight. The
+// ground law used to drive the board closed whatever the switch said, so a
+// landing rollout had no speedbrake.
+func TestBrakeOnDeck(t *testing.T) {
+	m := aboard()
+	park(m, -30, 5)
+	for i := 0; i < 240*3; i++ {
+		m.Step(Inputs{Gear: true, Brake: true})
+	}
+	if !m.State.Gear.Wow {
+		t.Fatal("no weight on wheels")
+	}
+	for i := 0; i < 240*4; i++ {
+		m.Step(Inputs{Gear: true, Brake: true, Flap: 1, Speedbrake: 1})
+	}
+	if m.State.Fcs.Speedbrake < 0.99 {
+		t.Fatalf("the board stayed in on deck with the switch held: %.2f", m.State.Fcs.Speedbrake)
+	}
+	for i := 0; i < 240*4; i++ {
+		m.Step(Inputs{Gear: true, Brake: true, Flap: 1})
+	}
+	if m.State.Fcs.Speedbrake > 0.01 {
+		t.Fatalf("the board did not stow on deck with the switch released: %.2f", m.State.Fcs.Speedbrake)
+	}
+	// Airborne in the landing configuration below the law's handover, the
+	// board retracts whatever the switch says.
+	a := New(Fighter, Environment{}, World{})
+	a.State = Level(a, Vec3{Y: 300}, Vec3{X: 1}, 60, 2500)
+	throttle := a.State.Engine[0].Spool
+	for i := 0; i < 240*4; i++ {
+		a.Step(Inputs{Throttle: throttle, Gear: true, Flap: 1, Speedbrake: 1})
+	}
+	if a.State.Fcs.Speedbrake > 0.01 {
+		t.Fatalf("the landing configuration must retract the board in flight: %.2f", a.State.Fcs.Speedbrake)
+	}
+}

@@ -273,7 +273,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		errorTerm := (demand-a)*2.2 - q*1.8
 		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
 		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
-		brakeTarget = 0                                               // the landing configuration auto-retracts the speedbrake (NATOPS: flap extension retracts the board)
+		if !m.State.Gear.Wow {
+			brakeTarget = 0 // the landing configuration auto-retracts the speedbrake in flight (NATOPS 2.8.4.8: not in auto flaps up, it retracts below 250 knots); on the ground the speedbrake operates normally, whatever law the wheels select
+		}
 		// The dirty placard, procedural like the real jet's (#86): nothing
 		// here stops the pull — the exposure beyond gear/flaps +2.0/0 g feeds
 		// the same structural weakness the up-and-away limits do.
