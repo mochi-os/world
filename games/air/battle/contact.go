@@ -115,13 +115,21 @@ func keys(set map[int]bool) []int {
 
 // segments is the distance between the segments p1-q1 and p2-q2.
 func segments(p1, q1, p2, q2 flight.Vec3) float64 {
+	gap, _ := nearest(p1, q1, p2, q2)
+	return gap
+}
+
+// nearest is the same measurement, and also WHERE along p1-q1 it happened, as
+// a fraction of that segment. Near needs the point and Contact does not, so
+// the maths lives here once and segments drops the second return.
+func nearest(p1, q1, p2, q2 flight.Vec3) (float64, float64) {
 	const tiny = 1e-9
 	d1, d2, r := q1.Subtract(p1), q2.Subtract(p2), p1.Subtract(p2)
 	a, e, f := d1.Dot(d1), d2.Dot(d2), d2.Dot(r)
 	var s, t float64
 	switch {
 	case a <= tiny && e <= tiny:
-		return r.Length()
+		return r.Length(), 0
 	case a <= tiny:
 		t = clamp(f/e, 0, 1)
 	default:
@@ -141,7 +149,7 @@ func segments(p1, q1, p2, q2 flight.Vec3) float64 {
 			}
 		}
 	}
-	return p1.Add(d1.Scale(s)).Subtract(p2.Add(d2.Scale(t))).Length()
+	return p1.Add(d1.Scale(s)).Subtract(p2.Add(d2.Scale(t))).Length(), s
 }
 
 // Ram applies a midair to the parts of one body that met the other: whether

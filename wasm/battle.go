@@ -178,19 +178,44 @@ func volley(this js.Value, arguments []js.Value) any {
 	return len(airborne)
 }
 
+// grazed is where the near-miss block sits in fly's output: after the whole
+// impact table, at a FIXED offset, so a reader finds it without counting
+// impacts. Four slots — the gap in metres then the miss in the bandit's body
+// frame — and the gap is negative when no round came near enough to measure.
+const grazed = 3 + 3*battle.ImpactPoints
+
+// flown is fly's whole output length. It is written in full on every path,
+// including the early returns: CopyBytesToJS fills only as many bytes as it is
+// given, so a short write would leave the previous tick's numbers standing in
+// the slots it skipped.
+const flown = grazed + 4
+
 // fly advances every airborne round one step and resolves arrivals: ownship
 // rounds (identity 0) against the bandit hulk, bandit rounds (identity 1)
 // against the ownship model. Input: [0 dt, 1 invulnerable (rounds pass
 // through the ownship), 2 bandit present, 3-5 bandit position, 6-9 bandit
 // attitude, 10-12 bandit velocity]. Output: [0 hits on the bandit, 1 hits on
 // the ownship, 2 impact count, then x|y|z per impact in the BANDIT's body
-// frame] — ownship damage itself flows through the model and progress() as
-// always.
+// frame, then at `grazed` the closest MISS of an ownship round this tick:
+// gap in metres (negative for none) and the point in the bandit's body frame]
+// — ownship damage itself flows through the model and progress() as always.
+//
+// The miss is here because Strike reports nothing at all when a round goes
+// past, so a burst that connected was fully described and a burst that missed
+// was silent. It is the gun's answer to the missiles' Least and Off.
 func fly(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], arsenal[:13])
+	receive(arguments[0], arsenal[:14])
 	dt := arsenal[0]
+	// arsenal[13]: the tick the current burst opened on. A 20 mm round flies
+	// for four seconds and bursts come closer together than that, so without
+	// this the last burst's rounds are still in the air and quietly set the
+	// next burst's "closest miss". Negative measures nothing, which is the
+	// state before a trigger has ever been pulled.
+	since := arsenal[13]
 	if dt <= 0 || len(airborne) == 0 {
-		send([]float64{0, 0, 0}, arguments[1])
+		empty := make([]float64, flown)
+		empty[grazed] = -1
+		send(empty, arguments[1])
 		return 0
 	}
 	invulnerable := arsenal[1] > 0.5
@@ -206,6 +231,7 @@ func fly(this js.Value, arguments []js.Value) any {
 	}
 	bandit_hits, own_hits := 0, 0
 	var impacts []flight.Vec3
+	closest, spot, measured := 0.0, flight.Vec3{}, false
 	alive := airborne[:0]
 	for r := range airborne {
 		round := &airborne[r]
@@ -220,6 +246,10 @@ func fly(this js.Value, arguments []js.Value) any {
 				fleet[0].condition.Damager = 0
 				fleet[0].condition.Damaged = 0
 				landed = true
+			} else if since >= 0 && float64(round.Born) >= since {
+				if gap, at, near := battle.Near(round, position, attitude, velocity, &fleet[0].body, dt, wrap); near && (!measured || gap < closest) {
+					closest, spot, measured = gap, at, true
+				}
 			}
 		}
 		if !landed && round.Shooter != 0 && model != nil && !invulnerable {
@@ -240,10 +270,15 @@ func fly(this js.Value, arguments []js.Value) any {
 		}
 	}
 	airborne = alive
-	out := make([]float64, 3+3*len(impacts))
+	out := make([]float64, flown)
 	out[0], out[1], out[2] = float64(bandit_hits), float64(own_hits), float64(len(impacts))
 	for n, point := range impacts {
 		out[3+3*n], out[4+3*n], out[5+3*n] = point.X, point.Y, point.Z
+	}
+	out[grazed] = -1
+	if measured {
+		out[grazed] = closest
+		out[grazed+1], out[grazed+2], out[grazed+3] = spot.X, spot.Y, spot.Z
 	}
 	send(out, arguments[1])
 	return bandit_hits + own_hits

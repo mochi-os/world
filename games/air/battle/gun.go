@@ -118,6 +118,70 @@ func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []R
 	return born
 }
 
+// Graze is how far outside the skin a round still counts as a near miss. The
+// gate is a broad phase, not a judgement: anything further out than this is
+// not worth the narrow-phase sweep, and a stream this wide is already a miss
+// no pilot needs the metres for.
+const Graze = 60.0
+
+// Near is how close a round that did NOT strike came, and where. It returns
+// the gap from the airframe's SKIN in metres (a part's radius is subtracted,
+// so zero is a graze), the point of closest approach in the TARGET's body
+// frame, and whether the round came near enough to measure at all.
+//
+// This exists because Strike returns nothing whatever on a miss. A burst that
+// connects is fully described by its hit count; a burst that misses — the one
+// a pilot actually needs to learn from — was silent, and the debrief could
+// only guess at it from the recorded tracks, against the body ORIGIN rather
+// than the structure. Measuring it here is exact, because this is the same
+// sweep and the same capsules that decide a hit.
+//
+// It runs on the hot path for every missing round, so the bounding sphere
+// gates it before any per-part work: the step is one segment and the body is
+// one sphere, which is a dot product and a length against a few dozen capsule
+// sweeps.
+func Near(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, wrap float64) (float64, flight.Vec3, bool) {
+	relative := flight.Vec3{
+		X: flight.Shortest(position.X, r.Position.X, wrap),
+		Y: r.Position.Y - position.Y,
+		Z: flight.Shortest(position.Z, r.Position.Z, wrap),
+	}
+	origin := attitude.Unrotate(relative)
+	step := r.Velocity.Subtract(velocity).Scale(dt)
+	span := step.Length()
+	if span < 1e-9 {
+		return 0, flight.Vec3{}, false
+	}
+	direction := attitude.Unrotate(step.Scale(1 / span))
+	// Broad phase: the closest the step comes to the body's own origin. The
+	// body frame puts that origin at zero, so this is the distance from a
+	// segment to a point.
+	along := clamp(-origin.Dot(direction), 0, span)
+	if origin.Add(direction.Scale(along)).Length() > Extent(body.Parts)+Graze {
+		return 0, flight.Vec3{}, false
+	}
+	finish := origin.Add(direction.Scale(span))
+	best, at, found := math.Inf(1), flight.Vec3{}, false
+	for pi := range body.Parts {
+		part := &body.Parts[pi]
+		if !carried(part, body.Stores) {
+			continue
+		}
+		gap, fraction := nearest(origin, finish, part.A, part.B)
+		gap -= part.Radius
+		if gap < best {
+			best, at, found = gap, origin.Add(direction.Scale(fraction*span)), true
+		}
+	}
+	if !found || best > Graze {
+		return 0, flight.Vec3{}, false
+	}
+	if best < 0 {
+		best = 0 // inside a capsule's radius without Strike calling it: a graze, not a negative distance
+	}
+	return best, at, true
+}
+
 // Fly advances a round one step of dt: ballistic, gravity only (20 mm drag
 // over these ranges is a second-order correction the fire control never
 // modelled either). Returns true once the round is spent.
