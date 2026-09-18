@@ -13,6 +13,20 @@ import (
 
 // TestLevel: the spawn helper produces flight the FCS holds without a
 // transient — a second later the aircraft is still level, near 1g, on speed.
+// TestEvaluateAtRest: no flow, no coefficients. The static evaluation at zero
+// airspeed once returned 0/0, and the landing law's secant fit carried that
+// NaN into the stabilators of every calm-air ground start.
+func TestEvaluateAtRest(t *testing.T) {
+	m := calm()
+	cl, cd := m.Evaluate(0, 0.1, 100)
+	if cl != 0 || cd != 0 {
+		t.Fatalf("coefficients at zero airspeed must be finite zeros, got %v %v", cl, cd)
+	}
+	if cl, _ := m.Evaluate(60, 0.1, 100); !(cl > 0) {
+		t.Fatalf("a real flow must still give a lift coefficient, got %v", cl)
+	}
+}
+
 func TestLevel(t *testing.T) {
 	m := New(Fighter, Environment{Wrap: 250000}, World{})
 	s := Level(m, Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)

@@ -78,6 +78,9 @@ func (m *Model) Evaluate(speed float64, angle float64, altitude float64) (float6
 	total := m.forces(s, Inputs{}, local)
 	world := s.Attitude.Rotate(total.Force)
 	q := 0.5 * local.Density * speed * speed * m.Airframe.Reference.Area
+	if q <= 0 {
+		return 0, 0 // no flow, no coefficients: a division here poisons every caller with NaN
+	}
 	return world.Y / q, -world.X / q
 }
 

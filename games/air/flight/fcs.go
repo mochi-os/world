@@ -192,7 +192,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 			m.fitClock = 0
 		}
 		m.fitClock -= Dt
-		if m.fitClock <= 0 {
+		if m.fitClock <= 0 && speed >= 1 {
+			// Below the same 1 m/s floor the aero pass sits out there is nothing
+			// to fit: at rest in calm air the relative airspeed is exactly zero,
+			// and the static evaluation divided the summed force by a zero
+			// dynamic pressure, so the fit read 0/0 and the clamp carried the
+			// NaN into the alpha datum and the stabilators for the model's life.
 			m.fitClock = 0.25
 			m.static.State.Fuel = m.State.Fuel
 			cl, _ := m.static.Evaluate(speed, m.fitAlpha, m.State.Position.Y)

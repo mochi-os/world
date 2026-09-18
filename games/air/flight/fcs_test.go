@@ -285,6 +285,33 @@ func TestBrakeAutoRetract(t *testing.T) {
 	}
 }
 
+// TestRestCalmHalfFlap: parked at rest in calm air with the flap switch at
+// HALF, as every runway and carrier start is handed over. The landing law's
+// secant fit once evaluated the static model at zero airspeed, divided the
+// summed force by a zero dynamic pressure, and carried the NaN into the alpha
+// datum and the stabilators from the first step; and below the aero floor the
+// coefficients are zero by construction, so a fit that ran there wound the
+// datum to its clamp while the jet sat still.
+func TestRestCalmHalfFlap(t *testing.T) {
+	m := aboard()
+	park(m, -30, 5)
+	for i := 0; i < 240*5; i++ {
+		m.Step(Inputs{Gear: true, Brake: true, Flap: 1})
+		f := &m.State.Fcs
+		for _, v := range []float64{f.Stabilator.Left, f.Stabilator.Right, f.Integral, m.State.Position.Y, m.State.Velocity.Length()} {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				t.Fatalf("step %d: the state went non-finite at rest in calm air with HALF flap: stabilator %+v integral %v altitude %v", i+1, f.Stabilator, f.Integral, m.State.Position.Y)
+			}
+		}
+	}
+	if !m.State.Gear.Wow {
+		t.Fatal("no weight on wheels at rest")
+	}
+	if onspeed := m.Airframe.Control.Onspeed; m.fitAlpha < 0 || m.fitAlpha > onspeed+1e-9 {
+		t.Fatalf("the alpha fit wound to %.3f rad while parked; nothing flows to fit under the aero floor, so it must hold its seed inside 0..on-speed %.3f", m.fitAlpha, onspeed)
+	}
+}
+
 // TestRollLimitTanks: R-LIM (NATOPS 2.8.2.8) — wing-pylon tanks cut the
 // maximum roll rate by about a third. The centreline tank is not a wing-pylon
 // store and must not engage it.
