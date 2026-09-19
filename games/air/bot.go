@@ -823,6 +823,14 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	if b == nil || a.model == nil || b.prey == nil || b.target < 0 || b.missiles <= 0 {
 		return
 	}
+	if !i.missiles {
+		// Nothing can leave the rail in this match (the launch below needs
+		// i.missiles), yet every brain is built holding six. The heater zone was
+		// built here anyway, and its cache never held: guns-only bots ride the
+		// burner, the target's plume moves every tick, and the zone was rebuilt
+		// on 99% of ticks - a sixth of a 16-ace furball's tick, for no shot.
+		return
+	}
 	b.gate = gate{when: tick}
 	heat := clamp((i.glow(b)-0.5)*2, 0, 1)
 	if !b.shoot && !(heat > 0 && (b.mode == "saddle" || b.mode == "press")) {

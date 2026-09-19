@@ -93,3 +93,36 @@ func TestEvolveAgainstArc(t *testing.T) {
 		}
 	}
 }
+
+// TestNoHeaterZoneWithoutMissiles: in a match nothing can be launched in, no
+// brain builds the heater launch zone. Every brain carries six heaters whatever
+// the match allows, and in a guns-only fight the zone's cache never held - the
+// target's burner moves its plume every tick - so it was rebuilt on nearly
+// every tick for a shot that could not be taken. The missiles arm is the
+// control: the same fight does reach the zone when a launch is possible.
+func TestNoHeaterZoneWithoutMissiles(t *testing.T) {
+	for _, missiles := range []bool{true, false} {
+		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{"ace": 4.0}}
+		if missiles {
+			parameters["weapons"] = "fox2"
+		}
+		i := build(t, "furball", parameters, 0)
+		built := 0
+		for tick := uint64(1); tick <= 60*60; tick++ {
+			i.Step(tick, nil)
+			for _, slot := range i.slots() {
+				if c := i.aircraft[slot]; c != nil && c.brain != nil && c.brain.heated == tick {
+					built++
+				}
+			}
+		}
+		i.Close()
+		switch {
+		case missiles && built == 0:
+			t.Fatalf("the missiles match never built a heater zone in 60 s: the fight never reached the gate, so the guns-only arm proves nothing")
+		case !missiles && built > 0:
+			t.Errorf("a guns-only match built the heater zone %d times in 60 s", built)
+		}
+		t.Logf("missiles %v: heater zone built %d times in 60 s", missiles, built)
+	}
+}

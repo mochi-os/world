@@ -93,15 +93,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	// surface actually beneath the jet - an elevated field or the carrier deck,
 	// not sea level. The abrupt step at the round-down is deliberate.
 	beneath := m.World.Sea
-	ceiling := m.World.Sea // the probe gate must clear the world's HIGHEST surface: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
-	for fi := range m.World.Fields {
-		if m.World.Fields[fi].Height > ceiling {
-			ceiling = m.World.Fields[fi].Height
-		}
-	}
-	if c := m.World.Carrier; c != nil && c.Position.Y > ceiling {
-		ceiling = c.Position.Y
-	}
+	ceiling := m.World.top() // the probe gate must clear the world's HIGHEST surface: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
 	if s.Position.Y-ceiling < 6*a.Reference.Span {
 		if top, _, _, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap); found && top > beneath {
 			beneath = top

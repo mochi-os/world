@@ -124,11 +124,41 @@ func inside(p Vec3, polygon []Vec3) bool {
 	return in
 }
 
+// Reach is how far above the world's highest surface a lookup can still find
+// one. Every contact caller - the gear, the belly skids, touch and the crash
+// probes - reads a surface below the point as no contact, so above the top
+// there is nothing for them to find. Ground effect (aero.go) asks from up to six
+// wingspans; every airframe's six spans must fit inside this
+// (aircraft.TestGroundEffectInsideReach).
+const Reach = 100.0
+
+// top is the highest surface a lookup can return: the fields and the
+// carrier's deck, over the sea.
+func (w *World) top() float64 {
+	top := w.Sea
+	for fi := range w.Fields {
+		if w.Fields[fi].Height > top {
+			top = w.Fields[fi].Height
+		}
+	}
+	if c := w.Carrier; c != nil && c.Position.Y > top {
+		top = c.Position.Y
+	}
+	return top
+}
+
 // surface finds the contact surface under a world point: carrier deck, then
 // paved strips, then island ground, else none (open sea — the hosts treat
 // water impact as a crash, not a contact). Returns height, kind, and the
 // surface's own velocity (a parked jet rides the ship).
 func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bool) {
+	if p.Y > w.top()+Reach {
+		// Far above anything in this world. Once every server model flew the
+		// match's map, a jet at altitude asked this about 160 times a tick
+		// between its gear, skids and crash probes, and every answer walked
+		// every island's coastline: two thirds of a 16-ace furball's tick.
+		return 0, 0, Vec3{}, false
+	}
 	if w.Carrier != nil {
 		local := w.Carrier.local(p, t, wrap)
 		if local.Y > -12 && local.Y < 25 && math.Abs(local.X) < 180 && math.Abs(local.Z) < 60 {

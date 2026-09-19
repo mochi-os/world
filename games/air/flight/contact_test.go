@@ -357,3 +357,34 @@ func TestTaxiUpSlow(t *testing.T) {
 		t.Logf("offset %.1f: stroke straight: lateral %.2f m/s heading %.5f", offset, lateral, align)
 	}
 }
+
+// TestSurfaceIgnoresTheSky: a lookup from more than Reach above the world's
+// highest surface finds nothing - so it walks no coastline - and one from
+// inside that reach still finds what lies beneath, which ground effect needs
+// from up to six spans up.
+func TestSurfaceIgnoresTheSky(t *testing.T) {
+	w := harbor()
+	top := w.top()
+	if top != 19 {
+		t.Fatalf("the harbour's highest surface is the deck at 19 m; top() says %.1f", top)
+	}
+	for _, c := range []struct {
+		where string
+		point Vec3
+		kind  int
+		found bool
+	}{
+		{"low over the island", Vec3{X: 2000, Y: 10, Z: 8500}, Soft, true},
+		{"just inside the reach over the island", Vec3{X: 2000, Y: top + Reach - 1, Z: 8500}, Soft, true},
+		{"just past the reach over the island", Vec3{X: 2000, Y: top + Reach + 1, Z: 8500}, 0, false},
+		{"at altitude over the island", Vec3{X: 2000, Y: 4000, Z: 8500}, 0, false},
+		{"over the strip at altitude", Vec3{X: 0, Y: 4000, Z: 8000}, 0, false},
+		{"just above the deck", Vec3{Y: 25}, Deck, true},
+		{"at altitude over the deck", Vec3{Y: 4000}, 0, false},
+	} {
+		_, kind, _, found := w.surface(c.point, 0, 250000)
+		if found != c.found || (found && kind != c.kind) {
+			t.Errorf("%s (%.0f m): found %v kind %d, want found %v kind %d", c.where, c.point.Y, found, kind, c.found, c.kind)
+		}
+	}
+}
