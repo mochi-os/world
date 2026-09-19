@@ -34,6 +34,53 @@ func (m *Model) droopRun(target float64, c *Control) float64 {
 	return m.droop
 }
 
+// envelope is the up-and-away pitch law's command range THIS tick: `level`, the
+// load a centred stick asks for, and `ceiling`, the load full aft stick asks
+// for. A stick fraction s >= 0 demands level + s*(ceiling-level).
+//
+// Neither end is the round number it looks like. The ceiling schedules DOWN
+// with gross weight (NATOPS: the 7.5 g placard is written at Limit.Reference,
+// 14,700 kg, and a combat-loaded jet flies near 16,000) and again while
+// rolling (#46, NATOPS 11.1.7/2.8.2.3: 80% of NzREF from a quarter of lateral
+// stick to full - a rolling pull is limited BELOW a straight one); the paddle
+// defeats the limiter, rolling reduction included, but rides the same weight
+// schedule. And `level` is not cos γ once the wing is working: above 0.15 rad
+// of alpha it is BACKED OFF, so that a centred stick lets the nose fall rather
+// than mush when too slow.
+//
+// One function, because whatever turns a wanted load into a stick has to
+// invert exactly this. The bot's compose() inverts a simpler law - level as
+// cos γ, ceiling as the bare placard - so every partial g command it makes
+// arrives short: measured on the ace below corner speed, a 2.62 g command
+// becomes a 2.11 g turn, 71% of the wing where its own aero cap asks for 85%
+// (TestDeliveryProbe, which reads the law through Envelope). The human it lost
+// to used 89%. Inverting this instead was built and declined by the doctrine
+// gates; compose() carries the numbers.
+func (m *Model) envelope(a, speed, roll float64, override bool) (level, ceiling float64) {
+	schedule := 1.0
+	if m.Airframe.Limit.Reference > 0 {
+		schedule = math.Min(1, m.Airframe.Limit.Reference/m.mass)
+	}
+	ceiling = m.Airframe.Limit.Positive * schedule
+	ceiling *= 1 - 0.2*clamp((math.Abs(roll)-0.25)/0.75, 0, 1)
+	if override {
+		ceiling = m.Airframe.Limit.Override * schedule
+	}
+	// Neutral-stick feedforward: the load that holds the current flight path
+	// (cos γ), less the alpha backstop.
+	gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
+	level = math.Cos(gamma)
+	level -= clamp((a-0.15)*5, 0, 0.8)
+	return level, ceiling
+}
+
+// Envelope is envelope() for a caller outside the law: it measures alpha and
+// airspeed the way fcs() does, against the same gust.
+func (m *Model) Envelope(roll float64, override bool) (level, ceiling float64) {
+	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
+	return m.envelope(alpha(v), v.Length(), roll, override)
+}
+
 func (m *Model) fcs(in Inputs, local Air) {
 	c := &m.Airframe.Control
 	f := &m.State.Fcs
@@ -309,30 +356,16 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// Up and away: C* command with the carefree limiter. The symmetric limits
 		// schedule with gross weight (NATOPS) - the placard's g is written at
 		// Limit.Reference; the paddle rides the same schedule.
-		schedule := 1.0
-		if m.Airframe.Limit.Reference > 0 {
-			schedule = math.Min(1, m.Airframe.Limit.Reference/m.mass)
-		}
-		ceiling := m.Airframe.Limit.Positive * schedule
-		// Rolling reduction (#46, NATOPS 11.1.7/2.8.2.3): commanded load falls to 80%
-		// NzREF from a quarter of lateral stick to full - a rolling pull is limited
-		// BELOW a straight one.
-		ceiling *= 1 - 0.2*clamp((math.Abs(in.Roll)-0.25)/0.75, 0, 1)
-		if in.Override {
-			ceiling = m.Airframe.Limit.Override * schedule // the paddle defeats the limiter, rolling reduction included
-		}
+		// Both ends of the command range come from envelope(), so anything that
+		// needs the law's range (Model.Envelope) reads the one the law flies.
+		level, ceiling := m.envelope(a, speed, in.Roll, in.Override)
 		// The negative command floor is FIXED at -3 g for all gross weights
 		// (NATOPS 11.1.7) — only the positive side schedules with mass.
 		floor := m.Airframe.Limit.Negative
-		// Neutral-stick feedforward: the load that holds the current flight
-		// path (cos γ); the attitude-hold below owns the actual behaviour.
-		gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		theta := math.Asin(clamp(forward.Y, -1, 1))
 		up := m.State.Attitude.Rotate(Vec3{Y: 1})
 		upright := clamp(up.Y, -1, 1) // gravity's share of the sensed load: the steady-manoeuvre pitch rate is (g/V)·(n − upright) in ANY attitude (upright ≈ 1 wings level, ≈ 1/n in a level turn, −1 inverted)
-		level := math.Cos(gamma)
-		level -= clamp((a-0.15)*5, 0, 0.8) // alpha backstop: the nose falls rather than mushing when too slow
 		// Stick-free = ATTITUDE HOLD. While the stick is displaced the held reference
 		// follows the jet; on release it freezes and the error feeds the rate loop.
 		// It follows the nose only while motion moves AWAY.

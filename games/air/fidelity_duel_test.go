@@ -40,8 +40,20 @@ func TestFidelityDuel(t *testing.T) {
 			return bands[2]
 		}
 	}
+	// And by SPEED regime, which the range bands cannot see. The surrogate's 66%
+	// agreement was only ever measured across whole bot-against-bot duels, which
+	// are flown fast; a human beat the ace below 0.7 of corner (recording
+	// 01a0b090, 87% of the fight sub-corner), exactly where a point-mass with a
+	// hard lift ceiling and parabolic drag is least like the aeroplane.
+	regimes := []string{"slow <0.7 corner", "fast >=0.7 corner"}
+	regime := func(a *craft) string {
+		if a.model.State.Velocity.Length() < 0.7*corner(a.model) {
+			return regimes[0]
+		}
+		return regimes[1]
+	}
 	results := map[string]*tally{}
-	for _, b := range bands {
+	for _, b := range append(append([]string{}, bands...), regimes...) {
 		results[b] = &tally{}
 	}
 	confusion := map[string]int{} // "truth->got" across all bands: is the drift directional?
@@ -77,10 +89,12 @@ func TestFidelityDuel(t *testing.T) {
 				rehearsal = both
 				got, _ := i.choose(slot, a, b, sim, b.prey, tick, b.distance, map[string]float64{})
 				rehearsal = live
-				r := results[band(b.distance)]
+				r, paced := results[band(b.distance)], results[regime(a)]
 				r.seen++
+				paced.seen++
 				if got == truth {
 					r.agreed++
+					paced.agreed++
 					continue
 				}
 				confusion[truth+" -> "+got]++
@@ -92,14 +106,16 @@ func TestFidelityDuel(t *testing.T) {
 				if mine, ok := honest[got]; ok && best > worst {
 					lost := (best - mine) / (best - worst)
 					r.regret += lost
+					paced.regret += lost
 					if lost > 0.2 {
 						r.costly++
+						paced.costly++
 					}
 				}
 			}
 		}
 	}
-	for _, name := range bands {
+	for _, name := range append(append([]string{}, bands...), regimes...) {
 		r := results[name]
 		if r.seen == 0 {
 			fmt.Printf("%-16s no decision points sampled\n", name)

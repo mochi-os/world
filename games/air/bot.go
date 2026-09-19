@@ -304,7 +304,84 @@ type tactics struct {
 	wounded struct {
 		weight float64 // target-selection discount for a visibly hurt contact (#144): the smoking, burning, wing-shy bird pulls the eye
 	}
+	// stage is the structural change under evaluation (claude/plans/air-bot-arbiter.md,
+	// Part II): 0 is the brain as it stands, N flies stage N's revised branch. It
+	// is per brain so a revised bot can fight the current bot of the SAME tier in
+	// the ladder loops (TestRevisedAgainstCurrent), which is the only comparison
+	// that does not lean on gates fitted to the old doctrine. Each stage deletes
+	// its old branch when it is accepted, so this is only ever one stage wide.
+	stage int
+	// omit leaves individual stages OUT of the stack beneath `stage`, one bit per
+	// stage number, so a stage can be read on its own: the stages were designed
+	// to build on one another, and a stack inherits the faults of whatever is
+	// under it. Evaluation only; an accepted stage loses its switch altogether.
+	omit int
+	// futures and hedge shape stage 7's re-ranking (duel.go hedge): how many
+	// opponent futures the leading plays are rehearsed against, and how much of a
+	// play's WORST future counts beside its weighted mean.
+	futures int
+	hedge   float64
+	// peril weights stage 7's other half (duel.go peril): HIS gun solution on me,
+	// priced in every rehearsed instant. A knob so the stages above can be flown
+	// without it (0) and the two halves of stage 7 told apart.
+	peril float64
+	// steady and startled tie stage 7's commitment to how well the opponent has
+	// been keeping to his forecast (duel.go surprised, and the re-plan site).
+	//
+	// MEASURED 2026-09-18, the two halves apart (quick gates, and 48 seeds a
+	// side against the current ace, guns / heaters):
+	//
+	//                              gates red                         v current
+	//   neither (the first build)  ladder (14/16 undecided)          13-5 / 33-12
+	//   both                       ladder inverted, spiral           13-7 / 12-36
+	//   break early only           ladder (13/16 undecided)          12-8 / 30-14
+	//   extend only                ladder inverted, spiral           14-6 / 12-35
+	//
+	// Extending a commitment against an opponent who has been flying the arc
+	// is what costs the heater fights: the ace holds a line past the moment a
+	// missile defence needed a re-plan. So `steady` defaults to 0, the
+	// extension off, and stage 7 breaks early and nothing else.
+	steady, startled float64
+	// span overrides a duel play's rehearsal span, seconds; 0 keeps the table's
+	// (duel.go plays). The three long-window plays only: the sweep the plan asks
+	// for under stage 6, where a rehearsal that flies the real jet may no longer
+	// need twelve seconds to see a yo-yo pay.
+	//
+	// SWEPT 2026-09-18 on stage 6 (quick gates; v current ace, guns / heaters):
+	//
+	//   high 12 (the table)       pounce red: bailout never entered      18-4 / 23-23
+	//   high 8                    all five green                          12-12 / 25-21
+	//   high 6                    ladder inverted 3-1, 12/16 undecided
+	//   high 4                    ladder 11/16 undecided
+	//   high 8, pitch 6           ladder 11/16 undecided
+	//   high 8, climb 6           missile ladder inverted 12-3
+	//
+	// high 8 is the only green point; it also cuts the spiral gate's donated
+	// perch from 143,883 m.s to 59,657 and reverses the recorded under-guns
+	// scene. It does not beat the current ace, which twelve seconds does.
+	span struct{ high, pitch, climb float64 }
+	// gravity rehearses every play with the turn geometry the licensed bleed
+	// already uses (rollout.go glide). Off, which is the brain as it stands, a
+	// rehearsed turn bends the path toward the LIFT vector - already tilted up
+	// to hold gravity - and never subtracts gravity across the path, so it also
+	// climbs at about one g: 177-250 m gained in a six-second level turn where
+	// the real jet holds height within 35 m. Every tier's doctrine was fitted
+	// with that error in place, so correcting it is a doctrine change and sits
+	// behind this knob until the gates have been read.
+	//
+	// READ 2026-09-18, and left off. At stage 0 it reddens the guns ladder
+	// (superhuman v ace 12 of 16 undecided, allowance 9) and loses to the
+	// current ace 10-19 with guns, 25-20 with heaters. On top of stage 6 all
+	// five quick gates are green, and it still loses 7-14 with guns (25-19
+	// heaters) where stage 6 without it wins 18-4. A rehearsal that no longer
+	// awards every turn free height stops choosing the turning plays, and the
+	// doctrine above it was built on them.
+	gravity bool
 }
+
+// on reports whether a structural stage's branch is flown: at or under the
+// stage under evaluation, and not omitted from the stack.
+func (t *tactics) on(stage int) bool { return t.stage >= stage && t.omit&(1<<stage) == 0 }
 
 // standard is the doctrine every brain flies today: the defaults the tuning
 // battery measures candidates against. Every value here was hand-picked with
@@ -312,6 +389,9 @@ type tactics struct {
 // a reason is a bot-metagame artifact, not doctrine (#143).
 func standard() tactics {
 	var t tactics
+	t.peril = 1.3                // as appraise() weighs its own threat term
+	t.steady, t.startled = 0, 42 // metres of miss per second of lookahead; steady 0 = never extend (see the field)
+	t.futures, t.hedge = 4, 0.25 // stage 7 (duel.go hedge): continue, unload, reverse, tighten; a quarter of the worst future beside the weighted mean
 	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
 	// hands him the saddle, so the break stays mandatory. Measured at 200 seeds
 	// the tighter threshold improves the section's survival edge over solo.
@@ -413,6 +493,7 @@ type track struct {
 	nose     flight.Vec3 // his bore at the last sighting (#251): the planform cue — you can SEE where a close jet is pointing, and a bore swinging into lead on you is the shot forming
 	wobble   float64     // jerk estimate, m/s^3: how fast his acceleration has been CHANGING. This is the target's unpredictability — a steady circle carries a small constant jerk (the acceleration vector rotates with the turn), a reversal spikes it an order of magnitude. The trigger prices its shot against it: a predictable target rewards waiting for a converged solution, an erratic one never converges and the snapshot is the only shot there is (#235).
 	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
+	pursuit  bool        // a rehearsed FUTURE only (duel.go futures): he flies at me, closed-loop, instead of along this track's arc
 }
 
 // orbit is the opponent's estimated turning circle — the object BFM is flown
@@ -594,9 +675,18 @@ type brain struct {
 	reversed  uint64          // last reversal commitment tick: the anti-churn cooldown belongs to REVERSALS, not to whatever hold happens to be live
 	settled   uint64          // tick the current committed manoeuvre may be replaced (#206): commitment is a SKILL, and it rises with tier
 	starving  bool            // below the skill's energy floor: recovery outranks the fight until well clear of it (#206)
+	spent     bool            // the same hysteresis for the duel path's own floor (0.55 of corner): two floors, two flags, one rule (starved)
 	play      string          // the duel arbiter's committed manoeuvre (duel.go)
 	until     uint64          // tick that manoeuvre is re-judged
 	picked    uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
+	cast      []track         // the opponent futures rehearsed against at the last re-plan (duel.go hedge, stage 7)
+	casted    uint64          // the tick they were cast
+	jolted    uint64          // the cast that has already broken a commitment (duel.go surprised): one early re-plan per cast
+	doubt     [4]float64      // running miss of each future, metres per second of lookahead: what turns into the weights
+	journal   *journal        // the decision journal (journal.go): nil costs nothing, and only the single-player harness allocates one
+	demand    Demand          // the g asked for at each stage between the law and the stick, for the journal
+	shaped    bool            // polish() ran this decision and filled demand; a bypass that skips it reports its raw command instead
+	licensed  bool            // the committed play's order carried `alpha` (duel.go, stage 9): polish() leaves its g uncapped and undisciplined
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -616,6 +706,7 @@ func (b *brain) reborn() {
 	b.turning, b.turned = 0, 0
 	b.told, b.tallied = -1, -1
 	b.play, b.until, b.promise = "", 0, 0
+	b.cast, b.casted, b.jolted, b.doubt = nil, 0, 0, [4]float64{}
 	b.prey = nil
 	b.known = map[int]*track{}
 }
@@ -771,7 +862,14 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 	if b.decided == 0 || tick-b.decided >= b.skill.cadence {
 		b.decided = tick
+		b.shaped, b.licensed = false, false
 		i.decide(slot, a, tick)
+		if !b.shaped {
+			b.demand.Law, b.demand.Corner, b.demand.Capped = b.g, b.g, b.g // a bypass that never reached polish(): its raw command is the whole stack
+		}
+	}
+	if b.journal != nil {
+		i.chronicle(slot, a, tick) // every tick, not every decision: a forecast settled up to a cadence late is wrong by however far he flew meanwhile
 	}
 	i.trigger(slot, a, tick) // the shot is a reflex, not a plan: every tick, whatever the cadence
 	i.hunt(slot, a, tick)    // BVR radar, DLZ shot, crank, and defence (hunt.go): inert without AMRAAMs aboard or radar rounds inbound
@@ -1413,7 +1511,19 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	// Too slow to fight: unload, nose down a little, burner, rebuild to
 	// corner — a stalled zoom otherwise floats for tens of seconds.
-	if speed < 0.55*pace {
+	//
+	// Two different things lived under this one threshold. Below 70 m/s the jet
+	// is OUT OF CONTROL: the push is recovery, not tactics, and it stays a reflex
+	// here for every bot. Between that and 0.55 of corner the jet flies perfectly
+	// well and the question is tactical - and for a TEAMLESS bot that question
+	// now waits for the threat picture below (see starved). Sitting here, ahead
+	// of the scan that finds a menace, the tactical tier could not know who was
+	// behind it or whether it was in the saddle: a recorded human fight (01a0b090,
+	// 2026-09-17) found it unloading in front of a gun 250 m off its tail, which
+	// killed it. It predates the duel arbiter by three weeks and the arbiter was built
+	// around it. The section doctrine keeps the old tier: its ladder has its own
+	// floor further down, and the team path is outside this repair.
+	if speed < 70 || (a.team != "" && speed < 0.55*pace) {
 		b.mode = "rebuild"
 		b.settle(tick)
 		b.press = 0
@@ -1622,6 +1732,26 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// decision there, so an attacker's overshoot flips the fight without a
 	// hand-written bridge between modes. The ladder remains the section doctrine.
 	if a.team == "" {
+		// The tactical half of "too slow to fight", asked HERE, with the threat
+		// picture in hand. The law is the old clause's own; what changed is that
+		// it yields (starved), and that it no longer sets b.prey = nil - which
+		// never dropped the track (b.known keeps it) but closed every weapons
+		// gate, so a target drifting through the sights could not be shot. A
+		// reflex may take the controls; it must not disarm the pilot.
+		// A committed bleed (stage 9) is slow ON PURPOSE: the arbiter priced the
+		// dump and chose it, and a reflex that then unloads the jet halfway round
+		// leaves it slow, wide and pointing nowhere - the worst of both. The
+		// loss-of-control tier above (70 m/s) still takes the controls.
+		spending := b.tactics.on(9) && b.play == "bleed" && tick < b.until
+		if !spending && i.starved(b, &b.spent, me, speed, 0.55*pace, menace) {
+			b.mode = "rebuild"
+			b.press = 0
+			flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
+			b.aim = flat.Subtract(flight.Vec3{Y: 0.25}).Normalize()
+			b.g, b.throttle, b.reheat = 1.4, 1, 1
+			b.shoot = true
+			return
+		}
 		i.duel(slot, a, tick, prey, direction, distance, tail, menace, gap)
 		i.polish(slot, a, tick, speed, pace, nose, direction, distance, tail)
 		return
@@ -1646,57 +1776,22 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// showed. Hysteresis (recovery at 1.3x the floor) stops it flickering back
 	// into the fight the moment it gains a knot. A rookie has no floor: getting
 	// slow and dying is exactly the rookie's flaw, and it stays authentic.
-	threatRange := 1e9
-	if menace >= 0 {
-		if foe, found := b.known[menace]; found {
-			_, threatRange = i.bearing(me.Position, foe.position)
+	if b.skill.floor > 0 && b.plan != "" && i.starved(b, &b.starving, me, speed, b.skill.floor, menace) { // ...and never before the merge plan is chosen: energy management belongs inside the fight
+		b.mode = "rebuild"
+		b.settle(tick)
+		b.press = 0
+		b.safed = "rebuild"
+		b.shoot = false
+		b.throttle, b.reheat = 1, 1
+		nose := me.Attitude.Rotate(flight.Vec3{X: 1})
+		nose.Y = -0.15 // unload and accelerate; the descent is the cheapest energy there is
+		if me.Position.Y < 900 {
+			nose.Y = 0.05 // ...but never dive into the sea
 		}
-	}
-	// ...and the floor also yields to a close PREY, not just a close threat. It
-	// only checked the range to whoever was attacking ME, so against a target
-	// that was not shooting back there was no menace, and the ace starved out
-	// of a PRESS 380 m behind a compliant target — the player handed it a free
-	// kill and watched it unload away (2026-07-30 recording). Rebuilding is FOR
-	// the fight; abandoning gun parameters to rebuild is throwing away the
-	// fight it was rebuilding for. A slow gun kill in the saddle is still a
-	// kill — the aero cap keeps the nose honest at low speed.
-	// The yield is for the SADDLE, not for any nearby enemy: gated on being
-	// behind him (tail geometry), because "someone is close" also describes a
-	// grinding scissors, where refusing to rebuild is how both jets stall into
-	// the sea — measured as six extra section deaths across 40 seeds when the
-	// yield keyed on range alone.
-	saddled := false
-	if b.target >= 0 {
-		if quarry, found := b.known[b.target]; found {
-			direction, span := i.bearing(me.Position, quarry.position)
-			if span < 900 && quarry.velocity.Length() > 1 && direction.Dot(quarry.velocity.Normalize()) > 0.35 {
-				saddled = true
-			}
-		}
-	}
-	if b.skill.floor > 0 && threatRange > 1200 && !saddled && b.plan != "" { // ...and never before the merge plan is chosen: energy management belongs inside the fight // a slow jet with the attacker still outside gun range unloads and accelerates: that is the energy defence. Inside 1200 m it keeps fighting - unloading in front of a gun is how you die tidily
-		if speed < b.skill.floor {
-			b.starving = true
-		} else if speed > b.skill.floor*1.3 {
-			b.starving = false
-		}
-		if b.starving {
-			b.mode = "rebuild"
-			b.settle(tick)
-			b.press = 0
-			b.safed = "rebuild"
-			b.shoot = false
-			b.throttle, b.reheat = 1, 1
-			nose := me.Attitude.Rotate(flight.Vec3{X: 1})
-			nose.Y = -0.15 // unload and accelerate; the descent is the cheapest energy there is
-			if me.Position.Y < 900 {
-				nose.Y = 0.05 // ...but never dive into the sea
-			}
-			b.aim = nose.Normalize()
-			b.g = 1
-			b.settle(tick)
-			return
-		}
+		b.aim = nose.Normalize()
+		b.g = 1
+		b.settle(tick)
+		return
 	}
 
 	// A gun attack that is CONVERTING is not abandoned mid-solution (#42).
@@ -2405,6 +2500,78 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 // polish is the shared tail of every fight decision: the g the airframe can
 // actually give, the missile request, the terrain guard, fuel discipline and
 // the aim wander. Both the section ladder and the duel arbiter end here.
+// disciplined is corner discipline (tier 3+): pulling the full limiter while
+// slow just bleeds the jet, so the commanded g is scaled by the speed margin.
+// At corner you pull the LIMIT — that's what corner speed is for. The
+// discipline only eases the stick once genuinely slow; the first cut made the
+// ace out-turned by the rookie's artless yank. One function because the
+// REHEARSAL must ease the same stick the live jet does (duel.go rehearse).
+func disciplined(g, speed, pace float64) float64 {
+	return 1 + (g-1)*clamp((speed/pace-0.35)/0.4, 0.6, 1)
+}
+
+// starved reports whether energy recovery should outrank the fight right now.
+// ONE rule for both floors - the section ladder's (skill.floor) and the duel
+// path's (0.55 of corner) - because the lessons below were each learned from a
+// recording and written into only ONE of them, and the other then cost a fight
+// it had already been told how to win.
+//
+// Below the floor, recovering energy outranks the fight — a committed
+// unload-and-accelerate, not the two-second gesture the #206 trace showed.
+// Hysteresis (recovery at 1.3x the floor) stops it flickering back into the
+// fight the moment it gains a knot; `flag` is the caller's own, so two floors
+// never talk to each other.
+//
+// It YIELDS, leaving the flag untouched, in two cases:
+//   - a threat inside 1,200 m. A slow jet with the attacker still outside gun
+//     range unloads and accelerates: that is the energy defence. Inside it, it
+//     keeps fighting - unloading in front of a gun is how you die tidily.
+//   - the SADDLE, not any nearby enemy. The floor only checked the range to
+//     whoever was attacking ME, so against a target that was not shooting back
+//     there was no menace, and the ace starved out of a press 380 m behind a
+//     compliant target (2026-07-30 recording). Rebuilding is FOR the fight;
+//     abandoning gun parameters to rebuild throws away the fight it was for.
+//     Gated on being BEHIND him (tail geometry), because "someone is close"
+//     also describes a grinding scissors, where refusing to rebuild is how both
+//     jets stall into the sea - six extra section deaths across 40 seeds when
+//     the yield keyed on range alone.
+//
+// TRIED AND WITHDRAWN (2026-09-18): a third yield, "he is poorer than I am", on
+// the specific-energy difference appraise() prices as `edge`. It was written
+// for recording 01a0b090 at t=124-132, read as the ace unloading away from a
+// jet at 117 kt that it sat 1,869 ft above. Replayed as a scene, the geometry
+// said otherwise: the human was in the ace's REAR quarter at 440-650 m with his
+// nose 16-25 degrees off it, the ace's own nose 130 degrees away, at 190 kt. It
+// could not have reversed onto him, and extending from a slower jet behind it
+// was sound. An energy edge over someone pointing at your tail is not a fight
+// being won, and no test or scene ever needed the yield. Do not rebuild it on
+// energy alone; it would want his nose as well as his speed.
+func (i *instance) starved(b *brain, flag *bool, me *flight.State, speed, floor float64, menace int) bool {
+	threat := 1e9
+	if menace >= 0 {
+		if foe, found := b.known[menace]; found {
+			_, threat = i.bearing(me.Position, foe.position)
+		}
+	}
+	if threat <= 1200 {
+		return false
+	}
+	if b.target >= 0 {
+		if quarry, found := b.known[b.target]; found {
+			direction, span := i.bearing(me.Position, quarry.position)
+			if span < 900 && quarry.velocity.Length() > 1 && direction.Dot(quarry.velocity.Normalize()) > 0.35 {
+				return false // saddled
+			}
+		}
+	}
+	if speed < floor {
+		*flag = true
+	} else if speed > floor*1.3 {
+		*flag = false
+	}
+	return *flag
+}
+
 func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, nose, direction flight.Vec3, distance, tail float64) {
 	b := a.brain
 	me := &a.model.State
@@ -2414,20 +2581,23 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	if me.Damage.Loss > 0 {
 		b.g = math.Min(b.g, 4.5)
 	}
+	b.demand.Law, b.shaped = b.g, true
 
 	// Corner discipline (tier 3+): pulling the full limiter while slow just
 	// bleeds the jet — scale the commanded g by the speed margin. Rookies
 	// keep yanking; that bleed is authentic.
-	if b.skill.library >= 3 {
-		// At corner you pull the LIMIT — that's what corner speed is for. The
-		// discipline only eases the stick once genuinely slow; the first cut
-		// made the ace out-turned by the rookie's artless yank.
-		b.g = 1 + (b.g-1)*clamp((speed/pace-0.35)/0.4, 0.6, 1)
+	if b.licensed {
+		// The licensed play (bleed, stage 9) keeps its whole demand: the point
+		// of it is to take the wing past the lift peak, which discipline and the
+		// aero cap exist to prevent everywhere else.
+	} else if b.skill.library >= 3 {
+		b.g = disciplined(b.g, speed, pace)
 	} else {
 		// The low tiers cannot hold smooth g: the pull wobbles on a slow
 		// deterministic rhythm — bursts of yank, moments of mush.
 		b.g *= 0.55 + 0.45*battle.Roll(i.environment.Seed, uint64(slot)+41, tick/90)
 	}
+	b.demand.Corner = b.g
 	// Burner discipline (#255, widened by #56): with missiles in play the
 	// afterburner is a beacon at EVERY aspect — the plume-conditioned floor
 	// lifts a lit jet's lockability by 1,750*(1-tailview) metres, which is
@@ -2473,7 +2643,10 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 
 	// The aero cap, by tier (skill.capped): every play, so no play is ever
 	// the one without a departure guard near the stall.
-	b.g = b.skill.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
+	if !b.licensed {
+		b.g = b.skill.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
+	}
+	b.demand.Capped = b.g
 
 	// Missile request: the launch gates with discipline-scaled margin. The
 	// disciplined SAVE their missiles for rear-aspect close shots — the ones
@@ -3033,6 +3206,33 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// of the rounds previously landed on it). Slow fights keep the original
 	// normalisation and the plane gate's roll-first sequencing instead.
 	limited := clamp((speed-0.9*corner(m))/math.Max(0.25*corner(m), 1), 0, 1)
+	// MEASURED AND DECLINED (2026-09-18): normalising this stick against the pitch
+	// law's REAL command range (flight.Model.Envelope) instead of cos γ and the
+	// bare placard. The law's range is neither: its ceiling schedules down with
+	// gross weight (6.7 g on a combat-loaded jet) and its centre is backed off
+	// above 0.15 rad of alpha, to 0.55 g at the 14 degrees a slow fight is flown
+	// at. So every partial g command arrives short - on the ace below corner a
+	// 2.62 g command becomes a 2.11 g turn, 71% of the wing where its aero cap
+	// asks for 85%, flat across every play (TestDeliveryProbe; the human who beat
+	// it in recording 01a0b090 used 89%). Inverting the real law fixed exactly
+	// that: the stick then asked for the capped g to 0.997 and 94% of it arrived.
+	//
+	// And three of the five quick gates went red, against a baseline and an
+	// override-repair run that were both five for five on the same day:
+	//
+	//   ace tracked in the attacker's rear quarter   19% -> 32%   (bar 20%)
+	//   missiles, superhuman v ace                   inverted, lost 10-6
+	//   pilot kills on the jinker                    11/12 -> 4/12, and a jinker
+	//                                                flew into the sea unhit
+	//
+	// The doctrine is tuned around the shortfall. The 0.85 cap, corner discipline
+	// and the aim loop's gains were all fitted to a jet that delivers 71%, so
+	// handing it 79% is the cap experiment again by another door (capped():
+	// seven gates at 1.2 and 1.5), and the same stick-per-g change stiffens the
+	// fine-tracking loop this function's damper comments describe. It cannot land
+	// alone: it wants the cap and the tracking gains re-swept WITH it, which is a
+	// doctrine ruling and not a repair. The law's range stays shared and exported
+	// for that day, and so the probe can say what a stick fraction means.
 	ceiling := m.Airframe.Limit.Positive * (1 - 0.2*limited*clamp((math.Abs(rolled)-0.25)/0.75, 0, 1))
 	// The load the demanded lift vector actually represents: gravity support
 	// and the turn, at right angles. Aligned and settled it falls to `level` —
@@ -3053,6 +3253,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// against the ace, and TestConvert fell from 12/12 to 9/12. A bot that
 	// aims better and loses is not better.
 	b.rolled = rolled // slewed above: full deflection over ~8 ticks, never a flap
+	b.demand.Stick = pitch
 	return flight.Inputs{
 		Pitch:      pitch,
 		Roll:       b.rolled,

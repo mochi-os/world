@@ -179,6 +179,28 @@ func amend(t *tactics, name string, value float64) bool {
 		t.bracket.angle = value
 	case "wounded.weight":
 		t.wounded.weight = value
+	case "stage":
+		t.stage = int(value)
+	case "omit":
+		t.omit = int(value)
+	case "futures":
+		t.futures = int(value)
+	case "hedge":
+		t.hedge = value
+	case "peril":
+		t.peril = value
+	case "steady":
+		t.steady = value
+	case "startled":
+		t.startled = value
+	case "gravity":
+		t.gravity = value != 0
+	case "span.high":
+		t.span.high = value
+	case "span.pitch":
+		t.span.pitch = value
+	case "span.climb":
+		t.span.climb = value
 	default:
 		return false
 	}

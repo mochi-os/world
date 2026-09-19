@@ -30,18 +30,19 @@ var (
 
 func bandits() map[string]any {
 	return map[string]any{
-		"bandit_init":   guard(bandit_initialize),
-		"bandit_place":  guard(bandit_place),
-		"bandit_mirror": guard(bandit_mirror),
-		"bandit_menace": guard(bandit_menace),
-		"bandit_step":   guard(bandit_step),
-		"bandit_coast":  guard(bandit_coast),
-		"bandit_mode":   guard(bandit_mode),
+		"bandit_init":    guard(bandit_initialize),
+		"bandit_place":   guard(bandit_place),
+		"bandit_mirror":  guard(bandit_mirror),
+		"bandit_menace":  guard(bandit_menace),
+		"bandit_step":    guard(bandit_step),
+		"bandit_coast":   guard(bandit_coast),
+		"bandit_mode":    guard(bandit_mode),
+		"bandit_journal": guard(bandit_journal),
 	}
 }
 
 // bandit_initialize builds the harness from a JSON payload: level, seed, wrap,
-// sky (cloud preset), night, missiles, weapons, fuel. Returns an error string, or "" on success.
+// sky (cloud preset), night, missiles, weapons, fuel, stage. Returns an error string, or "" on success.
 func bandit_initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
 		Level    string
@@ -52,11 +53,14 @@ func bandit_initialize(this js.Value, arguments []js.Value) any {
 		Missiles bool
 		Weapons  string
 		Fuel     float64 // kg; the player's own spawn load, so the bandit fights on the same tank (0 = the server default)
+		Stage    int     // the structural change under evaluation (tactics.stage); 0 = the brain as it stands
+		Omit     int     // stages left out of the stack beneath it, one bit per stage number (tactics.omit)
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
 	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, payload.Fuel)
+	bandit.Stage(payload.Stage, payload.Omit)
 	return ""
 }
 
@@ -165,4 +169,23 @@ func bandit_mode(this js.Value, arguments []js.Value) any {
 		return ""
 	}
 	return bandit.Mode()
+}
+
+// bandit_journal drains the brain's decision journal as JSON - what the
+// arbiter weighed at each re-plan, the forecast errors that have come due, the
+// bypasses that pre-empted it, and the g demand stack. Developer recordings
+// only; the client never calls it otherwise. Empty when there is nothing.
+func bandit_journal(this js.Value, arguments []js.Value) any {
+	if bandit == nil {
+		return ""
+	}
+	drained := bandit.Journal()
+	if drained == nil {
+		return ""
+	}
+	payload, err := json.Marshal(drained)
+	if err != nil {
+		return ""
+	}
+	return string(payload)
 }

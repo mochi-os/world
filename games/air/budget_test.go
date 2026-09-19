@@ -23,13 +23,21 @@ func TestBudget(t *testing.T) {
 	for _, roster := range []float64{16, 99} {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("budget%.0f", roster), Game: "air",
-			Mode: "furball", Capacity: 128, Seed: 5,
+			Mode: "furball", Capacity: 16, Seed: 5,
 			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": roster}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		i := made.(*instance)
 		defer i.Close() // the bot budget is process-wide; a 99-ace roster left unreleased starves every later bot-spawning test in the binary (#208)
+		// The roster must actually fly. Bots are seated ABOVE the players and
+		// under the seven-bit slot ceiling, so a session's capacity comes off the
+		// room for bots: at the capacity of 128 this test used to ask for, the
+		// room is zero, no bot was ever seated, and every tick measured an empty
+		// sky at 0.00 ms - green, and blind, from the day the ceiling arrived.
+		if i.bots != int(roster) {
+			t.Fatalf("%.0f aces asked for, %d seated: the budget would be measured against an emptier sky than the one it gates", roster, i.bots)
+		}
 		var spent []float64
 		for tick := uint64(0); tick < 900; tick++ {
 			start := time.Now()

@@ -12,6 +12,7 @@ package air
 
 import (
 	"math"
+	"sort"
 
 	"world/games/air/battle"
 	"world/games/air/flight"
@@ -109,6 +110,8 @@ type order struct {
 	throttle float64
 	reheat   float64
 	brake    float64
+	gravity  bool // rehearse with the turn geometry that pays gravity across the path (tactics.gravity, rollout.go glide): off, every rehearsed turn also climbs at about one g
+	alpha    bool // licensed past the lift peak (stage 9): exempt from the aero cap and corner discipline, and rehearsed with glide's post-stall branch. One play holds it - bleed
 }
 
 // play is one candidate manoeuvre: a closed-loop control law, recomputed from
@@ -369,6 +372,77 @@ var plays = []play{
 		f := m.flat()
 		return order{aim: flight.Vec3{X: f.X, Y: 0.6, Z: f.Z}.Normalize(), g: 3, throttle: 1, reheat: 1}
 	}},
+	{"bleed", 3, 6, func(m *moment) order {
+		// The energy dump (stage 9): idle, boards out, and the whole stick, to
+		// take the wing past its lift peak on purpose. Speed falls a hundred
+		// knots in seconds, the radius with it, and the nose rides thirty
+		// degrees inside the flight path - onto him. It is what a human did to
+		// this bot (recording 01a0b090: 254 kt to 138 and a 1,667 m radius to
+		// 735 in fourteen seconds, head-on to dead astern), and the one turn
+		// the catalogue could neither fly nor rehearse: every other play is
+		// held under the aero cap, and glide() stopped at the lift peak. The
+		// only play that carries the `alpha` licence. LAST in the table with
+		// regain, and skipped below its stage (staged), so no other play's
+		// noise draw moves.
+		//
+		// MEASURED AND DECLINED BY ITS OWN RULE (2026-09-18). The plan said in
+		// advance that an ace tracked over 20% of a fight while converting
+		// nothing is the #153 signature, and that is what the dump buys:
+		//
+		//                         tracked   converted   v current ace, guns / heaters
+		//   stage 0                 18%       0.0%
+		//   truth + ends            18%       0.1%        11-4  /  23-22
+		//   truth + ends + bleed    36%       0.1%         5-14 /  17-29
+		//   the whole stack (6-9)   34%       0.2%         7-3  /  27-20
+		//
+		// with the missile top rung inverted (superhuman lost to the ace 11-5),
+		// gunnery against the jinker inverted, and the spiral gate's donated
+		// perch at 309,584 m.s against 143,883 - chosen for only 3-4% of the
+		// fight. It does what it was built for where it was built: both recorded
+		// scenes it targets reverse (the human's dump ends with him on its tail
+		// for 0.6 s of the last 3, from 1.8-2.9; under his guns it flies no
+		// offensive play at all, from 100%). A jet that spends its speed to
+		// point wins the scene and is then slow in front of everyone else. The
+		// play, the licence and glide's post-stall branch (TestBleedFidelity,
+		// TestStallProbe) stay behind stage 9 so it can be flown against;
+		// nothing about it argues for cutover.
+		return order{aim: m.aloft(m.lead()), g: m.pull, throttle: 0, brake: 1, alpha: true}
+	}},
+	{"regain", 2, 12, func(m *moment) order {
+		// The regain bailout's own law (duel(), #64) as a candidate (stage 10):
+		// climb out from under him, away from him, in burner. At this stage the
+		// bypass stands down and the arbiter weighs the climb against the rest
+		// of the catalogue, over the longest window on offer because a sustained
+		// climb pays late.
+		//
+		// MEASURED 2026-09-18 on stage 6 alone: it is chosen (the pounce gate's
+		// entry count goes green again, and lingering stays at 21-25%), and it
+		// holds the current ace 14-8 guns, 26-20 heaters, but the guns ladder
+		// goes red - the ace lost to the pilot 4-2 and superhuman v ace left 11
+		// of 16 undecided. Not accepted; stage 6's own red pounce gate is the
+		// reason it was tried.
+		out := m.me.Position.Subtract(m.prey)
+		out.Y = 0
+		if out.Length() > 1 {
+			out = out.Normalize()
+		} else {
+			out = flight.Vec3{X: 1}
+		}
+		return order{aim: flight.Vec3{X: out.X, Y: 0.75, Z: out.Z}.Normalize(), g: 3, throttle: 1, reheat: 1}
+	}},
+	// TRIED AND DECLINED (2026-09-18): `rebuild` as a play. The "too slow to fight"
+	// reflex in bot.go pre-empts this arbiter, so making its law a candidate here
+	// (tier 2, a ten-second span like the other slow-paying plays, last in the
+	// table so no other play's noise draw moved) and deleting the reflex for
+	// teamless bots looked like the clean repair. Both synthetic twins stayed
+	// green (TestDuelSaddleFinish, TestDuelThreatenedNeverUnloads). The recorded
+	// scene did not: TestSceneThreatOnTheSix went from 8/8 back to 0/8, the
+	// arbiter CHOOSING rebuild for 0.8 of the 4 seconds with a registered menace
+	// 770 m behind it. Against one constant-arc phantom, flying straight away
+	// from him opens the range in the rollout and scores as the threat going
+	// away; a pursuer who adjusts simply shoots. So the reflex stays, repaired
+	// (bot.go starved: it now yields to a threat and to the saddle), until the
+	// rollout rehearses against an opponent who can follow. Revisit only then.
 }
 
 // evolve advances the opponent's track by dt along the LOCAL CURVE: velocity
@@ -671,7 +745,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 // rehearse flies one candidate law forward through the real flight model - the
 // same airframe, FCS, and executor imperfections the live bot flies - and
 // returns the mean score and, beside it, the mean raw offence (brain.promise).
-func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon int) (float64, float64) {
+func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon, window int) (float64, float64) {
 	sim.State = a.model.State
 	sim.State.Damage = sim.State.Damage.Copy() // the struct copy shares Element/Jam with the LIVE jet; a damage-writing Step would corrupt it mid-fight
 	shadow := *b                               // the executor's scalar state rides along; maps are untouched
@@ -679,12 +753,76 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	pace := corner(a.model)
 	age := float64(tick-prey.when) / 60
 	score, offence, samples := 0.0, 0.0, 0.0
+	weighed, last, before := 0.0, 0.0, 0.0 // the ends scorer (stage 8): the confidence-weighted sum, and the final two samples
+	// A PURSUIT future (stage 7, futures()) is closed-loop: he flies at ME, where
+	// the rollout has put me, turning as hard as a fighter can. Every other future
+	// is an arc he would fly whatever I did - and an arbiter rehearsed only
+	// against those learns that a gun on its six simply goes away if it flies
+	// somewhere else.
+	chaseP, chaseV := evolve(prey, age)
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
 		hisP, hisV := evolve(prey, age+t)
+		if prey.pursuit {
+			if pace := chaseV.Length(); pace > 1 {
+				if to := sim.State.Position.Subtract(chaseP); to.Length() > 1 {
+					have, want := chaseV.Scale(1/pace), to.Normalize()
+					if off := math.Acos(clamp(have.Dot(want), -1, 1)); off > 1e-6 {
+						// He flies the same airframe under the same wing: below corner
+						// he cannot pull six g any more than I can, and a phantom that
+						// could out-turned every defence and made them all score alike.
+						load := math.Max(1.5, math.Min(6, a.model.Airframe.Limit.Positive*(pace/corner(a.model))*(pace/corner(a.model))))
+						swing := 9.81 * math.Sqrt(load*load-1) / pace / 60 // what that load turns him through in one rollout tick
+						share := math.Min(1, swing/off)
+						chaseV = have.Scale(1 - share).Add(want.Scale(share)).Normalize().Scale(pace)
+					}
+				}
+			}
+			chaseP = chaseP.Add(chaseV.Scale(1.0 / 60))
+			hisP, hisV = chaseP, chaseV
+		}
 		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
 		m.derive()
 		o := chosen.law(&m)
+		o.gravity = b.tactics.gravity
+		if b.tactics.on(6) {
+			// Truth (stage 6): rehearse the jet that will actually be flown. The
+			// law's g used to go straight to the rollout while the LIVE command
+			// went on through corner discipline and the aero cap in polish() -
+			// so the ace rehearsed every sub-corner turn at 100% of the wing and
+			// flew 85% of it, and chose its plays with an aeroplane that does
+			// not exist. It also means every earlier cap experiment (1.2, 1.5)
+			// moved the live jet and left the rehearsal alone: those results
+			// were confounded. The low tiers' wobble is not rehearsed - a novice
+			// cannot predict his own mush - but their cap is.
+			//
+			// MEASURED 2026-09-18, not yet accepted. The rollout's own forecast
+			// error against the recorded human falls at every lookahead but the
+			// last (27 -> 24 m at 2 s, 102 -> 91 at 4 s, 380 -> 351 at 8 s), and
+			// against the current ace it wins 18-4 with guns and draws 23-23
+			// with heaters (current against itself: 3-5). Four quick gates are
+			// green; the fifth, TestPounceExposure, is red on its PROXY - the
+			// regain bailout is never entered - with the outcomes it guards
+			// unchanged (lost 0 of 24, lingering 21.9% against a 28% bar). With
+			// `high` rehearsed over eight seconds instead of twelve all five are
+			// green and the head-to-head is even (tactics.span).
+			//
+			// Then the full battery, and the wide BVR rung, which no quick gate
+			// flies, inverts beyond any doubt: over 144 seeds the superhuman
+			// loses to the ace 35-93 (12 s span) and 48-89 (8 s), where stage 0
+			// reads 62-62 and HEAD 65-60. The 8 s variant also leaves the free
+			// kill in TestConvert untaken twice in twelve (superhuman 10/12,
+			// floor 11). Truth in the rehearsal helps the fight it was built for
+			// and costs the missile fight at range more than it gains, so this
+			// stage is not accepted in either form.
+			flown := sim.State.Velocity.Length()
+			if !o.alpha {
+				if b.skill.library >= 3 {
+					o.g = disciplined(o.g, flown, pace)
+				}
+				o.g = b.skill.capped(o.g, flown, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
+			}
+		}
 		if rehearsal.reduced() {
 			// The point-mass surrogate flies the ORDER directly: no stick, no
 			// FCS, no blade element (#256).
@@ -701,6 +839,13 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		if sim.State.Position.Y < 120 {
 			return -100, 0 // flew it into the sea: veto, whatever else it bought
 		}
+		if b.journal != nil && b.journal.tracing {
+			for _, span := range spans {
+				if k == int(span*60) {
+					b.journal.path = append(b.journal.path, sim.State.Position)
+				}
+			}
+		}
 		if k%30 == 0 || k == horizon {
 			// Every sampled instant counts alike: rounds land during the trajectory, so
 			// time on the solution is itself the payoff and a terminal weighting
@@ -712,6 +857,14 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				stance.offence *= 0.4 + 0.6*nurse
 			}
 			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring)
+			if b.tactics.on(7) {
+				one -= b.tactics.peril * stance.threat * peril(&sim.State, hisP, hisV)
+			}
+			if flown := sim.State.Velocity.Length(); b.tactics.on(9) && flown < 80 && flown >= 0.9*hisV.Length() {
+				one++ // appraise fines any line below 80 m/s a full point, whoever it is flown against. Slow while he is slower still is not a fault, it is the fight being won where he chose to hold it - and with the fine absolute, the energy dump could never be chosen however it was priced
+			}
+			weighed += confidence(float64(k)/60) * one
+			before, last = last, one
 			score += one
 			offence += guns
 			samples++
@@ -739,7 +892,60 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	// other side of the trade. Fading the tariff by range moved which gates
 	// broke (jink against pounce) and never the total. Do not rebuild it: the
 	// counter-offence is #73's unbuilt capability, not a mispriced one.
+	if window > 0 {
+		return ends(weighed, last, before, samples, horizon, window), offence / samples
+	}
 	return score / samples, offence / samples
+}
+
+// confidence is how far a rehearsed instant t seconds ahead is believed (stage
+// 8). Measured by the decision journal against a real human (recording
+// 01a0b090), the phantom's median error grows as the square of the lookahead -
+// 84 m at four seconds, 376 m at eight, 851 m at twelve, which is 5.9 t^2 to
+// within a tenth - and 700 m is where a forecast has stopped describing a guns
+// fight at all. Floored, because even a fictional twelfth second says which way
+// the line was heading.
+//
+// It is ONE curve for every play, applied over ONE window, and that is the
+// point. rehearse() returned each play's mean over its own span, so `high`,
+// judged over twelve seconds, was scored on eight seconds of fiction the
+// four-second plays were never charged for. Both repairs on record failed for
+// reasons this shape avoids: a discount renormalised per play cancels itself
+// (choose(), REFUTED 2026-09-13), and flying every play out to the longest span
+// judges a four-second law against a phantom it was never meant to meet
+// (declined twice, same place). Here no play is flown past its span; the
+// remainder of the window is a static valuation of the state it ended in - a
+// constraint on where a line leaves you, never a currency (#153) - and the
+// divisor is common, so it is neither a sum nor a per-play mean.
+//
+// MEASURED 2026-09-18 and NOT ACCEPTED. On stage 6 alone it reverses the
+// recorded under-guns scene (offensive share 100% -> 24%) and holds the
+// current ace (11-4 guns, 23-22 heaters), but three quick gates go red: the
+// superhuman is shot down 3 times in 24 by the crude tail-chase (allowance
+// 2), its guns kills over the ace arrive in 64.6 s against a 75 s floor, and
+// the regain bailout is never entered. On top of stage 7 the same three go
+// red with the jinker gate added.
+func confidence(t float64) float64 { return math.Max(0.1, 1-5.9*t*t/700) }
+
+// ends is the stage 8 value of a rehearsed line: its own samples at the trust
+// their lookahead has earned (`weighed`, summed by rehearse), the rest of the
+// common window valued at where the line ended up - the mean of its last two
+// samples - and every play divided by the same number. Samples fall every half
+// second, as rehearse() takes them.
+func ends(weighed, last, before, samples float64, horizon, window int) float64 {
+	end := last
+	if samples > 1 {
+		end = (last + before) / 2
+	}
+	tail, total := 0.0, 0.0
+	for k := 30; k <= window; k += 30 {
+		trust := confidence(float64(k) / 60)
+		total += trust
+		if k > horizon {
+			tail += trust
+		}
+	}
+	return (weighed + end*tail) / total
 }
 
 // allowance is how many bots may rehearse in one tick. Two is comfortably
@@ -795,10 +1001,22 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// because it earns it, and taking the arbiter off it costs kills - which
 	// refutes #174's premise from a second direction and closes the line of
 	// enquiry that treated the play mix as the defect.
-	base := 60*2 + 30*b.skill.library
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
+	hedging := b.tactics.on(7) && distance < 2500 && b.tactics.futures > 1
+	window := 0
+	if b.tactics.on(8) {
+		// The common window is the longest span this pilot owns: a property of
+		// the tier, not of which plays survive today's gates, so a play's score
+		// does not move because a rival was banned.
+		for _, p := range plays {
+			if p.tier <= b.skill.library && b.tactics.staged(p.name) {
+				window = max(window, b.horizon(p))
+			}
+		}
+	}
+	var shortlist []candidate
 	for _, p := range plays {
-		if p.tier > b.skill.library {
+		if p.tier > b.skill.library || !b.tactics.staged(p.name) {
 			continue
 		}
 		if p.name == "extend" && distance > 2500 {
@@ -808,11 +1026,9 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 			n++      // consume the play's noise index: every surviving play keeps the draw it had ungated, so fights diverge from the old arbitration ONLY where a park would actually have won
 			continue // the parking laws (#69): saddle's speed-match and lag's corner-pace reheat both MIL-park a matched-speed stern chase, and beyond ~2.5 km the rehearsal horizon cannot tell a park from a pursuit — they win on selection noise, stick via incumbency, and bleed the closure press had built. Banned only where they cannot ARRIVE: a far-field stern chase whose closure trend is more than two minutes from gun range. A closing stalk, and any mutual fight, keeps the full repertoire.
 		}
-		horizon := base
-		if p.span > 0 && int(p.span*60) > horizon {
-			horizon = int(p.span * 60)
-		}
-		score, guns := i.rehearse(a, b, sim, p, prey, tick, horizon)
+		horizon := b.horizon(p)
+		score, guns := i.rehearse(a, b, sim, p, prey, tick, horizon, window)
+		raw := score
 		// Selection noise is the skill's wander: the ace nearly argmaxes,
 		// the novice sometimes picks the second-best line and flies it well.
 		score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
@@ -826,12 +1042,258 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		if scores != nil {
 			scores[p.name] = score
 		}
+		if hedging {
+			shortlist = append(shortlist, candidate{play: p, horizon: horizon, score: score, raw: raw, guns: guns})
+		}
 		if score > top {
 			best, top, promise = p.name, score, guns
 		}
 		n++
 	}
+	if hedging {
+		best, promise = i.hedge(a, b, sim, prey, tick, shortlist, scores, window)
+	}
 	return best, promise
+}
+
+// horizon is how far one play is rehearsed, in rollout ticks: the tier's own
+// window (2.5 s for the novice up to 4 s at the top), or the play's span when
+// that is longer.
+func (b *brain) horizon(p play) int {
+	span := p.span
+	switch {
+	case p.name == "high" && b.tactics.span.high > 0:
+		span = b.tactics.span.high
+	case p.name == "pitch" && b.tactics.span.pitch > 0:
+		span = b.tactics.span.pitch
+	case p.name == "climb" && b.tactics.span.climb > 0:
+		span = b.tactics.span.climb
+	}
+	return max(60*2+30*b.skill.library, int(span*60))
+}
+
+// staged reports whether a play is in the catalogue at this stage. The two
+// plays the structural stages add sit LAST in the table and are skipped below
+// their stage, so no other play's noise draw moves and stage 0 is today's bot.
+func (t *tactics) staged(name string) bool {
+	switch name {
+	case "bleed":
+		return t.on(9)
+	case "regain":
+		return t.on(10)
+	}
+	return true
+}
+
+// candidate is one rehearsed play on its way to the hypotheses stage: `raw` is
+// what it scored against the opponent as he IS, `score` that plus the selection
+// noise, personality and incumbency the arbiter has always added.
+type candidate struct {
+	play       play
+	horizon    int
+	score, raw float64
+	guns       float64
+}
+
+// peril is HIS gun solution on ME: appraise()'s offence term seen from the other
+// cockpit, with the same gun band and the same sharpened nose term. How much of
+// my tail he sees, times how nearly his flight path is on me, inside gun range.
+//
+// appraise() already has `threat`, and it is blunt by design: he is behind my
+// path, flying my way, inside 2.5 km. It cannot tell a break turn that takes my
+// tailpipes out of his windscreen from a yo-yo that leaves them there - and once
+// the rollout was given an opponent who PURSUES (stage 7), that showed: against
+// him every play scored between -2.2 and -2.6 and `high` was still the least
+// bad, which is the ace flying a yo-yo for 22.7 s with a human 450 m behind
+// hitting it (recording 01a0b090). Angle-off is what defeats a tracking gun,
+// and this is where angle-off is priced.
+func peril(me *flight.State, hisP, hisV flight.Vec3) float64 {
+	line := me.Position.Subtract(hisP) // him -> me
+	r := math.Max(line.Length(), 1)
+	line = line.Scale(1 / r)
+	mine, his := me.Velocity, hisV
+	if mine.Length() < 1 || his.Length() < 1 {
+		return 0
+	}
+	tail := clamp(mine.Normalize().Dot(line), 0, 1) // 1: he looks up my tailpipes
+	nosed := clamp(his.Normalize().Dot(line), 0, 1) // 1: his flight path is on me
+	band := clamp((r-60)/190, 0, 1) * clamp((1500-r)/800, 0, 1)
+	return tail * math.Pow(nosed, keen) * band
+}
+
+// futures derives what the opponent might do next from what he is doing now.
+// evolve() is left alone - the heater ladder and the live aim both depend on it
+// - so each future is simply a different TRACK for it to extrapolate, anchored
+// at this tick:
+//
+//	continue  the track as it stands: the single phantom every candidate was
+//	          always rehearsed against
+//	pursue    he flies at ME, wherever the rollout puts me, at six g: the only
+//	          closed-loop future, and the one that matters with him behind me
+//	reverse   the cross-track swing negated: he turns the other way
+//	tighten   slower and pulling harder, the energy dump: a human took the ace
+//	          from head-on to dead astern in fourteen seconds doing exactly this
+//	          (recording 01a0b090: 254 kt to 138, radius 1,667 m to 735), and a
+//	          constant-SPEED arc cannot represent it at all
+func futures(prey *track, tick uint64, count int) []track {
+	age := float64(tick-prey.when) / 60
+	position, velocity := evolve(prey, age)
+	now := track{when: tick, position: position, velocity: velocity, swing: prey.swing, nose: prey.nose, wobble: prey.wobble}
+	list := []track{now}
+	speed := velocity.Length()
+	if count < 2 || speed < 1 {
+		return list
+	}
+	ahead := velocity.Scale(1 / speed)
+	along := ahead.Scale(prey.swing.Dot(ahead))
+	across := prey.swing.Subtract(along)
+	pursue, reverse, tighten := now, now, now
+	pursue.pursuit = true
+	reverse.swing = along.Subtract(across)
+	tighten.velocity = velocity.Scale(0.85)
+	tighten.swing = across.Scale(1.4)
+	if across.Length() < 2 {
+		// Nearly straight: there is no turn to reverse or tighten, so the
+		// surprises are a break either way at a fighter's working load.
+		side := ahead.Cross(flight.Vec3{Y: 1})
+		if side.Length() < 1e-6 {
+			side = flight.Vec3{Z: 1}
+		}
+		side = side.Normalize().Scale(4 * 9.81)
+		reverse.swing, tighten.swing = side, side.Scale(-1)
+	}
+	for _, extra := range []track{pursue, reverse, tighten} {
+		if len(list) < count {
+			list = append(list, extra)
+		}
+	}
+	return list
+}
+
+// hedge re-ranks the leading plays against an opponent who might not continue
+// as he is (stage 7). The arbiter rehearsed every candidate against ONE
+// constant-speed arc; measured against a real human that arc is 84 m out at
+// four seconds and 851 m out at twelve - past gun range - and the play judged
+// over twelve seconds, `high`, was half the fight: the ace flew it for 22.7 s
+// with the human 450 m behind hitting it, because against that one phantom the
+// yo-yo always pays inside its window.
+//
+// Only the top four and the incumbent meet the extra futures, inside 2,500 m,
+// which holds the rollout cost near double rather than fourfold. A play's
+// value is the weighted mean over the futures plus `tactics.hedge` times its
+// WORST: not pure minimax, which hands kills to scripts that never reverse.
+// The weights are what each future predicted last time against what he then
+// did (brain.cast, brain.doubt), so a steady opponent earns a confident arc
+// and an erratic one earns a hedge. With one future, no hedge and no peril
+// this is the old argmax exactly: TestHedgeControl.
+//
+// MEASURED 2026-09-18 and NOT ACCEPTED: its keep rule asked for green gates
+// and both of the dump and under-guns scenes flipped, and neither holds.
+// Against the current ace it is stronger (13-5 guns, 33-12 heaters, first
+// build; 12-8 and 30-14 with the early re-plan), but every variant reddens
+// the guns ladder: superhuman v ace leaves 13-14 of 16 fights undecided
+// against an allowance of 9. The hedge sweep does not repair it - at 0 the
+// guns rung is also decided too fast (58.9 s against a 75 s floor) and the
+// jinker is out-shot by the pilot; at 0.5 the rung inverts, 4-2 guns and
+// 11-5 missiles. Neither scene moves: with a pursuing future in the set the
+// yo-yo still scores best under guns, because it beats the breaks by about
+// 1.7 against the continue and tighten futures and loses only against the
+// pursuing one. Tick cost
+// was not the obstacle (26.1 ms against 24.6 at stage 0, 16 aces; see
+// TestBudget for why both are over).
+func (i *instance) hedge(a *craft, b *brain, sim *flight.Model, prey *track, tick uint64, shortlist []candidate, scores map[string]float64, window int) (string, float64) {
+	b.learn(prey, tick)
+	cast := futures(prey, tick, b.tactics.futures)
+	sort.SliceStable(shortlist, func(x, y int) bool { return shortlist[x].score > shortlist[y].score })
+	keep := shortlist
+	if len(keep) > 4 {
+		keep = keep[:4]
+		for _, c := range shortlist[4:] {
+			if c.play.name == b.play {
+				keep = append(keep, c)
+			}
+		}
+	}
+	weight := b.trust(len(cast))
+	best, top, promise := b.play, math.Inf(-1), 0.0
+	for _, c := range keep {
+		mean, worst, guns := weight[0]*c.raw, c.raw, weight[0]*c.guns
+		for n := 1; n < len(cast); n++ {
+			raw, shots := i.rehearse(a, b, sim, c.play, &cast[n], tick, c.horizon, window)
+			mean += weight[n] * raw
+			guns += weight[n] * shots
+			worst = math.Min(worst, raw)
+		}
+		value := mean + b.tactics.hedge*worst + (c.score - c.raw)
+		if scores != nil {
+			scores[c.play.name] = value
+		}
+		if value > top {
+			best, top, promise = c.play.name, value, guns
+		}
+	}
+	b.cast, b.casted = cast, tick
+	return best, promise
+}
+
+// tactics.steady and tactics.startled are the two ends of the forecast's running
+// miss, in metres per second of lookahead. Against the recorded human the single
+// arc's median error was 84 m at four seconds, about 21 m/s; an opponent inside
+// half of that is flying the arc, and one past twice it has left it. Either at
+// zero switches its half off, which is how the two were told apart.
+
+// surprised reports that the opponent has left the future the committed line
+// was chosen against (stage 7): the `continue` arc cast at the last re-plan,
+// extrapolated to now, against where his track says he is. It waits half a
+// second, because every arc is right at first, and it never fires twice on one
+// cast.
+func (b *brain) surprised(prey *track, tick uint64) bool {
+	if len(b.cast) == 0 || b.casted == 0 || b.jolted == b.casted || tick < b.casted+30 || tick-b.casted > 300 {
+		return false
+	}
+	elapsed := float64(tick-b.casted) / 60
+	guess, _ := evolve(&b.cast[0], elapsed)
+	actual, _ := evolve(prey, float64(tick-prey.when)/60)
+	if b.tactics.startled <= 0 || guess.Subtract(actual).Length()/elapsed < b.tactics.startled {
+		return false
+	}
+	b.jolted = b.casted // spent. The cast itself stays: learn() reads it at the re-plan, and this miss is the one most worth learning from
+	return true
+}
+
+// learn scores the futures cast at the last re-plan against where he is now.
+func (b *brain) learn(prey *track, tick uint64) {
+	if b.casted == 0 || tick <= b.casted || tick-b.casted > 300 {
+		return // nothing cast, or so long ago that it says nothing about his habits now
+	}
+	elapsed := float64(tick-b.casted) / 60
+	age := float64(tick-prey.when) / 60
+	actual, _ := evolve(prey, age)
+	for n := range b.cast {
+		guess, _ := evolve(&b.cast[n], elapsed)
+		miss := guess.Subtract(actual).Length() / math.Max(elapsed, 0.5) // metres per second of lookahead: a re-plan after 1 s and one after 3 s are judged alike
+		if n < len(b.doubt) {
+			b.doubt[n] += (miss - b.doubt[n]) * 0.4
+		}
+	}
+}
+
+// trust turns the running doubt in each future into weights that sum to one.
+func (b *brain) trust(count int) []float64 {
+	weight := make([]float64, count)
+	total := 0.0
+	for n := range weight {
+		doubt := 0.0
+		if n < len(b.doubt) {
+			doubt = b.doubt[n]
+		}
+		weight[n] = 1 / (1 + doubt/25)
+		total += weight[n]
+	}
+	for n := range weight {
+		weight[n] /= total
+	}
+	return weight
 }
 
 // duel is the teamless fight brain: rehearse, commit, fly. Replaces the mode
@@ -900,7 +1362,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		// and the first two landings sent the superhuman climbing away from
 		// free kills (0/12) and inverted the BVR top rung. An opponent who
 		// has never attacked from his perch is a target, not a threat.
-		if b.regained == 0 && holds && !diving && menace < 0 && b.promise < 0.4 && b.intent != "finish" &&
+		if !b.tactics.on(10) && b.regained == 0 && holds && !diving && menace < 0 && b.promise < 0.4 && b.intent != "finish" &&
 			prey.velocity.Length() < 200 && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
 			b.audit["calm"]++
 			if b.ceded != 0 && tick-b.ceded > 300 {
@@ -965,6 +1427,9 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	overshot := b.flanked < -0.15 && bearing > 0.15 && distance < 700 && b.skill.library >= 3
 	b.flanked = bearing
 	offensive := b.play == "press" || b.play == "lag" || b.play == "low" || b.play == "high" || b.play == "climb"
+	if b.tactics.on(7) && b.surprised(prey, tick) {
+		b.until = tick // the forecast the committed line was chosen against has failed: re-plan now, not when the commitment runs out
+	}
 	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) || (overshot && tick-b.picked >= 10) {
 		// The tick's rehearsal allowance (#256): cost is bounded by CONSTRUCTION - a
 		// roster of any size spends only so many re-plans per tick, and the rest
@@ -974,9 +1439,26 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		} else {
 			i.rehearsals++
 			sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
-			b.play, b.promise = i.choose(slot, a, b, sim, prey, tick, distance, nil)
+			var scores map[string]float64
+			if b.journal != nil {
+				scores = map[string]float64{}
+			}
+			held := b.play
+			b.play, b.promise = i.choose(slot, a, b, sim, prey, tick, distance, scores)
+			if b.play == "regain" && held != "regain" && b.audit != nil {
+				b.audit["enter"]++ // stage 10: the arbiter choosing the climb IS the bailout entering, so the pounce gate keeps its reading
+			}
+			if b.journal != nil {
+				i.minute(a, b, sim, prey, tick, scores)
+			}
 			b.picked = tick
 			b.until = tick + uint64(math.Max(54, b.skill.commit*24)) // the commitment: ~0.9 s floor, 1.6 s at the top — the machine included, whose edge is reflex and precision, not strategy churn
+			if b.tactics.on(7) && len(b.cast) > 0 && b.casted == tick && b.doubt[0] < b.tactics.steady {
+				// An opponent who has been doing what the arc said earns a longer
+				// commitment: half as long again, which is the cost of a re-plan
+				// saved where a re-plan would have told the ace nothing new.
+				b.until = tick + (b.until-tick)*3/2
+			}
 		}
 	}
 
@@ -1006,6 +1488,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		if p.name == b.play {
 			o := p.law(&m)
 			b.aim, b.g, b.throttle, b.reheat, b.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
+			b.licensed = o.alpha
 			break
 		}
 	}

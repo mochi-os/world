@@ -85,6 +85,41 @@ func glide(m *flight.Model, o order, dt float64) {
 	// fiction.
 	lift := clamp(o.g, -3, m.Airframe.Limit.Positive)
 	ceiling := pressure * area * 1.55 / (mass * 9.81)
+	stalled := o.alpha
+	if stalled {
+		// Past the lift peak, for the one play licensed to go there (bleed, stage
+		// 9). The blade-element jet does not stop at 1.55: full aft stick below
+		// corner rides on to the 40 degree alpha limit, and the load ACROSS the
+		// path keeps rising as the body, the LEX and the tilted thrust join the
+		// wing. Measured on the bandit's own jet (TestStallProbe, 2026-09-18,
+		// reheat off / on alike):
+		//
+		//     alpha     lift   drag   lift/drag
+		//     20-25     1.50   0.55     2.7
+		//     25-30     1.81   0.80     2.3
+		//     30-35     2.24   1.16     1.9
+		//     35-40     2.60   1.40     1.9
+		//
+		// The top bin is mostly thrust at almost no airspeed, so the branch stops
+		// at 2.3. Drag and alpha are the straight lines through the other three,
+		// and they are what make this a purchase rather than a gift: four times
+		// the pre-stall drag for half again the load.
+		//
+		// The jet does not ARRIVE there at once. Alpha walks up at eleven or
+		// twelve degrees a second from the moment the stick comes back (the same
+		// jet, half-second steps: 5.9, 11.8, 16.7, 22.5, 29.4, 32.6 degrees),
+		// which is 1.2 of lift coefficient a second below the peak and 0.75 above
+		// it. The load glide stored on the last tick is the memory - on the first
+		// tick of a rollout that is the live jet's own - and without it a
+		// rehearsed bleed paid the whole post-stall drag from its first instant:
+		// 20 m/s gone in the first half second, where the real jet loses one.
+		held := clamp(s.Fcs.Normal*mass*9.81/math.Max(pressure*area, 1), 0, 2.3)
+		rate := 1.2
+		if held >= 1.55 {
+			rate = 0.75
+		}
+		ceiling = pressure * area * math.Min(2.3, held+rate*dt) / (mass * 9.81)
+	}
 	if lift > ceiling {
 		lift = ceiling
 	}
@@ -94,7 +129,12 @@ func glide(m *flight.Model, o order, dt float64) {
 	span := m.Airframe.Reference.Span
 	ratio := span * span / math.Max(area, 1)
 	drag := pressure * area * (0.021 + coefficient*coefficient/(math.Pi*ratio*0.78))
-	if o.brake > 0.5 {
+	if stalled && coefficient > 1.5 {
+		drag = pressure * area * (0.55 + (coefficient-1.5)*0.8)
+		if o.brake > 0.5 {
+			drag += pressure * area * 0.1 // the boards add what they add at the lift peak; scaling a post-stall drag by them would charge for a panel the wake has already swallowed
+		}
+	} else if o.brake > 0.5 {
 		drag *= 1.35
 	}
 
@@ -144,7 +184,19 @@ func glide(m *flight.Model, o order, dt float64) {
 	// Bend the path along the current lift direction, never past the aim.
 	lateral := 9.81 * math.Sqrt(math.Max(lift*lift-1, 0))
 	heave := skyward
-	if angle > 1e-4 && lateral > 1e-6 {
+	if stalled || o.gravity {
+		// The licensed turn bends the path along what is LEFT of the lift once
+		// gravity across the path is paid. The branch below turns toward the lift
+		// vector itself, which the roll law has tilted up to hold gravity, so every
+		// turn it flies also climbs at about one g; a bleed rehearsed that way
+		// spent its speed on height the real jet never gains.
+		net := lifting.Scale(lift * 9.81).Subtract(skyward.Scale(9.81))
+		if size := net.Length(); size > 1e-6 && angle > 1e-4 {
+			turn := math.Min(size/speed*dt, angle)
+			heave = lifting.Scale(lateral).Add(skyward.Scale(9.81))
+			direction = direction.Scale(math.Cos(turn)).Add(net.Scale(math.Sin(turn) / size)).Normalize()
+		}
+	} else if angle > 1e-4 && lateral > 1e-6 {
 		turn := math.Min(lateral/speed*dt, angle)
 		heave = lifting.Scale(lateral).Add(skyward.Scale(9.81))
 		sin, cos := math.Sin(turn), math.Cos(turn)
@@ -164,8 +216,20 @@ func glide(m *flight.Model, o order, dt float64) {
 	// (Look() flattens it to a wings-level heading) and settle the nose on the aim
 	// when the aim is inside the alpha budget, as the pipper takeover does.
 	alpha := clamp(coefficient/5.9, 0, m.Airframe.Limit.Alpha)
+	if stalled && coefficient > 1.5 {
+		alpha = clamp(0.39+(coefficient-1.5)*0.237, 0, m.Airframe.Limit.Alpha) // 22.5 degrees at the peak, 33 at the branch's ceiling: the measured line above
+	}
 	nose := direction
-	if heave.Length() > 1e-6 && alpha > 1e-4 {
+	if stalled || o.gravity {
+		// Alpha lives in the jet's plane of symmetry, which holds the LIFT vector,
+		// not the net heave. The branch below tilts the nose toward the heave, and
+		// the frame it stores then hands the next tick a lift vector pushed off by
+		// sin^2(alpha) of the difference: a nudge at 15 degrees that the roll law
+		// absorbs, and at 33 a roll onto its back inside a second (measured: the
+		// licensed turn inverted, dived at 67 m/s and turned 22 degrees in six
+		// seconds where the real jet turns 68).
+		nose = direction.Scale(math.Cos(alpha)).Add(lifting.Scale(math.Sin(alpha))).Normalize()
+	} else if heave.Length() > 1e-6 && alpha > 1e-4 {
 		if plane := heave.Subtract(direction.Scale(heave.Dot(direction))); plane.Length() > 1e-6 {
 			nose = direction.Scale(math.Cos(alpha)).Add(plane.Normalize().Scale(math.Sin(alpha))).Normalize()
 		}
