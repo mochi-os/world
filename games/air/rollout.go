@@ -62,6 +62,9 @@ func glide(m *flight.Model, o order, dt float64) {
 	}
 	local := flight.Atmosphere(s.Position.Y, m.Environment)
 	mass := m.Mass()
+	if o.weight > 0 {
+		mass = o.weight
+	}
 	if mass <= 0 {
 		mass = m.Airframe.Mass.Empty + s.Fuel
 	}
@@ -83,7 +86,16 @@ func glide(m *flight.Model, o order, dt float64) {
 	// by the wing at this speed. This is the term that makes a slow jet a
 	// balloon, so the surrogate must keep it or every energy judgement is a
 	// fiction.
-	lift := clamp(o.g, -3, m.Airframe.Limit.Positive)
+	limit := m.Airframe.Limit.Positive
+	if o.weighed && m.Airframe.Limit.Reference > 0 {
+		// The flight control system writes its 7.5 g placard at the reference
+		// weight and schedules it down from there (fcs.go envelope): a
+		// combat-loaded jet is held to about 6.7 g. The rehearsal pulled the bare
+		// placard, so above corner it out-turned the jet it stood for by a
+		// tenth of a g for every g it asked.
+		limit *= math.Min(1, m.Airframe.Limit.Reference/mass)
+	}
+	lift := clamp(o.g, -3, limit)
 	ceiling := pressure * area * 1.55 / (mass * 9.81)
 	stalled := o.alpha
 	if stalled {

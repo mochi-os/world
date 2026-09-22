@@ -107,5 +107,28 @@ func TestFidelity(t *testing.T) {
 			names[level], float64(per.Microseconds())/1000,
 			float64(results[full].spent)/float64(r.spent), 100*float64(r.agreed)/float64(r.seen),
 			100*mean, 100*float64(r.costly)/float64(r.seen))
+		if level == rehearsal {
+			floor(t, names[level], float64(r.agreed)/float64(r.seen), mean, float64(r.costly)/float64(r.seen), 0.45, 0.42, 0.30)
+		}
+	}
+}
+
+// floor holds the live rehearsal to the full model it stands for. This test and
+// TestFidelityDuel used to print and assert nothing, and the surrogate drifted
+// unseen from the 66% agreement it was adopted on (e7314d6, giving up 12% of
+// the spread when it differed) to 50% and 36%. Each bound sits about five
+// points outside what the brain as it stands measured on 2026-09-19, so the
+// next drift of that kind stops a build; raise them when a truer rehearsal
+// is accepted.
+func floor(t *testing.T, name string, agreed, regret, costly, least, most, worst float64) {
+	t.Helper()
+	if agreed < least {
+		t.Errorf("%s agrees with the full model on %.1f%% of decisions, under the %.0f%% floor", name, 100*agreed, 100*least)
+	}
+	if regret > most {
+		t.Errorf("%s gives up %.1f%% of the spread when it differs, past the %.0f%% ceiling", name, 100*regret, 100*most)
+	}
+	if costly > worst {
+		t.Errorf("%s makes a costly pick at %.1f%% of decisions, past %.0f%%", name, 100*costly, 100*worst)
 	}
 }

@@ -84,7 +84,7 @@ func TestRecoilServed(t *testing.T) {
 // impulse over its mass, measured against the same hunt flown with a gun
 // that kicks nothing; told its belt is empty, the brain never presses.
 func TestBanditLoad(t *testing.T) {
-	fresh := NewBandit("ace", 1, 250000, "", false, false, "", 0)
+	fresh := NewBandit("ace", 1, 250000, "", false, false, "", 0, false)
 	fresh.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	if fresh.craft.ammunition != rounds {
 		t.Fatalf("a fresh bandit carries %d rounds, want the full %d", fresh.craft.ammunition, rounds)
@@ -94,7 +94,7 @@ func TestBanditLoad(t *testing.T) {
 		t.Fatalf("belt %d after Load(37)", fresh.craft.ammunition)
 	}
 	hunt := func(belt int, kick bool) (firing int, speed float64) {
-		b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0)
+		b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 		if !kick {
 			quiet := *b.craft.model.Airframe

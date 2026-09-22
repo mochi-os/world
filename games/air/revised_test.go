@@ -42,7 +42,7 @@ func TestMain(m *testing.M) {
 		evaluating = stage
 		doctrine.stage = stage
 	}
-	for _, knob := range []string{"omit", "futures", "hedge", "peril", "steady", "startled", "gravity", "span.high", "span.pitch", "span.climb"} {
+	for _, knob := range []string{"omit", "futures", "hedge", "peril", "steady", "startled", "gravity", "truth.cap", "truth.parts", "truth.stack", "truth.keen", "truth.point", "truth.offence", "truth.overtake", "truth.threat", "truth.closing", "span.high", "span.pitch", "span.climb"} {
 		if value, err := strconv.ParseFloat(os.Getenv("AIR_"+strings.ToUpper(strings.ReplaceAll(knob, ".", "_"))), 64); err == nil {
 			amend(&doctrine, knob, value) // the stage's own sweeps: AIR_HEDGE=0.5, AIR_FUTURES=2, AIR_SPAN_HIGH=8
 		}

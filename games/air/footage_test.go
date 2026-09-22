@@ -261,7 +261,7 @@ func replay(t *testing.T, reel footage, level string, seed uint64, start, length
 	if !found {
 		t.Fatalf("the recording has no bandit at t=%.1f", start)
 	}
-	b := NewBandit(level, seed, 250000, "", false, true, "fox2", sample.fuel)
+	b := NewBandit(level, seed, 250000, "", false, true, "fox2", sample.fuel, false)
 	b.Stage(evaluating, doctrine.omit) // AIR_STAGE, AIR_OMIT: the scenes judge whichever brain is under evaluation
 	b.Spawn(position, velocity)
 	b.craft.model.State.Attitude = flight.Basis(forward, up)

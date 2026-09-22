@@ -28,7 +28,10 @@ type Bandit struct {
 // NewBandit builds the harness. Unknown levels fly as ace. `missiles` says
 // whether the PLAYER can shoot, which the bandit's defensive doctrine reacts to
 // (#211); `weapons` is the match's class, and "open" wakes the BVR brain.
-func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string, tank float64) *Bandit {
+// `hold` is the joust's weapons hold: true holds the brain's gun and missiles
+// until either jet crosses the other's 3/9 line, the rule the server's joust
+// and the client's own trigger keep; false is the BVR start, free from spawn.
+func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string, tank float64, hold bool) *Bandit {
 	if weapons == "" {
 		if missiles {
 			weapons = "fox2"
@@ -52,8 +55,12 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 	if tank <= 0 {
 		tank = fuel // the server's default load; the client passes the player's own so the joust is fought on equal tanks
 	}
+	// A started joust, so free() and merge() hold the brain exactly as they hold
+	// it on the server. The arena was a furball, whose weapons are always free:
+	// the client held its own trigger and the bandit's gun, and the brain fired
+	// heaters head-on through the merge nobody had reached.
 	return &Bandit{
-		arena: &instance{mode: "furball", environment: environment, sky: sky, night: night,
+		arena: &instance{mode: "joust", started: true, merged: !hold, environment: environment, sky: sky, night: night,
 			missiles: missiles || weapons == "open", weapons: weapons,
 			aircraft: map[int]*craft{0: mirror, 1: fighter}},
 		craft: fighter,
@@ -148,6 +155,7 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff 
 	// The single-player bandit drives think() directly rather than through
 	// instance.Step, so it owns the per-tick arbiter allowance reset (#256).
 	b.arena.rehearsals = 0
+	b.arena.merge() // the mirror and the bandit, as they stand: the 3/9 crossing frees the brain's weapons before it thinks
 	b.arena.think(1, b.craft, b.tick)
 	for _, event := range b.arena.events {
 		if event["kind"] == "flare" {
@@ -164,14 +172,20 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff 
 		}
 	}
 	b.arena.events = b.arena.events[:0]
+	fed := b.craft.trigger(b.arena.free()) // the brain reads its belt (Load) and never presses dry; the hold is what can still mask the button, as on the server
 	for substep := 0; substep < 4; substep++ {
-		b.craft.model.Step(b.craft.latest) // the brain reads its belt (Load) and never presses dry, so its sample is the core's
+		b.craft.model.Step(fed)
 	}
 	b.craft.flared += 1.0 / 60
 	b.craft.clouded += 1.0 / 60
 	b.craft.release += 1.0 / 60
 	return b.craft.latest.Fire, flare, launch, heater, chaff
 }
+
+// Free reports whether the joust's weapons are free: the merge has been made,
+// or the match began without a hold. The client releases its own hold on it,
+// so the player's trigger and the brain's open on the same frame.
+func (b *Bandit) Free() bool { return b.arena.free() }
 
 // Load sets the bandit's magazine. The single-player client keeps the belt
 // (its fire_gun spends it, round by round, the same counter the HUD reads)

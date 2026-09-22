@@ -40,7 +40,7 @@ func TestStallProbe(t *testing.T) {
 	for _, reheat := range []float64{0, 1} {
 		bins := map[int]*bin{}
 		for _, entry := range []float64{230, 190, 160, 130} {
-			b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0)
+			b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, false)
 			b.Spawn(flight.Vec3{Y: 4000}, flight.Vec3{X: entry})
 			m := b.craft.model
 			area := m.Airframe.Reference.Area
@@ -114,7 +114,7 @@ func TestBleedFidelity(t *testing.T) {
 	}
 	for _, entry := range []float64{170, 130} {
 		fly := func(reduced bool) (speed, turned, alpha float64) {
-			b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0)
+			b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, false)
 			b.Spawn(flight.Vec3{Y: 4000}, flight.Vec3{X: entry})
 			m, brain := b.craft.model, b.craft.brain
 			shadow := *brain

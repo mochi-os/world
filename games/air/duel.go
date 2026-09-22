@@ -110,8 +110,10 @@ type order struct {
 	throttle float64
 	reheat   float64
 	brake    float64
-	gravity  bool // rehearse with the turn geometry that pays gravity across the path (tactics.gravity, rollout.go glide): off, every rehearsed turn also climbs at about one g
-	alpha    bool // licensed past the lift peak (stage 9): exempt from the aero cap and corner discipline, and rehearsed with glide's post-stall branch. One play holds it - bleed
+	weight   float64 // the live jet's flown mass, kg (stage 6): the rollout's scratch model is never weighed - glide fell back to the empty airframe and its internal fuel, a clean jet some 470 kg lighter than a bandit carrying heaters
+	weighed  bool    // rehearse against the g ceiling the flight control system enforces, scheduled with gross weight (6.7 g on a combat-loaded jet), instead of the bare 7.5 g placard (stage 6, rollout.go glide)
+	gravity  bool    // rehearse with the turn geometry that pays gravity across the path (tactics.gravity, rollout.go glide): off, every rehearsed turn also climbs at about one g
+	alpha    bool    // licensed past the lift peak (stage 9): exempt from the aero cap and corner discipline, and rehearsed with glide's post-stall branch. One play holds it - bleed
 }
 
 // play is one candidate manoeuvre: a closed-loop control law, recomputed from
@@ -609,7 +611,20 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 // the comment at its use. SWEEP THIS, do not guess it.
 const keen = 6.0
 
-func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit) (float64, float64) {
+func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit, t *tactics) (float64, float64) {
+	stack, sharp, danger, chase, progress, press := 0.45, keen, 1.3, 0.35, 0.15, 1.0
+	if t.on(6) {
+		stack, sharp, danger, chase = t.truth.stack, t.truth.keen, t.truth.threat, t.truth.closing
+		press = t.truth.offence
+		// The extra nose reward is a SKILL: pressing the nose onto him at any range
+		// is what the ace's geometry read buys, and the pilot keeps the old
+		// weight. Handed to every tier alike, 0.30 sent the pilot diving at a
+		// floundering target in burner (TestPilotEngagesTheMush: 552 kt against
+		// a 450 kt bar, 385 at 0.15), and fading it with closure instead
+		// (truth.overtake) gave back what it had bought: at 150 m/s the guns
+		// head-to-head went 21-12 to 8-15 and the wide BVR rung inverted 56-78.
+		progress += (t.truth.point - 0.15) * sk.geometry
+	}
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
 	lhat := los.Scale(1 / r)
@@ -656,7 +671,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	//   guns superhuman v ace                          6-4 -> 4-3, and mean
 	//     time to kill 150 -> 101 s: the one arm that softened, inside noise at
 	//     sixteen seeds and still positive and well clear of the #213 floor.
-	offence := clamp(rear, 0, 1) * math.Pow(clamp(point, 0, 1), keen) * band
+	offence := clamp(rear, 0, 1) * math.Pow(clamp(point, 0, 1), sharp) * band
 	threat := clamp(-rear, 0, 1) * clamp(-ahead, 0, 1) * near
 	// The head-on trade (#45): `threat` prices him BEHIND me, so a mutual nose-on
 	// pass scored zero danger and the arbiter learned that jousting at the merge
@@ -672,6 +687,9 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// so without this the choice at 3 km is decided by selection noise. It fades
 	// approaching the band, where arriving hot is the blown pass.
 	closing := s.Velocity.Subtract(hisV).Dot(lhat)
+	if t.on(6) && t.truth.overtake > 0 {
+		progress *= clamp(1-(closing-t.truth.overtake)/(2*t.truth.overtake), 0.4, 1)
+	}
 	// The RELATIVE energy truth (#248): the fight's currency is the difference,
 	// not the balance - this is what makes zooming off a floater score as winning.
 	// Its weight is a skill: the novice chases the nose and ignores it.
@@ -711,15 +729,15 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// fight and spends without regret once someone is on the six, so taxing
 	// the escape dive is wrong exactly where escaping matters (it inverted
 	// the wide heater ladder before this gate).
-	stack := clamp((s.Position.Y-hisP.Y)/400, -1, 1) * near * clamp(1-2*threat, 0, 1)
+	height := clamp((s.Position.Y-hisP.Y)/400, -1, 1) * near * clamp(1-2*threat, 0, 1)
 	// The range term is deliberately shallow: every geometry term dies by 2.5 km,
 	// so beyond that this gradient is nearly the whole scorer and steepening it
 	// reweights the merge and gun bands too. Pulling a distant bot back wants a
 	// term that is zero inside weapons range, not a bigger multiplier here.
-	score := w.offence*offence - 1.3*w.threat*threat - 0.8*w.threat*joust - w.energy*hungry*clamp(edge*-1, 0, 1) + 0.45*sk.energy*stack - r/12000 +
+	score := press*w.offence*offence - danger*w.threat*threat - 0.8*w.threat*joust - w.energy*hungry*clamp(edge*-1, 0, 1) + stack*sk.energy*height - r/12000 +
 		sk.geometry*0.25*standing*clamp((2500-r)/1500, 0, 1) +
-		w.closing*0.35*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
-		w.offence*0.15*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
+		w.closing*chase*clamp(closing/400, -1, 1)*clamp((r-500)/1200, 0, 1) +
+		w.offence*progress*point - // nose toward him is progress at any range: a reversal's value shows as swing long before it shows as a gun band
 		0.5*clamp((closing-70)/150, 0, 1)*clamp((900-r)/600, 0, 1) // the blown pass, priced: arriving hot inside the merge cannot be stopped by any law (stopping distance alone exceeds the range), and without this the incumbent full-burner play tied the disciplined one and zero-noise argmax never escaped it — the machine overshot every pass it flew
 	// The deck is NON-NEGOTIABLE, whatever the posture: these penalties sit
 	// outside the weights because FINISH's discounted threat and energy let
@@ -746,6 +764,13 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 // same airframe, FCS, and executor imperfections the live bot flies - and
 // returns the mean score and, beside it, the mean raw offence (brain.promise).
 func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, prey *track, tick uint64, horizon, window int) (float64, float64) {
+	if b.tactics.truthful(carried) {
+		// The scratch model carries the live jet's stores, so a rollout through the
+		// full model weighs and drags what the bot is actually carrying. Before the
+		// state is copied: mounting a tank fills it, and the copy then sets the
+		// fuel the jet really has.
+		sim.Stores(a.model.Attached())
+	}
 	sim.State = a.model.State
 	sim.State.Damage = sim.State.Damage.Copy() // the struct copy shares Element/Jam with the LIVE jet; a damage-writing Step would corrupt it mid-fight
 	shadow := *b                               // the executor's scalar state rides along; maps are untouched
@@ -784,8 +809,12 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
 		m.derive()
 		o := chosen.law(&m)
-		o.gravity = b.tactics.gravity
-		if b.tactics.on(6) {
+		o.gravity = b.tactics.gravity || b.tactics.truthful(gravity)
+		o.weighed = b.tactics.truthful(carried)
+		if b.tactics.truthful(carried) {
+			o.weight = a.model.Mass()
+		}
+		if b.tactics.truthful(capped) {
 			// Truth (stage 6): rehearse the jet that will actually be flown. The
 			// law's g used to go straight to the rollout while the LIVE command
 			// went on through corner discipline and the aero cap in polish() -
@@ -820,7 +849,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				if b.skill.library >= 3 {
 					o.g = disciplined(o.g, flown, pace)
 				}
-				o.g = b.skill.capped(o.g, flown, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
+				o.g = b.capped(o.g, flown, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
 			}
 		}
 		if rehearsal.reduced() {
@@ -856,7 +885,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				stance.energy *= 1 + 2.0*(1-nurse)
 				stance.offence *= 0.4 + 0.6*nurse
 			}
-			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring)
+			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring, &b.tactics)
 			if b.tactics.on(7) {
 				one -= b.tactics.peril * stance.threat * peril(&sim.State, hisP, hisV)
 			}

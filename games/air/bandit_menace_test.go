@@ -24,7 +24,7 @@ func menace(position, velocity flight.Vec3, shooter int, phase float64) []float6
 // heater that has already lost: the client is the only source of
 // `loose`/`blind` there, and `beaten` (bot.go) reads exactly those two.
 func TestMenaceBeaten(t *testing.T) {
-	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0)
+	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, false)
 	position, velocity := flight.Vec3{X: 1000}, flight.Vec3{X: -300}
 
 	for _, c := range []struct {
@@ -74,7 +74,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 	// The machine tier: no sighting roll and no reaction delay, so the response
 	// is deterministic and the test measures doctrine rather than dice.
 	evading := func(phase float64) bool {
-		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2", 0)
+		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2", 0, false)
 		bandit.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 
 		environment := flight.Environment{Seed: 1, Wrap: 250000}
@@ -140,7 +140,7 @@ func TestSpent(t *testing.T) {
 // 2, 8 and 18 km launches, with the superhuman firing nothing in 40 s.
 func TestMenaceCarriesABattery(t *testing.T) {
 	wrap := 250000.0
-	bandit := NewBandit("ace", 1, wrap, "", false, true, "open", 0)
+	bandit := NewBandit("ace", 1, wrap, "", false, true, "open", 0, false)
 	bandit.Spawn(flight.Vec3{X: 12000, Y: 8000}, flight.Vec3{X: -240})
 	bandit.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
 

@@ -129,6 +129,26 @@ func TestFidelityDuel(t *testing.T) {
 		fmt.Printf("%-16s %4d points | agrees %5.1f%% | when it differs, gives up %4.1f%% of the spread | costly picks %4.1f%%\n",
 			name, r.seen, 100*float64(r.agreed)/float64(r.seen), 100*mean, 100*float64(r.costly)/float64(r.seen))
 	}
+	// The two speed regimes between them hold every decision point.
+	overall := tally{}
+	for _, name := range regimes {
+		r := results[name]
+		overall.seen += r.seen
+		overall.agreed += r.agreed
+		overall.regret += r.regret
+		overall.costly += r.costly
+	}
+	if overall.seen == 0 {
+		t.Fatal("no decision points sampled")
+	}
+	missed := overall.seen - overall.agreed
+	mean := 0.0
+	if missed > 0 {
+		mean = overall.regret / float64(missed)
+	}
+	fmt.Printf("%-16s %4d points | agrees %5.1f%% | when it differs, gives up %4.1f%% of the spread | costly picks %4.1f%%\n",
+		"overall", overall.seen, 100*float64(overall.agreed)/float64(overall.seen), 100*mean, 100*float64(overall.costly)/float64(overall.seen))
+	floor(t, "the live rehearsal in duels", float64(overall.agreed)/float64(overall.seen), mean, float64(overall.costly)/float64(overall.seen), 0.48, 0.35, 0.26)
 	pairs := make([]string, 0, len(confusion))
 	for p := range confusion {
 		pairs = append(pairs, p)

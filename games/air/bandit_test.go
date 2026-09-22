@@ -15,7 +15,7 @@ import (
 )
 
 func TestBanditSpawnTrimmed(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "", 0)
+	b := NewBandit("ace", 1, 250000, "", false, false, "", 0, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	s := &b.craft.model.State
 	v := s.Attitude.Unrotate(s.Velocity)
@@ -34,7 +34,7 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 // open class arms it, its radar acquires beyond visual range, a DLZ shot leaves
 // the rail, and the guns class stays byte-inert.
 func TestBanditBvr(t *testing.T) {
-	b := NewBandit("ace", 3, 250000, "", false, true, "open", 0)
+	b := NewBandit("ace", 3, 250000, "", false, true, "open", 0, false)
 	if b.craft.amraams == 0 {
 		t.Fatal("open-class bandit spawned without AMRAAMs")
 	}
@@ -100,7 +100,7 @@ func TestBanditBvr(t *testing.T) {
 	}
 
 	// The guns class: today's exact joust, nothing radiates.
-	quiet := NewBandit("ace", 3, 250000, "", false, false, "guns", 0)
+	quiet := NewBandit("ace", 3, 250000, "", false, false, "guns", 0, false)
 	quiet.Spawn(flight.Vec3{X: 8000, Y: 3000}, flight.Vec3{X: -272})
 	for tick := 0; tick < 60*5; tick++ {
 		player.State.Encode(words)
@@ -113,13 +113,111 @@ func TestBanditBvr(t *testing.T) {
 	}
 }
 
+// TestBanditJoustHold: the single-player joust as the client starts it -
+// head-on from 1.5 NM a side at 220 m/s, the player in burner - which is where
+// recordings 01a0b090, 01a0c91b and 01a0c9e0 all show the ace's heaters leaving
+// at about 8.4 s with neither jet past the other's 3/9 line. Unheld, the same
+// geometry must still produce that shot, or the held run proves nothing. Held,
+// nothing leaves the rails before the crossing, Free reports the crossing on
+// the frame the geometry makes it, and the stores are all aboard at the merge.
+// The gun half: the novice, who alone takes the head-on snapshot, pulls the
+// trigger on the run-in, and held its core must not kick for it.
+func TestBanditJoustHold(t *testing.T) {
+	type outcome struct {
+		early   int    // missiles that left before either jet crossed the other's 3/9 line
+		pressed int    // frames the brain pulled the trigger before the crossing
+		crossed uint64 // the tick the geometry first shows the crossing
+		freed   uint64 // the tick Free first reported the weapons free
+		stores  int    // heaters aboard at the crossing
+		aboard  int    // heaters aboard at spawn
+		track   []flight.Vec3
+	}
+	joust := func(level string, seed uint64, weapons string, hold bool, recoil bool) outcome {
+		b := NewBandit(level, seed, 250000, "", false, weapons != "guns", weapons, 0, hold)
+		if !recoil {
+			quiet := *b.craft.model.Airframe
+			quiet.Gun.Recoil = 0
+			b.craft.model.Airframe = &quiet
+		}
+		b.Spawn(flight.Vec3{X: 2778, Y: 4572}, flight.Vec3{X: -220})
+		player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: seed, Wrap: 250000}, flight.World{Sea: sea})
+		player.State = flight.Level(player, flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 1}, 220, fuel)
+		words := make([]float64, flight.Size)
+		// behind is the rule in the test's own terms: from lies behind the line
+		// through of's wings, with the rule's five metres of margin.
+		behind := func(from, of *flight.State) bool {
+			return from.Position.Subtract(of.Position).Dot(of.Attitude.Rotate(flight.Vec3{X: 1})) < -5
+		}
+		result := outcome{aboard: b.craft.missiles}
+		for tick := uint64(1); tick <= 60*20; tick++ {
+			for substep := 0; substep < 4; substep++ {
+				player.Step(flight.Inputs{Throttle: 1, Reheat: 1})
+			}
+			player.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Menace(nil)
+			if result.crossed == 0 && (behind(&player.State, b.State()) || behind(b.State(), &player.State)) {
+				result.crossed, result.stores = tick, b.craft.missiles
+			}
+			fire, _, launch, heater, _ := b.Step()
+			if result.crossed == 0 {
+				result.track = append(result.track, b.State().Position)
+				if launch || heater {
+					result.early++
+				}
+				if fire {
+					result.pressed++
+				}
+			}
+			if result.freed == 0 && b.Free() {
+				result.freed = tick
+			}
+		}
+		if result.crossed == 0 {
+			t.Fatalf("%s seed %d never merged in twenty seconds", level, seed)
+		}
+		return result
+	}
+
+	free := joust("ace", 7, "fox2", false, true)
+	if free.early == 0 {
+		t.Fatalf("unheld, the ace fired nothing before the merge at tick %d: the geometry no longer reproduces the recorded shot, so the held run proves nothing", free.crossed)
+	}
+	if free.freed != 1 {
+		t.Errorf("a bandit started without the hold reported its weapons free first at tick %d, want the first frame", free.freed)
+	}
+	held := joust("ace", 7, "fox2", true, true)
+	if held.early != 0 {
+		t.Errorf("held, %d missiles left the ace's rails before the merge at tick %d", held.early, held.crossed)
+	}
+	if held.freed != held.crossed {
+		t.Errorf("Free first reported at tick %d, the crossing is at tick %d: the client's hold and the brain's would open on different frames", held.freed, held.crossed)
+	}
+	if held.stores != held.aboard {
+		t.Errorf("%d heaters aboard at the merge, want all %d", held.stores, held.aboard)
+	}
+
+	kicked := joust("novice", 3, "guns", true, true)
+	quiet := joust("novice", 3, "guns", true, false)
+	if kicked.pressed == 0 {
+		t.Fatal("the novice never pulled the trigger on the run-in: the gun half of the hold is untested")
+	}
+	for tick := range kicked.track {
+		if tick >= len(quiet.track) || kicked.track[tick].Subtract(quiet.track[tick]).Length() > 1e-9 {
+			t.Errorf("held, the novice's run-in left the recoil-free one at tick %d with the trigger pulled for %d frames: the gun kicked before the merge", tick+1, kicked.pressed)
+			break
+		}
+	}
+	t.Logf("ace: %d missiles before the merge at tick %d unheld, %d held, freed at tick %d; novice: %d frames on the trigger held", free.early, free.crossed, held.early, held.freed, kicked.pressed)
+}
+
 // TestMirrorShortFrame: the exported entry the panic was found through. Mirror
 // takes a []float64 with no documented length and hands it straight to
 // flight.Decode, so a nil or truncated frame from the wasm bridge used to kill
 // the Go program page-wide rather than being refused. The reflection has to
 // stay flyable afterwards, not merely not crash.
 func TestMirrorShortFrame(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0)
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{X: 2000, Y: 6096}, flight.Vec3{X: -250})
 	reflection := b.arena.aircraft[0]
 

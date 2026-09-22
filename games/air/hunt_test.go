@@ -364,7 +364,7 @@ func TestHuntSeam(t *testing.T) {
 func TestJammerStaysWithTheMachine(t *testing.T) {
 	// Driven through the real defensive path, not by restating the condition.
 	arm := func(level string, span float64) bool {
-		b := NewBandit(level, 1, 250000, "", false, true, "open", 0)
+		b := NewBandit(level, 1, 250000, "", false, true, "open", 0, false)
 		b.Spawn(flight.Vec3{X: span, Y: 8000}, flight.Vec3{X: -240})
 		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, fuel)

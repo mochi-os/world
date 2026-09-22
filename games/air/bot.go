@@ -153,6 +153,18 @@ func (s skill) capped(g, speed, stall float64) float64 {
 	return math.Min(g, math.Max(s.cap*(speed/stall)*(speed/stall), 1.1))
 }
 
+// capped is the skill's aero cap as this brain flies it. At stage 6 the jet
+// delivers the g it commands, where it used to deliver about five sixths of
+// it, so a cap fitted to the old delivery is a different cap; tactics.truth.cap
+// scales it there, and only there, for the retune to find where it belongs.
+func (b *brain) capped(g, speed, stall float64) float64 {
+	s := b.skill
+	if b.tactics.truthful(capped) && b.tactics.truth.cap > 0 {
+		s.cap *= b.tactics.truth.cap
+	}
+	return s.capped(g, speed, stall)
+}
+
 // commitment is the manoeuvre set that must be flown through rather than
 // re-decided: each of these needs seconds to pay off, and abandoning one
 // halfway is worse than never starting it.
@@ -377,11 +389,42 @@ type tactics struct {
 	// awards every turn free height stops choosing the turning plays, and the
 	// doctrine above it was built on them.
 	gravity bool
+	// truth holds stage 6's own values, where the truer jet needs different
+	// ones from the brain as it stands; each defaults to what stage 0 flies.
+	truth struct {
+		cap   float64 // multiplies every tier's aero cap; 0 or 1 leaves it
+		parts int     // which of the four corrections stage 6 flies, as bits (0 = all): the screen that says what each one costs
+		// The scorer's own weights, which were fitted against a rehearsal that
+		// climbed a g in every turn: each is the stage 0 value until the retune
+		// moves it, and each applies only at stage 6.
+		stack    float64 // height over him (appraise)
+		keen     float64 // the nose term's exponent
+		threat   float64 // his gun on me
+		closing  float64 // the chase gradient outside the gun band
+		point    float64 // the nose toward him at any range: a reversal's value before it reaches the gun band
+		offence  float64 // multiplies the offence term itself
+		overtake float64 // m/s of closure past which the nose reward fades (to 40% at three times it); 0 = never. MEASURED AND LEFT OFF: it cured the pilot's dive at the mush target and gave back everything else (see appraise)
+	}
 }
 
 // on reports whether a structural stage's branch is flown: at or under the
 // stage under evaluation, and not omitted from the stack.
 func (t *tactics) on(stage int) bool { return t.stage >= stage && t.omit&(1<<stage) == 0 }
+
+// The four corrections stage 6 carries, so a screen can fly them one at a time.
+// Each makes the rehearsal, or the jet it stands for, honest in one way.
+const (
+	capped   = 1 << iota // rehearse the aero cap and corner discipline the live jet flies under
+	gravity              // pay gravity across the rehearsed turn: it used to climb a g's worth for nothing
+	carried              // the jet's own weight and stores, and the g ceiling the limiter schedules from it
+	delivery             // ask the pitch law for the load in its own terms, so the g commanded is the g flown
+)
+
+// truthful reports whether stage 6 flies one of its corrections (bot.go
+// tactics.truth.parts; 0, the default, is all four).
+func (t *tactics) truthful(part int) bool {
+	return t.on(6) && (t.truth.parts == 0 || t.truth.parts&part != 0)
+}
 
 // standard is the doctrine every brain flies today: the defaults the tuning
 // battery measures candidates against. Every value here was hand-picked with
@@ -389,6 +432,31 @@ func (t *tactics) on(stage int) bool { return t.stage >= stage && t.omit&(1<<sta
 // a reason is a bot-metagame artifact, not doctrine (#143).
 func standard() tactics {
 	var t tactics
+	// Stage 6's retune, read by appraise() at stage 6 only; stage 0 keeps its
+	// literals. RULING 2026-09-22 (user): the bot is for fighting humans, so the
+	// recorded-human scripts (the hornet, the mush) and the recorded scenes are
+	// the measure and the bot-against-bot ladders are secondary. This is the
+	// human-facing form: the cap correction alone, with the nose exponent 6 -> 3,
+	// height 0.45 -> 0.50 and threat 1.3 -> 1.5. Against the hornet with the
+	// merge shot allowed the ace kills it 12 of 16 and dies once (8 and 3 as it
+	// stands); after a denied merge, 48 seeds, the ace reads 12-18-18 won-lost-
+	// undecided against 4-22-22; it dies to the mush 7 times in 16 against 11.
+	// It costs the pounce proxy (the regain bailout is never entered) and the
+	// wide BVR rung (superhuman v ace 41-84 over 144 seeds), both bot-against-bot.
+	//
+	// The bot-facing form is recorded here because it is the opposite pick:
+	// parts capped|gravity|carried, keen 3, point 0.30, stack 0.50, threat 1.5
+	// (AIR_TRUTH_PARTS=7 AIR_TRUTH_POINT=0.30 reproduces it). It beats the brain
+	// as it stands 37-23 guns and 71-23 heaters over 96 seeds, holds every gate
+	// and the BVR rung (69-74), and flips the dump scene - and against the hornet
+	// after a denied merge its superhuman reads 6-31-11. The rehearsal
+	// corrections that make it truer (78% agreement with the full model against
+	// 50%) make it more cautious against a human who pulls hard; each of the
+	// geometry and weight corrections alone reads worse than the brain as it
+	// stands there. The delivery correction stays out of both: heaters 15-31.
+	t.truth.parts = capped
+	t.truth.stack, t.truth.keen, t.truth.threat, t.truth.closing = 0.50, 3, 1.5, 0.35
+	t.truth.point, t.truth.offence, t.truth.overtake = 0.15, 1, 0
 	t.peril = 1.3                // as appraise() weighs its own threat term
 	t.steady, t.startled = 0, 42 // metres of miss per second of lookahead; steady 0 = never extend (see the field)
 	t.futures, t.hedge = 4, 0.25 // stage 7 (duel.go hedge): continue, unload, reverse, tighten; a quarter of the worst future beside the weighted mean
@@ -2652,7 +2720,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// The aero cap, by tier (skill.capped): every play, so no play is ever
 	// the one without a departure guard near the stall.
 	if !b.licensed {
-		b.g = b.skill.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
+		b.g = b.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
 	}
 	b.demand.Capped = b.g
 
@@ -3245,7 +3313,18 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// The load the demanded lift vector actually represents: gravity support
 	// and the turn, at right angles. Aligned and settled it falls to `level` —
 	// stick centred, wings level, no self-inflicted nose excursion to chase.
-	pitch := clamp((math.Hypot(level, turn)*plane-level)/math.Max(ceiling-level, 0.5), -1, 1)
+	neutral := level
+	if b.tactics.truthful(delivery) {
+		// Truth (stage 6): ask the law for the load in the law's own terms, so the
+		// g the brain commands is the g that arrives - and the g the rollout
+		// rehearsed. The rolling tax keeps its above-corner gating (see
+		// `limited`); the weight schedule and the alpha-backed centre come from
+		// the law itself.
+		var top float64
+		neutral, top = m.Envelope(0, false)
+		ceiling = top * (1 - 0.2*limited*clamp((math.Abs(rolled)-0.25)/0.75, 0, 1))
+	}
+	pitch := clamp((math.Hypot(level, turn)*plane-neutral)/math.Max(ceiling-neutral, 0.5), -1, 1)
 	if want < 0.5 {
 		pitch = clamp((want-level)/3.5, -1, 0) // pushes bypass the lift-plane gate: recovery, not pursuit
 	}

@@ -43,7 +43,7 @@ func TestDeliveryProbe(t *testing.T) {
 	}
 	type sample struct{ pace, law, corner, capped, stick, ceiling, asked, delivered, alpha, wing float64 }
 	for _, level := range []string{"pilot", "ace"} {
-		b := NewBandit(level, 7, 250000, "", false, true, "fox2", 0)
+		b := NewBandit(level, 7, 250000, "", false, true, "fox2", 0, false)
 		b.Spawn(flight.Vec3{X: 1500, Y: 3000}, flight.Vec3{X: -150})
 		environment := flight.Environment{Seed: 7, Wrap: 250000}
 		player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})

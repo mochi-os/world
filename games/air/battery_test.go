@@ -193,6 +193,24 @@ func amend(t *tactics, name string, value float64) bool {
 		t.steady = value
 	case "startled":
 		t.startled = value
+	case "truth.overtake":
+		t.truth.overtake = value
+	case "truth.point":
+		t.truth.point = value
+	case "truth.offence":
+		t.truth.offence = value
+	case "truth.stack":
+		t.truth.stack = value
+	case "truth.keen":
+		t.truth.keen = value
+	case "truth.threat":
+		t.truth.threat = value
+	case "truth.closing":
+		t.truth.closing = value
+	case "truth.parts":
+		t.truth.parts = int(value)
+	case "truth.cap":
+		t.truth.cap = value
 	case "gravity":
 		t.gravity = value != 0
 	case "span.high":

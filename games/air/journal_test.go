@@ -20,7 +20,7 @@ import (
 // something to be wrong about - and hands every tick to watch.
 func skirmish(t *testing.T, journalled bool, seconds int, watch func(tick uint64, b *Bandit)) *Bandit {
 	t.Helper()
-	b := NewBandit("ace", 7, 250000, "", false, false, "guns", 0)
+	b := NewBandit("ace", 7, 250000, "", false, false, "guns", 0, false)
 	if !journalled {
 		b.craft.brain.journal = nil
 	}

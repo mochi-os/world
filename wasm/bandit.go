@@ -42,7 +42,7 @@ func bandits() map[string]any {
 }
 
 // bandit_initialize builds the harness from a JSON payload: level, seed, wrap,
-// sky (cloud preset), night, missiles, weapons, fuel, stage. Returns an error string, or "" on success.
+// sky (cloud preset), night, missiles, weapons, fuel, stage, omit, hold. Returns an error string, or "" on success.
 func bandit_initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
 		Level    string
@@ -55,11 +55,12 @@ func bandit_initialize(this js.Value, arguments []js.Value) any {
 		Fuel     float64 // kg; the player's own spawn load, so the bandit fights on the same tank (0 = the server default)
 		Stage    int     // the structural change under evaluation (tactics.stage); 0 = the brain as it stands
 		Omit     int     // stages left out of the stack beneath it, one bit per stage number (tactics.omit)
+		Hold     bool    // the joust's weapons hold: the brain fires nothing until the merge (false: the BVR start, free from spawn)
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, payload.Fuel)
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, payload.Fuel, payload.Hold)
 	bandit.Stage(payload.Stage, payload.Omit)
 	return ""
 }
@@ -158,6 +159,9 @@ func bandit_step(this js.Value, arguments []js.Value) any {
 	flags |= bandit.Emitter() << 3 // bits 3-4: the radar state the player's RWR reads
 	if bandit.Locked() {
 		flags |= 32 // the STT holds the player: datalink support for the client-flown round
+	}
+	if bandit.Free() {
+		flags |= 256 // the joust's weapons are free: the brain saw the merge, and the client's hold opens with it
 	}
 	return flags
 }
