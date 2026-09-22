@@ -9,6 +9,7 @@ package battle
 import (
 	"math"
 	"testing"
+	"time"
 
 	"world/games/air/flight"
 )
@@ -67,6 +68,30 @@ func TestContactSweep(t *testing.T) {
 	b.Position.Z = 12.8
 	if metA, metB := Contact(a, b, 1.0/60, 0); len(metA) != 0 || len(metB) != 0 {
 		t.Errorf("a 0.2 m gap at the tips is a miss: met %v %v", metA, metB)
+	}
+}
+
+// TestContactBounded: a flight state that has run away asks the sweep to look
+// back along a relative motion of 1e11 m/s, over a million kilometres in one
+// tick. The server's session goroutine runs that tick, so the answer has to
+// come back at once; and the wingtips that overlap at the end of the tick must
+// still be seen.
+func TestContactBounded(t *testing.T) {
+	still := flight.Quat{W: 1}
+	a := Mover{Parts: cross(), Attitude: still, Velocity: flight.Vec3{X: 1e11}}
+	b := Mover{Parts: cross(), Position: flight.Vec3{Z: 11.8}, Attitude: still}
+	done := make(chan [2][]int, 1)
+	go func() {
+		metA, metB := Contact(a, b, 1.0/60, 0)
+		done <- [2][]int{metA, metB}
+	}()
+	select {
+	case met := <-done:
+		if len(met[0]) != 1 || met[0][0] != 1 || len(met[1]) != 1 || met[1][0] != 1 {
+			t.Errorf("the wingtips overlap at the end of the tick, but the sweep met %v %v", met[0], met[1])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a sweep at 1e11 m/s relative has not returned after a second: the sample count follows the speed")
 	}
 }
 

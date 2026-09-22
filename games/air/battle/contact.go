@@ -33,6 +33,14 @@ type Mover struct {
 // samples.
 const stride = 0.4
 
+// most is the most samples one sweep takes. Two jets at Mach 2 head-on close
+// 23 m in a tick, 60 samples at the stride, so no real pass comes near it. A
+// flight state that has run away (relative speeds of 1e11 m/s have been seen)
+// asked for billions, and the session goroutine that runs the tick sat in one
+// for hours; past this count the samples spread out instead, so the cost is
+// fixed and the verdict on such a state is as good as the state is.
+const most = 256
+
 // Extent is the radius of the sphere about the body origin that holds every
 // part - the broad-phase gate for a pair is two extents plus the relative step
 // over the tick, and anything further apart cannot have met. Cached per
@@ -74,7 +82,10 @@ func Contact(a Mover, b Mover, dt float64, wrap float64) ([]int, []int) {
 	}
 	origin := a.Attitude.Unrotate(offset)
 	back := a.Attitude.Unrotate(a.Velocity.Subtract(b.Velocity).Scale(dt))
-	samples := int(math.Ceil(back.Length()/stride)) + 1
+	samples := most // the comparison is false for a NaN too, which then costs a bounded sweep rather than a conversion's guess
+	if count := math.Ceil(back.Length()/stride) + 1; count < most {
+		samples = int(count)
+	}
 	metA, metB := map[int]bool{}, map[int]bool{}
 	for j := range b.Parts {
 		pb := &b.Parts[j]
