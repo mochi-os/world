@@ -251,7 +251,17 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			// vortex system riding the section pressure as well doubled it.
 			tilted := w.Subtract(e.Normal.Scale(w.Length() * downwash)) // the flow the element meets, downwash and all, without the section's spanwise lean: the body frame the calibrated terms and the hump's Mach were written in
 			plain := 0.5 * local.Density * tilted.Dot(tilted)
-			boost := plain / pressure
+			// boost carries the calibrated terms, written on the flow the element
+			// meets, onto the section pressure. The section flow is what the span
+			// and the downwash leave of that flow, and it can all but vanish while
+			// the flow does not; the terms riding the ratio then run quadratic
+			// through the polar break and the compressibility, and one step's force
+			// has no bound. The ratio stops where sweep() stops the section theory,
+			// at 1/0.05: healthy flight stays under 3.2 at the 99.99th percentile.
+			boost := 1 / 0.05
+			if plain < boost*pressure {
+				boost = plain / pressure
+			}
 			reference := cl * pressure / plain                    // the surface's reference coefficient, on the pressure share the section sees
 			cd += surface.Induced * reference * reference * boost // calibrated drag-due-to-lift the emergent tilt under-prices
 			if over := math.Abs(reference) - 1.1; over > 0 {

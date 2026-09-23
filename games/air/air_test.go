@@ -2541,3 +2541,71 @@ func TestSpentCountsWithoutTheCheat(t *testing.T) {
 		t.Errorf("spent = %d, want %d (rounds that left the magazine)", a.spent, before-a.ammunition)
 	}
 }
+
+// TestBreakup: a jet the flight model has flown somewhere no airframe goes is
+// ended as a break-up, where it was last whole. A state that is not a number
+// used to live on as a ghost: never in the sea, never struck, and a joust with
+// one never finished. Two bots, so the joust starts at creation.
+func TestBreakup(t *testing.T) {
+	joust := func() (*instance, int, int) {
+		made, err := (&Air{}).Create(game.Session{Identifier: "breakup", Game: "air", Mode: "joust", Seed: 4,
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 2.0}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		for tick := uint64(0); tick < 60; tick++ {
+			i.Step(tick, nil)
+		}
+		slots := i.slots()
+		i.events = i.events[:0]
+		return i, slots[0], slots[1]
+	}
+	broken := func(i *instance, victim int) map[string]any {
+		for _, event := range i.events {
+			if event["kind"] == "kill" && event["slot"] == victim {
+				return event
+			}
+		}
+		return nil
+	}
+	for _, injury := range []struct {
+		name  string
+		apply func(s *flight.State)
+	}{
+		{"a spin no airframe survives", func(s *flight.State) { s.Omega = flight.Vec3{Y: 30} }},
+		{"a speed that is not a number", func(s *flight.State) { s.Velocity.X = math.NaN() }},
+	} {
+		i, victim, other := joust()
+		state := &i.aircraft[victim].model.State
+		injury.apply(state)
+		was := state.Position
+		i.Step(60, nil)
+		if i.aircraft[victim].alive {
+			t.Fatalf("%s: the jet is still alive", injury.name)
+		}
+		event := broken(i, victim)
+		if event == nil || event["cause"] != "breakup" {
+			t.Fatalf("%s: no break-up kill in the events: %v", injury.name, i.events)
+		}
+		if at := event["position"].([]float64); at[0] != was.X || at[1] != was.Y || at[2] != was.Z {
+			t.Errorf("%s: the break-up is at %v, want where the jet was whole, %v", injury.name, at, was)
+		}
+		if p := i.aircraft[victim].model.State.Position; math.IsNaN(p.Length()) {
+			t.Errorf("%s: the dead jet is left at %v", injury.name, p)
+		}
+		if !i.finished {
+			t.Errorf("%s: the joust did not finish", injury.name)
+		}
+		if !i.aircraft[other].alive {
+			t.Errorf("%s: the other jet died with it", injury.name)
+		}
+	}
+	// And a healthy jet is left alone: a real roll is four radians a second.
+	i, victim, _ := joust()
+	i.aircraft[victim].model.State.Omega = flight.Vec3{X: 4}
+	i.Step(60, nil)
+	if !i.aircraft[victim].alive || broken(i, victim) != nil {
+		t.Error("a jet rolling at 4 rad/s was ended as a break-up")
+	}
+}

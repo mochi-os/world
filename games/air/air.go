@@ -968,6 +968,15 @@ func (i *instance) merge() {
 	}
 }
 
+// intact reports whether a flight state is one an airframe can be in: every
+// value a number, under 1,500 m/s (Mach 4.4 at sea level) and turning under
+// 15 rad/s, where a wingtip six metres out already pulls 138 g. Healthy fights
+// stay under 7 rad/s; a damaged jet's tumble has been seen at 20 and then gone
+// to not-a-number in one step.
+func intact(s *flight.State) bool {
+	return s.Velocity.Length() < 1500 && s.Omega.Length() < 15 && !math.IsNaN(s.Position.Length()) && !math.IsInf(s.Position.Length(), 0)
+}
+
 // trigger is the craft's inputs as the flight core should see them: the fire
 // flag only while rounds actually leave - a loaded drum, and the weapons free
 // (a joust holds them until the merge) - so the core's recoil follows the gun
@@ -1182,8 +1191,19 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			continue
 		}
 		fed := a.trigger(i.free())
+		whole := a.model.State // this tick's start, where a jet that breaks up during it is laid to rest
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(fed) // 4 × Dt (1/240) per 60 Hz tick
+		}
+		if !intact(&a.model.State) {
+			// The model has flown the jet somewhere no airframe goes. A state that
+			// is not a number never meets the sea or a round, so it lived on as a
+			// ghost the match could never decide; one merely past the airframe is
+			// a jet that would have come apart. Either way it has broken up: back
+			// to where it was whole, so the kill has a place, and dead.
+			a.model.State = whole
+			i.fell(slot, credit(a), "breakup", -1)
+			continue
 		}
 		// The damage cascade: fires feed or starve on the throttle, fuel
 		// fires run their fuse, weakened wings shed under g.
