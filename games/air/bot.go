@@ -327,6 +327,10 @@ type tactics struct {
 	// stage number, so a stage can be read on its own: the stages were designed
 	// to build on one another, and a stack inherits the faults of whatever is
 	// under it. Evaluation only; an accepted stage loses its switch altogether.
+	//
+	// Stage 11 is the forecast that believes a slowing opponent (duel.go slowing,
+	// track.floor); flown on stage 6 alone it is stage 11 with 7-10 omitted,
+	// &stage=11&omit=1920 in the developer client.
 	omit int
 	// futures and hedge shape stage 7's re-ranking (duel.go hedge): how many
 	// opponent futures the leading plays are rehearsed against, and how much of a
@@ -562,6 +566,8 @@ type track struct {
 	wobble   float64     // jerk estimate, m/s^3: how fast his acceleration has been CHANGING. This is the target's unpredictability — a steady circle carries a small constant jerk (the acceleration vector rotates with the turn), a reversal spikes it an order of magnitude. The trigger prices its shot against it: a predictable target rewards waiting for a converged solution, an erratic one never converges and the snapshot is the only shot there is (#235).
 	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
 	pursuit  bool        // a rehearsed FUTURE only (duel.go futures): he flies at me, closed-loop, instead of along this track's arc
+	floor    float64     // stage 11: the speed evolve() flies his measured slowing down to, m/s (slowest); 0 holds his speed, as every earlier stage does
+	lasted   float64     // s his speed has kept falling faster than 2 m/s^2, look after look: a turn's bleed is brief, a slowing on purpose keeps on
 }
 
 // orbit is the opponent's estimated turning circle — the object BFM is flown
@@ -1148,6 +1154,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if seen {
 			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity, wobble: 45,
 				nose: c.model.State.Attitude.Rotate(flight.Vec3{X: 1})}
+			if b.tactics.on(11) {
+				fresh.floor = slowest
+			}
 			if t, found := b.known[other]; found {
 				fresh.wobble = t.wobble // carried between looks; a fresh contact starts at 45 — treat the unknown as manoeuvring until watched
 				least := 0.05
@@ -1163,6 +1172,9 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					// roughly half-second memory whatever the refresh rate.
 					jerk := fresh.swing.Subtract(t.swing).Length() / gap
 					fresh.wobble = t.wobble + clamp(gap*3, 0.05, 1)*(jerk-t.wobble)
+					if speed := fresh.velocity.Length(); speed > 1 && fresh.swing.Dot(fresh.velocity.Scale(1/speed)) < -2 {
+						fresh.lasted = t.lasted + gap
+					}
 				}
 				// TALLY (#146): my own eyes replace the radio picture — tell
 				// the lead his call was picked up. Once per bandit per life.
@@ -1818,7 +1830,15 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// dump and chose it, and a reflex that then unloads the jet halfway round
 		// leaves it slow, wide and pointing nowhere - the worst of both. The
 		// loss-of-control tier above (70 m/s) still takes the controls.
-		spending := b.tactics.on(9) && b.play == "bleed" && tick < b.until
+		//
+		// The bleed keeps the jet for as long as the arbiter keeps choosing it,
+		// not only until its commitment runs out: this clause runs before the
+		// re-plan, and its hysteresis then holds the jet unloaded until 1.3 times
+		// the gate, so the arbiter never got to choose again. In recording
+		// 01a0cf57 that cut a bleed off after 3.3 s, its nose come round from 76
+		// to 31 degrees off the pilot, and flew it nose-down in burner across
+		// his nose for 5.4 s into a pair of heaters.
+		spending := b.tactics.on(9) && b.play == "bleed"
 		if !spending && i.starved(b, &b.spent, me, speed, 0.55*pace, menace) {
 			b.mode = "rebuild"
 			b.press = 0

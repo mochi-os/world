@@ -25,7 +25,7 @@ func TestArrivalAgainstRange(t *testing.T) {
 		direction := c.targetP.Subtract(c.shooterP).Normalize()
 		band := ""
 		for r := 400.0; r <= 3000; r += 200 {
-			if reaches(shooter, target, direction, c.swing, 0, r, true) {
+			if reaches(shooter, target, direction, c.swing, 0, r, true, 0) {
 				band += "#"
 			} else {
 				band += "."
@@ -34,7 +34,7 @@ func TestArrivalAgainstRange(t *testing.T) {
 		t.Logf("%s (fired at %.0f m)", c.name, c.fired)
 		t.Logf("   400 m -> 3000 m in 200 m steps, # arrives: %s", band)
 		t.Logf("   at the range actually fired from (%.0f m): arrives %v",
-			c.fired, reaches(shooter, target, direction, c.swing, 0, c.fired, true))
+			c.fired, reaches(shooter, target, direction, c.swing, 0, c.fired, true, 0))
 	}
 }
 

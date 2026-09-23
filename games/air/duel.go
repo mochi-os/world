@@ -487,6 +487,9 @@ func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
 	}
 	ahead := t.velocity.Scale(1 / speed)
 	across := t.swing.Subtract(ahead.Scale(t.swing.Dot(ahead)))
+	if along := t.swing.Dot(ahead); t.floor > 0 && t.lasted >= lasting && along < 0 && speed > t.floor {
+		return slowing(t.position, ahead, across, speed, along, t.floor, dt)
+	}
 	pull := across.Length()
 	if pull < 0.01 { // straight enough that the arc and the line agree
 		return t.position.Add(t.velocity.Scale(dt)), t.velocity
@@ -499,6 +502,72 @@ func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
 		Add(inward.Scale(radius * (1 - math.Cos(turn))))
 	velocity := ahead.Scale(speed * math.Cos(turn)).Add(inward.Scale(speed * math.Sin(turn)))
 	return position, velocity
+}
+
+// slowest is the speed a slowing forecast bottoms out at, m/s (track.floor):
+// the rollout's own floor (glide), below which a jet stops flying rather than
+// slowing.
+const slowest = 30.0
+
+// lasting is how long a jet's speed must have kept falling before the forecast
+// believes it, s (track.lasted). Replayed against the pilot's seven recorded
+// jousts (forecast_test.go), the 12 s forecast in the 12 s after each merge:
+//
+//	                                    slowed-hard fights   fast fights
+//	any slowing believed, whole window   -32% and -62%       +3% to +20%
+//	any slowing believed for 3 s         -22% and -45%        0% to  +8%
+//	slowing that has lasted 1 s          -20% and -63%        0%
+//
+// No deceleration threshold separated them: a pilot turning hard at speed bleeds
+// as fast as one slowing on purpose, but for less than a second before he
+// unloads.
+//
+// Stage 11 costs the superhuman its guns ladder against the ace, with or
+// without this gate: over 64 seeds 13-11 with 40 undecided (12-15 with 37
+// believing any slowing for 3 s) against 22-15 with 27 at stage 6. Its forecast
+// of the ace is closer there too, 582 m against 711 m at 12 s where a slowing
+// is believed, but it flies `high` 43% of the time against 35%, and fewer fights
+// finish.
+const lasting = 1.0
+
+// slowing is evolve() for a jet that has been losing speed for `lasting` (stage
+// 11): his turn RATE held, his speed falling at the rate measured along his
+// path until it reaches floor, then held, so his circle shrinks as he slows.
+// The speed-holding arc flew a pilot who had bled 400 kt in 11 s round a circle
+// three times too big, and the forecast landed a kilometre from him at 12 s.
+//
+// Down to slowest it has him too slow at 12 s: by 115 and 60 kt in the
+// pilot's two slowed-hard jousts, about 100 kt in bot fights. DECLINED
+// 2026-09-23, a floor at his own 1 g stall where he was seen: his speed came
+// right in those jousts (-14 and +45 kt), but the forecast gave back most of
+// its gain, 01a0ca24 closer by 4% where this is 10-20%, 01a0ca2e by 36% where
+// this is 57-63%, since both pilots, and the scripted mush, flew well below
+// their stall. Against the mush the superhuman went 2 kills and 13 deaths of 16
+// (this floor 7 and 5, stage 6 7 and 7), and the guns ladder did not move
+// (14-12 of 64).
+//
+// Closed form, as the arc is: with v = v0 + a*s and heading w*s, the path is
+// the integral of v e^(iws), which is
+// [(v/w) sin ws + (a/w^2) cos ws, -(v/w) cos ws + (a/w^2) sin ws].
+func slowing(position, ahead, across flight.Vec3, speed, along, floor, dt float64) (flight.Vec3, flight.Vec3) {
+	until := math.Min(dt, (floor-speed)/along) // seconds of slowing before the floor
+	final := speed + along*until
+	pull := across.Length()
+	if pull < 0.01 { // straight: the distance of a steady deceleration, then the floor
+		distance := speed*until + along*until*until/2 + final*(dt-until) // a steady deceleration, then the speed it reached
+		return position.Add(ahead.Scale(distance)), ahead.Scale(final)
+	}
+	inward := across.Scale(1 / pull)
+	omega := pull / speed // rad/s, held as he slows
+	w2 := omega * omega
+	sweep := omega * until
+	x := final*math.Sin(sweep)/omega + along*(math.Cos(sweep)-1)/w2
+	y := (speed-final*math.Cos(sweep))/omega + along*math.Sin(sweep)/w2
+	turn := omega * dt // then the rest of the window at the speed reached, on the same rate
+	x += final * (math.Sin(turn) - math.Sin(sweep)) / omega
+	y += final * (math.Cos(sweep) - math.Cos(turn)) / omega
+	velocity := ahead.Scale(final * math.Cos(turn)).Add(inward.Scale(final * math.Sin(turn)))
+	return position.Add(ahead.Scale(x)).Add(inward.Scale(y)), velocity
 }
 
 // posture is the fight-level intent (#236) expressed as weights on the one
@@ -1167,7 +1236,7 @@ func peril(me *flight.State, hisP, hisV flight.Vec3) float64 {
 func futures(prey *track, tick uint64, count int) []track {
 	age := float64(tick-prey.when) / 60
 	position, velocity := evolve(prey, age)
-	now := track{when: tick, position: position, velocity: velocity, swing: prey.swing, nose: prey.nose, wobble: prey.wobble}
+	now := track{when: tick, position: position, velocity: velocity, swing: prey.swing, nose: prey.nose, wobble: prey.wobble, floor: prey.floor}
 	list := []track{now}
 	speed := velocity.Length()
 	if count < 2 || speed < 1 {

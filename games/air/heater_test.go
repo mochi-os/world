@@ -38,6 +38,35 @@ func recorded() []shot {
 	}
 }
 
+// TestHeatSlowing: the launch zone a stage-11 bot draws flies the target the
+// way its forecast does. A target running away at 300 m/s and slowing at 3 g is
+// caught further out than one holding his speed - the zone's own flight shows
+// it; the zone itself stops at the seeker's reach well inside, here 5 km - and
+// a target that is not slowing gets exactly the flight and the zone every other
+// caller gets.
+func TestHeatSlowing(t *testing.T) {
+	shooter := round.Target{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: 205}}
+	target := round.Target{Position: flight.Vec3{X: 3000, Y: 4000}, Velocity: flight.Vec3{X: 300}}
+	slowing := flight.Vec3{X: -3 * 9.80665}
+	for _, trial := range []float64{8000, 9000} {
+		if reaches(shooter, target, flight.Vec3{X: 1}, slowing, 0, trial, false, 0) {
+			t.Fatalf("%.0f m: the round catches a 300 m/s target holding his speed, so this range cannot tell the flights apart", trial)
+		}
+		if !reaches(shooter, target, flight.Vec3{X: 1}, slowing, 0, trial, false, 80) {
+			t.Errorf("%.0f m: believing his 3 g slowing, the round still does not catch him", trial)
+		}
+	}
+	steady := flight.Vec3{Z: 30}
+	for trial := 4000.0; trial <= 10000; trial += 1000 {
+		if reaches(shooter, target, flight.Vec3{X: 1}, steady, 0, trial, false, 80) != reaches(shooter, target, flight.Vec3{X: 1}, steady, 0, trial, false, 0) {
+			t.Errorf("%.0f m: a target turning without slowing flew differently at stage 11", trial)
+		}
+	}
+	if a, b := Heat(shooter, target, steady, 0, 0), heat(shooter, target, steady, 0, 0, 80); a != b {
+		t.Errorf("a target that is not slowing drew a different zone at stage 11: %+v against %+v", b, a)
+	}
+}
+
 // TestHeatZone pins the AIM-9M ladder to the physics the cockpit's SHOOT cue
 // will lean on (#47): the zone must order with aspect and closure the way
 // the seeker's own rules dictate, and the floor must be inside the ceiling.
@@ -87,7 +116,7 @@ func TestHeatZone(t *testing.T) {
 	// #104's real invariant: every range the ladder endorses must arrive.
 	beamward := shortest(shooter.Position, place(math.Pi/2).Position, 0).Normalize()
 	for _, trial := range []float64{beam.Minimum, (beam.Minimum + beam.Max) / 2, beam.Max} {
-		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false) {
+		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false, 0) {
 			t.Errorf("the ladder endorses %.0f m on a cold beam but its own round refuses it: %+v", trial, beam)
 		}
 	}

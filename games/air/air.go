@@ -1531,9 +1531,13 @@ func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool
 	// not the clock.
 	if b.heated == 0 || tick-b.heated >= 60 || b.warmed != b.target || b.glowed != lit {
 		me := &a.model.State
-		b.heat = Heat(round.Target{Position: me.Position, Velocity: me.Velocity},
+		floor := b.prey.floor // stage 11: a slowing that has lasted is zoned as evolve() flies it
+		if b.prey.lasted < lasting {
+			floor = 0
+		}
+		b.heat = heat(round.Target{Position: me.Position, Velocity: me.Velocity},
 			round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
-			b.prey.swing, lit, i.environment.Wrap)
+			b.prey.swing, lit, i.environment.Wrap, floor)
 		b.heated, b.warmed, b.glowed = tick, b.target, lit
 	}
 	zone := b.heat

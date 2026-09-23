@@ -1,7 +1,9 @@
 package air
 
 import (
+	"math"
 	"testing"
+	"world/game"
 	"world/games/air/flight"
 )
 
@@ -91,6 +93,131 @@ func TestEvolveAgainstArc(t *testing.T) {
 				t.Errorf("%.0f g over %.0f s: the phantom is %.0f m from a real turn - evolve is extrapolating a parabola again", g, dt, miss)
 			}
 		}
+	}
+}
+
+// TestEvolveSlowing pins stage 11's forecast of a slowing jet to the flight it
+// describes: his turn rate held, his speed falling at the measured rate to his
+// floor, then held. The closed form must agree with a fine numerical flight of
+// that law to the metre, straight or turning, with and without reaching the
+// floor. A jet that is not slowing, one whose slowing has not yet lasted
+// `lasting`, one already at his floor, and a track not at stage 11 must all fly
+// the speed-holding arc.
+func TestEvolveSlowing(t *testing.T) {
+	const floor = slowest
+	flown := func(speed, pull, along, dt float64) flight.Vec3 {
+		const step = 1.0 / 2400
+		omega := pull / speed
+		p := flight.Vec3{}
+		for s := step / 2; s < dt; s += step {
+			v := math.Max(floor, speed+along*s)
+			p = p.Add(flight.Vec3{X: math.Cos(omega * s), Z: math.Sin(omega * s)}.Scale(v * step))
+		}
+		return p
+	}
+	for _, c := range []struct {
+		name               string
+		speed, pull, along float64
+	}{
+		{"straight, never reaching the floor", 200, 0, -10},
+		{"straight, reaching the floor", 200, 0, -20},
+		{"turning at 5 g, reaching the floor", 200, 5 * 9.80665, -20},
+		{"turning at 3 g, slow and reaching the floor early", 90, 3 * 9.80665, -40},
+		{"turning at 7 g, a gentle slowing", 250, 7 * 9.80665, -5},
+	} {
+		contact := &track{velocity: flight.Vec3{X: c.speed}, swing: flight.Vec3{X: c.along, Z: c.pull}, floor: floor, lasted: lasting}
+		for _, dt := range []float64{1, 2, 4, 8, 12} {
+			got, _ := evolve(contact, dt)
+			if miss := got.Subtract(flown(c.speed, c.pull, c.along, dt)).Length(); miss > 1 {
+				t.Errorf("%s, %.0f s: the forecast is %.1f m from the flight it describes", c.name, dt, miss)
+			}
+		}
+	}
+	for _, dt := range []float64{4, 12} {
+		held, _ := evolve(&track{velocity: flight.Vec3{X: 200}, swing: flight.Vec3{Z: 40}}, dt)
+		for name, contact := range map[string]*track{
+			"a jet speeding up":             {velocity: flight.Vec3{X: 200}, swing: flight.Vec3{X: 10, Z: 40}, floor: floor, lasted: lasting},
+			"a slowing that has not lasted": {velocity: flight.Vec3{X: 200}, swing: flight.Vec3{X: -20, Z: 40}, floor: floor, lasted: lasting / 2},
+			"a jet already at his floor":    {velocity: flight.Vec3{X: 200}, swing: flight.Vec3{X: -20, Z: 40}, floor: 200, lasted: lasting},
+			"a track not at stage 11":       {velocity: flight.Vec3{X: 200}, swing: flight.Vec3{X: -20, Z: 40}, lasted: lasting},
+		} {
+			if got, _ := evolve(contact, dt); got != held {
+				t.Errorf("%.0f s: %s left the speed-holding arc: %v against %v", dt, name, got, held)
+			}
+		}
+	}
+}
+
+// TestSlowingIsStageEleven: only a brain at stage 11 believes a slowing
+// opponent, and flown on stage 6 alone (&stage=11&omit=1920) it still does;
+// the brain as it stands, and stage 6, keep the speed-holding forecast.
+func TestSlowingIsStageEleven(t *testing.T) {
+	for _, c := range []struct {
+		stage, omit int
+		want        bool
+	}{{0, 0, false}, {6, 0, false}, {11, 0, true}, {11, 1920, true}} {
+		i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"ace": 2.0}}, 0)
+		for _, slot := range i.slots() {
+			if a := i.aircraft[slot]; a != nil && a.brain != nil {
+				a.brain.tactics.stage, a.brain.tactics.omit = c.stage, c.omit
+			}
+		}
+		seen := 0
+		for tick := uint64(1); tick <= 60*30 && seen == 0; tick++ {
+			i.Step(tick, nil)
+			for _, slot := range i.slots() {
+				if a := i.aircraft[slot]; a != nil && a.brain != nil {
+					for _, known := range a.brain.known {
+						seen++
+						if want := map[bool]float64{false: 0, true: slowest}[c.want]; known.floor != want {
+							t.Fatalf("stage %d omitting %d: a track floors his slowing at %v, want %v", c.stage, c.omit, known.floor, want)
+						}
+					}
+				}
+			}
+		}
+		i.Close()
+		if seen == 0 {
+			t.Fatalf("stage %d: no brain saw the other in 30 s, so nothing was checked", c.stage)
+		}
+	}
+}
+
+// TestSlowingMustLast: the bot's own looks decide when a slowing is believed. A
+// jet 1.5 km ahead of a stage-11 ace holds his speed, then pulls the throttle to
+// idle with the boards out, then goes to full burner: the ace's track of him
+// must count the slowing only while it happens, pass `lasting` inside the
+// three seconds of it, and drop to nothing once he is speeding up again.
+func TestSlowingMustLast(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}, 1)
+	var bot *craft
+	for _, slot := range i.slots() {
+		if a := i.aircraft[slot]; a != nil && a.brain != nil {
+			bot = a
+		}
+	}
+	bot.brain.tactics.stage, bot.brain.tactics.omit = 11, 1920
+	me := i.aircraft[0]
+	me.model.State = flight.Level(me.model, flight.Vec3{X: 1500, Y: 4000}, flight.Vec3{X: 1}, 200, 3000)
+	bot.model.State = flight.Level(bot.model, flight.Vec3{Y: 4000}, flight.Vec3{X: 1}, 200, 3000)
+	fly := func(from, to uint64, inputs map[string]any) (most float64) {
+		for tick := from; tick < to; tick++ {
+			i.Step(tick, map[int][]game.Input{0: {{Sequence: uint32(tick + 1), Data: inputs}}})
+			if known, found := bot.brain.known[0]; found && known.lasted > most {
+				most = known.lasted
+			}
+		}
+		return most
+	}
+	if held := fly(0, 120, map[string]any{"throttle": 0.8}); held > 0 {
+		t.Fatalf("holding his speed, he was counted as slowing for %.2f s", held)
+	}
+	if slowed := fly(120, 300, map[string]any{"throttle": 0.0, "speedbrake": 1.0}); slowed < lasting {
+		t.Fatalf("three seconds at idle with the boards out counted only %.2f s of slowing", slowed)
+	}
+	fly(300, 480, map[string]any{"throttle": 1.0, "reheat": 1.0})
+	if known, found := bot.brain.known[0]; !found || known.lasted != 0 {
+		t.Fatalf("after three seconds of burner his slowing still counts %v", known)
 	}
 }
 

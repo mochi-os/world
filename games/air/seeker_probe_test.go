@@ -226,7 +226,7 @@ func TestSeekerPredictor(t *testing.T) {
 			heading := flight.Vec3{X: math.Cos(off + aspect*math.Pi/180), Z: math.Sin(off + aspect*math.Pi/180)}
 			shooter := round.Target{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 250}}
 			prey := round.Target{Position: flight.Vec3{Y: 3000}.Add(line.Scale(span)), Velocity: heading.Scale(200)}
-			says := reaches(shooter, prey, line, flight.Vec3{}, 250000, span, false)
+			says := reaches(shooter, prey, line, flight.Vec3{}, 250000, span, false, 0)
 
 			frames, m, closest := seek(t, span, off, aspect*math.Pi/180, 200, 0)
 			_, why := broke(frames)

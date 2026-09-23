@@ -126,6 +126,49 @@ func TestDuelSaddleFinish(t *testing.T) {
 	}
 }
 
+// TestDuelBleedKeepsTheArbiter: a bleed (stage 9) is slow on purpose, so the
+// "too slow to fight" reflex must leave it to the arbiter. When the bleed's
+// commitment runs out, the arbiter re-plans before the reflex is asked, and the
+// jet keeps whatever it chooses. The reflex still takes a slow jet committed to
+// anything else. Here the target is 1.6 km ahead and flying away: no threat and
+// no saddle to excuse the reflex on its own terms.
+func TestDuelBleedKeepsTheArbiter(t *testing.T) {
+	i, ace, prey := duellist(t, "drone")
+	b := ace.brain
+	b.tactics.stage, b.tactics.omit = 9, 1<<7|1<<8 // bleed on stage 6 alone
+	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
+	ahead := base.Add(flight.Vec3{X: 1600})
+	tick := uint64(0)
+	for ; tick < 90; tick++ { // the picture forms at a fighting speed
+		aloft(ace, base, flight.Vec3{X: 200})
+		aloft(prey, ahead, flight.Vec3{X: 200})
+		i.Step(tick, nil)
+	}
+	slow := flight.Vec3{X: 100}
+	if gate := 0.55 * corner(ace.model); slow.X >= gate {
+		t.Fatalf("the jet must sit under the reflex's gate: 100 m/s against %.0f", gate)
+	}
+	decide := func(play string, until uint64) {
+		b.play, b.until, b.spent, b.decided = play, until, false, 0 // decided 0: this tick is a decision
+		aloft(ace, base, slow)
+		aloft(prey, ahead, slow.Scale(2))
+		i.Step(tick, nil)
+		tick++
+	}
+	decide("bleed", tick+60)
+	if b.mode == "rebuild" {
+		t.Fatal("the reflex took a jet in the middle of a committed bleed")
+	}
+	decide("bleed", tick)
+	if b.mode == "rebuild" || b.picked != tick-1 {
+		t.Fatalf("the bleed's commitment ran out and the reflex answered before the arbiter: mode %q, last re-plan at tick %d, this tick %d", b.mode, b.picked, tick-1)
+	}
+	decide("high", tick+60)
+	if b.mode != "rebuild" {
+		t.Fatalf("a jet 100 m/s under the gate, committed to high with nothing near it, was not rebuilt: mode %q", b.mode)
+	}
+}
+
 // TestDuelThreatenedNeverUnloads: a slow teamless ace with a gun 300 m behind it
 // must fight, not fly a wings-level energy recovery in front of the muzzle.
 func TestDuelThreatenedNeverUnloads(t *testing.T) {

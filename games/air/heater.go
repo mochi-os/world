@@ -25,6 +25,15 @@ import (
 // (m/s2, zero flies him straight); lit is his afterburner (0..1), which sets
 // the seeker's acquisition reach and caps the zone.
 func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, wrap float64) round.Zone {
+	return heat(shooter, target, swing, lit, wrap, 0)
+}
+
+// heat is Heat with the target's flight chosen: a bottom above zero flies him
+// losing speed at the rate his swing measures along his path down to that
+// speed, m/s, the turn RATE held, as evolve() forecasts a stage-11 track that
+// has been slowing for `lasting` (track.floor), so the zone and the plays that
+// consult it agree on where he will be. Zero holds his speed.
+func heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, wrap float64, bottom float64) round.Zone {
 	sight := shortest(shooter.Position, target.Position, wrap)
 	distance := math.Max(sight.Length(), 1)
 	direction := sight.Scale(1 / distance)
@@ -33,7 +42,7 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// line of sight and either flies on or bends 7.5 g away. No flares (the zone
 	// cannot know them) and no seeker acquisition roll.
 	arrives := func(trial float64, breaking bool) bool {
-		return reaches(shooter, target, direction, swing, wrap, trial, breaking)
+		return reaches(shooter, target, direction, swing, wrap, trial, breaking, bottom)
 	}
 
 	// Bisect the range band satisfying a criterion, walking the floor outward
@@ -147,10 +156,15 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 // present line of sight and reports whether it fuses. This is the ladder's
 // whole opinion of a shot: every rung in Heat is a bisection over it, and the
 // bot's gate is a question about it. breaking bends the target into the beam
-// at 7.5 g; otherwise it holds its measured turn.
-func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, wrap float64, trial float64, breaking bool) bool {
+// at 7.5 g; otherwise it holds its measured turn, and above a bottom it also
+// loses speed down to it at its measured rate (heat).
+func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, wrap float64, trial float64, breaking bool, bottom float64) bool {
 	const dt = 1.0 / 60
 	virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
+	initial, along := target.Velocity.Length(), 0.0 // his speed and his slowing, m/s and m/s^2, at the moment the zone is drawn
+	if initial > 1 {
+		along = swing.Dot(target.Velocity.Scale(1 / initial))
+	}
 	forward := shooter.Velocity
 	if forward.Length() > 1 {
 		forward = forward.Normalize()
@@ -245,6 +259,17 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 					turned := heading.Add(beam.Subtract(heading.Scale(beam.Dot(heading))).Normalize().Scale(7.5 * 9.80665 / speed * dt))
 					virtual.Velocity = turned.Normalize().Scale(speed)
 				}
+			} else if bottom > 0 && along < 0 {
+				// Flying on as now, for a jet losing speed: his turn rate held
+				// and his speed falling at the measured rate to the bottom, which
+				// is the curve evolve() flies a slowing track along.
+				if turn := swing.Subtract(heading.Scale(swing.Dot(heading))); turn.Length() > 1 {
+					heading = heading.Add(turn.Scale(dt / initial)).Normalize()
+				}
+				if speed > bottom {
+					speed = math.Max(bottom, speed+along*dt)
+				}
+				virtual.Velocity = heading.Scale(speed)
 			} else if turn := swing.Subtract(heading.Scale(swing.Dot(heading))); turn.Length() > 1 {
 				// Flying on as now means holding his present turn: the
 				// velocity rotates at his measured rate, speed held, the
