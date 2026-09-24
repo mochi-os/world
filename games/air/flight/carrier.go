@@ -185,5 +185,11 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 		pull = 0 // the arresting engine dissipates: no recoil — even a 12%-of-payout residual dragged the stopped jet 68 m backwards down the deck (#72 scenario 9)
 	}
 	direction := legA.Normalize().Add(legB.Normalize()).Normalize()
-	m.apply(s, direction.Scale(pull), tip, total)
+	// The shank is a pinned link and carries no moment, so the airframe feels
+	// the pull at the hook PIVOT, along the tip's geometry. Applied at the tip,
+	// 2.6 m below the CG, the V's lateral component rolls the jet with five
+	// times the pivot's arm while the retard pitches it 8° nose down: a catch
+	// a metre off the wire's centre lifts the inner main and rolls it over.
+	pivot := s.Position.Add(s.Attitude.Rotate(m.Airframe.Hook.Position.Subtract(m.center)))
+	m.apply(s, direction.Scale(pull), pivot, total)
 }

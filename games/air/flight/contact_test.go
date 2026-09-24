@@ -169,23 +169,21 @@ func TestUnhook(t *testing.T) {
 	}
 }
 
-// TestTrap: an on-speed pass over the wires with the hook down stops the
-// jet within the deck run.
+// TestTrap: an on-speed pass over the wires with the hook down lands on the
+// deck, meets nothing but the wire, and stops within the deck run.
 func TestTrap(t *testing.T) {
 	m := aboard()
-	m.State.Position = Vec3{X: -300, Y: 25.5, Z: 0} // low enough to touch down BEFORE the wires and scrape in: the deck-height wire catch no longer snags mid-air crossings (the old 4 m band did, and this pass leaned on it)
-	m.State.Velocity = Vec3{X: 59, Y: -3.4}         // 65 -> 59 with deck ground effect (#132): the cushion floated the faster pass into a bounce clean over all the wires; 59 catches the middle wire across the whole 0.30-0.42 throttle range
-	m.State.Attitude = Axis(Vec3{Z: 1}, 0.10)
-	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
-	m.State.Engine[0] = EngineState{Spool: 0.7}
-	m.State.Engine[1] = EngineState{Spool: 0.7}
+	approach(m, 0)
 	caught := false
 	for i := 0; i < 240*10; i++ {
-		throttle := 0.42 // 0.45 -> 0.42 with the #131 polar calibration; the 2026-07-21 drag recalibration (K 0.19 -> 0.14 + the cl>1.1 polar break) nets out at the approach CL, so the scripted pass trims where #131 left it
+		throttle := 0.5
 		if caught {
 			throttle = 0 // throttle to idle in the wire, as the real procedure has it — the gentler low-energy arrest otherwise lets approach power creep the trapped jet
 		}
 		m.Step(Inputs{Gear: true, Hook: true, Flap: 2, Throttle: throttle})
+		if m.State.Gear.Contact >= 0 {
+			t.Fatalf("probe %d fired at %.2f s, x=%.0f y=%.1f", m.State.Gear.Contact, float64(i)/240, m.State.Position.X, m.State.Position.Y)
+		}
 		if m.State.Gear.Wire >= 0 {
 			caught = true
 		}
@@ -198,6 +196,87 @@ func TestTrap(t *testing.T) {
 	}
 	if m.State.Position.X > 60 {
 		t.Fatalf("rollout past the deck: x=%.0f", m.State.Position.X)
+	}
+}
+
+// approach sets up the trimmed pass the trap tests fly: on speed with full
+// flaps, sinking 3.5 m/s on a path that touches down short of the wires,
+// `offset` metres left of the landing line. A slower or steeper pass sinks
+// below the deck and meets the stern, where the from-below strut clamp
+// bounces it onto the deck: a probe, never a landing.
+func approach(m *Model, offset float64) {
+	m.State.Position = Vec3{X: -260, Y: 30.1, Z: -offset}
+	m.State.Velocity = Vec3{X: 70, Y: -3.5}
+	m.State.Attitude = Axis(Vec3{Z: 1}, 0.09)
+	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	m.State.Engine[0] = EngineState{Spool: 0.5}
+	m.State.Engine[1] = EngineState{Spool: 0.5}
+}
+
+// TestTrapOffset: a catch five metres left of the wire's centre. The V pulls
+// the tail toward the centre and the nose swings away, but the jet stays
+// close to level and stops upright.
+func TestTrapOffset(t *testing.T) {
+	m := aboard()
+	approach(m, 5)
+	caught := false
+	leaned, swung := 0.0, 0.0
+	for i := 0; i < 240*12; i++ {
+		throttle := 0.5
+		if caught {
+			throttle = 0
+		}
+		m.Step(Inputs{Gear: true, Hook: true, Flap: 2, Throttle: throttle})
+		if m.State.Gear.Contact >= 0 {
+			t.Fatalf("probe %d fired at %.2f s", m.State.Gear.Contact, float64(i)/240)
+		}
+		if m.State.Gear.Wire >= 0 {
+			caught = true
+		}
+		if !caught {
+			continue
+		}
+		leaned = math.Max(leaned, math.Abs(bank(m)))
+		nose := m.State.Attitude.Rotate(Vec3{X: 1})
+		swung = math.Max(swung, math.Abs(math.Atan2(-nose.Z, nose.X)))
+	}
+	if !caught {
+		t.Fatal("hook never found a wire")
+	}
+	if speed := m.State.Velocity.Length(); speed > 3 {
+		t.Fatalf("trap did not stop the jet: %.1f m/s", speed)
+	}
+	if leaned > 8*math.Pi/180 {
+		t.Fatalf("leaned %.1f° on the wire", leaned*180/math.Pi)
+	}
+	if swung > 15*math.Pi/180 {
+		t.Fatalf("swung %.1f° off the landing line", swung*180/math.Pi)
+	}
+}
+
+// TestTipped: a jet set down on one main, leaning 24° with the brakes on,
+// falls back onto both wheels. Gravity restores anything short of the
+// geometric tip-over (half the track over the CG height: ~32°), and the
+// weight-on-wheels roll moment must help it, not push the other way.
+func TestTipped(t *testing.T) {
+	m := aboard()
+	park(m, -30, 5)
+	for i := 0; i < 240*3; i++ {
+		m.Step(Inputs{Gear: true, Brake: true})
+	}
+	lean := 24 * math.Pi / 180
+	wheel := m.Airframe.Gear.Right.Attach.Subtract(m.center)
+	m.State.Attitude = Axis(Vec3{X: 1}, lean) // right wing down
+	m.State.Position.Y = m.World.Carrier.Position.Y - (wheel.Y*math.Cos(lean) - wheel.Z*math.Sin(lean)) - 0.10
+	m.State.Velocity, m.State.Omega = Vec3{}, Vec3{}
+	for i := 0; i < 240*8; i++ {
+		m.Step(Inputs{Gear: true, Brake: true})
+		if b := bank(m); math.Abs(b) > 0.5 || m.State.Gear.Contact >= 0 {
+			t.Fatalf("went over at %.1f s: bank %.1f°, probe %d", float64(i)/240, b*180/math.Pi, m.State.Gear.Contact)
+		}
+	}
+	if b := bank(m); math.Abs(b) > 0.02 {
+		t.Fatalf("still leaning %.1f° after eight seconds", b*180/math.Pi)
 	}
 }
 

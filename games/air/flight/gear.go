@@ -49,10 +49,12 @@ func (m *Model) contact(s *State, in Inputs, total *Forces) {
 		// Ground roll stability: the contact patches cannot scrub sideways, so a
 		// restoring + damping roll moment that does NOT depend on airspeed - the
 		// low-speed arrest has no air for the flaperons. Scaled by extension.
+		// bank is NEGATIVE with the right wing down (right.Y falls below zero)
+		// and +X rolls right, so the restoring term carries bank's own sign.
 		up := s.Attitude.Rotate(Vec3{Y: 1})
 		right := s.Attitude.Rotate(Vec3{Z: 1})
 		bank := math.Atan2(right.Y, up.Y)
-		total.Moment = total.Moment.Add(Vec3{X: -(bank*6e5 + s.Omega.X*1.2e6) * down})
+		total.Moment = total.Moment.Add(Vec3{X: (bank*6e5 - s.Omega.X*1.2e6) * down})
 		if s.Gear.Wire >= 0 {
 			// Pitch RATE damping DURING THE ARREST only: the wire decelerates through a
 			// hook below the CG and the nose strut rebounds. Gated on the wire so it
