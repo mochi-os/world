@@ -191,6 +191,8 @@ func amend(t *tactics, name string, value float64) bool {
 		t.peril = value
 	case "tariff":
 		t.tariff = value
+	case "exposure":
+		t.exposure = value
 	case "steady":
 		t.steady = value
 	case "startled":
@@ -221,6 +223,8 @@ func amend(t *tactics, name string, value float64) bool {
 		t.span.pitch = value
 	case "span.climb":
 		t.span.climb = value
+	case "span.beam":
+		t.span.beam = value
 	default:
 		return false
 	}

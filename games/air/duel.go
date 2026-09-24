@@ -113,6 +113,7 @@ type order struct {
 	weight   float64 // the live jet's flown mass, kg (stage 6): the rollout's scratch model is never weighed - glide fell back to the empty airframe and its internal fuel, a clean jet some 470 kg lighter than a bandit carrying heaters
 	weighed  bool    // rehearse against the g ceiling the flight control system enforces, scheduled with gross weight (6.7 g on a combat-loaded jet), instead of the bare 7.5 g placard (stage 6, rollout.go glide)
 	gravity  bool    // rehearse with the turn geometry that pays gravity across the path (tactics.gravity, rollout.go glide): off, every rehearsed turn also climbs at about one g
+	rolling  bool    // rehearse steer()'s roll law and the load it holds back while the wings roll onto the plane they want (stage 14, rollout.go glide)
 	alpha    bool    // licensed past the lift peak (stage 9): exempt from the aero cap and corner discipline, and rehearsed with glide's post-stall branch. One play holds it - bleed
 }
 
@@ -881,6 +882,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 		o := chosen.law(&m)
 		o.gravity = b.tactics.gravity || b.tactics.truthful(gravity)
 		o.weighed = b.tactics.truthful(carried)
+		o.rolling = b.tactics.on(14)
 		if b.tactics.truthful(carried) {
 			o.weight = a.model.Mass()
 		}
@@ -964,6 +966,9 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				// I already stood, on the corner-speed scale appraise() judges
 				// energy on: a surplus is there to be spent for angles.
 				one -= b.tactics.tariff * stance.energy * clamp((math.Min(held, 0)-surplus(&sim.State, hisP, hisV))/(pace*pace/2), 0, 1)
+			}
+			if b.tactics.on(13) {
+				one -= b.tactics.exposure * stance.threat * exposed(&sim.State, hisP, hisV, i.missiles)
 			}
 			if flown := sim.State.Velocity.Length(); b.tactics.on(9) && flown < 80 && flown >= 0.9*hisV.Length() {
 				one++ // appraise fines any line below 80 m/s a full point, whoever it is flown against. Slow while he is slower still is not a fault, it is the fight being won where he chose to hold it - and with the fine absolute, the energy dump could never be chosen however it was priced
@@ -1107,6 +1112,15 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// refutes #174's premise from a second direction and closes the line of
 	// enquiry that treated the play mix as the defect.
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
+	if b.tactics.on(13) && astern(&a.model.State, prey) {
+		// Stage 13: a pilot astern with his nose on me follows whatever I do,
+		// so every play is rehearsed against him flying at me (rehearse's
+		// pursuit branch) rather than along his arc, which an extension simply
+		// leaves behind.
+		hunted := *prey
+		hunted.pursuit = true
+		prey = &hunted
+	}
 	hedging := b.tactics.on(7) && distance < 2500 && b.tactics.futures > 1
 	window := 0
 	if b.tactics.on(8) {
@@ -1173,6 +1187,8 @@ func (b *brain) horizon(p play) int {
 		span = b.tactics.span.pitch
 	case p.name == "climb" && b.tactics.span.climb > 0:
 		span = b.tactics.span.climb
+	case (p.name == "left" || p.name == "right") && b.tactics.span.beam > 0:
+		span = b.tactics.span.beam
 	}
 	return max(60*2+30*b.skill.library, int(span*60))
 }
@@ -1188,6 +1204,256 @@ func (t *tactics) staged(name string) bool {
 		return t.on(10)
 	}
 	return true
+}
+
+// meeting reports whether stage 15 holds a committed merge (#19): from the
+// moment the run-in's head-on pass lies ahead, weapons still held, until he
+// crosses my 3/9 line. Only the run-in: a pass met mid-fight is the fight, and
+// the arbiter's to fly. Held there too, against the scripted mush, the merge
+// flew its line through a second nose-to-nose pass at 15 s and left the bandit
+// extending tail-on at 900 m with his nose on it, dead to his heater at 28 s in
+// 14 of 16 fights, where the arbiter's screw and press in the same geometry
+// lived. Every recorded
+// joust showed the arbiter trading near-tied plays at each re-plan through the
+// run-in, 326 to 886 degrees of roll before the pass; its horizons end before
+// anything decisive happens there, and the plays do not share a side, so in
+// 01a0d3a8 a switch from `left` through `press` to `high` rolled the jet from
+// 80 degrees of left bank to 70 of right half a second before the pass, and
+// turned a fight the pilot had set up as two-circle into one. A pilot decides
+// the merge before it and flies it through; so does this. Releasing it hands
+// the fight straight back to the arbiter.
+//
+// MEASURED (2026-09-24), three forms. The scripted humans, 64 seeds with stages
+// 6, 11 and 14 beneath it, kills / deaths:
+//
+//	                          mush v ace  hornet v ace  mush v super  hornet v super   net
+//	stage 14                    38/4         58/3          50/2           62/2        +197
+//	and 15 at every head-on     11/46        10/32          9/47           6/44       -133
+//	and 15 in the run-in only   10/32         9/40         26/25          16/36        -72
+//	and 15, the pass (plan)     17/23        31/21         37/11          34/23        +41
+//
+// On the held-out seeds 65-128: +193, -134, -72 and +82. The first two forms, a
+// held line and then the section doctrine's lead turn, are declined: they flew
+// a collision course, one play and about 100 degrees of roll before a pass the
+// pilot of 01a0d4ad met at 19 m. The third, the side kept or drawn, a 150 m
+// bubble and the lead turn by skill (plan, merge), is what stage 15 flies, and
+// its measure is the pilot's sorties: the scripts start nose to nose at 2.4 km
+// and their fights run in grooves the opening picks. The quick gates read as
+// stage 14's. For the first two forms: the scorer
+// re-tuned with it on did not move it: stack 0.5 or 0.1, threat 1.5 or 0.7,
+// offence 1.0 or 1.5, all -107 to -133. The scripted fights run in grooves that
+// barely change from seed to seed - at stage 14 the ace launches at about 20 s
+// and kills the hornet at 22-23 s in 13 of 16, at stage 15 it dies to the mush at
+// 26-31 s in 14 of 16 - and the opening picks the groove; the weights do not.
+// Bisected at 16 seeds (the ace; stage 14 reads 10/1 against the mush, 14/0
+// against the hornet):
+//
+//	no lead turn, the line held through the pass            7/7     5/8
+//	the lead turn in burner                                 6/10    5/7
+//	handed back to the arbiter at the lead-turn range      14/2     6/6
+//	flown at him on the way in                              4/7    12/2
+//	one arbiter choice at the lead-turn range, held         5/9     5/8
+//
+// Offsetting a collision-course approach away from him flipped side as the
+// turn moved him across the nose, 740 degrees of roll, and was dropped. The
+// scripts start exactly nose to nose at 2.4 km, where the recorded jousts pass
+// some 670 m apart, so no script flies the run-in a human does. The quick gates
+// at stage 15 (every-pass form) read as stage 14's but for the guns and missile
+// ladders, inverted (superhuman lost to the ace 6-2 and 11-4).
+func (b *brain) meeting(me *flight.State, prey *track, direction flight.Vec3, distance, bearing, tail float64, tick uint64, held bool) bool {
+	closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
+	if !b.merging {
+		if held && tail < -0.35 && bearing > 0.5 && closure > 100 && distance < 6000 { // the run-in, weapons held: he is coming at me, ahead of me, inside the joust's 5.5 km start
+			b.merging = true
+			b.turning, b.plan, b.course = 0, "", flight.Vec3{} // a fresh pass: its side and its turn are the plan's to pick
+			b.meet = crossing{began: tick}
+		}
+	} else if bearing <= 0 || closure <= 0 || (!b.meet.decided && tail >= -0.35) {
+		// Spent when he crosses my 3/9 line or the range opens, and called off if
+		// he turns away before my lead turn is decided: a merge held on a jet that
+		// has left flies a pursuit with the arbiter shut out. His aspect is no test
+		// once the turn is decided: abeam, a wide pass reads as no longer coming at
+		// me, and letting go there handed the arbiter the last half second before
+		// the pass, where 01a0d3a8's reversal happened.
+		b.merging = false
+		b.until = tick // the pass is spent: re-plan now
+	}
+	return b.merging
+}
+
+// crossing is stage 15's pass, decided once per merge and then only flown: the
+// side it passes him on, and the lead turn.
+type crossing struct {
+	abeam   flight.Vec3 // my side of him at the pass, world horizontal: chosen once and kept, so it cannot flip
+	turn    float64     // the lead turn: +1 toward his side (two-circle), -1 across the pass (one-circle), 0 late (after it)
+	timing  float64     // the lead turn's range as a multiple of the section doctrine's
+	sided   bool        // the side is chosen
+	decided bool        // the lead turn is chosen
+	began   uint64      // the tick the pass came up: the seed of this pass's draws
+}
+
+// bubble is the least a merge passes him by, offset the separation it aims for,
+// and margin where it re-aims: training merges fly a bubble, and a collision
+// course is no merge. Flown head-on with both noses on, stage 15's first form
+// passed a pilot at 19 m. A pilot who holds his nose on me erodes whatever
+// offset I fly, so the line is re-aimed well before the bubble is reached:
+// re-aimed only at the bubble itself, a pursuer turning at 15 deg/s was passed
+// at 104-143 m. (A hard break away in the last four seconds did the same job and
+// was dropped as the rougher of the two.)
+const (
+	bubble = 150.0
+	offset = 400.0
+	margin = 250.0
+)
+
+// plan decides stage 15's pass, each half once. The SIDE as the pass comes up:
+// the one the run-in already gives, when he will go by more than 100 m wide of
+// me, so a pilot sets up the pass by setting up his own line; on a collision
+// course a draw for the novice and the pilot, and for the instructor tiers the
+// side their rehearsal likes better. Never a fixed rule: a side a pilot could
+// count on is one he would set up for. The LEAD TURN a few seconds out, by
+// skill: the instructor tiers rehearse turning toward his side, across the pass
+// and holding on to turn after it, and fly the best, the ace a little early or
+// late; the pilot takes the section doctrine's energy rule, its timing off by
+// up to four tenths either way; the novice turns late, after the pass, or away
+// from him far too early.
+func (i *instance) plan(slot int, a *craft, b *brain, prey *track, tick uint64, direction flight.Vec3, distance float64) {
+	me := &a.model.State
+	closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
+	reach := math.Max(b.tactics.lead.floor, closure*b.tactics.lead.closure)
+	draw := func(salt uint64) float64 { return battle.Roll(i.environment.Seed, uint64(slot)+salt, b.meet.began) } // one salt per decision: counters under one salt drew the novice's turn below a half for eight seeds running
+	rehearsed := func(abeam flight.Vec3, turn, timing float64) float64 {
+		horizon := int(math.Min(distance/math.Max(closure, 50)+4, 15) * 60)
+		sim := flight.New(a.model.Airframe, a.model.Environment, a.model.World)
+		score, _ := i.rehearse(a, b, sim, passing(abeam, turn, timing, &b.tactics), prey, tick, horizon, horizon)
+		return score
+	}
+	if !b.meet.sided {
+		b.meet.sided = true
+		rel, relative := prey.position.Subtract(me.Position), prey.velocity.Subtract(me.Velocity)
+		at := 0.0
+		if speed := relative.Dot(relative); speed > 1 {
+			at = clamp(-rel.Dot(relative)/speed, 0, 60)
+		}
+		miss := rel.Add(relative.Scale(at)) // where he goes by me
+		miss.Y = 0
+		line := flight.Vec3{X: rel.X, Z: rel.Z}.Normalize()
+		side := flight.Vec3{X: -line.Z, Z: line.X}
+		switch {
+		case miss.Length() >= 100:
+			side = miss.Scale(-1 / miss.Length())
+		case b.skill.library >= 3:
+			// Rehearsed; head-on the two sides mirror each other, and a near tie
+			// settled by rounding would always go the same way.
+			if one, other := rehearsed(side, 1, 1), rehearsed(side.Scale(-1), 1, 1); math.Abs(one-other) < 0.02 {
+				if draw(173) < 0.5 {
+					side = side.Scale(-1)
+				}
+			} else if other > one {
+				side = side.Scale(-1)
+			}
+		case draw(173) < 0.5:
+			side = side.Scale(-1)
+		}
+		b.meet.abeam = side
+	}
+	if b.meet.decided || distance > 3*reach {
+		return
+	}
+	b.meet.decided = true
+	switch {
+	case b.skill.library >= 3:
+		b.meet.timing = 1
+		if !b.skill.machine {
+			b.meet.timing = 0.9 + 0.2*draw(181)
+		}
+		best := math.Inf(-1)
+		for _, turn := range []float64{1, -1, 0} {
+			if score := rehearsed(b.meet.abeam, turn, b.meet.timing); score > best {
+				best, b.meet.turn = score, turn
+			}
+		}
+	case b.skill.library == 2:
+		speed, his := me.Velocity.Length(), prey.velocity.Length()
+		mine := me.Position.Y + speed*speed/19.62
+		theirs := prey.position.Y + his*his/19.62
+		b.meet.turn, b.meet.timing = 1, 0.6+0.8*draw(181)
+		if mine < theirs-b.tactics.plan.deficit {
+			b.meet.turn = -1
+		}
+	case draw(179) < 0.5:
+		b.meet.turn, b.meet.timing = 0, 0 // late: holds its line through the pass
+	default:
+		// Early: the turn away from his side two kilometres before the pass,
+		// handing him the angles. Early toward him instead carried the jet across
+		// his path and inside the bubble, 42-105 m in seven passes of twelve.
+		b.meet.turn, b.meet.timing = -1, 2.5
+	}
+	b.plan = map[float64]string{1: "two", -1: "one", 0: "late"}[b.meet.turn]
+}
+
+// passing is one way of flying the pass, as a play the rehearsal can fly: at a
+// point beside where he will be when we pass, until the lead turn is due; then
+// the turn, and after the pass the turn it began, or toward his side for a late
+// one.
+func passing(abeam flight.Vec3, turn, timing float64, t *tactics) play {
+	return play{name: "merge", law: func(m *moment) order {
+		flat := m.flat()
+		side := math.Copysign(1, flat.Z*abeam.X-flat.X*abeam.Z) // swing's sign toward his side of me
+		if m.direction.Dot(flat) <= 0 || (turn != 0 && m.distance < timing*math.Max(t.lead.floor, m.closure*t.lead.closure)) {
+			sense := turn
+			if sense == 0 {
+				sense = 1
+			}
+			return order{aim: m.swing(sense * side * t.lead.angle), g: m.pull, throttle: 0.7}
+		}
+		ahead := m.distance / math.Max(m.closure, 50)
+		point := m.prey.Add(m.velocity.Scale(ahead)).Add(abeam.Scale(offset))
+		return order{aim: level(point.Subtract(m.me.Position).Normalize()), g: m.pull, throttle: 1, reheat: 1}
+	}}
+}
+
+// merge flies stage 15's committed pass, as plan decided it. On the way in it
+// holds a line, keeping its own climb angle within level's limits, aimed to pass
+// beside him on the chosen side; it re-aims only when the pass would come inside
+// the margin or go wider than a fight can be joined from, and always to the same
+// side. Flying straight at him closed the separation the lead turn needs and
+// rolled the jet 40-60 degrees each way to move its nose one or two, 530-735
+// degrees before the pass; an aim that followed its own heading held nothing
+// and drifted on a steady 20 degrees of bank; a line held level while the jet
+// climbed as it accelerated asked for a two-degree push the steering flew as
+// rolls either way; and an offset re-picked from where he sat flipped side as
+// the turn moved him across the nose, 740 degrees. Then the lead turn when it
+// is due, its side latched for the plays that follow the pass (#251's grain).
+func (b *brain) merge(m *moment, tick uint64) {
+	b.play, b.licensed = "merge", false
+	flat := m.flat()
+	side := math.Copysign(1, flat.Z*b.meet.abeam.X-flat.X*b.meet.abeam.Z)
+	if b.turning == 0 && b.meet.decided && b.meet.turn != 0 && m.distance < b.meet.timing*math.Max(b.tactics.lead.floor, m.closure*b.tactics.lead.closure) {
+		b.turning, b.turned = side, tick
+	}
+	relative := m.velocity.Subtract(m.me.Velocity)
+	at := 0.0
+	if speed := relative.Dot(relative); speed > 1 {
+		at = clamp(-m.prey.Subtract(m.me.Position).Dot(relative)/speed, 0, 60)
+	}
+	apart := m.me.Position.Subtract(m.prey.Add(relative.Scale(at))).Dot(b.meet.abeam) // my side of him at the pass, on my present line
+	if b.turning != 0 {
+		o := order{aim: m.swing(b.meet.turn * b.turning * b.tactics.lead.angle), g: m.pull, throttle: 0.7} // corner the pull, don't rocket past it
+		if b.meet.turn < 0 {
+			o.throttle = 0.75 // the radius fight is tighter, not powerless
+		}
+		b.aim, b.g, b.throttle, b.reheat, b.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
+		return
+	}
+	if b.course.Length() < 0.5 || apart < margin || apart > 1000 {
+		ahead := m.distance / math.Max(m.closure, 50)
+		point := m.prey.Add(m.velocity.Scale(ahead)).Add(b.meet.abeam.Scale(offset)).Subtract(m.me.Position)
+		b.course = flight.Vec3{X: point.X, Z: point.Z}.Normalize()
+	}
+	climb := clamp(m.me.Velocity.Y/math.Max(m.me.Velocity.Length(), 1), -0.15, 0.25)
+	b.aim = flight.Vec3{X: b.course.X, Y: climb, Z: b.course.Z}.Normalize()
+	b.g, b.throttle, b.reheat, b.brake = m.pull, 1, 1, 0
 }
 
 // candidate is one rehearsed play on its way to the hypotheses stage: `raw` is
@@ -1244,6 +1510,46 @@ func peril(me *flight.State, hisP, hisV flight.Vec3) float64 {
 // his lead point - while the jet flown dived away: the winner's own rehearsed
 // path landed 560-1,070 m from the flown one at 8 s and 950-1,700 m at 12 s in
 // all three dives. The defect is that divergence, not the missing price.
+
+// astern reports a pilot aft of my 3/9 line, inside 3 km, with his flight
+// path within 45 degrees of me: the pilot who will follow whatever I fly
+// (stage 13).
+func astern(me *flight.State, prey *track) bool {
+	line := prey.position.Subtract(me.Position) // me -> him
+	r := line.Length()
+	if r < 1 || r > 3000 || prey.velocity.Length() < 1 {
+		return false
+	}
+	return me.Attitude.Unrotate(line).X < 0 && prey.velocity.Normalize().Dot(line.Scale(-1/r)) > math.Cos(math.Pi/4)
+}
+
+// exposed is how well his weapons could hold me at one rehearsed instant
+// (stage 13): his flight path on me, times the line of sight swinging slower
+// than a seeker can follow (missile_track, 0.35 rad/s), times my being inside
+// his gun band or, with heaters flying, his seeker's reach. It is the value of
+// a break, which the scorer could not see: appraise()'s threat term and peril()
+// price where he sits and where he points, never how fast the line between us
+// turns, so against a pilot astern every play scored badly and an extension
+// straight away from him scored least badly - while holding the line his
+// heater tracks best (#31: every recorded episode ended with his 9M, and the
+// heaters in those fights broke lock at 0.35-0.74 rad/s).
+func exposed(me *flight.State, hisP, hisV flight.Vec3, heaters bool) float64 {
+	line := me.Position.Subtract(hisP) // him -> me
+	r := math.Max(line.Length(), 1)
+	line = line.Scale(1 / r)
+	if hisV.Length() < 1 {
+		return 0
+	}
+	nosed := clamp((hisV.Normalize().Dot(line)-0.7)/0.3, 0, 1) // his flight path within about 45 degrees of me, whole when dead on
+	relative := me.Velocity.Subtract(hisV)
+	swing := relative.Subtract(line.Scale(relative.Dot(line))).Length() / r // rad/s the line from him to me turns
+	held := clamp(1-swing/missile_track, 0, 1)
+	reach := clamp((1500-r)/800, 0, 1) // his gun
+	if heaters {
+		reach = math.Max(reach, clamp((missile_range-r)/1000, 0, 1)*clamp((r-300)/300, 0, 1))
+	}
+	return nosed * held * reach
+}
 
 // surplus is my specific energy over his, J/kg: what stage 12 charges a rehearsed
 // line for giving up.
@@ -1592,7 +1898,11 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	if b.tactics.on(7) && b.surprised(prey, tick) {
 		b.until = tick // the forecast the committed line was chosen against has failed: re-plan now, not when the commitment runs out
 	}
-	if b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) || (overshot && tick-b.picked >= 10) {
+	held := b.tactics.on(15) && b.meeting(me, prey, direction, distance, bearing, tail, tick, !i.free())
+	if held {
+		i.plan(slot, a, b, prey, tick, direction, distance)
+	}
+	if !held && (b.play == "" || tick >= b.until || (offensive && menace >= 0 && gap < 700 && tick-b.picked >= 15) || (overshot && tick-b.picked >= 10)) {
 		// The tick's rehearsal allowance (#256): cost is bounded by CONSTRUCTION - a
 		// roster of any size spends only so many re-plans per tick, and the rest
 		// wait. Deterministic by slot order, never wall clock, as the gates need.
@@ -1635,6 +1945,12 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	m.prey = predict(prey, age, b.skill.library >= 3)
 	m.velocity = prey.velocity.Add(prey.swing.Scale(age))
 	m.derive()
+	if held {
+		b.merge(&m, tick)
+		b.mode = b.play
+		b.shoot = true
+		return
+	}
 	// The merge side is committed ONCE per pass (#251): re-picking it per tick as
 	// the geometry drifts reads as roll dithering. b.turning holds the side in the
 	// classic path, and the arbiter keeps it too.

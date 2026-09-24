@@ -213,7 +213,7 @@ func (b *Bandit) Instruments() (alpha, beta, nz, mach, cas float64) {
 // (tactics.omit): stage 8 with 128 omitted is truth and ends without hypotheses.
 func (b *Bandit) Stage(stage, omit int) {
 	if b.craft != nil && b.craft.brain != nil {
-		b.craft.brain.tactics.stage, b.craft.brain.tactics.omit = stage, omit
+		b.craft.brain.tactics.evaluate(stage, omit)
 	}
 }
 

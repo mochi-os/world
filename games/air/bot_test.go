@@ -232,6 +232,79 @@ func TestTariffChargesTheDeficit(t *testing.T) {
 	}
 }
 
+// TestExposedIsTheHoldHisWeaponsHave: stage 13's charge. A pilot dead astern
+// with his flight path on me, both jets flying the same way, holds me
+// completely; turning across his nose fast enough to swing the line past a
+// seeker's ceiling frees me; so does his nose pointing elsewhere, and so does
+// range: out of his heater's reach, or his gun's without heaters.
+func TestExposedIsTheHoldHisWeaponsHave(t *testing.T) {
+	level := func(velocity flight.Vec3) *flight.State {
+		return &flight.State{Position: flight.Vec3{Y: 4000}, Velocity: velocity}
+	}
+	behind := flight.Vec3{X: -800, Y: 4000}
+	chasing := flight.Vec3{X: 200}
+	for _, c := range []struct {
+		name    string
+		me      *flight.State
+		his     flight.Vec3
+		where   flight.Vec3
+		heaters bool
+		least   float64
+		most    float64
+	}{
+		{"dead astern, both flying the same way", level(flight.Vec3{X: 200}), chasing, behind, true, 0.99, 1},
+		{"breaking across his nose at 800 m", level(flight.Vec3{Z: 300}), chasing, behind, true, 0, 0.01},
+		{"his nose 90 degrees off me", level(flight.Vec3{X: 200}), flight.Vec3{Z: 200}, behind, true, 0, 0},
+		{"out of his heater's reach", level(flight.Vec3{X: 200}), chasing, flight.Vec3{X: -6000, Y: 4000}, true, 0, 0},
+		{"guns only at 1,700 m", level(flight.Vec3{X: 200}), chasing, flight.Vec3{X: -1700, Y: 4000}, false, 0, 0},
+		{"guns only at 600 m", level(flight.Vec3{X: 200}), chasing, flight.Vec3{X: -600, Y: 4000}, false, 0.99, 1},
+	} {
+		if got := exposed(c.me, c.where, c.his, c.heaters); got < c.least || got > c.most {
+			t.Errorf("%s: exposed %.3f, want %.2f-%.2f", c.name, got, c.least, c.most)
+		}
+	}
+}
+
+// TestPursuedExtensionCostsMore: at stage 13, with a pilot 800 m astern and his
+// nose on me, the rehearsal flies him after me and charges his weapons' hold,
+// so extending straight away is charged more than a break across his nose.
+func TestPursuedExtensionCostsMore(t *testing.T) {
+	i, ace, _ := duellist(t, "drone")
+	b := ace.brain
+	find := func(name string) play {
+		for _, p := range plays {
+			if p.name == name {
+				return p
+			}
+		}
+		t.Fatalf("no play %q", name)
+		return play{}
+	}
+	chaser := &track{when: 60, position: flight.Vec3{X: -800, Y: 4000}, velocity: flight.Vec3{X: 200}, floor: slowest}
+	charge := func(name string) float64 {
+		score := func(stage int) float64 {
+			ace.model.State = flight.Level(ace.model, flight.Vec3{Y: 4000}, flight.Vec3{X: 1}, 200, 3000)
+			b.tactics.stage, b.tactics.omit = stage, 1<<7|1<<8|1<<10
+			prey := chaser
+			if stage >= 13 && astern(&ace.model.State, chaser) {
+				hunted := *chaser
+				hunted.pursuit = true
+				prey = &hunted
+			}
+			sim := flight.New(ace.model.Airframe, ace.model.Environment, ace.model.World)
+			p := find(name)
+			value, _ := i.rehearse(ace, b, sim, p, prey, 60, b.horizon(p), 0)
+			return value
+		}
+		return score(12) - score(13)
+	}
+	extend, left, right := charge("extend"), charge("left"), charge("right")
+	t.Logf("charged against a pursuer astern: extend %.3f, left %.3f, right %.3f", extend, left, right)
+	if extend <= left || extend <= right {
+		t.Errorf("extending straight away was charged %.3f, not more than the breaks (left %.3f, right %.3f)", extend, left, right)
+	}
+}
+
 // TestSlowingMustLast: the bot's own looks decide when a slowing is believed. A
 // jet 1.5 km ahead of a stage-11 ace holds his speed, then pulls the throttle to
 // idle with the boards out, then goes to full burner: the ace's track of him
@@ -300,5 +373,31 @@ func TestNoHeaterZoneWithoutMissiles(t *testing.T) {
 			t.Errorf("a guns-only match built the heater zone %d times in 60 s", built)
 		}
 		t.Logf("missiles %v: heater zone built %d times in 60 s", missiles, built)
+	}
+}
+
+// TestStageCarriesItsWeights: a bandit put at stage 14 flies the scorer weights
+// the re-tune fitted on its truthful rehearsal, all four of stage 6's
+// corrections with them; below stage 14, or with 14 omitted, it keeps the
+// weights it had.
+func TestStageCarriesItsWeights(t *testing.T) {
+	for _, arm := range []struct {
+		stage, omit int
+		tuned       bool
+	}{{14, 14208, true}, {15, 0, true}, {13, 1152, false}, {14, 14208 | 1<<14, false}} {
+		b := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, false)
+		b.Stage(arm.stage, arm.omit)
+		got, base := b.craft.brain.tactics.truth, standard().truth
+		tuned := got.parts == 0 && got.stack == 0.2 && got.threat == 1.0 && got.offence == 1.25
+		untouched := got == base
+		if arm.tuned && !tuned {
+			t.Errorf("stage %d omit %d: parts %d stack %.2f threat %.2f offence %.2f, not the weights stage 14 carries", arm.stage, arm.omit, got.parts, got.stack, got.threat, got.offence)
+		}
+		if !arm.tuned && !untouched {
+			t.Errorf("stage %d omit %d: the scorer weights moved without stage 14 flying", arm.stage, arm.omit)
+		}
+		if b.craft.brain.tactics.stage != arm.stage || b.craft.brain.tactics.omit != arm.omit {
+			t.Errorf("stage %d omit %d: the brain flies stage %d omit %d", arm.stage, arm.omit, b.craft.brain.tactics.stage, b.craft.brain.tactics.omit)
+		}
 	}
 }

@@ -332,6 +332,14 @@ type tactics struct {
 	// track.floor); flown on stage 6 alone it is stage 11 with 7-10 omitted,
 	// &stage=11&omit=1920 in the developer client. Stage 12 charges a rehearsed
 	// line for the energy lead over him it gives up (duel.go surplus, tactics.tariff).
+	// Stage 13 rehearses against a pilot astern who follows, and charges every
+	// instant his weapons could hold me (duel.go exposed, tactics.exposure).
+	// Stage 14 rehearses steer()'s roll law and the pull it holds back while the
+	// wings roll (rollout.go glide, order.rolling), and flies all four of stage
+	// 6's corrections with the scorer re-tuned on that rehearsal (evaluate):
+	// &stage=14&omit=14208 in the developer client.
+	// Stage 15 flies each head-on pass as one committed merge (duel.go meeting
+	// and merge): &stage=15&omit=14208 in the developer client.
 	omit int
 	// futures and hedge shape stage 7's re-ranking (duel.go hedge): how many
 	// opponent futures the leading plays are rehearsed against, and how much of a
@@ -345,6 +353,28 @@ type tactics struct {
 	// tariff is stage 12's price on energy lead given up, per corner-speed unit
 	// of specific energy (duel.go surplus), before the posture's energy weight.
 	tariff float64
+	// exposure is stage 13's weight on how well his weapons could hold me
+	// (duel.go exposed), before the posture's threat weight.
+	//
+	// MEASURED AND DECLINED (2026-09-24), 64 seeds against the scripted humans,
+	// the bandit's kills / deaths and the share of the fight it stayed engaged:
+	//
+	//                       mush v ace     hornet v ace   mush v super   hornet v super
+	//   stage 12, omit 1152  33/27  89%    19/25  56%     32/28  80%     17/23  60%
+	//     + 13, exposure 1.5 24/38  48%    10/36  64%     21/40  46%     17/30  68%
+	//     + 13, exposure 4   27/30  50%    10/25  64%     26/33  50%      7/22  70%
+	//   stages 6 and 11      19/20  91%    45/6   52%     34/18  79%     59/3   36%
+	//     + 13, exposure 1.5 22/36  46%     6/25  68%     12/46  40%      5/44  69%
+	//
+	// Choice at the recorded re-plans of the hornet fights it was built for did
+	// not move: `high` still won at 1.5 and at 4. On the stage 12 stack it loses
+	// more than it wins at either weight and halves the engagement against the
+	// mush, and on the stack that already beats the hornet it turns 59/3 into 5/44.
+	// The fault there is execution, not choice: the plays aim at him, and the jet
+	// cannot bring the nose round (the capped wing and #27's delivery in a steady
+	// pull, then steer()'s lift-plane gate once the aim is past 140 degrees, which
+	// glide() does not mirror).
+	exposure float64
 	// steady and startled tie stage 7's commitment to how well the opponent has
 	// been keeping to his forecast (duel.go surprised, and the re-plan site).
 	//
@@ -379,7 +409,27 @@ type tactics struct {
 	// high 8 is the only green point; it also cuts the spiral gate's donated
 	// perch from 143,883 m.s to 59,657 and reverses the recorded under-guns
 	// scene. It does not beat the current ace, which twelve seconds does.
-	span struct{ high, pitch, climb float64 }
+	//
+	// beam spans the two breaks, left and right, which turn to put him on the
+	// beam: rehearsed over the tier's four seconds, a break shows its cost and
+	// not its payoff against a pilot astern, while `high` shows twelve (#31).
+	//
+	// MEASURED 2026-09-24 and DECLINED. At twelve seconds a break wins 4 of 27
+	// recorded re-plans with a heater-armed pilot astern, and the bot then
+	// breaks where it should not. Scripted humans with heaters, 64 seeds,
+	// kills-deaths (mush v ace, hornet v ace, mush v superhuman, hornet v
+	// superhuman):
+	//
+	//   stage 11 alone               4 s  19-20  45-6   34-18  59-3
+	//                               12 s  22-29   6-30  25-25   6-43
+	//   stage 8 without bleed        4 s  25-11   5-34  21-3    4-28
+	//                               12 s  25-8    4-27  58-0    1-27
+	//   stage 12, omit 1152          4 s  33-27  19-25  32-28  17-23
+	//                                8 s  29-27  11-33  26-33  12-36
+	//                               12 s  30-28  14-31  27-34   5-43
+	//
+	// A break was not losing for want of rehearsal. It stays at 0.
+	span struct{ high, pitch, climb, beam float64 }
 	// gravity rehearses every play with the turn geometry the licensed bleed
 	// already uses (rollout.go glide). Off, which is the brain as it stands, a
 	// rehearsed turn bends the path toward the LIFT vector - already tilted up
@@ -418,6 +468,51 @@ type tactics struct {
 // on reports whether a structural stage's branch is flown: at or under the
 // stage under evaluation, and not omitted from the stack.
 func (t *tactics) on(stage int) bool { return t.stage >= stage && t.omit&(1<<stage) == 0 }
+
+// evaluate puts a brain at a structural stage, with the knobs that stage
+// carries: stage 14 flies its own scorer weights, fitted on the rehearsal it
+// makes truthful. The developer client (Bandit.Stage) and the doctrine battery
+// (AIR_STAGE) both come through here, so a sortie flies what the sweep
+// measured, and a knob set in the environment still overrides it.
+//
+// RE-TUNED 2026-09-24 against the scripted humans, under the ruling that the
+// bot is for fighting humans. Stages 6, 11 and 14 (omit 14208), 64 seeds, net
+// kills less deaths over the mush and the hornet against the ace and the
+// superhuman:
+//
+//	stages 6 and 11 as they stand, the stack that beats the hornet     +110
+//	with all four of stage 6's corrections                              +55
+//	and stage 14, on stage 6's weights                                  -26
+//	height over him (stack) 0.3 / 0.2 / 0.1 / 0          +62 / +134 / +67 / +104
+//	stack 0.2, his gun on me (threat) 1.0                              +155
+//	and the offence term 1.25                                          +197
+//
+// Left where they were: the cap (0.85: -92, 1.2: -80, and 1.1 on the pick
+// +75), the nose exponent (2: -28, 6: -25), `high`'s span (8 s: -21, 6 s:
+// -72), the nose toward him at any range (0.25: -29, 0.35: +65, 0.5: -51, and
+// it did not combine), the chase gradient and a larger offence (0.5-0.7 and
+// 1.5 all read +185 to +202 around the pick). Held out, seeds 65-128, the pick
+// reads +193 where the stack as it stands reads +94; over 128 seeds, per
+// matchup as above, 78/11 113/10 102/3 124/3 against 38/41 87/16 68/37 115/10.
+// The stage 12 stack does not take it: stack 0.2 there loses the mush fights
+// 10/41 and 8/48.
+//
+// The gates on the same binary, the pick against the stack as it stands: red
+// where the reference is green, TestDoctrineUnderHumanPressure (the ace sits
+// in a crude pursuer's rear quarter 35% of the fight against a 20% bar, shot
+// down no more) and TestSpiralDefection (perch donated 286k m.s against the
+// ~126k band: the height weight this lowers is the one #42 found load-bearing
+// in bot-against-bot spirals); red on both, TestLadderDuel (undecided guns
+// fights, 10 and 12 of 16); green on both, TestJink, TestPounceExposure, the
+// tier ladder against the hornet, the pilot against the mush, and the
+// head-to-head with the brain as it stands (guns 11-9, heaters 21-26).
+func (t *tactics) evaluate(stage, omit int) {
+	t.stage, t.omit = stage, omit
+	if t.on(14) {
+		t.truth.parts = 0 // all four of stage 6's corrections, the delivery of the g commanded included
+		t.truth.stack, t.truth.threat, t.truth.offence = 0.2, 1.0, 1.25
+	}
+}
 
 // The four corrections stage 6 carries, so a screen can fly them one at a time.
 // Each makes the rehearsal, or the jet it stands for, honest in one way.
@@ -467,6 +562,7 @@ func standard() tactics {
 	t.truth.point, t.truth.offence, t.truth.overtake = 0.15, 1, 0
 	t.peril = 1.3                // as appraise() weighs its own threat term
 	t.tariff = 0.5               // stage 12: the sweep's pick (duel.go surplus)
+	t.exposure = 4               // stage 13: the better of the two weights swept, declined (see the field)
 	t.steady, t.startled = 0, 42 // metres of miss per second of lookahead; steady 0 = never extend (see the field)
 	t.futures, t.hedge = 4, 0.25 // stage 7 (duel.go hedge): continue, unload, reverse, tighten; a quarter of the worst future beside the weighted mean
 	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
@@ -726,6 +822,9 @@ type brain struct {
 	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
 	futiled   int         // the target that futility was counted against; a new target resets the lesson
 	turned    uint64      // tick the lead turn was committed
+	merging   bool        // stage 15: a committed merge holds the controls until the pass ahead is spent (duel.go meeting)
+	course    flight.Vec3 // the line a committed merge holds on the way in, level (duel.go merge)
+	meet      crossing    // stage 15's pass, decided once per merge (duel.go plan, merge)
 	aimed     float64     // last tick's pointing error, sin of the angle off the aim
 	closing   float64     // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
 	jink      uint64      // tick to re-roll the jink direction

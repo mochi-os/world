@@ -220,3 +220,126 @@ func TestTruthIsWired(t *testing.T) {
 		}
 	}
 }
+
+// rolled flies four seconds from wings-level flight at 180 m/s toward an aim
+// held fixed in the world, the ace's capped and disciplined pull, either
+// through the real flight model and the brain's executor or through the
+// rehearsal's surrogate with or without stage 14's roll law. It reports the
+// bank every half second and the mean load over the first second.
+func rolled(t *testing.T, aim flight.Vec3, rehearsed, rolling bool) (bank []float64, load float64) {
+	t.Helper()
+	b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, false)
+	truthfully(b, 14)
+	b.Spawn(flight.Vec3{Y: 4000}, flight.Vec3{X: 180})
+	m, brain := b.craft.model, b.craft.brain
+	shadow := *brain
+	pace := corner(m)
+	aim = aim.Normalize()
+	for tick := 1; tick <= 60*4; tick++ {
+		flown := m.State.Velocity.Length()
+		g := disciplined(brain.skill.pull, flown, pace)
+		g = brain.skill.capped(g, flown, pace/math.Sqrt(m.Airframe.Limit.Positive))
+		o := order{aim: aim, g: g, throttle: 1, reheat: 1, gravity: true, weighed: true, rolling: rolling}
+		if rehearsed {
+			glide(m, o, 4*flight.Dt)
+		} else {
+			shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
+			in := shadow.steer(m, uint64(tick))
+			for sub := 0; sub < 4; sub++ {
+				m.Step(in)
+			}
+		}
+		if tick <= 60 {
+			load += m.State.Fcs.Normal / 60
+		}
+		if tick%30 == 0 {
+			v := m.State.Velocity.Normalize()
+			up := m.State.Attitude.Rotate(flight.Vec3{Y: 1})
+			up = up.Subtract(v.Scale(up.Dot(v))).Normalize()
+			sky := flight.Vec3{Y: 1}.Subtract(v.Scale(v.Y)).Normalize()
+			bank = append(bank, math.Acos(clamp(up.Dot(sky), -1, 1))*180/math.Pi)
+		}
+	}
+	return bank, load
+}
+
+// TestTruthRollsBeforeItPulls: at stage 14 the rehearsal rolls onto a turn as
+// steer()'s roll law does, easing in rather than slewing at the full rate, and
+// holds back the pull while the wings are off the plane they want. Turning in
+// toward an aim 90 degrees off, the bank it rehearses at 0.5 and 1 s is within
+// 10 degrees of the bank the jet flies (the surrogate as it stands is there in
+// 0.4 s, over 30 degrees early); reversing toward an aim 160 degrees behind,
+// its load over the first second is within 0.4 g of the jet's (as it stands it
+// pulls the whole load through the roll, over 3 g too much).
+func TestTruthRollsBeforeItPulls(t *testing.T) {
+	flown, _ := rolled(t, flight.Vec3{Z: -1}, false, false)
+	rehearsed, _ := rolled(t, flight.Vec3{Z: -1}, true, true)
+	optimistic, _ := rolled(t, flight.Vec3{Z: -1}, true, false)
+	t.Logf("turn-in bank at 0.5 and 1 s: flown %.0f %.0f, stage 14 %.0f %.0f, as it stands %.0f %.0f", flown[0], flown[1], rehearsed[0], rehearsed[1], optimistic[0], optimistic[1])
+	for k := range 2 {
+		if gap := math.Abs(rehearsed[k] - flown[k]); gap > 10 {
+			t.Errorf("stage 14 rehearsed %.0f degrees of bank at %.1f s where the jet flies %.0f", rehearsed[k], 0.5*float64(k+1), flown[k])
+		}
+	}
+	if optimistic[0]-flown[0] < 25 {
+		t.Errorf("as it stands the rehearsal banks %.0f degrees at 0.5 s against %.0f flown: the control no longer shows the full-rate roll, so this test has lost its reference", optimistic[0], flown[0])
+	}
+	behind := flight.Vec3{X: -0.94, Y: -0.34}
+	_, pulled := rolled(t, behind, false, false)
+	_, held := rolled(t, behind, true, true)
+	_, whole := rolled(t, behind, true, false)
+	t.Logf("reversal, load over the first second: flown %.2f g, stage 14 %.2f, as it stands %.2f", pulled, held, whole)
+	if gap := math.Abs(held - pulled); gap > 0.4 {
+		t.Errorf("stage 14 rehearsed %.2f g through the reversal's roll where the jet pulls %.2f", held, pulled)
+	}
+	if whole-pulled < 3 {
+		t.Errorf("as it stands the rehearsal pulls %.2f g through the roll against %.2f flown: the control no longer shows it, so this test has lost its reference", whole, pulled)
+	}
+}
+
+// TestRollingIsWired: the arbiter's own rehearsal (rehearse, not glide called
+// by hand) flies stage 14's roll law at stage 14 and not below it. The same
+// half second of `left` from wings-level flight at 170 m/s turns less when the
+// rehearsal rolls onto the turn before it pulls.
+func TestRollingIsWired(t *testing.T) {
+	var left play
+	for _, p := range plays {
+		if p.name == "left" {
+			left = p
+		}
+	}
+	turned := map[int]float64{}
+	for _, stage := range []int{13, 14} {
+		i := build(t, "furball", map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 1.0, "drone": 1.0}}, 0)
+		var ace, prey *craft
+		for _, slot := range i.slots() {
+			if c := i.aircraft[slot]; c != nil && c.brain != nil {
+				ace = c
+			} else if c != nil && c.bot {
+				prey = c
+			}
+		}
+		if ace == nil || prey == nil {
+			t.Fatal("the furball did not seat an ace and a drone")
+		}
+		ace.brain.tactics.stage, ace.brain.tactics.truth.parts = stage, 0
+		position, velocity := flight.Vec3{Y: 4000}, flight.Vec3{X: 170}
+		for tick := uint64(0); tick < 90; tick++ {
+			aloft(ace, position, velocity)
+			aloft(prey, position.Add(flight.Vec3{X: 3000, Z: 3000}), flight.Vec3{Z: 150})
+			i.Step(tick, nil)
+		}
+		if ace.brain.prey == nil {
+			t.Fatalf("stage %d: the ace never took the drone as its target", stage)
+		}
+		aloft(ace, position, velocity)
+		sim := flight.New(ace.model.Airframe, ace.model.Environment, ace.model.World)
+		i.rehearse(ace, ace.brain, sim, left, ace.brain.prey, 90, 30, 0)
+		v := sim.State.Velocity
+		turned[stage] = math.Abs(math.Atan2(v.Z, v.X)) * 180 / math.Pi
+	}
+	t.Logf("half a second of `left`: turned %.1f degrees at stage 13, %.1f at stage 14", turned[13], turned[14])
+	if turned[14] > 0.8*turned[13] {
+		t.Errorf("stage 14 rehearsed %.1f degrees of turn in half a second against %.1f at stage 13: the roll law is not reaching glide", turned[14], turned[13])
+	}
+}

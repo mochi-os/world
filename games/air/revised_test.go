@@ -39,10 +39,11 @@ var evaluating = 0
 
 func TestMain(m *testing.M) {
 	if stage, err := strconv.Atoi(os.Getenv("AIR_STAGE")); err == nil && stage > 0 {
+		omit, _ := strconv.Atoi(os.Getenv("AIR_OMIT"))
 		evaluating = stage
-		doctrine.stage = stage
+		doctrine.evaluate(stage, omit) // the knobs the stage carries, before the environment's own override them
 	}
-	for _, knob := range []string{"omit", "futures", "hedge", "peril", "tariff", "steady", "startled", "gravity", "truth.cap", "truth.parts", "truth.stack", "truth.keen", "truth.point", "truth.offence", "truth.overtake", "truth.threat", "truth.closing", "span.high", "span.pitch", "span.climb"} {
+	for _, knob := range []string{"omit", "futures", "hedge", "peril", "tariff", "exposure", "steady", "startled", "gravity", "truth.cap", "truth.parts", "truth.stack", "truth.keen", "truth.point", "truth.offence", "truth.overtake", "truth.threat", "truth.closing", "span.high", "span.pitch", "span.climb", "span.beam"} {
 		if value, err := strconv.ParseFloat(os.Getenv("AIR_"+strings.ToUpper(strings.ReplaceAll(knob, ".", "_"))), 64); err == nil {
 			amend(&doctrine, knob, value) // the stage's own sweeps: AIR_HEDGE=0.5, AIR_FUTURES=2, AIR_SPAN_HIGH=8
 		}
