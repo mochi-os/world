@@ -170,3 +170,65 @@ func TestSceneUnderGuns(t *testing.T) {
 	}
 	majority(t, "with a gun tracking from its six inside 600 m the ace must mostly fly a defensive play", passed, detail)
 }
+
+// flying sets the stage every scene in this test flies, whatever AIR_STAGE
+// says, for scenes that exist to pin one stage's behaviour.
+func flying(t *testing.T, stage, omit int) {
+	t.Helper()
+	before, was := evaluating, doctrine.omit
+	evaluating, doctrine.omit = stage, omit
+	t.Cleanup(func() { evaluating, doctrine.omit = before, was })
+}
+
+// Richer, and not threatened (recording 01a0cf7e, stages 8, 9 and 11, t=33-37).
+// The ace had bled to 201 kt at 16,100 ft, 1,340 ft of energy above a pilot
+// 1,240 m off its beam with his nose 56 degrees away, and its arbiter chose to
+// press him; the "too slow to fight" reflex dived it away instead, and the pilot
+// had tone three seconds later. At stage 9 the reflex yields to a richer jet
+// that is neither behind nor aimed at (bot.go starved), so the ace keeps flying
+// what it chose.
+func TestSceneRicherKeepsTheArbiter(t *testing.T) {
+	flying(t, 11, 1<<7|1<<10)
+	reel := view(t, "01a0cf7ea27b7e4288b4019cd40bf296")
+	passed := 0
+	var detail []string
+	for seed := uint64(1); seed <= seeds; seed++ {
+		rebuilding := 0
+		replay(t, reel, "ace", seed, 33, 4, func(g glimpse) {
+			if g.mode == "rebuild" {
+				rebuilding++
+			}
+		})
+		ok := rebuilding == 0
+		if ok {
+			passed++
+		}
+		detail = append(detail, fmt.Sprintf("seed %d: rebuilding %4.1f s of 4  %v", seed, float64(rebuilding)/60, ok))
+	}
+	majority(t, "the richer ace must keep its own choice against a pilot off its beam and looking away", passed, detail)
+}
+
+// ...and the case the old energy-only yield was withdrawn over (recording
+// 01a0b090, t=124-128): the human in the ace's rear quarter at 550-650 m, his
+// nose 16-22 degrees off it, 2,500 ft of energy below it. Extending was right
+// there, and at stage 9 the ace must still do it.
+func TestSceneRicherStillExtends(t *testing.T) {
+	flying(t, 11, 1<<7|1<<10)
+	reel := view(t, tape)
+	passed := 0
+	var detail []string
+	for seed := uint64(1); seed <= seeds; seed++ {
+		rebuilding := 0
+		replay(t, reel, "ace", seed, 124, 4, func(g glimpse) {
+			if g.mode == "rebuild" {
+				rebuilding++
+			}
+		})
+		ok := rebuilding > 0
+		if ok {
+			passed++
+		}
+		detail = append(detail, fmt.Sprintf("seed %d: rebuilding %4.1f s of 4  %v", seed, float64(rebuilding)/60, ok))
+	}
+	majority(t, "the ace must still extend from a poorer pilot sitting in its rear quarter with his nose on it", passed, detail)
+}

@@ -330,7 +330,8 @@ type tactics struct {
 	//
 	// Stage 11 is the forecast that believes a slowing opponent (duel.go slowing,
 	// track.floor); flown on stage 6 alone it is stage 11 with 7-10 omitted,
-	// &stage=11&omit=1920 in the developer client.
+	// &stage=11&omit=1920 in the developer client. Stage 12 charges a rehearsed
+	// line for the energy lead over him it gives up (duel.go surplus, tactics.tariff).
 	omit int
 	// futures and hedge shape stage 7's re-ranking (duel.go hedge): how many
 	// opponent futures the leading plays are rehearsed against, and how much of a
@@ -341,6 +342,9 @@ type tactics struct {
 	// priced in every rehearsed instant. A knob so the stages above can be flown
 	// without it (0) and the two halves of stage 7 told apart.
 	peril float64
+	// tariff is stage 12's price on energy lead given up, per corner-speed unit
+	// of specific energy (duel.go surplus), before the posture's energy weight.
+	tariff float64
 	// steady and startled tie stage 7's commitment to how well the opponent has
 	// been keeping to his forecast (duel.go surprised, and the re-plan site).
 	//
@@ -462,6 +466,7 @@ func standard() tactics {
 	t.truth.stack, t.truth.keen, t.truth.threat, t.truth.closing = 0.50, 3, 1.5, 0.35
 	t.truth.point, t.truth.offence, t.truth.overtake = 0.15, 1, 0
 	t.peril = 1.3                // as appraise() weighs its own threat term
+	t.tariff = 0.5               // stage 12: the sweep's pick (duel.go surplus)
 	t.steady, t.startled = 0, 42 // metres of miss per second of lookahead; steady 0 = never extend (see the field)
 	t.futures, t.hedge = 4, 0.25 // stage 7 (duel.go hedge): continue, unload, reverse, tighten; a quarter of the worst future beside the weighted mean
 	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
@@ -2642,6 +2647,18 @@ func disciplined(g, speed, pace float64) float64 {
 // was sound. An energy edge over someone pointing at your tail is not a fight
 // being won, and no test or scene ever needed the yield. Do not rebuild it on
 // energy alone; it would want his nose as well as his speed.
+//
+// REBUILT AT STAGE 9 (2026-09-23) with his nose and his place as well: I am
+// richer than he is, he does not sit aft of my 3/9 line, and his nose is more
+// than 30 degrees off me. It is bleed's stage because bleed is what leaves a jet
+// slow beside a slower one, and the reflex then flew away from fights the
+// arbiter had chosen to turn into. Recording 01a0cf7e at 33.8 s: the ace 1,342
+// ft of energy up on the pilot, the pilot 48 degrees off its nose at 1,238 m
+// with his own nose 56 degrees off it; the arbiter chose press, the reflex
+// dived it away, and the pilot had tone 3 s later. The recorded cases split
+// cleanly on the geometry: 01a0b090 at 124-132 s, where extending was right,
+// had the human in the ace's rear quarter (aspect 22-51 degrees) with his nose
+// 3-22 degrees off it.
 func (i *instance) starved(b *brain, flag *bool, me *flight.State, speed, floor float64, menace int) bool {
 	threat := 1e9
 	if menace >= 0 {
@@ -2657,6 +2674,15 @@ func (i *instance) starved(b *brain, flag *bool, me *flight.State, speed, floor 
 			direction, span := i.bearing(me.Position, quarry.position)
 			if span < 900 && quarry.velocity.Length() > 1 && direction.Dot(quarry.velocity.Normalize()) > 0.35 {
 				return false // saddled
+			}
+			if b.tactics.on(9) && (menace < 0 || menace == b.target) && speed > 1 {
+				him := quarry.velocity.Length()
+				richer := speed*speed/2+9.81*me.Position.Y > him*him/2+9.81*quarry.position.Y
+				behind := direction.Dot(me.Attitude.Rotate(flight.Vec3{X: 1})) < 0 // aft of my 3/9 line, as the menace check reads it
+				aimed := quarry.nose.Dot(direction.Scale(-1)) > math.Cos(30*math.Pi/180)
+				if richer && !behind && !aimed {
+					return false // richer, and he is neither behind me nor pointing at me
+				}
 			}
 		}
 	}

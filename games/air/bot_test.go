@@ -183,6 +183,55 @@ func TestSlowingIsStageEleven(t *testing.T) {
 	}
 }
 
+// TestTariffChargesTheDeficit: stage 12 prices a rehearsed line for the energy
+// deficit against his forecast it takes the jet into. Dumping energy with bleed
+// below parity with a jet holding his speed is charged; the same dump against a
+// jet the track believes is slowing is free, because his forecast loses energy
+// too; spending a surplus that stays above parity is free, because a surplus is
+// there to be spent for angles; and a zoom that trades speed for height is free.
+func TestTariffChargesTheDeficit(t *testing.T) {
+	i, ace, _ := duellist(t, "drone")
+	b := ace.brain
+	find := func(name string) play {
+		for _, p := range plays {
+			if p.name == name {
+				return p
+			}
+		}
+		t.Fatalf("no play %q", name)
+		return play{}
+	}
+	ahead := flight.Vec3{X: 1500, Y: 4000}
+	holding := &track{when: 60, position: ahead, velocity: flight.Vec3{X: 180}, floor: slowest}
+	slowing := &track{when: 60, position: ahead, velocity: flight.Vec3{X: 180}, swing: flight.Vec3{X: -20}, floor: slowest, lasted: lasting}
+	charge := func(name string, prey *track, speed float64) float64 {
+		score := func(stage int) float64 {
+			ace.model.State = flight.Level(ace.model, flight.Vec3{Y: 4000}, flight.Vec3{X: 1}, speed, 3000)
+			b.tactics.stage, b.tactics.omit = stage, 1<<7|1<<8|1<<10
+			sim := flight.New(ace.model.Airframe, ace.model.Environment, ace.model.World)
+			p := find(name)
+			value, _ := i.rehearse(ace, b, sim, p, prey, 60, b.horizon(p), 0)
+			return value
+		}
+		return score(11) - score(12)
+	}
+	fast, slow, zoom := charge("bleed", holding, 200), charge("bleed", slowing, 200), charge("climb", holding, 200)
+	spare := charge("bleed", holding, 300)
+	t.Logf("charged: bleed against a jet holding his speed %.3f, against a slowing jet %.3f, from a surplus %.3f; climb against the holding jet %.3f", fast, slow, spare, zoom)
+	if fast < 0.1 {
+		t.Errorf("bleed against a jet holding his speed was charged only %.3f", fast)
+	}
+	if slow > fast/3 {
+		t.Errorf("bleed against a slowing jet was charged %.3f, not far below the %.3f against one holding his speed", slow, fast)
+	}
+	if zoom > fast/3 {
+		t.Errorf("a climb, which trades speed for height, was charged %.3f against bleed's %.3f", zoom, fast)
+	}
+	if spare > fast/3 {
+		t.Errorf("bleed from 300 m/s, spending a surplus it keeps, was charged %.3f against the %.3f of a dump below parity", spare, fast)
+	}
+}
+
 // TestSlowingMustLast: the bot's own looks decide when a slowing is believed. A
 // jet 1.5 km ahead of a stage-11 ace holds his speed, then pulls the throttle to
 // idle with the boards out, then goes to full burner: the ace's track of him

@@ -169,6 +169,54 @@ func TestDuelBleedKeepsTheArbiter(t *testing.T) {
 	}
 }
 
+// TestDuelRicherKeepsTheArbiter: at stage 9 the "too slow to fight" reflex
+// stands aside for a jet that is richer than its opponent, when he neither sits
+// in its rear hemisphere nor points at it, 1.3 km off (recording 01a0cf7e). Each
+// other arm breaks exactly one of those, or the stage, and must still unload.
+func TestDuelRicherKeepsTheArbiter(t *testing.T) {
+	flown := func(stage, omit int, offset, heading flight.Vec3, speed float64) int {
+		i, ace, prey := duellist(t, "drone")
+		ace.brain.tactics.stage, ace.brain.tactics.omit = stage, omit
+		base := flight.Vec3{X: 0, Y: 4500, Z: 0}
+		rebuilt := 0
+		for tick := uint64(0); tick < 60*5; tick++ {
+			aloft(ace, base, flight.Vec3{X: 100}) // 194 kt, under the reflex's gate
+			aloft(prey, base.Add(offset), heading.Scale(speed))
+			if gate := 0.55 * corner(ace.model); tick == 0 && 100 >= gate {
+				t.Fatalf("the jet must sit under the reflex's gate: 100 m/s against %.0f", gate)
+			}
+			i.Step(tick, nil)
+			if tick >= 60 && ace.brain.mode == "rebuild" {
+				rebuilt++
+			}
+		}
+		return rebuilt
+	}
+	beside := flight.Vec3{X: 700, Y: -300, Z: 1100} // ahead and to the right, 1,340 m off and 300 m below
+	away := flight.Vec3{Z: 1}                       // flying right, his nose pointing away from the ace
+	for _, c := range []struct {
+		name          string
+		stage, omit   int
+		offset, going flight.Vec3
+		speed         float64
+		keeps         bool
+	}{
+		{"richer, beside him and not aimed at, stage 9", 9, 1<<7 | 1<<8, beside, away, 110, true},
+		{"the same at stage 6", 6, 0, beside, away, 110, false},
+		{"with him aft of the beam", 9, 1<<7 | 1<<8, flight.Vec3{X: -300, Z: 1300}, away, 80, false}, // level with the ace, so slower to stay poorer
+		{"with his nose on the ace", 9, 1<<7 | 1<<8, beside, beside.Scale(-1).Normalize(), 110, false},
+		{"with him richer", 9, 1<<7 | 1<<8, beside, away, 300, false},
+	} {
+		rebuilt := flown(c.stage, c.omit, c.offset, c.going, c.speed)
+		if c.keeps && rebuilt > 0 {
+			t.Errorf("%s: the reflex took the controls for %.1f s", c.name, float64(rebuilt)/60)
+		}
+		if !c.keeps && rebuilt == 0 {
+			t.Errorf("%s: the reflex never took the controls", c.name)
+		}
+	}
+}
+
 // TestDuelThreatenedNeverUnloads: a slow teamless ace with a gun 300 m behind it
 // must fight, not fly a wings-level energy recovery in front of the muzzle.
 func TestDuelThreatenedNeverUnloads(t *testing.T) {

@@ -854,6 +854,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	// against those learns that a gun on its six simply goes away if it flies
 	// somewhere else.
 	chaseP, chaseV := evolve(prey, age)
+	held := surplus(&sim.State, chaseP, chaseV) // stage 12: the energy lead over him this line starts from
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
 		hisP, hisV := evolve(prey, age+t)
@@ -957,6 +958,12 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring, &b.tactics)
 			if b.tactics.on(7) {
 				one -= b.tactics.peril * stance.threat * peril(&sim.State, hisP, hisV)
+			}
+			if b.tactics.on(12) {
+				// The deficit this line takes me into, below parity or below where
+				// I already stood, on the corner-speed scale appraise() judges
+				// energy on: a surplus is there to be spent for angles.
+				one -= b.tactics.tariff * stance.energy * clamp((math.Min(held, 0)-surplus(&sim.State, hisP, hisV))/(pace*pace/2), 0, 1)
 			}
 			if flown := sim.State.Velocity.Length(); b.tactics.on(9) && flown < 80 && flown >= 0.9*hisV.Length() {
 				one++ // appraise fines any line below 80 m/s a full point, whoever it is flown against. Slow while he is slower still is not a fault, it is the fight being won where he chose to hold it - and with the fine absolute, the energy dump could never be chosen however it was priced
@@ -1217,6 +1224,63 @@ func peril(me *flight.State, hisP, hisV flight.Vec3) float64 {
 	nosed := clamp(his.Normalize().Dot(line), 0, 1) // 1: his flight path is on me
 	band := clamp((r-60)/190, 0, 1) * clamp((1500-r)/800, 0, 1)
 	return tail * math.Pow(nosed, keen) * band
+}
+
+// TRIED AND DECLINED (2026-09-23, #31): HIS heater priced in every rehearsed
+// instant. With a heater-armed pilot 500-1,100 m in its rear quarter, the bandit
+// extended on `high` until his 9M arrived, in four recorded episodes (01a0ce44
+// 41.6-52.5 s, 01a0cf7e 44.7-53.9 s, 01a0cfbf 46-60 s and 119-139 s). appraise()'s
+// threat term and peril() both price his GUN, dead by 1.5-2.5 km, so a term was
+// built as the zone heater.go draws for my own shots seen from his cockpit: the
+// share of his seeker's reach at my aspect left before I am out of it (5 km up
+// my tailpipe, the plume's floor on the beam), times his flight path on me,
+// times whether his seeker could hold the line (0.35 rad/s), weighted 1.5 as
+// stage 6 weighs the threat term. Put to the real arbiter at the recorded
+// re-plans, it lowered every score and changed almost no choice: `high` still
+// won 17 of 20 (12 of 13 with stage 7's peril instead). Every line stays deep
+// inside a heater's reach at that range for its whole rehearsal, and no play
+// in the catalogue is rehearsed as escaping it. What the re-plans do show is
+// that `high` was chosen as a turn onto him - its law pulls the whole wing at
+// his lead point - while the jet flown dived away: the winner's own rehearsed
+// path landed 560-1,070 m from the flown one at 8 s and 950-1,700 m at 12 s in
+// all three dives. The defect is that divergence, not the missing price.
+
+// surplus is my specific energy over his, J/kg: what stage 12 charges a rehearsed
+// line for giving up.
+//
+// appraise() prices energy as a constraint, never a currency (#45), and pricing
+// what a line spends was measured and declined (#153, rehearse()): charged
+// against my own energy, the slow fight could never pay, and the guns ladder
+// inverted. That charge was absolute. This one is RELATIVE to his forecast, and
+// stage 11 made the forecast honest about a slowing jet: when he is slowing, his
+// phantom loses energy as fast as I do and matching him costs nothing, while
+// dumping energy against a jet holding or gaining speed hands him the lead. The
+// scripted hornet showed the price missing: at 9.6 s after a merge `bleed` beat
+// `high` by 0.032 against a hornet accelerating through 315-326 kt, threw away
+// an 1,860 ft lead in 1.5 s, and lost the fight that `high` won (#22).
+//
+// Only the DEFICIT is charged: how far below parity, or below where it already
+// stood, a line takes the jet. A surplus is there to be spent for angles. The
+// first form charged every foot of lead given up, and turned the best dump the
+// bandit has flown against the pilot (01a0cf57 at 17.6 s: 353 kt against his
+// 226, 1,000 ft above, nose 76 to 31 degrees off him in 3 s) into `high` at
+// every weight. Swept 2026-09-23 on stages 8, 9 and 11 (omit 1152), scripted
+// humans with heaters, 64 seeds, kills-deaths:
+//
+//	                          mush v ace  hornet v ace  mush v superhuman  hornet v superhuman
+//	stage 11 alone (1920)       19-20        45-6           34-18              59-3
+//	1152, no price              33-27        11-35          30-26               7-40
+//	1152, lead given up 1       30-25        22-27          13-36              11-37
+//	1152, deficit 0.5           33-27        19-25          32-28              17-23
+//	1152, deficit 1             27-32         8-25          28-31              20-23
+//	1152, deficit 2             26-30         7-43          16-41              21-27
+//
+// The deficit at 0.5 keeps the slow fight as it was and halves the fast-fight
+// losses. It does not reach stage 11 alone against the hornet, because stage 8
+// is half of that collapse on its own (without bleed, 1664: 5-34 and 4-28).
+func surplus(me *flight.State, hisP, hisV flight.Vec3) float64 {
+	speed, his := me.Velocity.Length(), hisV.Length()
+	return speed*speed/2 + 9.81*me.Position.Y - his*his/2 - 9.81*hisP.Y
 }
 
 // futures derives what the opponent might do next from what he is doing now.

@@ -189,6 +189,8 @@ func amend(t *tactics, name string, value float64) bool {
 		t.hedge = value
 	case "peril":
 		t.peril = value
+	case "tariff":
+		t.tariff = value
 	case "steady":
 		t.steady = value
 	case "startled":
