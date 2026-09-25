@@ -27,6 +27,29 @@ func TestEvaluateAtRest(t *testing.T) {
 	}
 }
 
+// TestLevelInWind: Level spawns at the true airspeed it is asked for,
+// whichever way the wind blows, and the jet holds it. It spawned at that speed
+// over the ground, so in the single-player trade wind (62 kt at 15,000 ft) the
+// joust's 428 kt start flew 366 kt through the air downwind and 490 kt into it.
+func TestLevelInWind(t *testing.T) {
+	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}, Wrap: 250000} // the single-player trades: 12.9 m/s from 070
+	for _, direction := range []Vec3{{X: 1}, {X: -1}, {Z: 1}} {
+		m := New(Fighter, air, World{})
+		s := Level(m, Vec3{Y: 4572}, direction, 220, 3000)
+		if through := s.Velocity.Subtract(wind(s.Position, 0, air, nil)).Length(); math.Abs(through-220) > 0.01 {
+			t.Errorf("heading %+.0f,%+.0f: spawned at %.1f m/s through the air, asked for 220", direction.X, direction.Z, through)
+		}
+		m.State = s
+		in := Inputs{Throttle: s.Engine[0].Spool}
+		for i := 0; i < 240; i++ {
+			m.Step(in)
+		}
+		if through := m.State.Velocity.Subtract(m.Gust()).Length(); math.Abs(through-220) > 5 {
+			t.Errorf("heading %+.0f,%+.0f: %.1f m/s through the air a second after spawn", direction.X, direction.Z, through)
+		}
+	}
+}
+
 func TestLevel(t *testing.T) {
 	m := New(Fighter, Environment{Wrap: 250000}, World{})
 	s := Level(m, Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)

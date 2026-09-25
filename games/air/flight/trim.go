@@ -108,6 +108,11 @@ func Atmosphere(altitude float64, env Environment) Air {
 // Level composes a steady level-flight state at a position, horizontal
 // direction and true airspeed - the shared spawn helper for server spawns,
 // client resets and tests. Alpha and throttle come from the static solution.
+// The velocity is the airspeed plus the wind where the jet is: it was the
+// airspeed alone, so in the single-player trade wind (62 kt at 15,000 ft) a
+// jet spawned at 428 kt flew 366 kt through the air heading downwind and 490
+// kt into it, and each joust began with the pilot 53 kt faster or slower than
+// the bandit on the side the coin gave him.
 func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64) State {
 	m.State.Fuel = fuel
 	m.weigh()
@@ -130,7 +135,7 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
-		Velocity: forward.Scale(speed),
+		Velocity: forward.Scale(speed).Add(wind(position, 0, m.Environment, nil)), // the state's clock starts at zero
 		Attitude: attitude,
 		Fuel:     fuel,
 	}

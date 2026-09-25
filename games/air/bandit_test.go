@@ -30,6 +30,31 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 	}
 }
 
+// TestBanditFliesThePlayersAir: given the player's environment, the bandit
+// flies the same wind, and the joust's two jets, spawned at the same speed
+// nose to nose, read the same airspeed. The bandit flew in still air while the
+// player's core had the trade wind, so each joust began with the pilot about
+// 53 kt faster or slower by the coin flip that picked his end.
+func TestBanditFliesThePlayersAir(t *testing.T) {
+	air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}, Wrap: 250000}
+	for _, east := range []float64{1, -1} {
+		b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, true)
+		b.Air(air)
+		b.Spawn(flight.Vec3{X: -2778 * east, Y: 4572}, flight.Vec3{X: 220 * east})
+		player := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
+		player.State = flight.Level(player, flight.Vec3{X: 2778 * east, Y: 4572}, flight.Vec3{X: -east}, 220, fuel)
+		player.Step(flight.Inputs{Throttle: player.State.Engine[0].Spool})
+		b.craft.model.Step(flight.Inputs{Throttle: b.craft.model.State.Engine[0].Spool})
+		if b.craft.model.Environment.Wind != air.Wind {
+			t.Fatalf("the bandit's jet flies wind %+v, not the player's %+v", b.craft.model.Environment.Wind, air.Wind)
+		}
+		mine, his := b.craft.model.Cas()*1.944, player.Cas()*1.944
+		if math.Abs(mine-his) > 2 {
+			t.Errorf("bandit heading %+.0f: %.0f kt against the player's %.0f kt at the joust's start", east, mine, his)
+		}
+	}
+}
+
 // TestBanditBvr: the SP bandit flies the same BVR brain the server does - the
 // open class arms it, its radar acquires beyond visual range, a DLZ shot leaves
 // the rail, and the guns class stays byte-inert.

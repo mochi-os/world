@@ -1284,12 +1284,15 @@ func (b *brain) meeting(me *flight.State, prey *track, direction flight.Vec3, di
 // crossing is stage 15's pass, decided once per merge and then only flown: the
 // side it passes him on, and the lead turn.
 type crossing struct {
-	abeam   flight.Vec3 // my side of him at the pass, world horizontal: chosen once and kept, so it cannot flip
-	turn    float64     // the lead turn: +1 toward his side (two-circle), -1 across the pass (one-circle), 0 late (after it)
-	timing  float64     // the lead turn's range as a multiple of the section doctrine's
-	sided   bool        // the side is chosen
-	decided bool        // the lead turn is chosen
-	began   uint64      // the tick the pass came up: the seed of this pass's draws
+	abeam    flight.Vec3 // my side of him at the pass, world horizontal: chosen once and kept, so it cannot flip
+	turn     float64     // the lead turn: +1 toward his side (two-circle), -1 across the pass (one-circle), 0 late (after it)
+	timing   float64     // the lead turn's range as a multiple of the section doctrine's
+	sided    bool        // the side is chosen
+	decided  bool        // the lead turn is chosen
+	straight bool        // he was flying straight when it was chosen
+	revised  bool        // chosen again because his own turn began first: once
+	chosen   uint64      // the tick it was last chosen
+	began    uint64      // the tick the pass came up: the seed of this pass's draws
 }
 
 // bubble is the least a merge passes him by, offset the separation it aims for,
@@ -1304,6 +1307,7 @@ const (
 	bubble = 150.0
 	offset = 400.0
 	margin = 250.0
+	veer   = 5 * math.Pi / 180 // his turn rate, rad/s, that reads as his lead turn begun
 )
 
 // plan decides stage 15's pass, each half once. The SIDE as the pass comes up:
@@ -1357,22 +1361,47 @@ func (i *instance) plan(slot int, a *craft, b *brain, prey *track, tick uint64, 
 		}
 		b.meet.abeam = side
 	}
-	if b.meet.decided || distance > 3*reach {
-		return
+	his := 0.0 // his turn rate, rad/s
+	if flat := (flight.Vec3{X: prey.velocity.X, Z: prey.velocity.Z}); flat.Length() > 1 {
+		his = math.Abs(prey.swing.Dot(flight.Vec3{X: -flat.Z, Z: flat.X}.Normalize())) / flat.Length()
 	}
-	b.meet.decided = true
-	switch {
-	case b.skill.library >= 3:
-		b.meet.timing = 1
-		if !b.skill.machine {
-			b.meet.timing = 0.9 + 0.2*draw(181)
-		}
+	choose := func() {
 		best := math.Inf(-1)
 		for _, turn := range []float64{1, -1, 0} {
 			if score := rehearsed(b.meet.abeam, turn, b.meet.timing); score > best {
 				best, b.meet.turn = score, turn
 			}
 		}
+		b.plan = map[float64]string{1: "two", -1: "one", 0: "late"}[b.meet.turn]
+		b.meet.chosen = tick
+	}
+	if b.meet.decided {
+		// The instructor tiers choose again, once, when his turn begins before
+		// their own lead turn: the choice was made against a jet flying straight,
+		// and each of three human sorties turned first (01a0d50a, 01a0d516,
+		// 01a0d51c). In 01a0d51c the line was re-aimed 10 degrees away from a
+		// pilot turning onto it and then rolled through 150 degrees into the lead
+		// turn toward him; chosen again, the turn toward him is not taken against a
+		// pilot turning onto the line. (A second trigger, choosing again without
+		// the turn toward him once the line had to be re-aimed inside the margin,
+		// changed no pass in TestMergeHeld: his turn had always begun first.)
+		if b.skill.library >= 3 && b.turning == 0 && b.meet.straight && !b.meet.revised && his > veer {
+			b.meet.revised = true
+			choose()
+		}
+		return
+	}
+	if distance > 3*reach {
+		return
+	}
+	b.meet.decided, b.meet.straight = true, his <= veer
+	switch {
+	case b.skill.library >= 3:
+		b.meet.timing = 1
+		if !b.skill.machine {
+			b.meet.timing = 0.9 + 0.2*draw(181)
+		}
+		choose()
 	case b.skill.library == 2:
 		speed, his := me.Velocity.Length(), prey.velocity.Length()
 		mine := me.Position.Y + speed*speed/19.62
@@ -1438,10 +1467,18 @@ func (b *brain) merge(m *moment, tick uint64) {
 		at = clamp(-m.prey.Subtract(m.me.Position).Dot(relative)/speed, 0, 60)
 	}
 	apart := m.me.Position.Subtract(m.prey.Add(relative.Scale(at))).Dot(b.meet.abeam) // my side of him at the pass, on my present line
+	climb := clamp(m.me.Velocity.Y/math.Max(m.me.Velocity.Length(), 1), -0.15, 0.25)
 	if b.turning != 0 {
 		o := order{aim: m.swing(b.meet.turn * b.turning * b.tactics.lead.angle), g: m.pull, throttle: 0.7} // corner the pull, don't rocket past it
 		if b.meet.turn < 0 {
 			o.throttle = 0.75 // the radius fight is tighter, not powerless
+		}
+		if b.meet.turn > 0 && apart < margin {
+			// A turn toward him closes the pass, and so does his own turn onto my
+			// line: once the pass would come inside the margin the turn holds its
+			// line until he has gone by. Unguarded, both lead turns took 01a0d516's
+			// pass to 115 m.
+			o.aim = flight.Vec3{X: flat.X, Y: climb, Z: flat.Z}.Normalize()
 		}
 		b.aim, b.g, b.throttle, b.reheat, b.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
 		return
@@ -1451,7 +1488,6 @@ func (b *brain) merge(m *moment, tick uint64) {
 		point := m.prey.Add(m.velocity.Scale(ahead)).Add(b.meet.abeam.Scale(offset)).Subtract(m.me.Position)
 		b.course = flight.Vec3{X: point.X, Z: point.Z}.Normalize()
 	}
-	climb := clamp(m.me.Velocity.Y/math.Max(m.me.Velocity.Length(), 1), -0.15, 0.25)
 	b.aim = flight.Vec3{X: b.course.X, Y: climb, Z: b.course.Z}.Normalize()
 	b.g, b.throttle, b.reheat, b.brake = m.pull, 1, 1, 0
 }

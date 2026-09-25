@@ -103,15 +103,21 @@ type approach struct {
 	roll, closest, side float64
 	began               float64
 	plan, after         string
+	reversed            bool   // inside 2 km it turned one way and then the other before the pass
+	first               string // the plan as first chosen
+	turned, chosen      int    // the tick his lead turn began, and the tick the bandit last chose its own
 }
 
 // approached flies a joust run-in from 5.5 km with the weapons held, as the
 // client flies it: the bandit of the given tier at the given stage (on stages
 // 6, 11 and 14 beneath it) against a jet at 220 m/s starting offset across its
-// track, flying straight, or when pursuing turning at 15 deg/s to hold its nose
-// on the bandit all the way in, as the pilot of 01a0d4ad did. Committed, the bandit starts with a
-// play a minute from running out, as a pass met in the middle of a fight can.
-func approached(t *testing.T, level string, stage int, seed uint64, entry, offset float64, committed, pursuing bool) approach {
+// track. The pilot flies straight; or pursues, turning at 15 deg/s to hold his
+// nose on the bandit all the way in, as the pilot of 01a0d4ad did; or flies
+// straight to 1.6 km and then lead-turns at 12 deg/s toward the bandit's side of
+// him or away from it, as the pilots of 01a0d516 and 01a0d51c (toward) and
+// 01a0d50a (away) did, turning first. Committed, the bandit starts with a play a
+// minute from running out, as a pass met in the middle of a fight can.
+func approached(t *testing.T, level string, stage int, seed uint64, entry, offset float64, committed bool, pilot string) approach {
 	t.Helper()
 	b := NewBandit(level, seed, 250000, "", false, true, "fox2", 0, true)
 	b.Stage(stage, 14208)
@@ -124,9 +130,29 @@ func approached(t *testing.T, level string, stage int, seed uint64, entry, offse
 	pm.State = flight.Level(pm, flight.Vec3{X: 2750, Y: 4572, Z: offset}, flight.Vec3{X: -1}, 220, fuel)
 	words := make([]float64, flight.Size)
 	out, previous, passed := approach{closest: math.Inf(1)}, math.NaN(), -1
+	sense, heading := 0.0, math.NaN() // the bandit's first turn inside 2 km, and its heading a tick ago
+	lead := 0.0                       // the pilot's lead turn, once begun: +1 turning left, -1 right
 	for tick := 0; tick < 60*25; tick++ {
 		s, brain := &b.craft.model.State, b.craft.brain
-		if pursuing && passed < 0 {
+		if (pilot == "toward" || pilot == "away") && passed < 0 {
+			at := s.Position.Subtract(pm.State.Position)
+			if lead == 0 && at.Length() < 1600 {
+				out.turned = tick
+				v := pm.State.Velocity
+				lead = math.Copysign(1, v.X*at.Z-v.Z*at.X) // the bandit's side of my track
+				if pilot == "away" {
+					lead = -lead
+				}
+			}
+			if lead != 0 {
+				turn := lead * 12 * math.Pi / 180 / 60
+				sin, cos := math.Sin(turn), math.Cos(turn)
+				v := pm.State.Velocity
+				pm.State.Velocity = flight.Vec3{X: v.X*cos - v.Z*sin, Z: v.X*sin + v.Z*cos}
+				pm.State.Attitude = flight.Look(pm.State.Velocity.Normalize())
+			}
+		}
+		if pilot == "pursuit" && passed < 0 {
 			// Nose on the bandit, turning toward it at 15 deg/s: a hard turn at this
 			// speed, where a velocity re-pointed every tick would be a jet no break
 			// could ever open a pass from.
@@ -155,11 +181,23 @@ func approached(t *testing.T, level string, stage int, seed uint64, entry, offse
 		if r := line.Length(); r < out.closest {
 			out.closest, out.side = r, math.Copysign(1, line.Z)
 		}
+		if out.first == "" && brain.meet.decided {
+			out.first = brain.plan
+		}
 		if brain.turning != 0 && out.began == 0 {
 			out.began = line.Length()
 		}
+		if now := math.Atan2(s.Velocity.Z, s.Velocity.X); line.Length() < 2000 && !math.IsNaN(heading) {
+			if rate := math.Remainder(now-heading, 2*math.Pi) * 60 * 180 / math.Pi; math.Abs(rate) > 4 {
+				if sense != 0 && math.Signbit(rate) != math.Signbit(sense) {
+					out.reversed = true
+				}
+				sense = rate
+			}
+		}
+		heading = math.Atan2(s.Velocity.Z, s.Velocity.X)
 		if line.Normalize().Dot(s.Velocity.Normalize()) < 0 {
-			passed, out.plan = tick, brain.plan
+			passed, out.plan, out.chosen = tick, brain.plan, int(brain.meet.chosen)
 			continue
 		}
 		if len(out.plays) == 0 || out.plays[len(out.plays)-1] != brain.play {
@@ -178,8 +216,15 @@ func approached(t *testing.T, level string, stage int, seed uint64, entry, offse
 
 // TestMergeHeld: at stage 15 every tier flies the run-in as one committed pass
 // (#19), and passes the pilot at 150 m or more (a training merge's bubble: the
-// first form passed one at 19 m), whether he flies straight or points at the
-// bandit all the way in. The side is the one the run-in gives when he starts
+// first form passed one at 19 m), whether he flies straight, points at the
+// bandit all the way in, or lead-turns first at 1.6 km toward the bandit's side
+// or away from it. Against a pilot turning first the instructor tiers choose
+// their lead turn again, after his began, and turn one way only inside 2 km:
+// 01a0d516's pilot turned toward it first and was passed at 115 m, and
+// 01a0d51c's bandit re-aimed away from a pilot turning onto its line and then
+// rolled 150 degrees into a lead turn toward him. A pilot who turns away that
+// hard at 1.6 km opens the range before any pass, and the merge is released as
+// spent. The side is the one the run-in gives when he starts
 // 300 m off its track; head-on it is drawn or rehearsed, and both sides turn up
 // at every tier, so no pilot can count on one. The ace holds a line where the
 // arbiter rolled 250-420 degrees (the stage 14 control); the pilot's lead turn
@@ -188,39 +233,45 @@ func approached(t *testing.T, level string, stage int, seed uint64, entry, offse
 // second and a half after the pass the arbiter has the fight back.
 func TestMergeHeld(t *testing.T) {
 	sides := map[string]map[float64]bool{}
-	pilot, novice := []float64{}, map[string]bool{}
+	pilots, novice := []float64{}, map[string]bool{}
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		sides[level] = map[float64]bool{}
 		for seed := uint64(1); seed <= 8; seed++ {
 			for _, offset := range []float64{0, 300, -300} {
-				for _, pursuing := range []bool{false, true} {
-					if pursuing && (offset != 0 || seed > 3) {
+				for _, pilot := range []string{"straight", "pursuit", "toward", "away"} {
+					if pilot == "pursuit" && (offset != 0 || seed > 3) || (pilot == "toward" || pilot == "away") && seed > 3 {
 						continue
 					}
-					got := approached(t, level, 15, seed, 220, offset, true, pursuing)
-					name := fmt.Sprintf("%s seed %d offset %+.0f pursuing %v", level, seed, offset, pursuing)
+					got := approached(t, level, 15, seed, 220, offset, true, pilot)
+					name := fmt.Sprintf("%s seed %d offset %+.0f pilot %s", level, seed, offset, pilot)
 					if got.closest < 150 {
 						t.Errorf("%s: passed %.0f m from him, inside the bubble", name, got.closest)
 					}
-					if offset != 0 && got.side != math.Copysign(1, offset) {
+					if offset != 0 && pilot != "toward" && pilot != "away" && got.side != math.Copysign(1, offset) {
 						t.Errorf("%s: he went by on %+.0f, not the side the run-in gave", name, got.side)
 					}
-					if offset == 0 && !pursuing {
+					if offset == 0 && pilot == "straight" {
 						sides[level][got.side] = true
 					}
 					if got.after == "merge" {
 						t.Errorf("%s: still flying the merge a second and a half after the pass", name)
 					}
-					if level == "ace" && (len(got.plays) != 1 || got.plays[0] != "merge") {
+					if level == "ace" && pilot != "away" && (len(got.plays) != 1 || got.plays[0] != "merge") {
 						t.Errorf("%s: flew %v before the pass, not one committed merge", name, got.plays)
 					}
-					if level == "ace" && offset != 0 && got.roll > 200 {
+					if level == "ace" && offset != 0 && pilot == "straight" && got.roll > 200 {
 						t.Errorf("%s: rolled %.0f degrees before the pass", name, got.roll)
 					}
-					if level == "pilot" && offset == 0 && !pursuing {
-						pilot = append(pilot, got.began)
+					if (level == "ace" || level == "superhuman") && (pilot == "toward" || pilot == "away") && got.chosen <= got.turned {
+						t.Errorf("%s: its lead turn was chosen at %.1f s, before his began at %.1f s, and not again", name, float64(got.chosen)/60, float64(got.turned)/60)
 					}
-					if level == "novice" && offset == 0 && !pursuing {
+					if (level == "ace" || level == "superhuman") && got.reversed {
+						t.Errorf("%s: turned one way and then the other inside 2 km of the pass (plan %q)", name, got.plan)
+					}
+					if level == "pilot" && offset == 0 && pilot == "straight" {
+						pilots = append(pilots, got.began)
+					}
+					if level == "novice" && offset == 0 && pilot == "straight" {
 						switch {
 						case got.plan == "late" && got.began == 0:
 							novice["late"] = true
@@ -237,15 +288,15 @@ func TestMergeHeld(t *testing.T) {
 			t.Errorf("%s: head-on, eight seeds all passed him on the same side", level)
 		}
 	}
-	sort.Float64s(pilot)
-	if len(pilot) == 0 || pilot[len(pilot)-1]-pilot[0] < 200 {
-		t.Errorf("the pilot's lead turn began at %v m (0: after the pass, its track of him half a second old): its timing does not vary", pilot)
+	sort.Float64s(pilots)
+	if len(pilots) == 0 || pilots[len(pilots)-1]-pilots[0] < 200 {
+		t.Errorf("the pilot's lead turn began at %v m (0: after the pass, its track of him half a second old): its timing does not vary", pilots)
 	}
 	if !novice["late"] || !novice["early"] {
 		t.Errorf("the novice's merges over eight seeds were only %v", novice)
 	}
 	for seed := uint64(1); seed <= 3; seed++ {
-		got := approached(t, "ace", 14, seed, 220, 300, false, false)
+		got := approached(t, "ace", 14, seed, 220, 300, false, "straight")
 		if len(got.plays) < 2 || got.roll < 200 {
 			t.Errorf("stage 14 seed %d flew %v and rolled %.0f degrees before the pass: the control no longer shows the run-in dithering, so this test has lost its reference", seed, got.plays, got.roll)
 		}

@@ -76,6 +76,18 @@ func (b *Bandit) place(words []float64) {
 	b.craft.alive = true
 }
 
+// Air gives the bandit the air the player flies in: the single-player weather
+// (wind, turbulence, cloud), with its seed so the gust field is the same one.
+// It flew in still air, while the player drifted 62 kt downwind of it at
+// 15,000 ft, and every forecast it made of him read that drift as his own
+// manoeuvring. The arena keeps its own seed, which the brain's draws run on.
+func (b *Bandit) Air(air flight.Environment) {
+	air.Wrap = b.arena.environment.Wrap
+	for _, c := range b.arena.aircraft {
+		c.model.Environment = air
+	}
+}
+
 // Spawn places the bandit fresh: trimmed on the velocity, engines spooled,
 // clean airframe — the client's joust merge entry and every respawn.
 func (b *Bandit) Spawn(position, velocity flight.Vec3) {

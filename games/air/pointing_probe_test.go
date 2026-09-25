@@ -12,6 +12,7 @@ import (
 	"world/game"
 	"world/games/air/aircraft"
 	"world/games/air/flight"
+	"world/games/air/round"
 )
 
 // Does pointing beat holding energy?
@@ -296,6 +297,64 @@ type hornet struct {
 	beam      flight.Vec3 // the break being flown, latched (#168)
 	until     uint64      // and the tick it may be re-picked at
 	branch    string      // which law last set pitch, for the departure trace (#214)
+	// The rest is mimic's (#45), zero for the hornet itself.
+	lead        float64     // the run-in's lead turn, begun first at 1.6 km: +1 toward his side of me, -1 away from it
+	sense       float64     // the lead turn being flown: +1 right, -1 left, 0 not yet begun
+	passed      bool        // he has gone by: the lead turn is over and the fight is on
+	floor, band float64     // the regain's floor and exit speed, m/s
+	alpha       float64     // the fighting alpha, deg (0: the hornet's 30)
+	ceiling     float64     // the alpha that starts the regain, deg (0: the hornet's 32)
+	stick       float64     // the everyday pull's ceiling (0: the hornet's 0.85)
+	cued        bool        // heaters on the shoot cue, not on a nose angle
+	wary        bool        // flares whenever his nose comes on close
+	last        flight.Vec3 // his velocity a tick ago: the zone's swing
+	zone        round.Zone  // his heater zone as the cue reads it, refreshed a few times a second
+	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
+}
+
+// mimic flies the fight the user flew against the stage 15 ace in the sorties
+// of 2026-09-24, which the difficulty target (#45) is judged against. The
+// run-in is straight and level from the joust's 5.5 km, and the pilot turns
+// first, at 1.6 km, toward the bandit's side of him or away from it (the four
+// sorties went both ways) and holds that turn through the pass. Then the
+// hornet's lift-vector fight, flown slower: the user fought at a mean of
+// 211-317 kt and went as slow as 83-173 kt, where the hornet regains below
+// 224 kt. Heaters go on the shoot cue, held for half a second, the way the
+// user fired them; flares go whenever the bandit's nose comes on inside
+// 1.5 km, as they did at 25.7-29.8 s of 01a0d51c against a pair.
+func mimic(lead float64) *hornet {
+	return &hornet{armed: true, lead: lead, floor: 70, band: 110, alpha: 34, ceiling: 38, stick: 1, cued: true, wary: true}
+}
+
+// tone is the shoot cue mimic fires on: its seeker would lock, by the rule the
+// server's own launch applies (acquire), and the range sits inside the heater
+// zone, held for half a second of reaction.
+func (h *hornet) tone(me, foe *flight.State, span float64, tick uint64) bool {
+	direction := foe.Position.Subtract(me.Position).Scale(1 / span)
+	lit := 0.0
+	for _, engine := range foe.Engine {
+		lit = math.Max(lit, engine.Reheat)
+	}
+	tail := math.Max(0, direction.Dot(foe.Attitude.Rotate(flight.Vec3{X: 1})))
+	reach := 0.15 + 0.35*clamp(lit, 0, 1)
+	locked := span <= missile_range*(reach+(1-reach)*tail) && me.Attitude.Rotate(flight.Vec3{X: 1}).Dot(direction) >= missile_cone
+	if locked {
+		if h.zoned == 0 || tick-h.zoned >= 15 {
+			swing := foe.Velocity.Subtract(h.last).Scale(60)
+			h.zone = heat(round.Target{Position: me.Position, Velocity: me.Velocity},
+				round.Target{Position: foe.Position, Velocity: foe.Velocity}, swing, lit, 0, 0)
+			h.zoned = tick
+		}
+		locked = span > h.zone.Minimum && span <= h.zone.Max
+	}
+	if !locked {
+		h.cue = 0
+		return false
+	}
+	if h.cue == 0 {
+		h.cue = tick
+	}
+	return tick-h.cue >= 30
 }
 
 func (h *hornet) spent() (int, int) { return h.fired, h.flared }
@@ -405,6 +464,9 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// because nobody holds 6 g at 200 kt - the jet departs (#97) - and the
 	// whole stick is kept for the merge break below.
 	limit := clamp((speed-60)/90, 0.15, 0.85) // 34 deg at 290 kt is what the recording shows, and the schedule has to reach it
+	if h.stick > 0 {
+		limit = clamp((speed-60)/90, 0.15, h.stick)
+	}
 	// REGULATE alpha, do not demand stick. The stick demand this replaces asked
 	// for a pull sized by the angle off and then unloaded when a threshold
 	// tripped, and five independent levers on that arrangement were measured -
@@ -442,9 +504,13 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// - the same close-fight window the calibration check measures over - the
 	// demand stands whatever the nose is doing; outside it the angle-sized
 	// demand returns, so the jet still unloads to extend and rebuild.
-	goal := clamp(angle/180*math.Pi*3, 0, 1) * 30
+	fight := 30.0
+	if h.alpha > 0 {
+		fight = h.alpha
+	}
+	goal := clamp(angle/180*math.Pi*3, 0, 1) * fight
 	if span < 1500 {
-		goal = 30
+		goal = fight
 	}
 	pitch := clamp((goal-riding)/8, -1, limit)
 	h.branch = "track"
@@ -454,7 +520,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// now - lift vector across to his side, the whole pull - and let pursuit
 	// carry the turn once he is off the nose. Toward is the one-circle, and
 	// the slow fighter wants the one-circle.
-	if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); !breaking && angle < 25 && span < 2600 && closing > 120 {
+	if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); h.lead == 0 && !breaking && angle < 25 && span < 2600 && closing > 120 {
 		side := want.Dot(right)
 		if math.Abs(side) < 0.05 {
 			side = 1 // dead ahead: any side, but pick one
@@ -462,6 +528,25 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		roll = clamp(side*8, -1, 1)
 		pitch = clamp((speed-70)/100, 0.1, 1) // the whole pull the speed allows: 344 kt at the merge gives the whole stick, a slow later pass does not
 		h.branch = "merge"
+	}
+	// mimic's run-in: wings level on its line until 1.6 km, then the lead turn,
+	// held until he has gone by. Level is the flight path held flat: the stick at
+	// rest holds a g, and a pitch law that points the nose at nothing pushes.
+	if h.lead != 0 && !h.passed && !breaking {
+		if closing := me.Velocity.Subtract(foe.Velocity).Dot(want); want.Dot(axis) < 0 || closing < 0 {
+			h.passed = true
+		} else {
+			if h.sense == 0 && span < 1600 {
+				h.sense = math.Copysign(1, want.Dot(right)) * h.lead
+			}
+			bank, target := math.Atan2(-right.Y, up.Y), 0.0 // bank positive rolled right
+			pitch = clamp(-me.Velocity.Y/math.Max(speed, 1)*5, -0.3, 0.3)
+			if h.sense != 0 {
+				target, pitch = h.sense*75*math.Pi/180, clamp((speed-70)/100, 0.1, 1)
+			}
+			roll = clamp((target-bank)*3, -1, 1)
+			h.branch = "lead"
+		}
 	}
 	// The one thing the mush lacks, and the whole difference between the two
 	// scripts: below the floor the stick comes forward whatever the geometry,
@@ -480,7 +565,10 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// regain early returns the jet to the fight without the energy to fly it,
 	// so it pulls, departs, regains and departs again. The hysteresis IS the
 	// energy rebuild; shortening it just loops.
-	const floor, band = 115.0, 170.0
+	floor, band := 115.0, 170.0
+	if h.floor > 0 {
+		floor, band = h.floor, h.band
+	}
 	// Speed ALONE is too late a trigger. A jet decelerating out of a manoeuvre
 	// arrives at the floor already deep in alpha, and from there a nose-down
 	// command at 1 g cannot arrest it: the guns arm's seed 1 was at 40 degrees
@@ -498,7 +586,11 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// against the recording's 49.9%), and that trade is refused here: the
 	// calibration gap is bought back below, on the regain's exit speed, where
 	// it costs no departure margin.
-	if speed < floor || riding > 32 {
+	trigger := 32.0
+	if h.ceiling > 0 {
+		trigger = h.ceiling
+	}
+	if speed < floor || riding > trigger {
 		h.regaining = true
 	} else if speed > band && riding < 20 {
 		h.regaining = false
@@ -642,6 +734,9 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// kept rather than pulling further back: the jet still has to manoeuvre,
 	// and this is a correction to a pinned control, not a new energy policy.
 	data := map[string]any{"pitch": pitch, "roll": roll, "throttle": 1.0, "reheat": 1.0}
+	if h.lead != 0 && !h.passed {
+		data["reheat"] = 0.0 // mimic runs in at military power, as the user did
+	}
 	if !h.armed {
 		return data
 	}
@@ -658,10 +753,19 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// Defending is not shooting: the recording's pilot took his shots at 73.5
 	// and 77.0 s, long after the pair at 8.3 s had gone by.
 	data["fire"] = !breaking && angle < 4 && span < 900
-	if !breaking && angle < 12 && span > 600 && span < 2500 && tick-h.rested > 120 {
+	shoot := !breaking && angle < 12 && span > 600 && span < 2500
+	if h.cued {
+		shoot = !breaking && h.tone(me, foe, span, tick)
+		h.last = foe.Velocity
+	}
+	if shoot && tick-h.rested > 120 {
 		data["missile"] = true
 		h.rested = tick
 		h.fired++
+	}
+	if h.wary && !breaking && span < 1500 && tick%45 == 0 && foe.Attitude.Rotate(flight.Vec3{X: 1}).Dot(want.Scale(-1)) > math.Cos(30*math.Pi/180) {
+		data["flare"] = true
+		h.flared++
 	}
 	return data
 }
@@ -695,6 +799,14 @@ type bout struct {
 // hold is why a live ace's first shot comes after the pass, not nose-on at two
 // seconds. An instrument standing in for a joust has to be a joust.
 func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int) bout {
+	t.Helper()
+	return sweepFrom(t, level, mode, opponent, missiles, entry, seeds, seconds, nil)
+}
+
+// sweepFrom is sweep with a setup that re-places the two jets after the
+// standard merge (the bot's slot is passed): the difficulty probe flies the
+// single-player joust's own start through it.
+func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int, setup func(i *instance, bot int)) bout {
 	t.Helper()
 	b := bout{plays: map[string]int{}, slowest: [2]float64{math.MaxFloat64, math.MaxFloat64}}
 	for seed := uint64(1); seed <= uint64(seeds); seed++ {
@@ -733,6 +845,9 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 			me.Velocity = me.Velocity.Normalize().Scale(entry) // the recording's merge speed, not the bot's spawn speed
 		}
 		me.Attitude = flight.Look(me.Velocity.Normalize())
+		if setup != nil {
+			setup(i, bot)
+		}
 		pilot := opponent()
 		// #214: the two seconds before the script's FIRST departure, each frame
 		// naming the law that commanded it. Six threshold fixes were refuted in
@@ -933,6 +1048,46 @@ func TestPilotEngagesTheMush(t *testing.T) {
 	t.Logf("pilot v mush, guns: mean %.0f kt, %.1f%% of the engaged fight above 20 deg alpha, killed %d died %d of %d", mean, engaged, b.downed, b.lost, b.seeds)
 	if mean > 450 {
 		t.Errorf("pilot mean %.0f kt against the mush: the fast match - it has no way up and dives in burner (tier-3 yo-yo: 528 kt)", mean)
+	}
+}
+
+// TestDifficulty measures the difficulty target (#45): each tier against
+// mimic, the scripted pilot of the user's fights, from the single-player
+// joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
+// weapons held until the pass - on the stage the user flies (AIR_STAGE,
+// AIR_OMIT). The lead turn alternates toward and away seed by seed. The target
+// is the user's: he wins most against the novice, loses most against the
+// pilot, and rarely or never beats the ace or the superhuman.
+func TestDifficulty(t *testing.T) {
+	if os.Getenv("AIR_POINT") == "" {
+		t.Skip("measurement probe: set AIR_POINT=1")
+	}
+	seeds := 16
+	if n, err := strconv.Atoi(os.Getenv("AIR_SEEDS")); err == nil && n > 0 {
+		seeds = n
+	}
+	tiers := []string{"novice", "pilot", "ace", "superhuman"}
+	if only := os.Getenv("AIR_TIER"); only != "" {
+		tiers = []string{only}
+	}
+	joust := func(i *instance, bot int) {
+		east := flight.Vec3{X: 1}
+		him, me := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
+		him.Position, me.Position = flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 2778, Y: 4572}
+		him.Velocity, me.Velocity = east.Scale(220), east.Scale(-220)
+		him.Attitude, me.Attitude = flight.Look(east), flight.Look(east.Scale(-1))
+	}
+	fmt.Printf("mimic: stage %d omit %d | %d seeds, 150 s, the joust's 5.5 km start\n", doctrine.stage, doctrine.omit, seeds)
+	for _, level := range tiers {
+		n := 0
+		b := sweepFrom(t, level, "joust", func() flyer {
+			n++
+			return mimic([]float64{1, -1}[n%2])
+		}, true, 0, seeds, 150, joust)
+		fmt.Println(report("mimic", level, b))
+		// A tumbling mimic is killed for free: its time past 45 degrees, as the
+		// hornet's own gate reads it, beside every row.
+		fmt.Printf("       mimic departed %.2f%% of %.0f s flown\n", 100*float64(b.departed[1])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60)
 	}
 }
 
