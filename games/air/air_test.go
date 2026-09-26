@@ -2304,11 +2304,11 @@ func TestSelfPoseDamage(t *testing.T) {
 	}
 	self := blob[:pose_record] // self first, by construction
 
-	if got := float64(self[29]) / 255; got < 0.5 || got > 0.7 {
-		t.Errorf("left engine fire byte %.2f, want ~0.6", got)
+	if got := self[29] >> 4; got != 9 {
+		t.Errorf("left engine fire %d fifteenths, want 9 (0.6)", got)
 	}
-	if self[30] != 0 {
-		t.Errorf("right engine fire byte %d, want 0 (only the left is alight)", self[30])
+	if got := self[29] & 15; got != 0 {
+		t.Errorf("right engine fire %d fifteenths, want 0 (only the left is alight)", got)
 	}
 	if self[26]&32 == 0 {
 		t.Error("fuel-fire flag not set in the self pose: the cockpit cannot raise FUEL FIRE")
@@ -2328,9 +2328,9 @@ func TestSelfPoseDamage(t *testing.T) {
 	if len(theirs) < pose_record {
 		t.Fatalf("slot 1 blob %d bytes", len(theirs))
 	}
-	if theirs[26]&32 != 0 || theirs[29] != 0 || theirs[30] != 0 || theirs[31] != 0 {
-		t.Errorf("undamaged jet's own pose reports damage: flags %08b fire %d/%d leak %d",
-			theirs[26], theirs[29], theirs[30], theirs[31])
+	if theirs[26]&32 != 0 || theirs[29] != 0 || theirs[31] != 0 {
+		t.Errorf("undamaged jet's own pose reports damage: flags %08b fire %08b leak %d",
+			theirs[26], theirs[29], theirs[31])
 	}
 }
 

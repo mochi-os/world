@@ -2030,12 +2030,13 @@ const (
 	// pose_record is the packed aircraft. The uint16 at 35 is the gun
 	// expenditure, which is what lets a recipient's recording say how much
 	// anyone else shot: a client can see a neighbour's trigger flag at 20 Hz
-	// but not count a 100 rounds/s belt from it (#163). Bytes 37-38 are his
-	// alpha and g (#164) — the two debrief channels that CANNOT be recovered
-	// from the pose stream, since #44 measured a derived nose disagreeing with
-	// recorded AOA by up to 80 degrees, and the only two that still fit the
-	// datagram: 27 poses at 39 bytes plus six missiles is ~1.2 kB, and the
-	// near/roving sizes below are what pay for anything wider.
+	// but not count a 100 rounds/s belt from it (#163). Byte 30 and bytes
+	// 37-38 are his sideslip, alpha and g (#164) — debrief channels that
+	// CANNOT be recovered from the pose stream, since #44 measured a derived
+	// nose disagreeing with recorded AOA by up to 80 degrees. Sideslip took
+	// the byte the two engine fires gave up by sharing byte 29 rather than
+	// widening the record: 27 poses at 39 bytes plus six missiles is ~1.2 kB,
+	// and the near/roving sizes below are what pay for anything wider.
 	pose_record = 39
 	// slot_most is the highest slot the missile record can name: the shooter
 	// occupies seven bits because the eighth carries the round's kind (#27).
@@ -2093,8 +2094,18 @@ func pose(slot int, a *craft) []byte {
 	b[26] = flags
 	b[27] = byte(clamp(a.latest.Reheat, 0, 1) * 255)
 	b[28] = byte(clamp(a.model.State.Fcs.Speedbrake, 0, 1) * 255)
-	b[29] = byte(clamp(a.condition.Fire[0], 0, 1) * 255)
-	b[30] = byte(clamp(a.condition.Fire[1], 0, 1) * 255)
+	// The two engine fires share byte 29, the left in the high four bits and
+	// the right in the low, each in fifteenths ROUNDED UP: the recipient draws
+	// the smoke from it and the pilot's own cockpit lights FIRE on anything
+	// above zero, so a small fire must never read as none.
+	fire := func(v float64) byte { return byte(math.Ceil(clamp(v, 0, 1) * 15)) }
+	b[29] = fire(a.condition.Fire[0])<<4 | fire(a.condition.Fire[1])
+	// Byte 30 is his sideslip in whole degrees, positive with the flow from
+	// the right; it never passes 90, so the byte holds all of it. It is the
+	// air's angle, wind, shear and gusts removed, which a recipient cannot recover
+	// from the ground track the direction bytes carry: a crab into a crosswind
+	// would read as a slip.
+	b[30] = byte(int8(math.Round(clamp(a.model.Beta()*180/math.Pi, -127, 127))))
 	b[31] = byte(clamp(a.model.State.Damage.Leak*10, 0, 255))
 	binary.LittleEndian.PutUint16(b[32:], uint16(mask(a.model.Airframe, a.model.State.Damage.Element)))
 	target := 63 // #30: byte 34 — high two bits the emitter mode, low six the locked slot (63 = none)
@@ -2113,9 +2124,10 @@ func pose(slot int, a *craft) []byte {
 	// gentle pull that never happened, which is the failure the gun counter
 	// above is also written to avoid. The 7.5 g limiter and the paddle
 	// override both sit well inside 12.7, and 1 degree of alpha is the
-	// resolution a debrief reads a turn at.
-	b[37] = byte(int8(clamp(a.model.Alpha()*180/math.Pi, -127, 127)))
-	b[38] = byte(int8(clamp(a.model.Nz()*10, -127, 127)))
+	// resolution a debrief reads a turn at. Both are rounded to the nearest
+	// step: a bare conversion truncates toward zero, and read 7.99 as 7.
+	b[37] = byte(int8(math.Round(clamp(a.model.Alpha()*180/math.Pi, -127, 127))))
+	b[38] = byte(int8(math.Round(clamp(a.model.Nz()*10, -127, 127))))
 	return b
 }
 
