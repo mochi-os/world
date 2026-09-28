@@ -9,6 +9,9 @@ package air
 import (
 	"fmt"
 	"math"
+	"os"
+	"regexp"
+	"strconv"
 	"testing"
 
 	"world/game"
@@ -387,6 +390,271 @@ func TestJammerStaysWithTheMachine(t *testing.T) {
 	for _, level := range []string{"novice", "pilot", "ace"} {
 		if arm(level, guard_quiet+6000) {
 			t.Errorf("%s armed a jammer: below the machine the trade does not pay (see the comment above)", level)
+		}
+	}
+}
+
+// radar_pair parks a BVR joust's two bots for the radar tests: the novice,
+// which never withholds its lock, at the origin with its nose east at 250 m/s
+// and 3,000 m, searching; the machine where each test puts it.
+func radar_pair(t *testing.T) (*instance, *craft, *craft, int) {
+	t.Helper()
+	made, err := (&Air{}).Create(game.Session{Identifier: "huntradar", Game: "air", Mode: "joust", Seed: 5,
+		Parameters: map[string]any{"missiles": true, "start": "bvr",
+			"bots": map[string]any{"novice": 1.0, "superhuman": 1.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	t.Cleanup(i.Close)
+	i.environment.Wrap = 0 // an unwrapped sky, as radar.test.ts has it: the cases reach past half the arena
+	var a, c *craft
+	slot := -1
+	for _, s := range i.slots() {
+		if k := i.aircraft[s]; k != nil && k.bot {
+			if k.brain.skill.machine {
+				c, slot = k, s
+			} else {
+				a = k
+			}
+		}
+	}
+	if a == nil || c == nil {
+		t.Fatal("joust roster wrong: the pair should be two bots")
+	}
+	a.model.State.Position = flight.Vec3{Y: 3000}
+	a.model.State.Velocity = flight.Vec3{X: 250}
+	a.model.State.Attitude = flight.Quat{W: 1}
+	a.emitter, a.lock = 1, -1
+	return i, a, c, slot
+}
+
+func park(c *craft, position flight.Vec3, velocity flight.Vec3) {
+	c.model.State.Position, c.model.State.Velocity = position, velocity
+}
+
+// TestRadarDetection holds the bot's radar to the pilot's: the cases are
+// radar.test.ts's, on the same numbers.
+func TestRadarDetection(t *testing.T) {
+	i, a, c, _ := radar_pair(t)
+	const nm = 1852.0
+	at := func(y, x float64) float64 {
+		park(c, flight.Vec3{X: x, Y: y}, flight.Vec3{Z: 250}) // on the beam
+		return i.detection(a, c)
+	}
+	park(c, flight.Vec3{X: 38 * nm, Y: 3000}, flight.Vec3{X: -272})
+	if d := i.detection(a, c); math.Abs(d-44*nm) > 1 {
+		t.Errorf("nose-on detection %.1f nm, want 44", d/nm)
+	}
+	if d := at(3000, 15*nm); math.Abs(d-55*nm) > 1 {
+		t.Errorf("beam detection %.1f nm, want 55", d/nm)
+	}
+	clear := at(3000, 15*nm)
+	if d := at(2999, 15*nm); math.Abs(d-clear) > 1e-6 {
+		t.Errorf("a metre below at 15 nm paid %.3f of its range: the sky is behind it", 1-d/clear)
+	}
+	if d, level := at(2900, 40*nm), at(3000, 40*nm); math.Abs(d-level) > 1e-6 {
+		t.Errorf("a hundred metres below at 40 nm paid %.3f of its range: the sky is still behind it", 1-d/level)
+	}
+	if d := at(500, 15*nm); math.Abs(d-clear*0.65) > 1 {
+		t.Errorf("far below against the sea: %.1f nm, want %.1f", d/nm, clear*0.65/nm)
+	}
+	if d := at(3000, 60*nm); math.Abs(d-clear) > 1e-6 {
+		t.Errorf("level at 60 nm paid %.3f of its range: the earth's curve is still above the horizon's dip", 1-d/clear)
+	}
+	low := flight.Vec3{Y: 300} // at 1,000 ft the horizon is 62 km off
+	if k := i.clutter(low, flight.Vec3{X: 130000, Y: 300}); k <= 0.5 {
+		t.Errorf("a jet level with us at 130 km from 300 m: clutter %.2f, want the sea behind it", k)
+	}
+	if k := i.clutter(low, flight.Vec3{X: 20000, Y: 300}); k != 0 {
+		t.Errorf("a jet level with us at 20 km from 300 m: clutter %.2f, want the sky", k)
+	}
+	last := clear
+	for y := 3000.0; y >= 0; y -= 10 {
+		now := at(y, 15*nm)
+		if now > last+1e-6 || last-now > 0.05*clear {
+			t.Fatalf("descending through the horizon at %.0f m the range stepped from %.1f to %.1f nm", y, last/nm, now/nm)
+		}
+		last = now
+	}
+	if p := probability(10*nm, 40*nm); math.Abs(p-0.97) > 1e-9 {
+		t.Errorf("paint odds well inside: %.2f, want 0.97", p)
+	}
+	if p := probability(39*nm, 40*nm); p >= 0.25 {
+		t.Errorf("paint odds at the edge: %.2f, want under a quarter", p)
+	}
+	if p := probability(41*nm, 40*nm); p != 0 {
+		t.Errorf("paint odds beyond the detection range: %.2f, want none", p)
+	}
+}
+
+// TestRadarNotch: the notch is the target's own speed along the line of sight,
+// as the pilot's radar and the seeker have it - not the two jets' closure.
+func TestRadarNotch(t *testing.T) {
+	i, a, c, _ := radar_pair(t)
+	look := func() bool { // any look in ten frames
+		for tick := uint64(0); tick < 10*radar_frame; tick += radar_frame {
+			if i.painted(a, c, tick) {
+				return true
+			}
+		}
+		return false
+	}
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{Z: 250}) // beaming a radar that flies straight at it
+	if look() {
+		t.Error("a beaming target painted: its own speed along the line of sight is nil, the notch")
+	}
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{X: 250}) // running away at the radar's own speed
+	if !look() {
+		t.Error("a dragging target at 30 km never painted: the jets' closure is nil, but its own speed along the line of sight is not")
+	}
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{X: -250})
+	if !look() {
+		t.Error("a hot target at 30 km never painted")
+	}
+	park(c, flight.Vec3{X: 90 * 1852, Y: 3000}, flight.Vec3{X: -250})
+	if look() {
+		t.Error("a hot target at 90 nm painted, twice past its 44 nm detection range")
+	}
+}
+
+// TestRadarMemory: a lock starved by the notch coasts four seconds on memory,
+// then drops, as the pilot's STT does; a lock that tracks holds.
+func TestRadarMemory(t *testing.T) {
+	i, a, c, slot := radar_pair(t)
+	b := a.brain
+	b.target = slot
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{X: -250})
+	b.known[slot] = &track{when: 0, position: c.model.State.Position, velocity: c.model.State.Velocity}
+	i.hunt(0, a, 1)
+	if a.emitter != 2 || a.lock != slot {
+		t.Fatalf("no STT on a hot target at 30 km (emitter %d, lock %d)", a.emitter, a.lock)
+	}
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{Z: 250}) // into the notch
+	for tick := uint64(2); tick <= 2+radar_memory; tick++ {
+		i.hunt(0, a, tick)
+		if a.emitter != 2 || a.lock != slot {
+			t.Fatalf("the starved lock dropped %.2f s in, inside the %d s memory", float64(tick-2)/60, radar_memory/60)
+		}
+	}
+	i.hunt(0, a, 3+radar_memory)
+	if a.emitter == 2 {
+		t.Fatalf("the starved lock outlasted its %d s memory", radar_memory/60)
+	}
+}
+
+// TestRadarHold: a lock acquires inside the detection range and, once held,
+// holds out to radar_hold of it; the cone and the notch gate both.
+func TestRadarHold(t *testing.T) {
+	i, a, c, _ := radar_pair(t)
+	park(c, flight.Vec3{X: 48 * 1852, Y: 3000}, flight.Vec3{X: -250}) // past the 44 nm nose-on detection, inside 1.15 of it
+	if i.trackable(a, c, false, 1) {
+		t.Error("a lock acquired at 48 nm, past the 44 nm detection range")
+	}
+	if !i.trackable(a, c, true, 1) {
+		t.Error("a held lock dropped at 48 nm, inside 1.15 of the detection range")
+	}
+	park(c, flight.Vec3{X: 52 * 1852, Y: 3000}, flight.Vec3{X: -250})
+	if i.trackable(a, c, true, 1) {
+		t.Error("a held lock survived at 52 nm, past 1.15 of the detection range")
+	}
+	park(c, flight.Vec3{X: -20000, Y: 3000}, flight.Vec3{X: 250}) // behind the radar
+	if i.trackable(a, c, false, 1) {
+		t.Error("a lock acquired on a target behind the gimbal")
+	}
+	park(c, flight.Vec3{X: 20000, Y: 3000}, flight.Vec3{Z: 250})
+	if i.trackable(a, c, false, 1) {
+		t.Error("a fresh lock acquired on a target in the notch")
+	}
+}
+
+// TestRadarCounterfire: the counter-shot a withholding tier takes under an
+// inbound round needs a lock the same radar can hold - none on a target in the
+// notch, which a beam puts it in, and one on a target running straight away.
+func TestRadarCounterfire(t *testing.T) {
+	shot := func(velocity flight.Vec3, x float64) bool {
+		i, c, a, self := radar_pair(t) // the machine withholds: it is the one that counterfires, at the novice
+		slot := -1
+		for _, s := range i.slots() {
+			if i.aircraft[s] == c {
+				slot = s
+			}
+		}
+		i.merged = true
+		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, flight.Quat{W: 1}
+		park(c, flight.Vec3{X: x, Y: 3000}, velocity)
+		a.brain.target, a.brain.alerted = slot, 1
+		inbound := round.New(flight.Vec3{X: -4000, Y: 3000}, flight.Vec3{X: 900}, nil, 0) // an active round closing from behind
+		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: inbound.Position, velocity: inbound.Velocity, life: 60})
+		before := a.amraams
+		i.counterfire(self, a, 100)
+		return a.brain.countered == 100 && (a.amraams < before || i.cheat.ammunition)
+	}
+	if shot(flight.Vec3{Z: 250}, 10000) {
+		t.Error("counterfired on a beaming target: it sits in the notch")
+	}
+	if !shot(flight.Vec3{X: 250}, 6000) {
+		t.Error("no counter-shot at a target running straight away at 6 km: out of the notch, inside the zone")
+	}
+}
+
+// TestRadarPicture: the bot fights from what it senses. While its STT holds it
+// has the jet as it is; once the lock is lost it has only its last look,
+// carried on by that look's velocity - a notch costs it the picture too.
+func TestRadarPicture(t *testing.T) {
+	i, a, c, slot := radar_pair(t)
+	b := a.brain
+	b.target = slot
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{X: -250})
+	b.known[slot] = &track{when: 0, position: c.model.State.Position, velocity: c.model.State.Velocity}
+	i.hunt(0, a, 1) // acquires the lock
+	i.hunt(0, a, 2)
+	if b.contact != c.model.State.Position {
+		t.Fatalf("locked, the picture is %+v, not the jet at %+v", b.contact, c.model.State.Position)
+	}
+	a.emitter, a.lock = 1, -1                                             // the lock lost
+	park(c, flight.Vec3{X: 30000, Y: 3000, Z: 4000}, flight.Vec3{Z: 250}) // and he has beamed away since the last look
+	i.hunt(0, a, 120)
+	want := flight.Vec3{X: 30000 - 250*2, Y: 3000}
+	if b.contact.Subtract(want).Length() > 1e-6 {
+		t.Fatalf("unlocked, the picture is %+v: want the last look carried on two seconds, %+v", b.contact, want)
+	}
+}
+
+// TestRadarParity reads the pilot's radar (radar.ts) where the monorepo has it
+// and holds the bot's constants to it.
+func TestRadarParity(t *testing.T) {
+	source, err := os.ReadFile("../../../apps/air/web/src/game/radar.ts")
+	if err != nil {
+		t.Skip("apps/air is not beside world: the parity check needs the monorepo")
+	}
+	read := func(pattern string) float64 {
+		m := regexp.MustCompile(pattern).FindSubmatch(source)
+		if m == nil {
+			t.Fatalf("radar.ts: %s not found", pattern)
+		}
+		v, err := strconv.ParseFloat(string(m[1]), 64)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	for _, c := range []struct {
+		name      string
+		ts, world float64
+	}{
+		{"BASE", read(`const BASE = ([0-9.]+) \* NM`) * 1852, radar_base},
+		{"CLUTTER", read(`const CLUTTER = ([0-9.]+)`), radar_clutter},
+		{"EDGE", read(`const EDGE = ([0-9.]+)`), radar_edge},
+		{"EARTH", read(`const EARTH = ([0-9.]+)`), earth},
+		{"HOLD", read(`const HOLD = ([0-9.]+)`), radar_hold},
+		{"MEMORY", read(`const MEMORY = ([0-9.]+)`), radar_memory / 60},
+		{"NOTCH", read(`const NOTCH = ([0-9.]+)`), round.Notch},
+		{"aspect", read(`return 1 - ([0-9.]+) \* along`), 1 - aspect(flight.Vec3{X: 1}, flight.Vec3{X: 100})},
+		{"stationary", read(`if \(speed < 20\) return ([0-9.]+)`), aspect(flight.Vec3{X: 1}, flight.Vec3{})},
+	} {
+		if math.Abs(c.ts-c.world) > 1e-9 {
+			t.Errorf("%s: the pilot's radar has %g, the bot's %g", c.name, c.ts, c.world)
 		}
 	}
 }

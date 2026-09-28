@@ -819,6 +819,7 @@ type brain struct {
 	jam       bool        // brain-driven jammer arming (the machine's emission trade); applied to latest.Jammer after steer
 	contact   flight.Vec3 // last place a BVR contact was held (hunt.go): the fight's address when the picture goes dark
 	contacted uint64      // tick of that memory; a defence drops both radars into each other's notch at once, and without this the pair politely flies apart forever
+	notching  uint64      // tick this bot's STT went into the notch, 0 while it tracks: the lock coasts radar_memory on memory, then drops
 	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
 	futiled   int         // the target that futility was counted against; a new target resets the lesson
 	turned    uint64      // tick the lead turn was committed
@@ -1223,7 +1224,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			continue
 		}
 		seen := i.visible(a, c, tick)
-		if !seen && i.painted(a, c) {
+		if !seen && i.painted(a, c, tick) {
 			// The radar picture (hunt.go): a BVR-armed bot's search radar
 			// extends its perception far past the canopy's twelve
 			// kilometres, feeding the same track table vision feeds — so

@@ -14,6 +14,7 @@ package air
 import (
 	"math"
 
+	"world/games/air/battle"
 	"world/games/air/flight"
 	"world/games/air/round"
 )
@@ -54,14 +55,70 @@ func pressing(library int) press {
 	}
 }
 
-// The bot radar's own geometry: detection reaches further than any shot it
-// can take (the DLZ is the limiting factor, as it should be), and the scan
-// cone matches the seeker's gimbal constant.
+// The bot's radar is the pilot's (apps/air/web/src/game/radar.ts): the same
+// detection range by aspect and against the sea, the same doppler notch on the
+// target's own speed along the line of sight, one look per antenna frame at
+// the same odds, and the same memory before a starved lock drops. The scan
+// cone matches the seeker's gimbal constant. hunt_test.go holds the two in
+// step.
 const (
-	radar_reach  = 80000.0 // m
-	radar_commit = 1.25    // the withholding tiers light the STT inside this multiple of the maximum rung
-	radar_seam   = 10000.0 // m: inside this the tuned WVR arbiter owns the flight path and the crank yields
+	radar_base    = 55 * 1852.0 // m: beam-aspect detection range against a fighter, 44 nm nose-on
+	radar_clutter = 0.35        // how much of its range a target seen against the sea loses
+	radar_edge    = 0.005       // rad: the band either side of the horizon over which the sea comes in behind a target
+	radar_hold    = 1.15        // an STT holds its lock out to this multiple of the detection range
+	radar_memory  = 4 * 60      // ticks a starved STT coasts on memory before the lock drops
+	radar_frame   = 112         // ticks per antenna frame, ±70° at 75°/s: one look at each target per frame
+	radar_commit  = 1.25        // the withholding tiers light the STT inside this multiple of the maximum rung
+	radar_seam    = 10000.0     // m: inside this the tuned WVR arbiter owns the flight path and the crank yields
+	earth         = 6371000.0   // m, the earth's radius
 )
+
+// aspect scales detection by the target's aspect: a beam-on fighter is the
+// biggest reflector (1), nose or tail the smallest (0.8), and a near-stationary
+// target has no meaningful aspect - the middle value.
+func aspect(line flight.Vec3, velocity flight.Vec3) float64 {
+	speed := velocity.Length()
+	if speed < 20 {
+		return 0.85
+	}
+	return 1 - 0.2*math.Abs(velocity.Dot(line))/speed
+}
+
+// clutter is how far a target is seen against the sea, 0 to 1: its line of
+// sight runs below the horizon, which dips further the higher the radar flies,
+// and a distant target sits lower for the earth's curve. A jet at the same
+// height, or a little below at long range, has the sky behind it.
+func (i *instance) clutter(own flight.Vec3, target flight.Vec3) float64 {
+	across := math.Hypot(flight.Shortest(own.X, target.X, i.environment.Wrap), flight.Shortest(own.Z, target.Z, i.environment.Wrap))
+	below := math.Atan2(own.Y-target.Y, across) + across/(2*earth)
+	horizon := math.Acos(earth / (earth + math.Max(0, own.Y)))
+	t := clamp((below-horizon+radar_edge)/(2*radar_edge), 0, 1)
+	return t * t * (3 - 2*t)
+}
+
+// detection is how far this target paints, this look.
+func (i *instance) detection(a, c *craft) float64 {
+	line, _ := i.bearing(a.model.State.Position, c.model.State.Position)
+	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*i.clutter(a.model.State.Position, c.model.State.Position))
+}
+
+// notched reports a target in the clutter notch: its own speed along the line
+// of sight, whatever the radar's, is too slow for the doppler gate - a beam.
+func notched(line flight.Vec3, velocity flight.Vec3) bool {
+	return math.Abs(velocity.Dot(line)) <= round.Notch
+}
+
+// probability is the chance one frame's look paints a target at this span
+// against its detection range: all but sure well inside, marginal at the edge.
+func probability(span float64, detection float64) float64 {
+	if span >= detection {
+		return 0
+	}
+	if span < 0.55*detection {
+		return 0.97
+	}
+	return 0.97 - (0.97-0.15)*(span-0.55*detection)/(0.45*detection)
+}
 
 // soar points a horizontal direction with the climb that walks the jet back to
 // the BVR block. Altitude is the DLZ's biggest lever, and a level() aim under
@@ -72,11 +129,12 @@ func soar(direction flight.Vec3, altitude float64) flight.Vec3 {
 	return d.Normalize()
 }
 
-// painted reports whether a bot's own radar holds this contact: radiating,
-// inside the scan cone and reach, and outside the notch. Order dependency,
+// painted reports whether a bot's own radar paints this contact this look:
+// radiating, inside the scan cone and out of the notch, and the frame's look
+// landing at the odds its range against the detection range gives. Order dependency,
 // deliberate: perception runs inside decide() at the skill's cadence and hunt()
 // every tick after it, so last tick's emitter admits this tick's contacts.
-func (i *instance) painted(a, c *craft) bool {
+func (i *instance) painted(a, c *craft, tick uint64) bool {
 	if a.brain == nil || i.weapons != "open" || a.emitter < 1 {
 		return false
 	}
@@ -84,14 +142,32 @@ func (i *instance) painted(a, c *craft) bool {
 		return false
 	}
 	line, span := i.bearing(a.model.State.Position, c.model.State.Position)
-	if span > radar_reach {
+	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || notched(line, c.model.State.Velocity) {
 		return false
 	}
-	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal {
-		return false
+	pair := uint64(a.player.Slot)*131 + uint64(c.player.Slot)
+	return battle.Roll(i.environment.Seed, pair, tick/radar_frame, 0x72616461) < probability(span, i.detection(a, c)) // stable through a frame: one look, however often perception asks
+}
+
+// trackable reports whether a bot's radar can hold an STT on the prey, on the
+// jet as it is: inside the gimbal cone, inside the detection range - or
+// radar_hold of it for a lock already held - and out of the notch, or starved
+// by it for no longer than the memory, after which the lock drops.
+func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
+	b := a.brain
+	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
+	reach := i.detection(a, prey)
+	if locked {
+		reach *= radar_hold
 	}
-	radial := math.Abs(c.model.State.Velocity.Subtract(a.model.State.Velocity).Dot(line))
-	return radial > round.Notch
+	starved := notched(line, prey.model.State.Velocity)
+	if !locked || !starved {
+		b.notching = 0
+	} else if b.notching == 0 {
+		b.notching = tick
+	}
+	return a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) >= round.Gimbal && span <= reach &&
+		(!starved || (b.notching > 0 && tick-b.notching <= radar_memory)) // a fresh lock never starts starved
 }
 
 // counterfire: a withholding tier forced defensive takes the one shot it has
@@ -136,12 +212,10 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	if prey == nil || !prey.alive || prey.model == nil || !hostile(a, prey) {
 		return
 	}
-	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
-	nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1})
-	radial := math.Abs(prey.model.State.Velocity.Subtract(a.model.State.Velocity).Dot(line))
-	if nose.Dot(line) < round.Gimbal || span > radar_reach || radial <= round.Notch {
+	if !i.trackable(a, prey, false, tick) {
 		return
 	}
+	_, span := i.bearing(a.model.State.Position, prey.model.State.Position)
 	zone := round.Ladder(
 		round.Target{Position: a.model.State.Position, Velocity: a.model.State.Velocity},
 		round.Target{Position: prey.model.State.Position, Velocity: prey.model.State.Velocity},
@@ -193,8 +267,9 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	if target >= 0 {
 		prey = i.aircraft[target] // a map: absent slots read nil, no bounds to check
 	}
-	if prey == nil || !prey.alive || prey.model == nil || !hostile(a, prey) {
-		a.emitter, a.lock = 1, -1 // armed and wanting: search — this is what lets painted() bootstrap the first contact
+	seen, found := b.known[target]
+	if prey == nil || !prey.alive || prey.model == nil || !hostile(a, prey) || !found {
+		a.emitter, a.lock, b.notching = 1, -1, 0 // armed and wanting: search — this is what lets painted() bootstrap the first contact
 		if b.contacted > 0 && tick-b.contacted < 10800 {
 			// Investigate the last contact: a mutual defence staleness both pictures at
 			// once, and the course a defence ends on points at the beam, not the fight.
@@ -217,12 +292,21 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		return
 	}
 
-	b.contact, b.contacted = prey.model.State.Position, tick
-	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
 	nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1})
-	cone := nose.Dot(line) >= round.Gimbal
-	radial := math.Abs(prey.model.State.Velocity.Subtract(a.model.State.Velocity).Dot(line))
-	trackable := cone && span <= radar_reach && radial > round.Notch
+	locked := a.emitter == 2 && a.lock == target
+	trackable := i.trackable(a, prey, locked, tick)
+
+	// The picture flown and fought from: the STT's live track while the lock
+	// holds, otherwise the last look carried on by its velocity - a notch, a
+	// drag or a turn out of the scan costs the bot the picture, not only the
+	// lock.
+	position, velocity := prey.model.State.Position, prey.model.State.Velocity
+	if !locked || !trackable {
+		age := float64(tick-seen.when) / 60
+		position, velocity = seen.position.Add(seen.velocity.Scale(age)), seen.velocity
+	}
+	b.contact, b.contacted = position, tick
+	line, span := i.bearing(a.model.State.Position, position)
 
 	// The DLZ, refreshed at most once a second: the same arithmetic the
 	// human HUD shows, so bot and human judge every shot by one truth.
@@ -230,7 +314,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		b.assessed = tick
 		b.zone = round.Ladder(
 			round.Target{Position: a.model.State.Position, Velocity: a.model.State.Velocity},
-			round.Target{Position: prey.model.State.Position, Velocity: prey.model.State.Velocity},
+			round.Target{Position: position, Velocity: velocity},
 			i.environment.Wrap)
 	}
 
@@ -294,8 +378,8 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		// the weapon cannot fly), and it is a DOCTRINE number shared by every
 		// tier, not a tier axis - #106 established that BVR shot quality cannot
 		// be one.
-		if nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1}); span > 1 {
-			if line, _ := i.bearing(a.model.State.Position, prey.model.State.Position); line.Dot(nose) > 0 {
+		if span > 1 {
+			if line.Dot(nose) > 0 {
 				// Half the cosine's bite, not all of it. The full cos(off) fixed
 				// the top rung (superhuman v ace 1-5 -> 5-1) but cost the ace
 				// six wins against the pilot at 48 seeds (33-13 -> 27-21): an
