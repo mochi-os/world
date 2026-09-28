@@ -515,8 +515,9 @@ type instance struct {
 	apart       float64 // BVR spawn separation, m (0 = the merge ring): the joust's BVR start, and the spaced/anchored spawn distance
 	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
-	sky         string // session cloud preset (bot visibility occlusion)
-	night       bool   // session time of day (bot visual range and glare)
+	wakes       flight.Wakes // every jet's trailing vortices, laid from its track: each jet flies through the others' and, once it is old enough, its own
+	sky         string       // session cloud preset (bot visibility occlusion)
+	night       bool         // session time of day (bot visual range and glare)
 	cheat       struct {
 		invulnerable bool // humans take no weapon damage; bots still do (crashes still kill)
 		ammunition   bool // guns and missiles never deplete — humans and bots alike
@@ -927,6 +928,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 
 func (i *instance) Leave(player game.Player) {
 	delete(i.aircraft, player.Slot)
+	i.wakes.Forget(player.Slot)
 	// A joust abandoned mid-fight ends in favour of whoever stayed — but only
 	// once it actually started: bailing out of the waiting room is not a win.
 	if i.mode == "joust" && i.started && !i.finished && len(i.aircraft) == 1 {
@@ -1163,6 +1165,14 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 		}
 	}
+	// Every flying jet lays its wake on the session's clock before any of them
+	// steps, so each meets the others' as they stood at the start of the tick.
+	clock := float64(tick) / 60
+	for _, slot := range i.slots() {
+		if a := i.aircraft[slot]; a.alive && a.model != nil {
+			i.wakes.Record(slot, clock, a.model)
+		}
+	}
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
 		a.flared += dt
@@ -1192,6 +1202,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		}
 		fed := a.trigger(i.free())
 		whole := a.model.State // this tick's start, where a jet that breaks up during it is laid to rest
+		a.model.Wake = i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea, i.environment.Wrap)
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(fed) // 4 × Dt (1/240) per 60 Hz tick
 		}

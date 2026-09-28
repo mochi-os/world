@@ -140,7 +140,9 @@ func bandit_step(this js.Value, arguments []js.Value) any {
 	if len(arguments) > 1 {
 		bandit.Load(arguments[1].Int()) // the client's belt: the recoil follows the rounds it actually has
 	}
+	meet(enemy, bandit.Model()) // the pilot's wake, and its own once old enough, on the pilot's clock
 	fire, flare, launch, heater, chaff := bandit.Step()
+	lay(enemy, bandit.Model())
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
 	send(back[:], arguments[0])

@@ -208,6 +208,10 @@ func (b *Bandit) Load(rounds int) { b.craft.ammunition = rounds }
 // State exposes the bandit's flight state for the client to render.
 func (b *Bandit) State() *flight.State { return &b.craft.model.State }
 
+// Model is the bandit's flight model: the browser hands it the wake it flies
+// through and lays the bandit's own from it.
+func (b *Bandit) Model() *flight.Model { return b.craft.model }
+
 // Instruments is the bandit's own instrument tail — the same five words the
 // player's flight frame carries after its state (alpha, beta, load factor,
 // Mach, calibrated airspeed) — so the client can record the bandit's

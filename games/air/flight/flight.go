@@ -21,7 +21,7 @@ import (
 // Version identifies the model's behaviour and state layout. It travels in the
 // multiplayer join payload; hosts on different versions disable prediction
 // rather than mispredict. Bump on ANY behavioural change.
-const Version = 3
+const Version = 4
 
 // Dt is the fixed simulation timestep. Hosts never choose a timestep; they
 // choose how many steps to run.

@@ -59,12 +59,20 @@ type Model struct {
 	starved  float64 // accumulated zero/negative-g time, s: the oil and boost pickups uncover (NATOPS ten-second limit)
 	stores   uint64  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
 
+	// Wake is the pieces of other aircraft's wakes - and of this one's own,
+	// once it is old enough - that the host hands the model before each step
+	// (Wakes.Near). Empty flies clean air.
+	Wake []Vortex
+
 	// Per-step caches:
 	mass    float64
 	center  Vec3 // combined CG, body, from datum
 	inertia Mat3 // about the combined CG
 	inverse Mat3
-	gust    Vec3      // wind at the pre-step position (frozen per step)
+	gust    Vec3      // wind at the pre-step position (frozen per step), the wake's swirl included
+	swirl   Vec3      // the air the wake induces at the CG this step, world m/s (part of gust)
+	swirls  []Vec3    // per element, what the wake induces there beyond the swirl at the CG: body m/s, frozen per step
+	near    []Vortex  // the wake's pieces close enough to reach some element this step
 	lift    []float64 // pass-one surface lift coefficients
 	base    []int     // per-surface offset into the flattened element index (damage addressing)
 	first   bool      // capture flag: record normal on the k1 stage only
@@ -160,6 +168,7 @@ func (m *Model) Step(in Inputs) {
 	m.weigh()
 	local := air(m.State.Position.Y, m.Environment)
 	m.gust = wind(m.State.Position, m.State.Time, m.Environment, m.World.Carrier)
+	m.stir()
 	m.fcs(in, local)
 	m.spool(in)
 	m.events(in)
@@ -168,6 +177,53 @@ func (m *Model) Step(in Inputs) {
 	m.burn(in)
 	m.shake(local)
 	m.State.Time += Dt
+}
+
+// stir adds the wake the host handed the model to this step's air: the swirl
+// at the CG joins the gust, so alpha, sideslip, Mach and the engines all read
+// it, and every element keeps what it meets beyond that, so a vortex under one
+// wing and not the other rolls the jet.
+func (m *Model) stir() {
+	m.swirl = Vec3{}
+	if len(m.Wake) == 0 {
+		m.swirls = m.swirls[:0]
+		return
+	}
+	s := &m.State
+	wrap := m.Environment.Wrap
+	m.swirl = Induced(s.Position, m.Wake, wrap)
+	m.gust = m.gust.Add(m.swirl)
+	// A piece whose line passes further from the CG than its reach and the
+	// airframe's own size tapers to nothing along the whole airframe, so the
+	// elements are summed over the rest alone: the same air, for less work.
+	extent := 0.0
+	for si := range m.Airframe.Surfaces {
+		for _, e := range m.Airframe.Surfaces[si].Elements {
+			extent = math.Max(extent, e.Position.Subtract(m.center).Length())
+		}
+	}
+	m.near = m.near[:0]
+	for _, v := range m.Wake {
+		if v.distance(s.Position, wrap) < v.Reach+extent {
+			m.near = append(m.near, v)
+		}
+	}
+	m.swirls = m.swirls[:0]
+	for si := range m.Airframe.Surfaces {
+		for _, e := range m.Airframe.Surfaces[si].Elements {
+			at := s.Position.Add(s.Attitude.Rotate(e.Position.Subtract(m.center)))
+			m.swirls = append(m.swirls, s.Attitude.Unrotate(Induced(at, m.near, wrap).Subtract(m.swirl)))
+		}
+	}
+}
+
+// swirled is what the wake induces at element ei of surface si beyond the
+// swirl at the CG, body frame: zero in clean air.
+func (m *Model) swirled(si int, ei int) Vec3 {
+	if k := m.base[si] + ei; k < len(m.swirls) {
+		return m.swirls[k]
+	}
+	return Vec3{}
 }
 
 // shake grades the aerodynamic buffet: separated-flow roughness from moderate

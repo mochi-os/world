@@ -82,6 +82,9 @@ func main() {
 	for name, export := range rounds() {
 		exports[name] = export
 	}
+	for name, export := range wake_exports() {
+		exports[name] = export
+	}
 	js.Global().Set("air_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
 }
@@ -131,6 +134,7 @@ func initialize(this js.Value, arguments []js.Value) any {
 	}
 	model = flight.New(airframe, payload.Environment, payload.World)
 	rings = [ring]slot{}
+	wake_reset(payload.Environment)
 	return ""
 }
 
@@ -250,9 +254,13 @@ func frame(this js.Value, arguments []js.Value) any {
 	}
 	receive(arguments[0], input[:])
 	in, steps := controls()
+	meet(pilot, model) // the wake as it stands at the frame's start, for every step of it
 	for i := 0; i < steps; i++ {
 		model.Step(in)
 	}
+	heard(model) // after the steps: the pieces and the air they made, from the same frame
+	clock += float64(steps) * flight.Dt
+	lay(pilot, model)
 	emit(arguments[1])
 	return ""
 }

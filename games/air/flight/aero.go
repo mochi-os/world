@@ -121,7 +121,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			sum, area := 0.0, 0.0
 			for ei := range surface.Elements {
 				e := &surface.Elements[ei]
-				w := v.Add(s.Omega.Cross(e.Position.Subtract(m.center))).Scale(-1)
+				w := v.Add(s.Omega.Cross(e.Position.Subtract(m.center))).Subtract(m.swirled(si, ei)).Scale(-1)
 				if surface.Kind == Stabilator {
 					w = w.Subtract(e.Normal.Scale(w.Length() * wash)) // the same tilt pass 2 applies
 				}
@@ -196,7 +196,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 		for ei := range surface.Elements {
 			e := &surface.Elements[ei]
 			r := e.Position.Subtract(m.center)
-			w := v.Add(s.Omega.Cross(r)).Scale(-1)
+			w := v.Add(s.Omega.Cross(r)).Subtract(m.swirled(si, ei)).Scale(-1) // the wake's air at this element, beyond the swirl the gust already carries
 			// Section flow: remove the span component.
 			section := w.Subtract(e.Axis.Scale(w.Dot(e.Axis)))
 			speed := section.Length()
