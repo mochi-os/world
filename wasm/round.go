@@ -58,7 +58,20 @@ func rounds() map[string]any {
 		"heater_ladder":  guard(heater_ladder),
 		"round_distract": guard(round_distract),
 		"round_drop":     guard(round_drop),
+		"joust_opening":  guard(joust_opening),
 	}
+}
+
+// joust_opening input words: 0 seed, 1 wrap. Output words: 0-1 each slot's
+// block, 2 block speed, 3 flank, 4 separation - the start the world server
+// draws a BVR joust with (#46), so single player draws it the same way.
+func joust_opening(this js.Value, arguments []js.Value) any {
+	receive(arguments[0], quiver[:2])
+	o := air.Draw(uint64(quiver[0]), quiver[1])
+	out := quiver[:5]
+	out[0], out[1], out[2], out[3], out[4] = o.Altitude[0], o.Altitude[1], o.Speed, o.Flank, o.Apart
+	send(out, arguments[1])
+	return nil
 }
 
 func round_distract(this js.Value, arguments []js.Value) any {

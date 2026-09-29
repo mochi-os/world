@@ -87,6 +87,62 @@ var separation = sync.OnceValue(func() float64 {
 	return ladder.Max + commit
 })
 
+// Opening is a BVR joust's start (#46), drawn from a seed so the world server
+// and the browser's core draw the same one: each jet's block between 15,000
+// and 35,000 ft, one block speed for both, and a flank both hold off the line
+// between them, turned the same way so each sees the other the same angle off
+// its nose - none a third of the time, a hot start. The flank stays inside
+// 45 degrees, well within the radar's scan (round.Gimbal): with no AWACS to
+// give the picture, a jet starting outside the other's scan is never found.
+// Apart keeps each outside the other's Rmax by the commit buffer.
+type Opening struct {
+	Altitude [2]float64 // m, by slot
+	Speed    float64    // m/s
+	Flank    float64    // rad each jet's heading turns off the line to the other, the same way for both
+	Apart    float64    // m
+}
+
+// headon is the classic start the tests and probes pin: both at the block,
+// nose to nose across the head-on separation.
+func headon() Opening {
+	return Opening{Altitude: [2]float64{bvraltitude, bvraltitude}, Speed: bvrspeed, Apart: separation()}
+}
+
+// Draw is the opening a seed gives in an arena of this wrap (0 unwrapped).
+func Draw(seed uint64, wrap float64) Opening {
+	roll := func(salt uint64) float64 { return battle.Roll(seed, 0x6f70656e, salt) }
+	o := Opening{Altitude: [2]float64{4572 + roll(1)*6096, 4572 + roll(2)*6096}, Speed: 230 + roll(3)*60}
+	if roll(4) >= 1.0/3 {
+		o.Flank = math.Pi/9 + roll(5)*(math.Pi/4-math.Pi/9) // 20-45 degrees
+		if roll(6) < 0.5 {
+			o.Flank = -o.Flank
+		}
+	}
+	// Rmax moves a little with the range it is judged at once the blocks
+	// differ, so judge it at the separation it gives until that settles.
+	o.Apart = 60000
+	for pass := 0; pass < 4; pass++ {
+		reach := 0.0
+		for slot := 0; slot < 2; slot++ {
+			reach = math.Max(reach, round.Ladder(o.state(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max)
+		}
+		o.Apart = reach + commit
+	}
+	if wrap > 0 {
+		o.Apart = math.Min(o.Apart, 0.45*wrap) // across the wrap they would meet the short way round
+	}
+	return o
+}
+
+// state is slot's spawn this far apart: at its end of the line along X - slot 0
+// east, as bvr() has always put it - on its block, heading the flank off the
+// line to the other jet.
+func (o Opening) state(slot int, apart float64) round.Target {
+	side := 1.0 - 2*float64(slot%2)
+	heading := flight.Vec3{X: -side * math.Cos(o.Flank), Z: -side * math.Sin(o.Flank)}
+	return round.Target{Position: flight.Vec3{X: side * apart / 2, Y: o.Altitude[slot%2]}, Velocity: heading.Scale(o.Speed)}
+}
+
 // Missile constants: pursuit guidance with an aspect-aware seeker, graded
 // flare decoys, and a real proximity fuse feeding the battle warhead.
 // The AIM-9M (#126): a boost-coast point mass flying PROPORTIONAL NAVIGATION
@@ -180,7 +236,14 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		i.night = true
 	}
 	if start, _ := session.Parameters["start"].(string); start == "bvr" && mode == "joust" {
-		i.apart = separation() // the BVR joust (#32): the pair opens the full derived distance apart
+		// The BVR joust (#32): the pair opens the full derived distance apart,
+		// from a start drawn from the match seed (#46) - or the classic head-on
+		// one, which "opening": "head" pins for tests.
+		i.opening = Draw(i.environment.Seed, i.environment.Wrap)
+		if pin, _ := session.Parameters["opening"].(string); pin == "head" {
+			i.opening = headon()
+		}
+		i.apart = i.opening.Apart
 	}
 	if spaced, _ := session.Parameters["spaced"].(bool); spaced && mode == "teams" {
 		i.apart = separation() // anchored sides (#32): each team's wall at its own anchor, the full width apart
@@ -513,6 +576,7 @@ type instance struct {
 	missiles    bool    // rule: any missiles allowed (weapons != "guns" — kept for the gates that only care about that much)
 	weapons     string  // the loadout class rule (#32): "guns" | "fox2" | "open"
 	apart       float64 // BVR spawn separation, m (0 = the merge ring): the joust's BVR start, and the spaced/anchored spawn distance
+	opening     Opening // the BVR joust's drawn start (#46)
 	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
 	wakes       flight.Wakes // every jet's trailing vortices, laid from its track: each jet flies through the others' and, once it is old enough, its own
@@ -743,10 +807,8 @@ func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) boo
 		return true
 	}
 	if i.mode == "joust" {
-		angle := float64(slot) * math.Pi
-		position := flight.Vec3{X: math.Cos(angle) * radius, Y: bvraltitude, Z: math.Sin(angle) * radius}
-		inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
-		m.State = flight.Level(m, position, inward, bvrspeed, tank)
+		spawn := i.opening.state(slot, i.apart)
+		m.State = flight.Level(m, spawn.Position, spawn.Velocity.Normalize(), i.opening.Speed, tank)
 		return true
 	}
 	// slots(), not a bare range: this is the sum the spaced respawn point is

@@ -617,6 +617,122 @@ func TestSeparation(t *testing.T) {
 	}
 }
 
+// TestOpening (#46): a BVR joust's start is drawn from a seed - each block
+// inside 15,000-35,000 ft, one speed, a hot start about a third of the time
+// and otherwise a 20-45 degree flank, inside the radar's scan - and opens far
+// enough apart that neither jet starts inside the other's Rmax.
+func TestOpening(t *testing.T) {
+	if Draw(7, 0) != Draw(7, 0) {
+		t.Fatal("one seed drew two openings: a match and its client would disagree")
+	}
+	hot, split := 0, 0
+	for seed := uint64(1); seed <= 300; seed++ {
+		o := Draw(seed, 0)
+		for _, h := range o.Altitude {
+			if h < 4572 || h > 10668 {
+				t.Fatalf("seed %d: block %.0f m outside 15,000-35,000 ft", seed, h)
+			}
+		}
+		if o.Speed < 230 || o.Speed > 290 {
+			t.Fatalf("seed %d: block speed %.0f m/s outside 230-290", seed, o.Speed)
+		}
+		if f := math.Abs(o.Flank); f != 0 && (f < math.Pi/9-1e-9 || f > math.Pi/4+1e-9) {
+			t.Fatalf("seed %d: flank %.1f deg, neither hot nor 20-45", seed, f*180/math.Pi)
+		}
+		// Both turned the same way off the line: their tracks run antiparallel
+		// and pass abeam, rather than converging on a point to one side.
+		zero, one := o.state(0, o.Apart), o.state(1, o.Apart)
+		if zero.Velocity.Add(one.Velocity).Length() > 1e-6 {
+			t.Fatalf("seed %d: the pair's tracks are not antiparallel: %+v and %+v", seed, zero.Velocity, one.Velocity)
+		}
+		for _, end := range [][2]round.Target{{zero, one}, {one, zero}} {
+			sight := end[1].Position.Subtract(end[0].Position)
+			sight.Y = 0
+			if off := math.Acos(math.Min(1, sight.Normalize().Dot(end[0].Velocity.Normalize()))); math.Abs(off-math.Abs(o.Flank)) > 1e-6 {
+				t.Fatalf("seed %d: one end sees the other %.1f deg off its nose, not the %.1f flank", seed, off*180/math.Pi, math.Abs(o.Flank)*180/math.Pi)
+			}
+		}
+		if math.Cos(o.Flank) < round.Gimbal {
+			t.Fatalf("seed %d: the other jet starts %.0f deg off the nose, outside the radar's scan", seed, math.Abs(o.Flank)*180/math.Pi)
+		}
+		if o.Flank == 0 {
+			hot++
+		}
+		if math.Abs(o.Altitude[0]-o.Altitude[1]) > 1500 {
+			split++
+		}
+		for slot := 0; slot < 2; slot++ {
+			if reach := round.Ladder(o.state(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max; o.Apart < reach+commit-1 {
+				t.Fatalf("seed %d: slot %d's Rmax %.0f m plus the commit buffer reaches past the %.0f m apart", seed, slot, reach, o.Apart)
+			}
+		}
+	}
+	if hot < 70 || hot > 130 {
+		t.Errorf("%d of 300 starts hot, want about a third", hot)
+	}
+	if split < 150 {
+		t.Errorf("only %d of 300 starts split the blocks by more than 1,500 m", split)
+	}
+	if o := Draw(3, 150000); o.Apart > 0.45*150000 {
+		t.Errorf("apart %.0f m past the wrap's reach: across a 150 km wrap the pair would meet the short way round", o.Apart)
+	}
+	if h := headon(); h.Altitude != [2]float64{bvraltitude, bvraltitude} || h.Speed != bvrspeed || h.Flank != 0 || h.Apart != separation() {
+		t.Errorf("the pinned head-on start moved: %+v", h)
+	}
+}
+
+// TestOpeningSpawn: a BVR joust spawns its pair on the drawn opening, or on
+// the classic head-on block when "opening": "head" pins it.
+func TestOpeningSpawn(t *testing.T) {
+	seed := uint64(11)
+	for Draw(seed, 0).Flank == 0 { // a flanked start, so the spawn's heading is tested off the line
+		seed++
+	}
+	joust := func(extra map[string]any) (*instance, [2]*flight.State) {
+		parameters := map[string]any{"missiles": true, "start": "bvr", "bots": map[string]any{"novice": 1.0, "ace": 1.0}}
+		for k, v := range extra {
+			parameters[k] = v
+		}
+		made, err := (&Air{}).Create(game.Session{Identifier: "opening", Game: "air", Mode: "joust", Seed: seed, Parameters: parameters})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		t.Cleanup(i.Close)
+		var pair [2]*flight.State // by slot parity, as bvr() places them
+		for _, s := range i.slots() {
+			if a := i.aircraft[s]; a != nil && a.model != nil {
+				pair[s%2] = &a.model.State
+			}
+		}
+		if pair[0] == nil || pair[1] == nil {
+			t.Fatal("the joust pair does not hold an even and an odd slot")
+		}
+		return i, pair
+	}
+	i, pair := joust(nil)
+	o := Draw(i.environment.Seed, i.environment.Wrap)
+	if i.opening != o || i.apart != o.Apart {
+		t.Fatalf("the joust opened on %+v, apart %.0f; the seed draws %+v", i.opening, i.apart, o)
+	}
+	for slot, st := range pair {
+		want := o.state(slot, o.Apart)
+		if st.Position.Subtract(want.Position).Length() > 1 {
+			t.Errorf("slot %d spawned at %+v, want %+v", slot, st.Position, want.Position)
+		}
+		if heading := st.Velocity.Normalize(); heading.Dot(want.Velocity.Normalize()) < 0.999 {
+			t.Errorf("slot %d spawned heading %+v, want %+v", slot, heading, want.Velocity.Normalize())
+		}
+		if speed := st.Velocity.Length(); math.Abs(speed-o.Speed) > 0.5 { // the match has no wind
+			t.Errorf("slot %d spawned at %.1f m/s, want the drawn %.1f", slot, speed, o.Speed)
+		}
+	}
+	i, pair = joust(map[string]any{"opening": "head"})
+	if i.opening != headon() || pair[0].Position.Y != bvraltitude || pair[1].Position.Y != bvraltitude || math.Abs(pair[0].Velocity.Length()-bvrspeed) > 0.5 {
+		t.Errorf(`"opening": "head" did not pin the classic start: %+v, blocks %.0f/%.0f`, i.opening, pair[0].Position.Y, pair[1].Position.Y)
+	}
+}
+
 // TestWeaponsGrant (#32): the three loadout classes clamp at the grant —
 // guns strips everything, Fox 2 keeps the heaters and the tank, open keeps
 // the lot.
@@ -659,6 +775,7 @@ func TestBvrJoust(t *testing.T) {
 		parameters := map[string]any{"missiles": true}
 		if start != "" {
 			parameters["start"] = start
+			parameters["opening"] = "head" // the classic start; TestOpeningSpawn covers the drawn one
 		}
 		made, err := (&Air{}).Create(game.Session{Mode: "joust", Seed: 7, Parameters: parameters})
 		if err != nil {
