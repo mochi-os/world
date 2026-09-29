@@ -59,19 +59,27 @@ func pressing(library int) press {
 // detection range by aspect and against the sea, the same doppler notch on the
 // target's own speed along the line of sight, one look per antenna frame at
 // the same odds, and the same memory before a starved lock drops. The scan
-// cone matches the seeker's gimbal constant. hunt_test.go holds the two in
-// step.
+// cone matches the seeker's gimbal constant, and in elevation it covers the
+// pilot's default four bars, a beam each, about where the antenna points.
+// hunt_test.go holds the two in step.
 const (
 	radar_base    = 55 * 1852.0 // m: beam-aspect detection range against a fighter, 44 nm nose-on
 	radar_clutter = 0.35        // how much of its range a target seen against the sea loses
 	radar_edge    = 0.005       // rad: the band either side of the horizon over which the sea comes in behind a target
 	radar_hold    = 1.15        // an STT holds its lock out to this multiple of the detection range
 	radar_memory  = 4 * 60      // ticks a starved STT coasts on memory before the lock drops
-	radar_frame   = 112         // ticks per antenna frame, ±70° at 75°/s: one look at each target per frame
+	radar_beam    = 0.0576      // rad: one bar's height, the beam's (3.3°)
+	radar_bars    = 4           // the bars a bot's search stacks
+	radar_sweep   = 112         // ticks per bar, ±70° at 75°/s
+	radar_tilt    = 1.047       // rad: the antenna's elevation gimbal
 	radar_commit  = 1.25        // the withholding tiers light the STT inside this multiple of the maximum rung
 	radar_seam    = 10000.0     // m: inside this the tuned WVR arbiter owns the flight path and the crank yields
 	earth         = 6371000.0   // m, the earth's radius
 )
+
+// radar_frame is the ticks per antenna frame, every bar swept once: one look at
+// each target in the volume per frame.
+const radar_frame = radar_bars * radar_sweep
 
 // aspect scales detection by the target's aspect: a beam-on fighter is the
 // biggest reflector (1), nose or tail the smallest (0.8), and a near-stationary
@@ -145,8 +153,26 @@ func (i *instance) painted(a, c *craft, tick uint64) bool {
 	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || notched(line, c.model.State.Velocity) {
 		return false
 	}
+	if math.Abs(math.Asin(clamp(line.Y, -1, 1))-i.antenna(a, tick)) > radar_bars*radar_beam/2 {
+		return false // above or below the bars
+	}
 	pair := uint64(a.player.Slot)*131 + uint64(c.player.Slot)
 	return battle.Roll(i.environment.Seed, pair, tick/radar_frame, 0x72616461) < probability(span, i.detection(a, c)) // stable through a frame: one look, however often perception asks
+}
+
+// antenna is the elevation a bot points its search at: its target's last
+// known position carried on to now, as the pilot's TWS follows the L&S, and
+// level when it has none - the bars then reach well past any block split at
+// the ranges a fighter first paints.
+func (i *instance) antenna(a *craft, tick uint64) float64 {
+	b := a.brain
+	t, found := b.known[b.target]
+	if b.target < 0 || !found || tick < t.when {
+		return 0
+	}
+	where := t.position.Add(t.velocity.Scale(float64(tick-t.when) / 60))
+	line, _ := i.bearing(a.model.State.Position, where)
+	return clamp(math.Asin(clamp(line.Y, -1, 1)), -radar_tilt, radar_tilt)
 }
 
 // trackable reports whether a bot's radar can hold an STT on the prey, on the

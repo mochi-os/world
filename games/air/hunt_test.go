@@ -12,6 +12,7 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
 	"testing"
 
 	"world/game"
@@ -651,10 +652,99 @@ func TestRadarParity(t *testing.T) {
 		{"MEMORY", read(`const MEMORY = ([0-9.]+)`), radar_memory / 60},
 		{"NOTCH", read(`const NOTCH = ([0-9.]+)`), round.Notch},
 		{"aspect", read(`return 1 - ([0-9.]+) \* along`), 1 - aspect(flight.Vec3{X: 1}, flight.Vec3{X: 100})},
+		{"BEAM", read(`const BEAM = ([0-9.]+)`), radar_beam},
+		{"TILT", read(`const TILT = ([0-9.]+)`), radar_tilt},
+		{"sweep ticks", math.Round(2 * read(`export const WIDTHS = \[([0-9.]+),`) / read(`const SWEEP = ([0-9.]+)`) * 60), radar_sweep},
 		{"stationary", read(`if \(speed < 20\) return ([0-9.]+)`), aspect(flight.Vec3{X: 1}, flight.Vec3{})},
 	} {
 		if math.Abs(c.ts-c.world) > 1e-9 {
 			t.Errorf("%s: the pilot's radar has %g, the bot's %g", c.name, c.ts, c.world)
 		}
+	}
+	// The bot searches the pilot's default bars: BARS[bars] in radar.ts.
+	var bars []int
+	for _, n := range strings.Split(string(regexp.MustCompile(`export const BARS = \[([0-9, ]+)\]`).FindSubmatch(source)[1]), ",") {
+		v, _ := strconv.Atoi(strings.TrimSpace(n))
+		bars = append(bars, v)
+	}
+	if index := int(read(`\n  bars = ([0-9]+) //`)); bars[index] != radar_bars {
+		t.Errorf("bars: the pilot's radar searches %d by default, the bot %d", bars[index], radar_bars)
+	}
+}
+
+// TestRadarBars: a bot's search covers its bars about where its antenna
+// points - level with no target, on the target's last known position with
+// one - as the pilot's four-bar scan does.
+func TestRadarBars(t *testing.T) {
+	i, a, c, slot := radar_pair(t)
+	a.model.State.Position = flight.Vec3{Y: 8000} // high enough that a target seven degrees down is still over the sea
+	up := func(degrees float64) {
+		span := 15 * 1852.0
+		park(c, flight.Vec3{X: span, Y: 8000 + span*math.Tan(degrees*math.Pi/180)}, flight.Vec3{X: -250})
+	}
+	look := func() bool { // any look in ten frames
+		for tick := uint64(0); tick < 10*radar_frame; tick += radar_frame {
+			if i.painted(a, c, tick) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, k := range []struct {
+		degrees float64
+		want    bool
+	}{{0, true}, {6.4, true}, {-6.4, true}, {7, false}, {-7, false}, {12, false}} {
+		up(k.degrees)
+		if look() != k.want {
+			t.Errorf("a target %+.1f degrees off level, the antenna level: painted %v, want %v", k.degrees, !k.want, k.want)
+		}
+	}
+	up(12)
+	a.brain.target = slot
+	a.brain.known[slot] = &track{when: 0, position: c.model.State.Position, velocity: c.model.State.Velocity}
+	if !look() {
+		t.Error("a target twelve degrees up never painted with the antenna on its last known position")
+	}
+	delete(a.brain.known, slot)
+	if look() {
+		t.Error("a target twelve degrees up painted with nothing to point the antenna at")
+	}
+}
+
+// TestRadarAntenna: the antenna follows the target's track carried on from
+// its last sighting, not the sighting itself.
+func TestRadarAntenna(t *testing.T) {
+	i, a, _, slot := radar_pair(t)
+	a.brain.target = slot
+	a.brain.known[slot] = &track{when: 0, position: flight.Vec3{X: 10000, Y: 3000}, velocity: flight.Vec3{Y: 100}}
+	if e := i.antenna(a, 600); math.Abs(e-math.Atan2(1000, 10000)) > 1e-3 { // ten seconds on: 1,000 m above where he was seen
+		t.Errorf("antenna %.2f degrees, want %.2f: on the track carried on", e*180/math.Pi, math.Atan2(1000, 10000)*180/math.Pi)
+	}
+	a.brain.known[slot] = &track{when: 0, position: flight.Vec3{X: 1000, Y: 30000}}
+	if e := i.antenna(a, 0); e != radar_tilt { // nearly overhead: the antenna stops at its gimbal
+		t.Errorf("antenna %.1f degrees at a target nearly overhead, want the %.1f degree gimbal", e*180/math.Pi, radar_tilt*180/math.Pi)
+	}
+}
+
+// TestRadarFrame: one look per frame, the frame every bar swept once - the
+// roll holds through bars x sweep ticks and changes between frames.
+func TestRadarFrame(t *testing.T) {
+	i, a, c, _ := radar_pair(t)
+	park(c, flight.Vec3{X: 41 * 1852, Y: 3000}, flight.Vec3{X: -100, Z: 230}) // flanking, 0.8 of its 50.6 nm detection: the odds are near even
+	frame := uint64(radar_bars * radar_sweep)
+	seen, missed := 0, 0
+	for k := uint64(0); k < 60; k++ {
+		first, last := i.painted(a, c, k*frame), i.painted(a, c, k*frame+frame-1)
+		if first != last {
+			t.Fatalf("frame %d: the look changed inside the frame", k)
+		}
+		if first {
+			seen++
+		} else {
+			missed++
+		}
+	}
+	if seen == 0 || missed == 0 {
+		t.Errorf("sixty frames at even odds painted %d and missed %d: the rolls are not per frame", seen, missed)
 	}
 }
