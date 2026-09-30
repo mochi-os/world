@@ -85,6 +85,9 @@ func main() {
 	for name, export := range wake_exports() {
 		exports[name] = export
 	}
+	for name, export := range debris_exports() {
+		exports[name] = export
+	}
 	js.Global().Set("air_flight", js.ValueOf(exports))
 	select {} // the exports keep serving; the program never exits
 }
@@ -135,6 +138,7 @@ func initialize(this js.Value, arguments []js.Value) any {
 	model = flight.New(airframe, payload.Environment, payload.World)
 	rings = [ring]slot{}
 	wake_reset(payload.Environment)
+	debris_reset()
 	return ""
 }
 

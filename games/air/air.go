@@ -579,9 +579,10 @@ type instance struct {
 	opening     Opening // the BVR joust's drawn start (#46)
 	tank        float64 // spawn fuel load, kg (the session's "fuel" parameter, in pounds on the wire)
 	environment flight.Environment
-	wakes       flight.Wakes // every jet's trailing vortices, laid from its track: each jet flies through the others' and, once it is old enough, its own
-	sky         string       // session cloud preset (bot visibility occlusion)
-	night       bool         // session time of day (bot visual range and glare)
+	wakes       flight.Wakes    // every jet's trailing vortices, laid from its track: each jet flies through the others' and, once it is old enough, its own
+	debris      []battle.Debris // every kill's wreckage while it can still strike (battle/debris.go): laid where the jet fell, met each tick
+	sky         string          // session cloud preset (bot visibility occlusion)
+	night       bool            // session time of day (bot visual range and glare)
 	cheat       struct {
 		invulnerable bool // humans take no weapon damage; bots still do (crashes still kill)
 		ammunition   bool // guns and missiles never deplete — humans and bots alike
@@ -1303,7 +1304,49 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	i.guns(dt, tick)
 	i.fly(dt, tick)
 	i.pursue(dt, tick)
+	i.scatter(dt, tick)
 	i.drift(dt)
+}
+
+// scatter meets every kill's wreckage against the jets flying through it
+// (battle/debris.go). A piece wounds as a round does but is nobody's shot: it
+// leaves the credit with whoever last damaged the jet, and raises a hit for
+// the struck pilot to feel. Each cloud rolls on its own seed, so two kills in
+// one tick do not strike alike.
+func (i *instance) scatter(dt float64, tick uint64) {
+	clock := float64(tick) / 60
+	live := i.debris[:0]
+	for _, d := range i.debris {
+		if _, _, _, alive := d.Cloud(clock); alive {
+			live = append(live, d)
+		}
+	}
+	i.debris = live
+	if len(i.debris) == 0 {
+		return
+	}
+	order := i.slots()
+	for k, d := range i.debris {
+		seed := i.environment.Seed + uint64(k+1)*0x9e3779b97f4a7c15
+		for _, slot := range order {
+			a := i.aircraft[slot]
+			if a == nil || !a.alive || a.model == nil {
+				continue
+			}
+			if i.cheat.invulnerable && !a.bot {
+				continue // pieces pass through a human under the cheat, as rounds do
+			}
+			state := &a.model.State
+			hit, events, _ := d.Meet(clock, dt, state.Position, state.Velocity, state.Attitude, &a.body, i.environment.Wrap, seed, uint64(slot), tick)
+			if !hit {
+				continue
+			}
+			i.events = append(i.events, map[string]any{"kind": "hit", "slot": slot, "by": -1, "count": 1})
+			for _, event := range events {
+				i.raise(slot, event)
+			}
+		}
+	}
 }
 
 // armed maps the bot brain's REMAINING discipline count to the attach mask
@@ -2040,6 +2083,9 @@ func (i *instance) fell(victim int, by int, cause string, other int) {
 	a.alive = false
 	a.wait = pause
 	a.deaths++
+	if a.model != nil {
+		i.debris = append(i.debris, battle.Debris{Origin: a.model.State.Position, Velocity: a.model.State.Velocity, Time: float64(i.stepped) / 60})
+	}
 	if killer := i.aircraft[by]; by >= 0 && killer != nil {
 		// Friendly fire is live in the teams mode, and it costs: a teammate
 		// kill scores MINUS one for the shooter and the side.
