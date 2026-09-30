@@ -17,6 +17,7 @@ type Inputs struct {
 	Speedbrake float64 // 0..1 commanded
 	Reheat     float64 // commanded reheat fraction 0..1: the throttle's position in the afterburner range (0 = dry); the fuel control quantizes to the F404's five zones
 	Brake      bool    // wheel brakes, held, both mains
+	Bypass     bool    // the ANTI SKID switch OFF (NATOPS 2.10.3.2): the brakes take full pressure on the pedal alone; the zero value is ON, so a host that never sends it keeps protected brakes
 	Gear       bool    // commanded position, true = down
 	Hook       bool    // true = deployed
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)

@@ -31,6 +31,13 @@ const (
 	// tyre, ~8 s at 400 kt and a folded leg if held.
 	gearoverspeed = 0.00025 // m/s: sink the oleo absorbs without harm (the type's carrier-rated ~7.3 with margin shaved for gameplay)
 	overload      = 18.0    // damage per (m/s beyond tolerable)·s while a hard strike lasts (#78): ~9 m/s blows the tyre, ~12 folds the leg
+	// Unprotected braking (NATOPS 2.10.3.2): with anti-skid bypassed a firm pedal at high speed locks the wheels and
+	// blows the tyres. NATOPS names the risk, not a speed, so the threshold is a judgement at the top of the
+	// anti-skid's own working range; the game's brake is all or nothing, so past it a held brake blows each main
+	// tyre in half a second and stops there, the strut intact.
+	unprotected = 100.0 // kt ground speed
+	blowout     = 0.6   // tyre damage per second of it
+	blown       = 0.5   // where it stops: past GearTyre, short of GearCollapse
 )
 
 // contact accumulates gear, belly, catapult, and cable forces for a trial

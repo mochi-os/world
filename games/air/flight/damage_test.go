@@ -433,3 +433,75 @@ func TestGearOverspeed(t *testing.T) {
 		t.Fatalf("a 400 kt extension must at least blow a tyre (>%.1f): %.3f", flight.GearTyre, fast)
 	}
 }
+
+// TestUnprotectedBraking: with the ANTI SKID switch off (Bypass) a held brake on
+// the ground past 100 kt blows both main tyres and stops short of folding the
+// legs (NATOPS 2.10.3.2); anti-skid on, slower than that, no brake, the gear
+// up on the belly, or a deck moving with the jet, and the tyres are untouched.
+func TestUnprotectedBraking(t *testing.T) {
+	brake := func(m *flight.Model, in flight.Inputs, seconds float64) *flight.Model {
+		in.Gear = m.State.Gear.Extension > 0.5
+		for i := 0; i < int(seconds*240); i++ {
+			m.Step(in)
+		}
+		return m
+	}
+	roll := func(name string, m *flight.Model, in flight.Inputs) *flight.Model {
+		brake(m, flight.Inputs{}, 0.5) // half a second to settle
+		if !m.State.Gear.Wow {
+			t.Fatalf("%s: never settled onto the surface", name)
+		}
+		return brake(m, in, 3)
+	}
+	m := runway(0, 130/1.9438)
+	brake(m, flight.Inputs{}, 0.5)
+	brake(m, flight.Inputs{Brake: true, Bypass: true}, 1)
+	for _, leg := range []int{1, 2} {
+		if d := m.State.Damage.Gear[leg]; d <= flight.GearTyre {
+			t.Errorf("main %d after a second's unprotected braking at 130 kt: damage %.2f, want a blown tyre (over %.1f)", leg, d, flight.GearTyre)
+		}
+	}
+	brake(m, flight.Inputs{Brake: true, Bypass: true}, 2)
+	for _, leg := range []int{1, 2} {
+		if d := m.State.Damage.Gear[leg]; d > flight.GearCollapse {
+			t.Errorf("main %d after three seconds of it: damage %.2f, want the strut intact (to %.1f)", leg, d, flight.GearCollapse)
+		}
+	}
+	if d := m.State.Damage.Gear[0]; d != 0 {
+		t.Errorf("the nose wheel has no brake, yet took damage %.2f", d)
+	}
+	air := runway(0, 130/1.9438)
+	air.State.Position.Y = 12 // the flare, the wheels ten metres up and the brakes already held
+	brake(air, flight.Inputs{Brake: true, Bypass: true}, 0.5)
+	if air.State.Gear.Wow {
+		t.Fatal("the flare touched down")
+	}
+	if d := worst(air); d != 0 {
+		t.Errorf("braking in the flare: damage %.2f, want none", d)
+	}
+	belly := runway(0, 130/1.9438)
+	belly.State.Gear.Extension = 0
+	belly.State.Position.Y = 1.4 // the keel a hand's breadth off the pavement
+	// A deck steaming at 20 m/s under a jet rolling 85 kt across it: 124 kt over
+	// the sea, but the wheels turn at the deck's speed, not the world's.
+	boat := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: -10, Carrier: &flight.Carrier{
+		Position: flight.Vec3{Y: 19}, Speed: 20,
+		Deck: []flight.Vec3{{X: -165, Z: -22}, {X: -165, Z: 22}, {X: 165, Z: 22}, {X: 165, Z: -22}},
+	}})
+	boat.State.Position = flight.Vec3{X: -150, Y: 22}
+	boat.State.Velocity = flight.Vec3{X: 20 + 85/1.9438}
+	boat.State.Attitude = flight.Look(flight.Vec3{X: 1})
+	boat.State.Fuel = 2000
+	boat.State.Gear = flight.GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
+	for name, run := range map[string]*flight.Model{
+		"anti-skid on":    roll("anti-skid on", runway(0, 130/1.9438), flight.Inputs{Brake: true}),
+		"no brake":        roll("no brake", runway(0, 130/1.9438), flight.Inputs{Bypass: true}),
+		"below the speed": roll("below the speed", runway(0, 90/1.9438), flight.Inputs{Brake: true, Bypass: true}),
+		"on the belly":    roll("on the belly", belly, flight.Inputs{Brake: true, Bypass: true}),
+		"a moving deck":   roll("a moving deck", boat, flight.Inputs{Brake: true, Bypass: true}),
+	} {
+		if d := worst(run); d != 0 {
+			t.Errorf("%s: damage %.2f, want none", name, d)
+		}
+	}
+}

@@ -2609,3 +2609,14 @@ func TestBreakup(t *testing.T) {
 		t.Error("a jet rolling at 4 rad/s was ended as a break-up")
 	}
 }
+
+// TestInputBypass: the wire's "bypass" is the ANTI SKID switch OFF, and a
+// sample without it (an older client) keeps the brakes protected (#114).
+func TestInputBypass(t *testing.T) {
+	if in := input(map[string]any{"brake": true, "bypass": true}); !in.Brake || !in.Bypass {
+		t.Errorf("brake and bypass sent: got brake %v bypass %v", in.Brake, in.Bypass)
+	}
+	if in := input(map[string]any{"brake": true}); in.Bypass {
+		t.Error("a sample without bypass must leave anti-skid on")
+	}
+}

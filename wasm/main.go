@@ -17,7 +17,7 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire),
+//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off),
 //	6 sequence, 7 steps
 //
 // Output buffer layout: flight.Size encoded state words, then
@@ -223,6 +223,7 @@ func controls() (flight.Inputs, int) {
 		Speedbrake: input[4],
 		Reheat:     input[8], // analog reheat: the commanded afterburner-zone fraction (flag bit 1 retired)
 		Brake:      flags&2 != 0,
+		Bypass:     flags&2048 != 0, // the ANTI SKID switch OFF
 		Gear:       flags&4 != 0,
 		Hook:       flags&8 != 0,
 		Launch:     flags&16 != 0,

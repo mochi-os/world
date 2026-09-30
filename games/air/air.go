@@ -1067,6 +1067,7 @@ func input(data map[string]any) flight.Inputs {
 		Reset:      flag("reset"),
 		Flap:       clamp(number(data, "flap"), 0, 2),
 		Brake:      flag("brake"),
+		Bypass:     flag("bypass"), // the ANTI SKID switch OFF; an older client never sends it and keeps protected brakes
 		Gear:       flag("gear"),
 		Probe:      flag("probe"),
 		Hook:       flag("hook"),

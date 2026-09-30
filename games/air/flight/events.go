@@ -34,9 +34,31 @@ func (m *Model) events(in Inputs) {
 	}
 
 	m.touch(s)
+	m.skidding(s, in)
 	m.probes(s)
 	m.catapult(s, in)
 	m.wire(s, in)
+}
+
+// skidding blows the main tyres under a held brake with anti-skid bypassed on the
+// ground past the unprotected speed, relative to the surface (a deck moves).
+func (m *Model) skidding(s *State, in Inputs) {
+	if !in.Brake || !in.Bypass || !s.Gear.Wow || s.Gear.Extension < 0.95 {
+		return
+	}
+	_, _, carried, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap)
+	if !found {
+		return
+	}
+	ground := s.Velocity.Subtract(carried)
+	if math.Hypot(ground.X, ground.Z)*1.9438 <= unprotected {
+		return
+	}
+	for _, leg := range []int{1, 2} { // the mains: the nose wheel has no brake
+		if s.Damage.Gear[leg] < blown {
+			s.Damage.Gear[leg] += blowout * Dt
+		}
+	}
 }
 
 // touch maintains weight-on-wheels and records the first contact of an
