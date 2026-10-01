@@ -24,13 +24,31 @@ const (
 	rolloff    = 1.6  // Mach where intake losses begin. Calibrated against the brochure top end (TestTopSpeed): at 1.3 the fixed inlets gave up far too early and the jet terminated at M1.50 at 11 km against the documented M1.7-1.8; ablating the rolloff entirely runs to M2.16, so the intake — not wave drag — owns the ceiling. 1.6 lands M1.76; the deck (M1.02) never feels it
 )
 
-// idle is the flight-idle core fraction: a turbofan at idle still makes a
+// idle is the ground-idle core fraction: a turbofan at idle still makes a
 // few percent of military thrust, so a parked jet creeps and needs brakes.
-const idle = 0.04
+// stop is the inflight IDLE stop's (NATOPS 2.1.1.7.2): with weight off the
+// wheels the throttles rest on it, for a higher idle and a shorter
+// acceleration to MIL. The client reads N2 as 65% + 34% of the core
+// fraction, so these are about 66% and 70%, against NATOPS 4.1.1.1's ground
+// idle of 63 to 70% and flight idle of 68 to 73%.
+const (
+	idle = 0.04
+	stop = 0.15
+)
 
 // spool advances the engine states one step.
 func (m *Model) spool(in Inputs) {
 	throttle := idle + clamp(in.Throttle, 0, 1)*(1-idle)
+	against := throttle <= stop // the lever at or below the inflight stop's position
+	switch {
+	case m.State.Gear.Wow || !against:
+		m.State.Retracted = false // landing, or the throttles coming off the stop, puts it back
+	case m.State.Fcs.Normal >= 5:
+		m.State.Retracted = true // the throttles at the stop at 5 g or more: it retracts to ground idle
+	}
+	if !m.State.Gear.Wow && !m.State.Retracted {
+		throttle = math.Max(throttle, stop)
+	}
 	if m.State.Fuel <= 0 {
 		throttle = 0 // flameout: dry tanks wind the cores down and kill reheat
 	}

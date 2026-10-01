@@ -256,7 +256,7 @@ func build() *flight.Airframe {
 	// Undercarriage: track 3.11 m, wheelbase 5.4 m. Stance measured from the drawn
 	// model's DEPLOYED gear so the drawn mains land within 5 cm of these struts.
 	// Stiffness scaled to the lighter jet at the F's ratio. Tunable.
-	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 75 * math.Pi / 180} // NWS HI 75° (LOW is 22.5°; the speed washout in gear.go stands in for the mode switch)
+	a.Gear.Nose = flight.Strut{Attach: flight.Vec3{X: 4.9, Y: -2.63}, Travel: 0.45, Stiffness: 4.5e5, Damping: 5.5e4, Steer: 75 * math.Pi / 180} // NWS HI 75°; LOW's 16° is the core's (Strut.limit)
 	a.Gear.Left = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: -1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Gear.Right = flight.Strut{Attach: flight.Vec3{X: -0.5, Y: -2.63, Z: 1.55}, Travel: 0.5, Stiffness: 9e5, Damping: 1.1e5}
 	a.Hook.Position = flight.Vec3{X: -6.0, Y: -0.55}

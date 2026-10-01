@@ -14,7 +14,7 @@
 package flight
 
 // Size is the encoded state length in float64 words.
-const Size = 57 + Elements + Channels + 1 + 3 + 4 + 3 // 116: base state, per-element loss, per-channel jams, lost mass, per-strut gear damage, then pitch-damper washout, PA trim datum, buffet, the roll-trim datum, the wing and centreline external fuel and the spin recovery latch (each appended LAST so no earlier index moved - the #78/#133 tail bug class)
+const Size = 57 + Elements + Channels + 1 + 3 + 4 + 4 // 117: base state, per-element loss, per-channel jams, lost mass, per-strut gear damage, then pitch-damper washout, PA trim datum, buffet, the roll-trim datum, the wing and centreline external fuel, the spin recovery latch and the inflight IDLE stop's latch (each appended LAST so no earlier index moved - the #78/#133 tail bug class)
 
 // Encode writes the state into out (at least Size long) and returns Size.
 func (s *State) Encode(out []float64) int {
@@ -72,6 +72,7 @@ func (s *State) Encode(out []float64) int {
 	out[57+Elements+Channels+8] = s.External.Wing
 	out[57+Elements+Channels+9] = s.External.Centre
 	out[57+Elements+Channels+10] = bit(f.Recovery)
+	out[57+Elements+Channels+11] = bit(s.Retracted)
 	return Size
 }
 
@@ -146,6 +147,7 @@ func Decode(in []float64) State {
 	s.External.Wing = in[57+Elements+Channels+8]
 	s.External.Centre = in[57+Elements+Channels+9]
 	f.Recovery = in[57+Elements+Channels+10] != 0
+	s.Retracted = in[57+Elements+Channels+11] != 0
 	return s
 }
 

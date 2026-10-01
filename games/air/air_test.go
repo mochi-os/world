@@ -2621,6 +2621,23 @@ func TestInputBypass(t *testing.T) {
 	}
 }
 
+// TestInputSteering: the wire's "steering" is the nosewheel steering mode,
+// -1 off, 0 LOW, +1 HI, rounded and clamped; a sample without it (an older
+// client) keeps LOW.
+func TestInputSteering(t *testing.T) {
+	for _, c := range []struct {
+		sent any
+		want int
+	}{{1.0, 1}, {-1.0, -1}, {0.0, 0}, {0.4, 0}, {0.6, 1}, {5.0, 1}, {-3.0, -1}} {
+		if in := input(map[string]any{"steering": c.sent}); in.Steering != c.want {
+			t.Errorf("steering %v read as %d, want %d", c.sent, in.Steering, c.want)
+		}
+	}
+	if in := input(map[string]any{}); in.Steering != 0 {
+		t.Errorf("absent steering read as %d, want LOW (0)", in.Steering)
+	}
+}
+
 // TestInputSystems: the wire's "emergency" is the gear handle turned and
 // pulled, "mechanical" MECH ON, and "wing" and "centre" the EXT TANKS switches
 // (-1 STOP, 0 NORM, +1 ORIDE, clamped); a sample without them (an older client)

@@ -149,19 +149,25 @@ func TestTwinWeigh(t *testing.T) {
 	}
 }
 
-// TestExternalEncode: the external groups and the spin recovery latch survive
-// the encode round trip at the appended tail words.
+// TestExternalEncode: the external groups, the spin recovery latch and the
+// inflight IDLE stop's latch survive the encode round trip at the appended
+// tail words.
 func TestExternalEncode(t *testing.T) {
-	s := State{Fuel: 1234, External: Tanks{Wing: 987.5, Centre: 321.25}}
+	s := State{Fuel: 1234, External: Tanks{Wing: 987.5, Centre: 321.25}, Retracted: true}
 	s.Fcs.Recovery = true
 	out := make([]float64, Size)
 	s.Encode(out)
 	back := Decode(out)
-	if back.External != s.External || back.Fuel != 1234 || !back.Fcs.Recovery {
-		t.Fatalf("round trip lost state: fuel %f external %+v recovery %v", back.Fuel, back.External, back.Fcs.Recovery)
+	if back.External != s.External || back.Fuel != 1234 || !back.Fcs.Recovery || !back.Retracted {
+		t.Fatalf("round trip lost state: fuel %f external %+v recovery %v retracted %v", back.Fuel, back.External, back.Fcs.Recovery, back.Retracted)
 	}
-	if out[Size-3] != 987.5 || out[Size-2] != 321.25 || out[Size-1] != 1 {
-		t.Fatalf("tail words %v, want the wing and centre fuel then the latch last", out[Size-3:])
+	if out[Size-4] != 987.5 || out[Size-3] != 321.25 || out[Size-2] != 1 || out[Size-1] != 1 {
+		t.Fatalf("tail words %v, want the wing and centre fuel, the spin latch, then the idle stop's last", out[Size-4:])
+	}
+	s.Retracted = false
+	s.Encode(out)
+	if out[Size-1] != 0 || Decode(out).Retracted {
+		t.Fatalf("the idle stop's latch read %v when clear", out[Size-1])
 	}
 }
 

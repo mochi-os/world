@@ -133,7 +133,7 @@ type Strut struct {
 	Travel    float64 // m of compression
 	Stiffness float64 // N/m
 	Damping   float64 // N·s/m
-	Steer     float64 // max steering angle, rad (nosewheel)
+	Steer     float64 // max steering angle, rad (nosewheel): the HI mode's throw
 }
 
 // Gun is the cannon's place and its recoil: the average force it kicks back

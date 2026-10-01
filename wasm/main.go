@@ -19,7 +19,8 @@
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
 //	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON),
 //	6 sequence, 7 steps, 8 reheat, 9 pitch trim, 10 flap switch, 11 roll trim,
-//	12/13 the EXT TANKS switches, WING and CTR (-1 STOP, 0 NORM, +1 ORIDE)
+//	12/13 the EXT TANKS switches, WING and CTR (-1 STOP, 0 NORM, +1 ORIDE),
+//	14 nosewheel steering (-1 off, 0 LOW, +1 HI)
 //
 // Output buffer layout: flight.Size encoded state words, then
 // alpha, beta, nz, mach, cas, power, stage, and the spin recovery display's
@@ -54,7 +55,7 @@ type slot struct {
 var (
 	model  *flight.Model
 	rings  [ring]slot
-	input  [14]float64
+	input  [15]float64
 	output [flight.Size + extra]float64
 	bytes  []byte // scratch for boundary copies
 )
@@ -245,6 +246,7 @@ func controls() (flight.Inputs, int) {
 		Dump:       flags&1 != 0, // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
 		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
 		Transfer:   [2]int{int(input[12]), int(input[13])},
+		Steering:   position(input[14]),
 		Fire:       flags&1024 != 0, // the trigger while rounds leave: the client gates it on its own magazine, the core kicks back
 		Sequence:   uint32(input[6]),
 	}
@@ -256,6 +258,18 @@ func controls() (flight.Inputs, int) {
 		steps = 30 // tab-throttle spiral cap; the host blends or snaps beyond
 	}
 	return in, steps
+}
+
+// position reads a three-position switch's slot as -1, 0 or +1; a slot the
+// client never filled (NaN) reads as the centre.
+func position(word float64) int {
+	switch {
+	case word >= 0.5:
+		return 1
+	case word <= -0.5:
+		return -1
+	}
+	return 0
 }
 
 // frame steps the model with one input sample and fills the output buffer.

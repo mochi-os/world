@@ -92,6 +92,55 @@ func TestFlareDiscipline(t *testing.T) {
 	}
 }
 
+// TestChaffSingles: the dispense switch forward (NATOPS 2.1.1.7.3) drops chaff
+// alone - one bundle an edge from its own magazine, no flare - and holds the
+// reliable broadcast to the bloom's 0.5 s cooldown under a spamming client.
+func TestChaffSingles(t *testing.T) {
+	batch := func(count int, on func(int) bool) []game.Input {
+		list := make([]game.Input, count)
+		for k := range list {
+			list[k] = game.Input{Data: map[string]any{"chaff": on(k)}}
+		}
+		return list
+	}
+	i, slot := hostileSession(t)
+	a := i.aircraft[slot]
+	flares, chaff := a.flares, a.chaff
+	i.Step(0, map[int][]game.Input{slot: batch(1, func(int) bool { return true })})
+	kinds := []any{}
+	for _, e := range i.events {
+		if e["slot"] == slot && (e["kind"] == "chaff" || e["kind"] == "flare") {
+			kinds = append(kinds, e["kind"])
+		}
+	}
+	if len(kinds) != 1 || kinds[0] != "chaff" || a.chaff != chaff-1 || a.flares != flares {
+		t.Fatalf("one chaff edge: events %v, chaff %d of %d, flares %d of %d; want one bloom, one bundle spent and no flare", kinds, a.chaff, chaff, a.flares, flares)
+	}
+	for _, alternate := range []bool{false, true} {
+		i, slot := hostileSession(t)
+		dropped := 0
+		const seconds = 4 // short enough that the cooldown, not the magazine of twenty, is what holds the count
+		for tick := uint64(0); tick < 60*seconds; tick++ {
+			i.Step(tick, map[int][]game.Input{slot: batch(64, func(k int) bool { return !alternate || k%2 == 0 })})
+			for _, e := range i.events {
+				if e["kind"] == "chaff" && e["slot"] == slot {
+					dropped++
+				}
+				if e["kind"] == "flare" && e["slot"] == slot {
+					t.Fatalf("alternate=%v: the chaff edge dropped a flare", alternate)
+				}
+			}
+			i.events = i.events[:0]
+		}
+		if dropped == 0 || dropped > seconds*2+1 {
+			t.Fatalf("alternate=%v: %d chaff events in %d s against the 0.5 s cooldown", alternate, dropped, seconds)
+		}
+		if !alternate && dropped != 1 {
+			t.Fatalf("the switch held forward dropped %d bundles, want the one its edge asks for", dropped)
+		}
+	}
+}
+
 // TestWrapFloor: a sub-arena wrap is rejected at creation — the parameter
 // that once hung the session goroutine keeps the default instead.
 func TestWrapFloor(t *testing.T) {

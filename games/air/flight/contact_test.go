@@ -83,7 +83,7 @@ func TestTaxi(t *testing.T) {
 		t.Fatalf("throttle does not taxi: %.2f m/s", rolling)
 	}
 	heading := math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X)
-	// 1.5 s of pedal: with LOW-mode taxi authority (22.5°, ~13 m radius) a longer
+	// 1.5 s of pedal: with LOW-mode taxi authority (16°, ~19 m radius) a longer
 	// full-pedal turn arcs the jet off the deck before the brake phase.
 	for i := 0; i < 240*3/2; i++ {
 		m.Step(Inputs{Gear: true, Throttle: 0.18, Yaw: 1})
@@ -97,6 +97,68 @@ func TestTaxi(t *testing.T) {
 	}
 	if m.State.Velocity.Length() > 0.5 {
 		t.Fatalf("brakes do not stop the jet: %.2f m/s", m.State.Velocity.Length())
+	}
+}
+
+// TestSteeringModes: the nosewheel steering modes (NATOPS 2.10.2). LOW throws
+// the nosewheel ±16°, HI the leg's full ±75°, and off leaves it castoring: the
+// pedal turns nothing at taxi speed and the nose tyre carries no side force.
+func TestSteeringModes(t *testing.T) {
+	nose := &Fighter.Gear.Nose
+	if low, high := nose.limit(0)*180/math.Pi, nose.limit(1)*180/math.Pi; math.Abs(low-16) > 1e-9 || math.Abs(high-75) > 1e-9 {
+		t.Fatalf("throws LOW %.2f° HI %.2f°, want 16° and 75°", low, high)
+	}
+	if short := (&Strut{Steer: 10 * math.Pi / 180}).limit(0) * 180 / math.Pi; math.Abs(short-10) > 1e-9 {
+		t.Fatalf("a 10° leg's LOW throw %.2f°, want the leg's own 10°", short)
+	}
+	// The same spotting-speed taxi in each mode, then 1.5 s of full right
+	// pedal: the heading it turns and the radius it ends on.
+	turn := func(mode int) (float64, float64, float64) {
+		m := aboard()
+		park(m, -150, 5)
+		m.State.Engine[0] = EngineState{Spool: 0.18}
+		m.State.Engine[1] = EngineState{Spool: 0.18}
+		for i := 0; i < 240; i++ {
+			m.Step(Inputs{Gear: true, Throttle: 0.18, Steering: mode})
+		}
+		heading := math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X)
+		for i := 0; i < 240*3/2; i++ {
+			m.Step(Inputs{Gear: true, Throttle: 0.18, Yaw: 1, Steering: mode})
+		}
+		speed := m.State.Velocity.Length()
+		return math.Abs(math.Atan2(-m.State.Velocity.Z, m.State.Velocity.X) - heading), speed / math.Max(math.Abs(m.State.Omega.Y), 1e-9), speed
+	}
+	off, _, _ := turn(-1)
+	low, wide, speed := turn(0)
+	_, tight, _ := turn(1)
+	t.Logf("1.5 s of full pedal from 1 m/s: off turned %.3f rad; LOW %.3f rad on a %.1f m radius at %.1f m/s; HI a %.1f m radius", off, low, wide, speed, tight)
+	if off > 0.01 {
+		t.Errorf("steering off turned the jet %.3f rad on the pedal; the nosewheel must castor", off)
+	}
+	// LOW's 16° on the 5.4 m wheelbase is a 19 m radius; 22.5° was 13 m.
+	if wide < 17 || wide > 24 {
+		t.Errorf("LOW turned on a %.1f m radius, want about 19 m", wide)
+	}
+	if tight > wide/2 {
+		t.Errorf("HI turned on a %.1f m radius against LOW's %.1f m, want under half", tight, wide)
+	}
+	// The nose tyre's side force with the jet sliding sideways at the nose.
+	side := func(mode int) float64 {
+		m := aboard()
+		park(m, -150, 5)
+		for i := 0; i < 240; i++ {
+			m.Step(Inputs{Gear: true, Brake: true})
+		}
+		m.State.Velocity = Vec3{X: 3, Z: 1}
+		var total Forces
+		m.strut(&m.State, &m.Airframe.Gear.Nose, Inputs{Gear: true, Steering: mode}, 1, true, 0, &total)
+		return total.Force.Z
+	}
+	if force := side(-1); math.Abs(force) > 1e-6 {
+		t.Errorf("a castoring nosewheel carried %.1f N of side force", force)
+	}
+	if force := side(0); math.Abs(force) < 1000 {
+		t.Errorf("LOW's nose tyre carried %.1f N of side force sliding at 1 m/s, want it to grip", force)
 	}
 }
 

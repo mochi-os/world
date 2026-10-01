@@ -1069,7 +1069,8 @@ func input(data map[string]any) flight.Inputs {
 		Reset:      flag("reset"),
 		Flap:       clamp(number(data, "flap"), 0, 2),
 		Brake:      flag("brake"),
-		Bypass:     flag("bypass"), // the ANTI SKID switch OFF; an older client never sends it and keeps protected brakes
+		Bypass:     flag("bypass"),       // the ANTI SKID switch OFF; an older client never sends it and keeps protected brakes
+		Steering:   position("steering"), // nosewheel steering: -1 off, 0 LOW, +1 HI; absent reads LOW
 		Gear:       flag("gear"),
 		Emergency:  flag("emergency"),                            // the gear handle turned and pulled: the emergency extension
 		Mechanical: flag("mechanical"),                           // MECH ON: the client judges when all electrical power is gone
@@ -1083,6 +1084,7 @@ func input(data map[string]any) flight.Inputs {
 		Eject:      flag("eject"),
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
+		Chaff:      flag("chaff"),
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
 		Jammer:     flag("jammer"),
@@ -1161,6 +1163,17 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					}
 					i.events = append(i.events, map[string]any{"kind": "chaff", "slot": slot})
 				}
+			}
+			// The dispense switch forward (NATOPS 2.1.1.7.3): chaff singles,
+			// a bloom alone from its own magazine and no flare, an edge on
+			// the bloom's own cooldown.
+			if in.Chaff && !previous.Chaff && a.alive && a.clouded > 0.5 && (a.chaff > 0 || i.cheat.ammunition) {
+				a.cloud = a.model.State.Position
+				a.clouded = 0
+				if !i.cheat.ammunition {
+					a.chaff--
+				}
+				i.events = append(i.events, map[string]any{"kind": "chaff", "slot": slot})
 			}
 			if in.Missile && !previous.Missile && a.alive && i.missiles && i.free() && a.missiles > 0 && a.release > 1.0 {
 				if i.launch(slot, a) {

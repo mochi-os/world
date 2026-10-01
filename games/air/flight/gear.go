@@ -120,19 +120,9 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	// Tyre friction in the surface plane, relative to the deck.
 	slip := Vec3{X: velocity.X, Z: velocity.Z}
 	roll := s.Attitude.Rotate(Vec3{X: 1})
-	if nose && leg.Steer != 0 {
-		// NWS authority blends LOW mode (22.5°, normal taxi) up to the full HI throw
-		// only near standstill (tight spotting) — full HI at taxi speed spins the jet
-		// on a dime and reads as twitchy under a bang-bang keyboard pedal.
-		low := 22.5 * math.Pi / 180
-		authority := leg.Steer
-		if authority > low {
-			// Full HI throw through spotting speeds (below ~8 kt), fading to LOW by
-			// ~16 kt: the earlier fade-by-2.5 m/s left only LOW at normal taxi and
-			// the jet couldn't turn tightly on deck.
-			authority = low + (leg.Steer-low)*clamp(1-(slip.Length()-4)/4, 0, 1)
-		}
-		steer := clamp(in.Yaw, -1, 1) * authority * clamp(1-slip.Length()/60, 0.1, 1)
+	castor := nose && leg.Steer != 0 && in.Steering < 0 // steering off: the nosewheel trails its own track
+	if nose && leg.Steer != 0 && !castor {
+		steer := clamp(in.Yaw, -1, 1) * leg.limit(in.Steering) * clamp(1-slip.Length()/60, 0.1, 1)
 		roll = s.Attitude.Rotate(Vec3{X: math.Cos(steer), Z: math.Sin(steer)})
 	}
 	roll = Vec3{X: roll.X, Z: roll.Z}.Normalize()
@@ -152,6 +142,9 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	}
 	force = force.Add(roll.Scale(-grip * normal * along / math.Max(math.Abs(along), knee)))
 	corner := cornering * (1 - 0.6*harm)
+	if castor {
+		corner = 0 // a castoring wheel turns to its slip and carries no side force
+	}
 	if s.Gear.Catapult >= 0 && s.Gear.Stroke < 0 {
 		if nose {
 			corner = cornering * 0.2 // hookup: the nosewheel mostly casters while the bar rides the slot (full grip fights the lateral tow and parks the jet crabbed) — but not freely: some cornering keeps lateral damping in the nose, or the capture rolls and wobbles
@@ -161,6 +154,15 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	}
 	force = force.Add(side.Scale(-corner * normal / math.Max(side.Length(), regular)))
 	m.apply(s, force, point, total)
+}
+
+// limit is the nosewheel's throw in a steering mode (NATOPS 2.10.2), rad: LOW
+// ±16° for taxi and takeoff, HI the leg's full throw for tight spotting.
+func (leg *Strut) limit(mode int) float64 {
+	if mode > 0 {
+		return leg.Steer
+	}
+	return math.Min(16*math.Pi/180, leg.Steer)
 }
 
 // carried reports whether the fuselage belly (the |Z|<3 points) is in ground

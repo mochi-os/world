@@ -18,6 +18,7 @@ type Inputs struct {
 	Reheat     float64 // commanded reheat fraction 0..1: the throttle's position in the afterburner range (0 = dry); the fuel control quantizes to the F404's five zones
 	Brake      bool    // wheel brakes, held, both mains
 	Bypass     bool    // the ANTI SKID switch OFF (NATOPS 2.10.3.2): the brakes take full pressure on the pedal alone; the zero value is ON, so a host that never sends it keeps protected brakes
+	Steering   int     // nosewheel steering (NATOPS 2.10.2): -1 off, the nosewheel castors; 0 LOW, ±16°; +1 HI, the leg's full throw (±75°); the zero value is LOW, so a host that never sends it keeps taxi steering
 	Gear       bool    // commanded position, true = down
 	Emergency  bool    // the gear handle turned 90° and pulled (NATOPS 2.10.1.6): the gear free-falls down and locks whatever the hydraulics, and stays down while the host holds it
 	Mechanical bool    // MECH ON: all electrical power gone, the host judging when (NATOPS 15.17): the flight control computers drop out and the stick drives the stabilators through the mechanical linkage (2.8.2.10)
@@ -35,6 +36,7 @@ type Inputs struct {
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
+	Chaff      bool // the dispense switch forward (NATOPS 2.1.1.7.3): chaff singles, an edge like the flare's
 	Missile    bool
 	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
 	Jammer     bool // the jammer's ARMED state (#31): a level, not an edge — the server judges when it actually radiates
@@ -58,6 +60,11 @@ type State struct {
 	Damage   DamageState
 	Buffet   float64 // aerodynamic buffet intensity 0..1 — the LEX/stall shake the airframe feels, for the client's seat-of-pants cue
 	Time     float64 // sim time, s — drives turbulence and the carrier pose
+
+	// Retracted is the inflight IDLE stop's latch (NATOPS 2.1.1.7.2): airborne,
+	// the stop holds the throttles at flight idle, and pulling them to it at 5 g
+	// or more retracts it to ground idle until they come off it or the jet lands.
+	Retracted bool
 }
 
 // Tanks is the external fuel by group, kg: the wing pylon tanks (stations 3
