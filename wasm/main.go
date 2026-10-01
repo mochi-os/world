@@ -17,11 +17,13 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off),
-//	6 sequence, 7 steps
+//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON),
+//	6 sequence, 7 steps, 8 reheat, 9 pitch trim, 10 flap switch, 11 roll trim,
+//	12/13 the EXT TANKS switches, WING and CTR (-1 STOP, 0 NORM, +1 ORIDE)
 //
 // Output buffer layout: flight.Size encoded state words, then
-// alpha, beta, nz, mach, cas, power, stage.
+// alpha, beta, nz, mach, cas, power, stage, and the spin recovery display's
+// stick direction (-1 left, +1 right, 0 none).
 package main
 
 import (
@@ -37,7 +39,7 @@ import (
 )
 
 // Extra is the instrument tail appended to the encoded state.
-const extra = 7
+const extra = 8
 
 // ring is the prediction history: one slot per input sequence.
 const ring = 512
@@ -52,7 +54,7 @@ type slot struct {
 var (
 	model  *flight.Model
 	rings  [ring]slot
-	input  [12]float64
+	input  [14]float64
 	output [flight.Size + extra]float64
 	bytes  []byte // scratch for boundary copies
 )
@@ -213,6 +215,7 @@ func emit(view js.Value) {
 	}
 	output[flight.Size+5] = power
 	output[flight.Size+6] = stage
+	output[flight.Size+7] = model.Spin()
 	send(output[:], view)
 }
 
@@ -229,6 +232,8 @@ func controls() (flight.Inputs, int) {
 		Brake:      flags&2 != 0,
 		Bypass:     flags&2048 != 0, // the ANTI SKID switch OFF
 		Gear:       flags&4 != 0,
+		Emergency:  flags&4096 != 0, // the gear handle turned and pulled
+		Mechanical: flags&8192 != 0, // MECH ON
 		Hook:       flags&8 != 0,
 		Launch:     flags&16 != 0,
 		Override:   flags&32 != 0,
@@ -239,6 +244,7 @@ func controls() (flight.Inputs, int) {
 		Reset:      flags&128 != 0,
 		Dump:       flags&1 != 0, // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
 		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
+		Transfer:   [2]int{int(input[12]), int(input[13])},
 		Fire:       flags&1024 != 0, // the trigger while rounds leave: the client gates it on its own magazine, the core kicks back
 		Sequence:   uint32(input[6]),
 	}

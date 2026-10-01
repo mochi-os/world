@@ -505,3 +505,52 @@ func TestUnprotectedBraking(t *testing.T) {
 		}
 	}
 }
+
+// TestGearHydraulics: the gear moves on HYD 2, the right engine's pump (NATOPS
+// 2.7.1); with the right engine dead it neither extends nor retracts (NATOPS
+// 15, HYD 2 failure), and the emergency extension free-falls it down in about
+// 8 s whatever the hydraulics and holds it there against the handle (NATOPS
+// 2.10.1.6).
+func TestGearHydraulics(t *testing.T) {
+	airborne := func(engine int) *flight.Model {
+		m := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: -10})
+		m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 120, 3000)
+		if engine >= 0 {
+			m.State.Damage.Engine[engine] = 1
+		}
+		return m
+	}
+	fly := func(m *flight.Model, in flight.Inputs, seconds float64) float64 {
+		in.Throttle = 0.8
+		for i := 0; i < int(seconds*240); i++ {
+			m.Step(in)
+		}
+		return m.State.Gear.Extension
+	}
+	if e := fly(airborne(-1), flight.Inputs{Gear: true}, 5.5); e < 0.999 {
+		t.Errorf("healthy jet: the gear came down to %.2f in 5.5 s", e)
+	}
+	if e := fly(airborne(0), flight.Inputs{Gear: true}, 5.5); e < 0.999 {
+		t.Errorf("left engine dead, HYD 2 up: the gear came down to %.2f", e)
+	}
+	if e := fly(airborne(1), flight.Inputs{Gear: true}, 5.5); e != 0 {
+		t.Errorf("right engine dead: the gear moved to %.2f without HYD 2", e)
+	}
+	down := airborne(1)
+	down.State.Gear.Extension = 1
+	if e := fly(down, flight.Inputs{}, 5.5); e != 1 {
+		t.Errorf("right engine dead: the gear retracted to %.2f without HYD 2", e)
+	}
+	falling := airborne(1)
+	if e := fly(falling, flight.Inputs{Emergency: true}, 4); e < 0.45 || e > 0.55 {
+		t.Errorf("emergency extension at 4 s: %.2f, want about half of the 8 s free fall", e)
+	}
+	if e := fly(falling, flight.Inputs{Emergency: true}, 4.5); e != 1 {
+		t.Errorf("emergency extension at 8.5 s: %.2f, want down and locked", e)
+	}
+	held := airborne(-1)
+	fly(held, flight.Inputs{Emergency: true}, 9)
+	if e := fly(held, flight.Inputs{Emergency: true, Gear: false}, 6); e != 1 {
+		t.Errorf("handle UP after the emergency extension, HYD 2 up: the gear went to %.2f", e)
+	}
+}

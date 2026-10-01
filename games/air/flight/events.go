@@ -16,12 +16,19 @@ import (
 
 func (m *Model) events(in Inputs) {
 	s := &m.State
-	// Gear travels in ~5 s.
+	// Gear travels in ~5 s on HYD 2; with it gone, a dead or secured right
+	// engine, the normal gear neither extends nor retracts (NATOPS 15, HYD 2
+	// failure). The emergency extension, the handle turned and pulled, lets it
+	// free-fall down whatever the hydraulics, and it stays down while held.
 	target := 0.0
 	if in.Gear {
 		target = 1
 	}
-	s.Gear.Extension += clamp(target-s.Gear.Extension, -Dt/5, Dt/5)
+	if in.Emergency {
+		s.Gear.Extension = math.Min(1, s.Gear.Extension+Dt/freefall)
+	} else if m.pumped() {
+		s.Gear.Extension += clamp(target-s.Gear.Extension, -Dt/5, Dt/5)
+	}
 	// Gear speed limit, 250 KCAS (NATOPS figure 4-2). Over-speed extension wounds
 	// the legs rather than refusing the handle: the thresholds blow a tyre at 0.3
 	// and fold the strut at 0.7.
@@ -59,6 +66,18 @@ func (m *Model) skidding(s *State, in Inputs) {
 			s.Damage.Gear[leg] += blowout * Dt
 		}
 	}
+}
+
+// pumped reports HYD 2 up: its pump is on the right engine (NATOPS 2.7.1),
+// which must be turning - the health-weighted spool the client's gauges and
+// brakes read.
+func (m *Model) pumped() bool {
+	i := len(m.Airframe.Engines) - 1
+	if i < 0 {
+		return true
+	}
+	i = min(i, 1)
+	return m.State.Engine[i].Spool*m.State.Damage.engine(i) > 0.03
 }
 
 // touch maintains weight-on-wheels and records the first contact of an

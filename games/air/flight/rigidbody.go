@@ -41,6 +41,9 @@ type Model struct {
 	droop     float64 // trailing-edge droop actually flying, rad — the command is slewed into this at the drive's rate (#199)
 	droopInit bool    // the first step SNAPS: a Case II spawn is handed over established on FULL, and running its flaps down from clean would be a visible lie
 	launder   float64
+	spin      float64 // the direction the spin recovery display asks the stick for this step: -1 left, +1 right, 0 no display (NATOPS 2.8.2.6.2)
+	reverted  bool    // the last step flew MECH ON
+	mismatch  float64 // MECH ON: the stabilator's remaining offset from the mechanical command, rad, fading out
 
 	// PA level-flight datum secant (#86) - unencoded like the law memory: the
 	// scratch model exists because Evaluate composes its own state and must
@@ -111,39 +114,76 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 func (m *Model) Attached() uint64 { return m.stores }
 
 // Stores sets the attached-station bitmask (bit i = Airframe.Stores[i]). A
-// fuel-bearing entry arriving comes full; one departing takes its proportional
-// share of State.External - exact, because attached tanks drain in step.
-// Re-asserting an unchanged mask is a no-op.
+// fuel-bearing entry arriving comes full; one departing takes its group's
+// proportional share of State.External - exact, because a group's tanks drain
+// in step. Re-asserting an unchanged mask is a no-op.
 func (m *Model) Stores(mask uint64) {
 	if mask != m.stores {
-		previous := 0.0
-		for i := range m.Airframe.Stores {
-			if entry := &m.Airframe.Stores[i]; entry.Fuel > 0 && m.stores&(1<<uint(i)) != 0 {
-				previous += entry.Fuel
-			}
+		before, after := m.capacity(m.stores), m.capacity(mask)
+		fill := Tanks{}
+		if before.Wing > 0 {
+			fill.Wing = m.State.External.Wing / before.Wing
 		}
-		fill := 0.0
-		if previous > 0 {
-			fill = m.State.External / previous
+		if before.Centre > 0 {
+			fill.Centre = m.State.External.Centre / before.Centre
 		}
-		capacity := 0.0
 		for i := range m.Airframe.Stores {
 			entry := &m.Airframe.Stores[i]
 			if entry.Fuel <= 0 {
 				continue
 			}
-			if mask&(1<<uint(i)) != 0 {
-				capacity += entry.Fuel
-				if m.stores&(1<<uint(i)) == 0 {
-					m.State.External += entry.Fuel // a fresh tank mounts full
-				}
-			} else if m.stores&(1<<uint(i)) != 0 {
-				m.State.External -= entry.Fuel * fill // a departing tank leaves with its share
+			group, share := &m.State.External.Wing, fill.Wing
+			if entry.centreline() {
+				group, share = &m.State.External.Centre, fill.Centre
+			}
+			if mask&(1<<uint(i)) != 0 && m.stores&(1<<uint(i)) == 0 {
+				*group += entry.Fuel // a fresh tank mounts full
+			} else if mask&(1<<uint(i)) == 0 && m.stores&(1<<uint(i)) != 0 {
+				*group -= entry.Fuel * share // a departing tank leaves with its share
 			}
 		}
-		m.State.External = math.Min(math.Max(m.State.External, 0), capacity) // float dust, and the invariant the fuel system assumes
+		// float dust, and the invariant the fuel system assumes
+		m.State.External.Wing = math.Min(math.Max(m.State.External.Wing, 0), after.Wing)
+		m.State.External.Centre = math.Min(math.Max(m.State.External.Centre, 0), after.Centre)
 	}
 	m.stores = mask
+}
+
+// centreline reports a store on the aircraft's centreline: its fuel, if it
+// carries any, is the CTR group's of the EXT TANKS switches, and every other
+// tank's is the WING group's (NATOPS 2.2.4.1).
+func (s *Store) centreline() bool { return math.Abs(s.Position.Z) < 0.1 }
+
+// capacity is the usable fuel the tanks attached under mask hold, by group.
+func (m *Model) capacity(mask uint64) Tanks {
+	var t Tanks
+	for i := range m.Airframe.Stores {
+		entry := &m.Airframe.Stores[i]
+		if entry.Fuel <= 0 || mask&(1<<uint(i)) == 0 {
+			continue
+		}
+		if entry.centreline() {
+			t.Centre += entry.Fuel
+		} else {
+			t.Wing += entry.Fuel
+		}
+	}
+	return t
+}
+
+// share is the fuel one attached tank holds: its group drains in step, so each
+// tank carries the group's fill of its own capacity.
+func (m *Model) share(store *Store, held Tanks) float64 {
+	if store.centreline() {
+		if held.Centre > 0 {
+			return m.State.External.Centre * store.Fuel / held.Centre
+		}
+		return 0
+	}
+	if held.Wing > 0 {
+		return m.State.External.Wing * store.Fuel / held.Wing
+	}
+	return 0
 }
 
 // Mass is the current flown mass, kilograms: structure less shed damage,
@@ -244,18 +284,13 @@ func (m *Model) shake(local Air) {
 }
 
 // weigh caches mass, combined CG, and the inertia tensor (and inverse) for the
-// step. External fuel rides at the attached tanks, split by capacity: the real
-// jet pressurizes all externals together and they drain in step.
+// step. External fuel rides at the attached tanks, each group's split over its
+// tanks by capacity: a group's tanks drain in step.
 func (m *Model) weigh() {
 	a := m.Airframe
 	fuel := m.State.Fuel
 	empty := math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
-	capacity := 0.0
-	for i := range a.Stores {
-		if m.stores&(1<<uint(i)) != 0 && a.Stores[i].Fuel > 0 {
-			capacity += a.Stores[i].Fuel
-		}
-	}
+	held := m.capacity(m.stores)
 	m.mass = empty + fuel
 	moment := a.Center.Scale(empty).Add(a.Tank.Scale(fuel))
 	for i := range a.Stores {
@@ -264,8 +299,8 @@ func (m *Model) weigh() {
 		}
 		store := &a.Stores[i]
 		carried := store.Mass
-		if store.Fuel > 0 && capacity > 0 {
-			carried += m.State.External * store.Fuel / capacity
+		if store.Fuel > 0 {
+			carried += m.share(store, held)
 		}
 		m.mass += carried
 		moment = moment.Add(store.Position.Scale(carried))
@@ -280,8 +315,8 @@ func (m *Model) weigh() {
 		if m.stores&(1<<uint(i)) != 0 {
 			store := &a.Stores[i]
 			carried := store.Mass
-			if store.Fuel > 0 && capacity > 0 {
-				carried += m.State.External * store.Fuel / capacity
+			if store.Fuel > 0 {
+				carried += m.share(store, held)
 			}
 			tensor = tensor.Add(parallel(store.Position.Subtract(m.center), carried))
 		}

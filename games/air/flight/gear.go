@@ -38,6 +38,10 @@ const (
 	unprotected = 100.0 // kt ground speed
 	blowout     = 0.6   // tyre damage per second of it
 	blown       = 0.5   // where it stops: past GearTyre, short of GearCollapse
+	// freefall is the emergency extension's travel time, s (NATOPS 2.10.1.6: the
+	// gear free-falls, aided by airloads, the side brace downlock actuator and the
+	// compressed shock absorbers) - a judgement: NATOPS gives no time.
+	freefall = 8.0
 )
 
 // contact accumulates gear, belly, catapult, and cable forces for a trial

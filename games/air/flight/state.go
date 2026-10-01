@@ -19,6 +19,8 @@ type Inputs struct {
 	Brake      bool    // wheel brakes, held, both mains
 	Bypass     bool    // the ANTI SKID switch OFF (NATOPS 2.10.3.2): the brakes take full pressure on the pedal alone; the zero value is ON, so a host that never sends it keeps protected brakes
 	Gear       bool    // commanded position, true = down
+	Emergency  bool    // the gear handle turned 90° and pulled (NATOPS 2.10.1.6): the gear free-falls down and locks whatever the hydraulics, and stays down while the host holds it
+	Mechanical bool    // MECH ON: all electrical power gone, the host judging when (NATOPS 15.17): the flight control computers drop out and the stick drives the stabilators through the mechanical linkage (2.8.2.10)
 	Hook       bool    // true = deployed
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
@@ -29,6 +31,7 @@ type Inputs struct {
 	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
 	Dump       bool    // fuel dump switch: burn() drains toward the bingo floor at the NATOPS rate while held on
 	Secure     [2]bool // per-engine fuel OFF (the fire drill and the runaway shutdown, NATOPS 15.1); clearing the switch relights
+	Transfer   [2]int  // the EXT TANKS switches (NATOPS 2.2.4.1), [0] WING and [1] CTR: 0 NORM, -1 STOP, +1 ORIDE; the zero value is NORM, so a host that never sends them keeps the normal transfer
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
@@ -48,7 +51,7 @@ type State struct {
 	Attitude Quat // body->world
 	Omega    Vec3 // body, rad/s
 	Fuel     float64
-	External float64        // external-tank fuel, kg, summed over attached tanks; burns before internal (the real transfer order) and rides at the tank positions in weigh()
+	External Tanks          // external-tank fuel, kg, by group; it transfers into the internal tanks as the EXT TANKS switches allow (burn) and rides at the tank positions in weigh()
 	Engine   [4]EngineState // one per Airframe.Engines entry (0..4); unused slots stay zero
 	Fcs      FcsState
 	Gear     GearState
@@ -56,6 +59,17 @@ type State struct {
 	Buffet   float64 // aerodynamic buffet intensity 0..1 — the LEX/stall shake the airframe feels, for the client's seat-of-pants cue
 	Time     float64 // sim time, s — drives turbulence and the carrier pose
 }
+
+// Tanks is the external fuel by group, kg: the wing pylon tanks (stations 3
+// and 7) and the centreline tank (5), which the EXT TANKS switches stop and
+// start separately (NATOPS 2.2.4.1). Within a group the tanks drain in step.
+type Tanks struct {
+	Wing   float64
+	Centre float64
+}
+
+// Total is all the external fuel aboard, kg.
+func (t Tanks) Total() float64 { return t.Wing + t.Centre }
 
 // EngineState is the achieved thrust condition of one engine.
 type EngineState struct {
@@ -86,6 +100,7 @@ type FcsState struct {
 	Reference  float64 // attitude-hold datum, rad of pitch (the stick-free hold in both laws; an early design stored trimmed airspeed here and this comment outlived it)
 	Datum      float64 // PA trim bias, rad of alpha about the law's own datum — the pitch trim switch in the landing configuration
 	Bank       float64 // roll-trim datum: a standing differential-flaperon command (stick fraction), the roll half of the trim hat
+	Recovery   bool    // spin recovery mode engaged (NATOPS 2.8.2.6): latched from the stick placed as the display asks until it goes prospin, airspeed passes about 245 kt or the yaw rate falls under 15°/s
 }
 
 // GearState is the undercarriage, catapult, and arrestor condition, plus

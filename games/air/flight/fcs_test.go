@@ -430,3 +430,138 @@ func TestPoisonedActuatorDoesNotReachTheReadout(t *testing.T) {
 		}
 	}
 }
+
+// TestSpinRecovery: the spin recovery system in NORM (NATOPS 2.8.2.6). At 120
+// ±15 kt with an uncommanded yaw of 15°/s or more the display asks for stick
+// into a left yaw with positive g or a right yaw with negative g, and the other
+// way otherwise; the stick placed as asked engages the mode, which holds until
+// the stick goes prospin, the airspeed passes 245 kt or the yaw dies away.
+func TestSpinRecovery(t *testing.T) {
+	kt := 1 / 1.9438
+	yaw := 30 * math.Pi / 180
+	m := calm()
+	ask := func(knots, r, g, pedal, lateral float64, engaged bool) (float64, bool) {
+		m.State.Fcs.Normal, m.State.Fcs.Recovery, m.State.Gear.Wow = g, engaged, false
+		return m.recovery(knots*kt, r, pedal, lateral), m.State.Fcs.Recovery
+	}
+	check := func(name string, direction float64, engaged bool, want float64, on bool) {
+		t.Helper()
+		if direction != want || engaged != on {
+			t.Errorf("%s: direction %v engaged %v, want %v and %v", name, direction, engaged, want, on)
+		}
+	}
+	d, e := ask(120, -yaw, 1, 0, 0, false)
+	check("left yaw, positive g", d, e, -1, false)
+	d, e = ask(120, yaw, 1, 0, 0, false)
+	check("right yaw, positive g", d, e, 1, false)
+	d, e = ask(120, yaw, -1, 0, 0, false)
+	check("right yaw, negative g", d, e, -1, false)
+	d, e = ask(120, -yaw, -1, 0, 0, false)
+	check("left yaw, negative g", d, e, 1, false)
+	d, e = ask(120, -yaw, 1, -1, 0, false)
+	check("yaw the pedals command", d, e, 0, false)
+	d, e = ask(150, -yaw, 1, 0, -1, false)
+	check("above the window", d, e, 0, false)
+	d, e = ask(120, -10*math.Pi/180, 1, 0, -1, false)
+	check("under 15°/s", d, e, 0, false)
+	d, e = ask(120, -yaw, 1, 0, -1, false)
+	check("stick placed", d, e, -1, true)
+	d, e = ask(200, -yaw, 1, 0, 0, true)
+	check("engaged, recovering at 200 kt, stick released", d, e, -1, true)
+	d, e = ask(250, -yaw, 1, 0, -1, true)
+	check("engaged, past 245 kt", d, e, 0, false)
+	d, e = ask(200, -10*math.Pi/180, 1, 0, -1, true)
+	check("engaged, the yaw dying away", d, e, 0, false)
+	d, e = ask(120, -yaw, 1, 0, 1, true)
+	check("engaged, stick prospin", d, e, 0, false)
+	m.State.Gear.Wow = true
+	if d := m.recovery(120*kt, -yaw, 0, -1); d != 0 || m.State.Fcs.Recovery {
+		t.Errorf("on the wheels: direction %v engaged %v", d, m.State.Fcs.Recovery)
+	}
+}
+
+// TestSpinRecoveryMode: engaged, the FCS gives full aileron, rudder and
+// stabilator authority straight from the controls, with no interconnect, and
+// drives the leading edge flaps to 33° down and the trailing edge flaps to 0°
+// (NATOPS 2.8.2.6).
+func TestSpinRecoveryMode(t *testing.T) {
+	m := calm()
+	launch(m, 62)
+	m.State.Position.Y = 100
+	m.State.Omega = Vec3{Y: 0.5} // a 29°/s left yaw
+	c := &m.Airframe.Control
+	for i := 0; i < 480; i++ {
+		m.fcs(Inputs{Pitch: 0.5, Roll: -1}, air(m.State.Position.Y, m.Environment))
+	}
+	f := m.State.Fcs
+	if !f.Recovery || m.Spin() != -1 {
+		t.Fatalf("the stick placed as asked: engaged %v, display asking %v, want the mode engaged into a left yaw", f.Recovery, m.Spin())
+	}
+	if math.Abs(f.Slat-33*math.Pi/180) > 1e-6 || f.Flap != 0 {
+		t.Errorf("flaps: leading edge %.1f°, trailing edge %.1f°, want 33 and 0", f.Slat*180/math.Pi, f.Flap*180/math.Pi)
+	}
+	symmetric := -0.5 * c.Throw.Down
+	if math.Abs(f.Stabilator.Left-(symmetric-0.25*0.35)) > 1e-6 || math.Abs(f.Stabilator.Right-(symmetric+0.25*0.35)) > 1e-6 {
+		t.Errorf("stabilators %.3f %.3f, want %.3f either side of %.3f", f.Stabilator.Left, f.Stabilator.Right, 0.25*0.35, symmetric)
+	}
+	if math.Abs(f.Flaperon.Left+0.35) > 1e-6 || math.Abs(f.Flaperon.Right-0.35) > 1e-6 {
+		t.Errorf("flaperons %.3f %.3f, want full aileron", f.Flaperon.Left, f.Flaperon.Right)
+	}
+	for i := 0; i < 480; i++ { // the pedals alone: rudder, and nothing on the rolling surfaces
+		m.fcs(Inputs{Yaw: -0.5, Roll: -0.6}, air(m.State.Position.Y, m.Environment))
+	}
+	f = m.State.Fcs
+	if math.Abs(f.Rudder-0.5*c.Throw.Rudder) > 1e-6 || math.Abs(f.Flaperon.Left+0.6*0.35) > 1e-6 {
+		t.Errorf("rudder %.3f and left flaperon %.3f, want %.3f and %.3f straight from the controls", f.Rudder, f.Flaperon.Left, 0.5*c.Throw.Rudder, -0.6*0.35)
+	}
+}
+
+// TestMechanical: MECH ON (NATOPS 2.8.2.10, 15.17). The stabilators fade at
+// 0.75°/s from where the computers left them into the mechanical command, then
+// follow the stick directly - symmetric for pitch, differential for roll, the
+// pitch gearing higher with the flaps down; the ailerons and rudders run to
+// neutral, the leading edge flaps and the speedbrake hold, and the spin
+// recovery mode drops out.
+func TestMechanical(t *testing.T) {
+	m := calm()
+	launch(m, 100)
+	f := &m.State.Fcs
+	f.Stabilator = Pair{Left: -0.2, Right: -0.2} // where the computers left it
+	f.Flaperon, f.Rudder, f.Slat, f.Speedbrake, f.Recovery = Pair{Left: 0.1, Right: -0.1}, 0.2, 0.1, 0.5, true
+	m.State.Omega = Vec3{Y: 0.5} // a left yaw the spin recovery mode, left to itself, would stay engaged in
+	local := air(m.State.Position.Y, m.Environment)
+	c := &m.Airframe.Control
+	run := func(in Inputs, seconds float64) {
+		for i := 0; i < int(seconds*240); i++ {
+			m.fcs(in, local)
+		}
+	}
+	in := Inputs{Mechanical: true, Pitch: 0.5, Roll: 0.4, Yaw: 1, Speedbrake: 1}
+	pitch := -0.5 * c.Gearing.Pitch * 2 / 3
+	symmetric := func() float64 { return (f.Stabilator.Left + f.Stabilator.Right) / 2 }
+	run(in, 2)
+	if want := pitch + (-0.2 - pitch) + 2*0.75*math.Pi/180; math.Abs(symmetric()-want) > 1e-3 {
+		t.Errorf("two seconds into the fade: stabilator %.4f, want %.4f", symmetric(), want)
+	}
+	run(in, 8)
+	if math.Abs(symmetric()-pitch) > 1e-6 {
+		t.Errorf("faded: stabilator %.4f, want the mechanical %.4f", symmetric(), pitch)
+	}
+	if split := f.Stabilator.Left - f.Stabilator.Right; math.Abs(split-2*0.25*0.4*c.Gearing.Roll) > 1e-6 {
+		t.Errorf("roll through the stabilators: split %.4f, want %.4f", split, 2*0.25*0.4*c.Gearing.Roll)
+	}
+	if f.Flaperon.Left != 0 || f.Flaperon.Right != 0 || f.Rudder != 0 {
+		t.Errorf("ailerons %.3f %.3f and rudder %.3f, want neutral", f.Flaperon.Left, f.Flaperon.Right, f.Rudder)
+	}
+	if f.Slat != 0.1 || f.Speedbrake != 0.5 {
+		t.Errorf("leading edge flaps %.3f and speedbrake %.3f moved, want them held", f.Slat, f.Speedbrake)
+	}
+	if f.Recovery || m.Spin() != 0 {
+		t.Error("the spin recovery mode outlived the computers")
+	}
+	in.Flap = 1
+	run(in, 1)
+	if want := -0.5 * c.Gearing.Pitch; math.Abs(symmetric()-want) > 1e-6 {
+		t.Errorf("flaps HALF: stabilator %.4f, want the higher gearing's %.4f", symmetric(), want)
+	}
+}

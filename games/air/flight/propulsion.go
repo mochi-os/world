@@ -115,13 +115,21 @@ func (m *Model) propulsion(s *State, total *Forces, local Air) {
 	}
 }
 
-// burn decrements fuel by the flow the condition demands. External fuel goes
-// first, so State.Fuel falls only once State.External is dry; damage leaks
-// drain the internal tanks regardless. dumping/dumpfloor are the DUMP switch
-// rate and its bingo-caution floor (NATOPS 2.2.7), internal fuel only.
+// burn decrements fuel by the flow the condition demands. The engines draw on
+// the internal tanks, and the external tanks transfer into them (transfer);
+// damage leaks drain the internal tanks regardless. dumping/dumpfloor are the
+// DUMP switch rate and its bingo-caution floor (NATOPS 2.2.7), internal fuel
+// only.
 const (
 	dumping   = 6.0  // kg/s ≈ 790 lb/min
 	dumpfloor = 1361 // kg = the 3,000 lb bingo caution
+	// caution is the internal fuel at FUEL LO, kg: the lower feed tank at 800 lb
+	// in the client's tank model (engine.ts FUEL_TANKS, FEED_LOW), 1,990 lb
+	// internal. refill is how much faster than the engines burn the external
+	// tanks refill the internal ones after a STOP, kg/s - a judgement: NATOPS
+	// gives no transfer rate.
+	caution = 902.6
+	refill  = 1.5
 )
 
 func (m *Model) burn(in Inputs) {
@@ -144,10 +152,60 @@ func (m *Model) burn(in Inputs) {
 		// one scenario where fuel is the drama (#41).
 		flow += (dry*engine.Flow.Dry + boost*engine.Flow.Reheat) * m.State.Damage.engine(i)
 	}
-	if m.State.External > 0 {
-		m.State.External = math.Max(0, m.State.External-flow*Dt)
-	} else {
-		m.State.Fuel = math.Max(0, m.State.Fuel-flow*Dt)
-	}
+	m.State.Fuel = math.Max(0, m.State.Fuel-flow*Dt)
+	m.transfer(in, flow)
 	m.State.Fuel = math.Max(0, m.State.Fuel-m.State.Damage.Leak*Dt)
+}
+
+// transfer moves external fuel into the internal tanks (NATOPS 2.2.4). Bleed
+// air pressurizes the external tanks with weight off the wheels, the probe in
+// and the hook or gear handle up, or whenever either EXT TANKS switch is at
+// ORIDE. Pressurized, a group transfers with its switch at NORM or ORIDE, and
+// at STOP only once FUEL LO is on (probe in). The transfer keeps the internal
+// tanks full while the engines burn, as the real one keeps up, and refills
+// them after a STOP. Both groups feeding share it by capacity; one running dry
+// leaves the rest to the other. NATOPS notes that ORIDE on both switches may
+// inhibit the centreline transfer; the model does not.
+func (m *Model) transfer(in Inputs, flow float64) {
+	t := &m.State.External
+	room := m.Airframe.Mass.Fuel - m.State.Fuel
+	if room <= 0 {
+		return // full, or over-full from a host's load: nothing flows back out
+	}
+	override := in.Transfer[0] > 0 || in.Transfer[1] > 0
+	if !override && (m.State.Gear.Wow || in.Probe || (in.Hook && in.Gear)) {
+		return // not pressurized
+	}
+	low := m.State.Fuel <= caution && !in.Probe
+	wing := t.Wing > 0 && (in.Transfer[0] >= 0 || low)
+	centre := t.Centre > 0 && (in.Transfer[1] >= 0 || low)
+	amount := math.Min(room, (flow+refill)*Dt)
+	var w, c float64
+	switch {
+	case wing && centre:
+		held := m.capacity(m.stores)
+		w = amount * held.Wing / math.Max(held.Wing+held.Centre, 1e-9)
+		c = amount - w
+	case wing:
+		w = amount
+	case centre:
+		c = amount
+	default:
+		return
+	}
+	if w > t.Wing {
+		if centre {
+			c += w - t.Wing
+		}
+		w = t.Wing
+	}
+	if c > t.Centre {
+		if wing {
+			w = math.Min(t.Wing, w+c-t.Centre)
+		}
+		c = t.Centre
+	}
+	t.Wing -= w
+	t.Centre -= c
+	m.State.Fuel += w + c
 }

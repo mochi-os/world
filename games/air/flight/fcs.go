@@ -102,6 +102,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 
 	var stabTarget, flapTarget, rudderTarget, droopTarget, slatFloor float64
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
+	m.spin = 0
+	if !m.Direct {
+		m.spin = m.recovery(calibrated, r, pedal, lateral)
+	}
 
 	// Law selection follows the FLAP SWITCH, as the real jet's does (#86):
 	// HALF or FULL selects the powered-approach gains, AUTO keeps up-and-away
@@ -545,10 +549,56 @@ func (m *Model) fcs(in Inputs, local Air) {
 		}
 	}
 
+	// Spin recovery mode (NATOPS 2.8.2.6): full aileron, rudder and stabilator
+	// authority with no interconnects and no rate or acceleration feedback; the
+	// leading edge flaps go to 33° down and the trailing edge flaps to 0°.
+	if f.Recovery {
+		stabTarget = -stick * c.Throw.Down
+		flapTarget = lateral * 0.35
+		rudderTarget = -pedal * c.Throw.Rudder
+		droopTarget = 0
+		f.Integral = 0
+	}
+
+	// MECH ON (NATOPS 2.8.2.10, 15.17): the stick drives the stabilators through
+	// the mechanical linkage, symmetric for pitch and differential for roll, with
+	// no computer, air data or motion feedback between. A ratio changer raises
+	// the pitch gearing with the FLAP switch at HALF or FULL - two thirds of the
+	// full throw at AUTO is a judgement, NATOPS gives no ratio. At the reversion
+	// the stabilator fades from where the computers left it into the mechanical
+	// command at 1/2 to 1°/s (0.75 here). The ailerons and rudders are
+	// inoperative and run to neutral; the leading edge flaps and the speedbrake,
+	// electrically commanded, hold where they are. There is no mechanical
+	// lateral trim; the pitch trim that moves the stick is not modelled.
+	mechanical := in.Mechanical && !m.Direct
+	if mechanical {
+		gain := c.Gearing.Pitch * 2 / 3
+		if in.Flap >= 1 {
+			gain = c.Gearing.Pitch
+		}
+		pitch := -stick * gain
+		if !m.reverted {
+			m.mismatch = (f.Stabilator.Left+f.Stabilator.Right)/2 - pitch
+		}
+		fade := 0.75 * math.Pi / 180 * Dt
+		m.mismatch -= clamp(m.mismatch, -fade, fade)
+		stabTarget = pitch + m.mismatch
+		flapTarget = lateral * c.Gearing.Roll
+		rudderTarget, droopTarget, brakeTarget = 0, 0, f.Speedbrake
+		f.Recovery, f.Integral, m.spin = false, 0, 0
+	}
+	m.reverted = mechanical
+
 	// Leading-edge flaps schedule with alpha (plus the PA floor set in the gear-down branch).
 	slatTarget := math.Max(clamp(c.Slat.Slope*(a-c.Slat.Offset), 0, c.Slat.Limit), slatFloor)
 	if m.Direct {
 		slatTarget = 0
+	}
+	if f.Recovery {
+		slatTarget = 33 * math.Pi / 180
+	}
+	if mechanical {
+		slatTarget = f.Slat
 	}
 
 	// Blowdown: available deflection falls with dynamic pressure.
@@ -562,14 +612,18 @@ func (m *Model) fcs(in Inputs, local Air) {
 	}
 	symmetric := clamp(stabTarget, -c.Throw.Down, c.Throw.Up)
 	differential := clamp(flapTarget, -0.35, 0.35)
+	aileron := differential // the flaperons' share of the roll command: none through the mechanical linkage
+	if mechanical {
+		aileron = 0
+	}
 	// Battle damage: a jammed actuator slews slower, and a fully jammed one
 	// freezes AT ITS CURRENT DEFLECTION — the surface holds whatever it was
 	// commanding when hit, and the FCS fights it with the others.
 	d := &m.State.Damage
 	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorLeft), c.Throw.Down)
 	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorRight), c.Throw.Down)
-	f.Flaperon.Left = slew(f.Flaperon.Left, clamp(droopTarget+differential, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonLeft), c.Throw.Flaperon.Down)
-	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-differential, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
+	f.Flaperon.Left = slew(f.Flaperon.Left, clamp(droopTarget+aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonLeft), c.Throw.Flaperon.Down)
+	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
 	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
 	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*Dt, c.Rate.Slat*d.jam(ChannelSlat)*Dt)
 	// Was `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a no-op
@@ -579,6 +633,43 @@ func (m *Model) fcs(in Inputs, local Air) {
 	f.Flap = droopTarget // droop is carried inside the flaperon targets; keep the readout
 	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt, c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt)
 }
+
+// recovery runs the spin recovery system with its switch in NORM (NATOPS
+// 2.8.2.6). With airspeed at 120 ±15 kt and an uncommanded yaw rate of 15°/s
+// or more, the DDIs ask for lateral stick: into a left yaw with positive g, or
+// a right yaw with negative g, STICK LEFT, and for the other two STICK RIGHT.
+// The stick placed as asked engages the spin recovery mode, which holds until
+// the stick goes prospin, the airspeed passes about 245 kt or the yaw rate
+// falls under 15°/s. The yaw counts as uncommanded unless the pedals push
+// with it; NATOPS asks it be sustained, which a model without a sensor lag
+// takes as present. It returns the direction the display asks for: -1 left,
+// +1 right, 0 no display.
+func (m *Model) recovery(calibrated, r, pedal, lateral float64) float64 {
+	f := &m.State.Fcs
+	knots := calibrated * 1.9438
+	yawing := math.Abs(r) >= 15*math.Pi/180 && !m.State.Gear.Wow
+	direction := math.Copysign(1, r) * math.Copysign(1, f.Normal)
+	if f.Recovery {
+		if !yawing || knots > 245 || lateral*direction < -0.5 {
+			f.Recovery = false
+		}
+	} else if yawing && pedal*math.Copysign(1, r) <= 0.1 && math.Abs(knots-120) <= 15 {
+		if lateral*direction > 0.5 {
+			f.Recovery = true
+		} else {
+			return direction
+		}
+	}
+	if f.Recovery {
+		return direction
+	}
+	return 0
+}
+
+// Spin is the direction the spin recovery display asks the stick for, from the
+// last step: -1 left, +1 right, 0 no display (NATOPS 2.8.2.6.2). With the mode
+// engaged (State.Fcs.Recovery) the display reads ENGAGED instead.
+func (m *Model) Spin() float64 { return m.spin }
 
 // taper is the roll command's alpha schedule: authority tapers as alpha rises
 // toward the limiter, then holds at its 35° value - NATOPS 11.1.8 has roll

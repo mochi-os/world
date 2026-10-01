@@ -872,7 +872,7 @@ func state_payload(s *flight.State) map[string]any {
 		if i == 57+flight.Elements+flight.Channels+4 { // Pitchwash, signed rad/s: map ±1.5 onto the unit interval
 			v = v/3 + 0.5
 		}
-		if i == 57+flight.Elements+flight.Channels+8 { // External fuel, kg — same scale as Loss
+		if i == 57+flight.Elements+flight.Channels+8 || i == 57+flight.Elements+flight.Channels+9 { // External fuel, wing and centreline, kg — same scale as Loss
 			v /= 8000
 		}
 		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
@@ -1056,6 +1056,7 @@ func (a *craft) trigger(free bool) flight.Inputs {
 // input converts a wire sample into flight inputs.
 func input(data map[string]any) flight.Inputs {
 	flag := func(key string) bool { v, _ := data[key].(bool); return v }
+	position := func(key string) int { return int(clamp(math.Round(number(data, key)), -1, 1)) } // a three-position switch
 	return flight.Inputs{
 		Pitch:      clamp(number(data, "pitch"), -1, 1),
 		Roll:       clamp(number(data, "roll"), -1, 1),
@@ -1070,6 +1071,9 @@ func input(data map[string]any) flight.Inputs {
 		Brake:      flag("brake"),
 		Bypass:     flag("bypass"), // the ANTI SKID switch OFF; an older client never sends it and keeps protected brakes
 		Gear:       flag("gear"),
+		Emergency:  flag("emergency"),                            // the gear handle turned and pulled: the emergency extension
+		Mechanical: flag("mechanical"),                           // MECH ON: the client judges when all electrical power is gone
+		Transfer:   [2]int{position("wing"), position("centre")}, // the EXT TANKS switches: -1 STOP, 0 NORM, +1 ORIDE; absent reads NORM
 		Probe:      flag("probe"),
 		Hook:       flag("hook"),
 		Launch:     flag("launch"),

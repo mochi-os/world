@@ -106,7 +106,7 @@ type Station struct {
 
 // Store is one catalog entry - a fixture or a store at its station, carrying
 // mass and flat-plate drag while its mask bit is set. Mutually exclusive
-// fitments are distinct bits; a fuel-bearing entry extends State.External.
+// fitments are distinct bits; a fuel-bearing entry extends State.External, its wing or centreline group by where it hangs.
 type Store struct {
 	Name     string // catalog identity — the wire and client vocabulary
 	Station  int    // NATOPS station 1..9 (port tip to starboard tip)

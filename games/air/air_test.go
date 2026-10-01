@@ -2620,3 +2620,17 @@ func TestInputBypass(t *testing.T) {
 		t.Error("a sample without bypass must leave anti-skid on")
 	}
 }
+
+// TestInputSystems: the wire's "emergency" is the gear handle turned and
+// pulled, "mechanical" MECH ON, and "wing" and "centre" the EXT TANKS switches
+// (-1 STOP, 0 NORM, +1 ORIDE, clamped); a sample without them (an older client)
+// keeps the normal gear, the computers and the normal transfer.
+func TestInputSystems(t *testing.T) {
+	in := input(map[string]any{"emergency": true, "mechanical": true, "wing": -1.0, "centre": 5.0})
+	if !in.Emergency || !in.Mechanical || in.Transfer != [2]int{-1, 1} {
+		t.Errorf("sent: emergency %v mechanical %v transfer %v, want true, true and [-1 1]", in.Emergency, in.Mechanical, in.Transfer)
+	}
+	if in := input(map[string]any{}); in.Emergency || in.Mechanical || in.Transfer != [2]int{} {
+		t.Errorf("absent: emergency %v mechanical %v transfer %v, want the zero values", in.Emergency, in.Mechanical, in.Transfer)
+	}
+}
