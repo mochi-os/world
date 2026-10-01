@@ -74,6 +74,7 @@ func main() {
 		"catalog":  guard(catalog),
 		"gust":     guard(gust),
 		"approach": guard(approach),
+		"cruise":   guard(cruise),
 		"clear":    guard(clear),
 	}
 	for name, export := range battles() {
@@ -363,6 +364,23 @@ func approach(this js.Value, arguments []js.Value) any {
 	state, throttle := flight.Approach(model, position, direction, -arguments[5].Float()*math.Pi/180, arguments[6].Float())
 	model.State = state
 	return throttle
+}
+
+// cruise reports trimmed level flight on dry power at an altitude (m) and Mach
+// number for the jet as it is now - its weight, stores and damage - as
+// [fuel flow kg/s for all engines, true airspeed m/s]: the figure the client
+// searches for the FPAS best Mach and optimum cruise (NATOPS 2.3.1.1). The
+// flow is negative where the jet cannot fly level on dry power. The flying
+// state is untouched.
+func cruise(this js.Value, arguments []js.Value) any {
+	if model == nil {
+		return []any{-1.0, 0.0}
+	}
+	flow, speed, ok := model.Cruise(arguments[0].Float(), arguments[1].Float())
+	if !ok {
+		flow = -1
+	}
+	return []any{flow, speed}
 }
 
 // stores sets the attached external-store bitmask: the client asserts the

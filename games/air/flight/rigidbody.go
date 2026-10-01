@@ -49,6 +49,7 @@ type Model struct {
 	// scratch model exists because Evaluate composes its own state and must
 	// never run on the flying one.
 	static   *Model
+	cruise   *Model // Cruise's scratch model, for the same reason: its trim solve composes its own state
 	fitAlpha float64
 	fitClock float64
 	rolling  float64 // ground-gains hold, s: weight-on-wheels keyed the law directly and a strut bounce flickered it mid-rollout (#86)
