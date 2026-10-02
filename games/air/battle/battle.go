@@ -150,6 +150,23 @@ func ignite(body *Body, seed uint64, slot uint64, tick uint64) {
 	body.Damage.Leak += 1
 }
 
+// Extinguish discharges the aircraft's one fire extinguisher bottle (NATOPS
+// 2.14.4): into the engine bay whose fuel is secured, where it puts the fire
+// out at once - the engine stays dead. Shared between two bays the agent is
+// too thin to put either out. It reports whether a fire went out.
+func Extinguish(body *Body, secure [2]bool) bool {
+	if secure[0] == secure[1] {
+		return false
+	}
+	bay := 0
+	if secure[1] {
+		bay = 1
+	}
+	out := body.Condition.Fire[bay] > 0
+	body.Condition.Fire[bay] = 0
+	return out
+}
+
 // weakest finds the wing whose inboard elements carry the most damage,
 // returning its surface index and the worst inboard health (1 = pristine).
 func weakest(body *Body) (int, float64) {

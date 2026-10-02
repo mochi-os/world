@@ -428,8 +428,12 @@ type craft struct {
 	team       string      // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
-	emitter    int // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
-	lock       int // the STT'd slot when emitter is 2, -1 otherwise
+	emitter    int    // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
+	lock       int    // the STT'd slot when emitter is 2, -1 otherwise
+	discharged bool   // the fire extinguisher bottle is spent this life (NATOPS 2.14.2): there is one
+	status     status // what this craft's side needs of its IFF and Link 16, as it last reported
+	reporting  bool   // it has reported one: an older client never does
+	told       status // the status the session last sent out for it: none yet has no antenna, which no status has
 }
 
 // hostile reports whether two craft may engage each other: everyone in the
@@ -535,6 +539,7 @@ func (a *craft) arm() {
 	}
 	a.release = 1e9
 	a.ejected = false
+	a.discharged = false
 	a.flares, a.chaff = flare_load, chaff_load
 }
 
@@ -1085,6 +1090,8 @@ func input(data map[string]any) flight.Inputs {
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
 		Chaff:      flag("chaff"),
+		Solo:       flag("solo"),       // the dispenser at BYPASS: the flare alone; an older client never sends it and keeps the mixed programme
+		Extinguish: flag("extinguish"), // the FIRE EXTGH pushbutton, an edge
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
 		Jammer:     flag("jammer"),
@@ -1155,7 +1162,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					}
 					i.events = append(i.events, map[string]any{"kind": "flare", "slot": slot})
 				}
-				if a.chaff > 0 || i.cheat.ammunition {
+				if !in.Solo && (a.chaff > 0 || i.cheat.ammunition) {
 					a.cloud = a.model.State.Position
 					a.clouded = 0
 					if !i.cheat.ammunition {
@@ -1200,10 +1207,20 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				a.ejected = true
 				i.eject(slot, a)
 			}
+			// The fire extinguisher (NATOPS 2.14.2): one bottle a life, into
+			// the bay whose engine the pilot has secured.
+			if in.Extinguish && !previous.Extinguish && a.alive && !a.discharged {
+				a.discharged = true
+				battle.Extinguish(&a.body, in.Secure)
+			}
 			previous = in
 		}
 		a.latest = input(list[len(list)-1].Data)
+		if next, ok := reported(list[len(list)-1].Data); ok {
+			a.status, a.reporting = next, true
+		}
 	}
+	i.statuses(tick)
 	if i.mode == "joust" && !i.started {
 		return // waiting room: no physics until the opponent arrives (the lone jet hangs frozen at the ring; Join starts the match and merges both fresh)
 	}
@@ -2284,6 +2301,118 @@ func (i *instance) Radar(slot int, mode int, target int) {
 	}
 	a.emitter = mode
 	a.lock = target
+}
+
+// status is what a craft's own side needs of its avionics: whether its
+// transponder answers a mode 4 challenge, whether its interrogator is making
+// them, which antenna the transponder answers on, whether its MIDS terminal is
+// sending on Link 16, and the slots its radar holds as tracks, which the
+// terminal gives to the net. Client-reported, as the emitter is, and relayed
+// for the clients to judge: the server decides nothing by it.
+type status struct {
+	reply     bool
+	challenge bool
+	link      bool
+	antenna   string // "upper", "both" or "lower" (NATOPS 23.6.2.8)
+	tracks    []int
+}
+
+// standing is the status of a craft that has reported none: everything on, as
+// the pre-flight leaves it, and no tracks. An older client never reports and
+// keeps it.
+func standing() status {
+	return status{reply: true, challenge: true, link: true, antenna: "both"}
+}
+
+func (s status) same(o status) bool {
+	if s.reply != o.reply || s.challenge != o.challenge || s.link != o.link || s.antenna != o.antenna || len(s.tracks) != len(o.tracks) {
+		return false
+	}
+	for k := range s.tracks {
+		if s.tracks[k] != o.tracks[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// tracked is the most slots one radar's report may name.
+const tracked = 16
+
+// whole reads a wire value as a whole number, which the wire may carry as any
+// of three types.
+func whole(entry any) (int, bool) {
+	var v float64
+	switch n := entry.(type) {
+	case float64:
+		v = n
+	case int64:
+		v = float64(n)
+	case uint64:
+		v = float64(n)
+	default:
+		return 0, false
+	}
+	return int(v), float64(int(v)) == v
+}
+
+// reported reads the status an input sample carries, if it carries one: an
+// array, packed small because the datagram has no room for named fields - its
+// first number the flags (reply 1, challenge 2, link 4, the upper antenna 8,
+// the lower 16) and the rest the tracks. The wire promises nothing: the tracks
+// are whole slot numbers inside the pose record's six bits, each once, and no
+// more of them than tracked.
+func reported(data map[string]any) (status, bool) {
+	list, _ := data["status"].([]any)
+	if len(list) == 0 {
+		return status{}, false
+	}
+	flags, ok := whole(list[0])
+	if !ok || flags < 0 {
+		return status{}, false
+	}
+	next := status{reply: flags&1 != 0, challenge: flags&2 != 0, link: flags&4 != 0, antenna: "both"}
+	if flags&8 != 0 {
+		next.antenna = "upper"
+	} else if flags&16 != 0 {
+		next.antenna = "lower"
+	}
+	seen := map[int]bool{}
+	for _, entry := range list[1:] {
+		slot, ok := whole(entry)
+		if !ok || slot < 0 || slot >= 63 || seen[slot] {
+			continue
+		}
+		if len(next.tracks) == tracked {
+			break
+		}
+		seen[slot] = true
+		next.tracks = append(next.tracks, slot)
+	}
+	return next, true
+}
+
+// statuses sends each craft's status to the session when it changes, and all
+// of them every two seconds for a client that joined since. A bot's is its own
+// radar's: everything on, and the aircraft it has locked.
+func (i *instance) statuses(tick uint64) {
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
+		now := standing()
+		if a.bot {
+			if a.emitter == 2 && a.lock >= 0 {
+				now.tracks = []int{a.lock}
+			}
+		} else if a.reporting {
+			now = a.status
+		}
+		if now.same(a.told) && tick%120 != 0 {
+			continue
+		}
+		a.told = now
+		tracks := append([]int{}, now.tracks...)
+		i.events = append(i.events, map[string]any{"kind": "status", "slot": slot, "reply": now.reply, "challenge": now.challenge, "link": now.link, "antenna": now.antenna, "tracks": tracks})
+	}
 }
 
 // span is the wrap-aware distance between two aircraft.

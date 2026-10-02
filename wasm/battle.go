@@ -372,6 +372,9 @@ func progress(this js.Value, arguments []js.Value) any {
 	if model != nil {
 		body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
 		secure := [2]bool{int(arsenal[3])&1 != 0, int(arsenal[3])&2 != 0}
+		if int(arsenal[3])&4 != 0 {
+			battle.Extinguish(&body, secure) // the FIRE EXTGH pushbutton this frame (NATOPS 2.14.2): the host holds the bottle and raises the bit once
+		}
 		raised := battle.Advance(&body, model, arsenal[0], secure, 60, model.Environment.Seed, 0, tick)
 		out[0], out[1] = condition.Fire[0], condition.Fire[1]
 		out[2], out[3] = bit(condition.Burning), bit(condition.Killed)

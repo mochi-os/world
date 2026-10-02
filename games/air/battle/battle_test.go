@@ -144,6 +144,42 @@ func TestFireDrill(t *testing.T) {
 	}
 }
 
+// TestExtinguish: the bottle puts out the fire in the one bay whose engine is
+// secured, at once, and leaves the engine dead; with both secured, or neither,
+// it puts out nothing (NATOPS 2.14.4).
+func TestExtinguish(t *testing.T) {
+	body, m := target()
+	body.Condition.Fire = [2]float64{0.6, 0.4}
+	Advance(body, m, 0.8, [2]bool{true, false}, 60, 7, 3, 0)
+	if !Extinguish(body, [2]bool{true, false}) {
+		t.Fatal("the bottle reported no fire out in the secured bay")
+	}
+	if body.Condition.Fire[0] != 0 {
+		t.Fatalf("the secured bay still burns at %.2f", body.Condition.Fire[0])
+	}
+	if body.Condition.Fire[1] <= 0 {
+		t.Fatal("the bottle reached the bay that was not selected")
+	}
+	if body.Damage.Engine[0] != 1 {
+		t.Fatalf("the extinguished engine came back: damage %.2f", body.Damage.Engine[0])
+	}
+	body.Condition.Fire = [2]float64{0.6, 0.4}
+	if Extinguish(body, [2]bool{true, true}) || body.Condition.Fire != [2]float64{0.6, 0.4} {
+		t.Fatalf("agent shared between two bays put a fire out: %v", body.Condition.Fire)
+	}
+	if Extinguish(body, [2]bool{}) || body.Condition.Fire != [2]float64{0.6, 0.4} {
+		t.Fatalf("the bottle reached a bay with no engine secured: %v", body.Condition.Fire)
+	}
+	body.Condition.Fire = [2]float64{0, 0.4}
+	if Extinguish(body, [2]bool{true, false}) {
+		t.Fatal("the bottle reported a fire out where none burned")
+	}
+	body.Condition.Fire = [2]float64{0.6, 0.4}
+	if !Extinguish(body, [2]bool{false, true}) || body.Condition.Fire != [2]float64{0.6, 0} {
+		t.Fatalf("the bottle into the right bay left the fires at %v; want the right out and the left burning", body.Condition.Fire)
+	}
+}
+
 // TestSecureDrill: the per-engine cutoff (NATOPS 15.1) starves a fire with
 // the throttle still at power — the good engine keeps fighting while the
 // secured one burns out.

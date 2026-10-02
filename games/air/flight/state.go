@@ -37,6 +37,8 @@ type Inputs struct {
 	Fire       bool    // weapons flags ride the wire; flight ignores them
 	Flare      bool
 	Chaff      bool // the dispense switch forward (NATOPS 2.1.1.7.3): chaff singles, an edge like the flare's
+	Solo       bool // the dispenser at BYPASS: a flare edge releases the flare alone, with no chaff bundle beside it
+	Extinguish bool // the FIRE EXTGH pushbutton (NATOPS 2.14.2): an edge the host judges; flight ignores it
 	Missile    bool
 	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
 	Jammer     bool // the jammer's ARMED state (#31): a level, not an edge — the server judges when it actually radiates
