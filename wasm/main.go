@@ -55,7 +55,7 @@ type slot struct {
 var (
 	model  *flight.Model
 	rings  [ring]slot
-	input  [15]float64
+	input  [16]float64
 	output [flight.Size + extra]float64
 	bytes  []byte // scratch for boundary copies
 )
@@ -244,7 +244,10 @@ func controls() (flight.Inputs, int) {
 		Flap:       input[10],
 		Lean:       input[11],
 		Reset:      flags&128 != 0,
-		Dump:       flags&1 != 0, // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
+		Onspeed:    flags&32768 != 0, // the pitch trim alone back to on-speed
+		Reverted:   flags&16384 != 0, // mission computer 1 lost
+		Held:       input[15],        // wing fuel held at INHIBIT, kg
+		Dump:       flags&1 != 0,     // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
 		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
 		Transfer:   [2]int{int(input[12]), int(input[13])},
 		Steering:   position(input[14]),

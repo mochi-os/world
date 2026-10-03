@@ -2651,3 +2651,20 @@ func TestInputSystems(t *testing.T) {
 		t.Errorf("absent: emergency %v mechanical %v transfer %v, want the zero values", in.Emergency, in.Mechanical, in.Transfer)
 	}
 }
+
+// TestInputReversions: the wire's "onspeed" is the pitch trim's reset to
+// on-speed, "reverted" the loss of mission computer 1, and "held" the wing fuel
+// INTR WING holds, kg and never negative; a sample without them (an older
+// client) resets nothing, keeps the limiter's schedules and holds no fuel.
+func TestInputReversions(t *testing.T) {
+	in := input(map[string]any{"onspeed": true, "reverted": true, "held": 312.5})
+	if !in.Onspeed || !in.Reverted || in.Held != 312.5 {
+		t.Errorf("sent: onspeed %v reverted %v held %v, want true, true and 312.5", in.Onspeed, in.Reverted, in.Held)
+	}
+	if in := input(map[string]any{"held": -40.0}); in.Held != 0 {
+		t.Errorf("a negative held reads %v, want 0", in.Held)
+	}
+	if in := input(map[string]any{}); in.Onspeed || in.Reverted || in.Held != 0 {
+		t.Errorf("absent: onspeed %v reverted %v held %v, want the zero values", in.Onspeed, in.Reverted, in.Held)
+	}
+}

@@ -83,6 +83,58 @@ func TestLevel(t *testing.T) {
 	}
 }
 
+// TestApproachInWind: Approach spawns on-speed through the air whichever way
+// the wind blows, as Level does, and the jet stays there. It spawned at its
+// on-speed figure over the ground, so the Case II start, level at 1,200 ft into
+// the trades the deck faces, began some 35 kt fast and ballooned 500 ft.
+func TestApproachInWind(t *testing.T) {
+	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}, Wrap: 250000} // the single-player trades: 12.9 m/s from 070
+	calm := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	still, _ := Approach(calm, Vec3{Y: 366}, Vec3{X: 1}, 0, 4900)
+	want := still.Velocity.Length()
+	for _, direction := range []Vec3{{X: 1}, {X: -1}, {Z: 1}} {
+		m := New(Fighter, air, World{})
+		s, throttle := Approach(m, Vec3{Y: 366}, direction, 0, 4900)
+		if through := s.Velocity.Subtract(wind(s.Position, 0, air, nil)).Length(); math.Abs(through-want) > 0.01 {
+			t.Errorf("heading %+.0f,%+.0f: spawned at %.1f m/s through the air, on-speed is %.1f", direction.X, direction.Z, through, want)
+		}
+		m.State = s
+		high := s.Position.Y
+		for i := 0; i < 240*20; i++ {
+			m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2})
+			high = math.Max(high, m.State.Position.Y)
+		}
+		if through := m.State.Velocity.Subtract(m.Gust()).Length(); math.Abs(through-want) > 3 {
+			t.Errorf("heading %+.0f,%+.0f: %.1f m/s through the air twenty seconds after spawn, on-speed is %.1f", direction.X, direction.Z, through, want)
+		}
+		if climbed := high - s.Position.Y; climbed > 15 {
+			t.Errorf("heading %+.0f,%+.0f: ballooned %.0f m above the altitude it was given", direction.X, direction.Z, climbed)
+		}
+	}
+}
+
+// TestApproachLoaded: the trim is of the jet as it is loaded. Its stores'
+// weight and drag are in the solution, and the state keeps the external fuel
+// the trim weighed, so a loaded jet holds the altitude it was given hands-off.
+func TestApproachLoaded(t *testing.T) {
+	load := Fighter.Default | mask(t, "rail2", "9m2", "rail8", "9m8", "rail4", "120c4", "rail6", "120c6", "pylon5", "tank5")
+	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	m.Stores(load)
+	s, throttle := Approach(m, Vec3{Y: 366}, Vec3{X: 1}, 0, 4877)
+	if s.External.Centre != 1010 {
+		t.Fatalf("the trimmed state carries %.0f kg in the centreline tank the trim weighed full (1,010)", s.External.Centre)
+	}
+	m.State = s
+	low, high := s.Position.Y, s.Position.Y
+	for i := 0; i < 240*25; i++ {
+		m.Step(Inputs{Throttle: throttle, Gear: true, Flap: 2, Hook: true})
+		low, high = math.Min(low, m.State.Position.Y), math.Max(high, m.State.Position.Y)
+	}
+	if low < s.Position.Y-10 || high > s.Position.Y+10 {
+		t.Fatalf("hands-off for 25 s the loaded jet ranged %.0f to %.0f m from the %.0f it was trimmed at", low, high, s.Position.Y)
+	}
+}
+
 // TestApproach: the approach spawn helper produces a trimmed on-speed descent
 // the PA law holds hands-off, so no caller carries hand-measured trim.
 func TestApproach(t *testing.T) {

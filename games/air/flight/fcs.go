@@ -56,9 +56,9 @@ func (m *Model) droopRun(target float64, c *Control) float64 {
 // (TestDeliveryProbe, which reads the law through Envelope). The human it lost
 // to used 89%. Inverting this instead was built and declined by the doctrine
 // gates; compose() carries the numbers.
-func (m *Model) envelope(a, speed, roll float64, override bool) (level, ceiling float64) {
+func (m *Model) envelope(a, speed, roll float64, override, reverted bool) (level, ceiling float64) {
 	schedule := 1.0
-	if m.Airframe.Limit.Reference > 0 {
+	if m.Airframe.Limit.Reference > 0 && !reverted { // without mission computer 1 the limiter knows no weight: the placard, whatever the jet weighs (NATOPS 25.1)
 		schedule = math.Min(1, m.Airframe.Limit.Reference/m.mass)
 	}
 	ceiling = m.Airframe.Limit.Positive * schedule
@@ -78,7 +78,7 @@ func (m *Model) envelope(a, speed, roll float64, override bool) (level, ceiling 
 // airspeed the way fcs() does, against the same gust.
 func (m *Model) Envelope(roll float64, override bool) (level, ceiling float64) {
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
-	return m.envelope(alpha(v), v.Length(), roll, override)
+	return m.envelope(alpha(v), v.Length(), roll, override, false)
 }
 
 func (m *Model) fcs(in Inputs, local Air) {
@@ -190,6 +190,9 @@ func (m *Model) fcs(in Inputs, local Air) {
 		f.Datum, f.Bank = 0, 0
 		forward := m.State.Attitude.Rotate(Vec3{X: 1})
 		f.Reference = math.Asin(clamp(forward.Y, -1, 1))
+	}
+	if in.Onspeed {
+		f.Datum = 0 // the pitch half alone: on-speed again, a roll trim held against an asymmetric load kept
 	}
 
 	if m.Direct {
@@ -362,7 +365,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// Limit.Reference; the paddle rides the same schedule.
 		// Both ends of the command range come from envelope(), so anything that
 		// needs the law's range (Model.Envelope) reads the one the law flies.
-		level, ceiling := m.envelope(a, speed, in.Roll, in.Override)
+		level, ceiling := m.envelope(a, speed, in.Roll, in.Override, in.Reverted)
 		// The negative command floor is FIXED at -3 g for all gross weights
 		// (NATOPS 11.1.7) — only the positive side schedules with mass.
 		floor := m.Airframe.Limit.Negative
@@ -523,8 +526,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// with their rack hooks closed cut the maximum roll rate by about a
 		// third. The catalog flags the stores that engage it, so the
 		// reduction rides the live mask and ends when the tanks depart.
+		// It is stores data the flight control computer has from mission
+		// computer 1, and without it there is none to limit for (25.1).
 		for i := range m.Airframe.Stores {
-			if m.Airframe.Stores[i].Limit.Roll && m.stores&(1<<uint(i)) != 0 {
+			if !in.Reverted && m.Airframe.Stores[i].Limit.Roll && m.stores&(1<<uint(i)) != 0 {
 				limit *= 0.67
 				break
 			}

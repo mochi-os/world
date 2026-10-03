@@ -29,6 +29,9 @@ type Inputs struct {
 	Trim       float64 // -1..1 held pitch-trim rate, +1 = nose-up: UA nudges the attitude datum, PA biases the alpha datum
 	Lean       float64 // -1..1 held roll-trim rate, +1 = right wing down: walks the differential-flaperon datum
 	Reset      bool    // one-shot trim reset: zero the alpha and roll datums, re-datum the attitude hold
+	Onspeed    bool    // one-shot: the pitch trim alone back to on-speed, the roll trim kept (NATOPS 2.9.2.1: the autopilot disengaged in the landing configuration)
+	Reverted   bool    // mission computer 1 lost, the host judging when (NATOPS 25.1): the flight control computer gets no g limiter or stores data and reverts to a 7.5 g aircraft with no roll rate limiting for stores
+	Held       float64 // internal wing fuel the INTR WING switch at INHIBIT holds out of the feed, kg (NATOPS 2.2.3.3): aboard and weighed, and not the engines' to burn; the host apportions the tanks, and the zero value holds none
 	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
 	Dump       bool    // fuel dump switch: burn() drains toward the bingo floor at the NATOPS rate while held on
 	Secure     [2]bool // per-engine fuel OFF (the fire drill and the runaway shutdown, NATOPS 15.1); clearing the switch relights

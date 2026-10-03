@@ -316,6 +316,7 @@ func TestRestCalmHalfFlap(t *testing.T) {
 // maximum roll rate by about a third. The centreline tank is not a wing-pylon
 // store and must not engage it.
 func TestRollLimitTanks(t *testing.T) {
+	reverted := false
 	peak := func(names ...string) float64 {
 		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel)
@@ -324,7 +325,7 @@ func TestRollLimitTanks(t *testing.T) {
 		}
 		best := 0.0
 		for i := 0; i < 240*2; i++ {
-			m.Step(Inputs{Roll: 1, Throttle: 0.8})
+			m.Step(Inputs{Roll: 1, Throttle: 0.8, Reverted: reverted})
 			p, _, _ := rates(m.State.Omega)
 			best = math.Max(best, p)
 		}
@@ -339,6 +340,14 @@ func TestRollLimitTanks(t *testing.T) {
 	}
 	if centre < clean*0.85 {
 		t.Fatalf("the centreline tank must not engage R-LIM: %.0f vs %.0f°/s clean", centre*180/math.Pi, clean*180/math.Pi)
+	}
+	// Mission computer 1 lost, the flight control computer has no stores data to
+	// limit for (NATOPS 25.1): the same tanks roll as the centreline one does.
+	reverted = true
+	free := peak("pylon3", "tank3", "pylon7", "tank7")
+	t.Logf("peak roll, wing tanks without mission computer 1: %.0f°/s", free*180/math.Pi)
+	if free < wing*1.25 || free < clean*0.85 {
+		t.Fatalf("without mission computer 1 the wing tanks must not limit the roll: %.0f°/s against %.0f limited and %.0f clean", free*180/math.Pi, wing*180/math.Pi, clean*180/math.Pi)
 	}
 }
 

@@ -15,11 +15,14 @@ import (
 	"testing"
 )
 
-// approaching builds a jet trimmed on-speed on a 3.5° slope, in the given wind.
-func approachJet(t *testing.T, wind Vec3) (*Model, float64) {
+// approaching builds a jet trimmed on-speed on a 3.5° slope, in the given wind:
+// tracking the centreline over the ground, as a pilot lined up without a crab
+// is, so the wind meets it as sideslip.
+func approachJet(t *testing.T, breeze Vec3) (*Model, float64) {
 	t.Helper()
-	m := New(Fighter, Environment{Seed: 1, Wind: wind}, World{Sea: 0})
+	m := New(Fighter, Environment{Seed: 1, Wind: breeze}, World{Sea: 0})
 	state, throttle := Approach(m, Vec3{Y: 300}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
+	state.Velocity = state.Velocity.Subtract(wind(state.Position, 0, m.Environment, nil))
 	m.State = state
 	return m, throttle
 }
@@ -107,6 +110,9 @@ func TestApproachCrosswind(t *testing.T) {
 		v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
 		if peak*180/math.Pi > 15 {
 			t.Errorf("%.0f m/s crosswind: sideslip peaked at %.1f°", wind, peak*180/math.Pi)
+		}
+		if peak*180/math.Pi < 2 {
+			t.Errorf("%.0f m/s crosswind: the jet never met it, sideslip peaked at %.2f°", wind, peak*180/math.Pi)
 		}
 		if math.Abs(beta(v))*180/math.Pi > 1.5 {
 			t.Errorf("%.0f m/s crosswind: never settled into the crab, %.2f° of sideslip left", wind, beta(v)*180/math.Pi)

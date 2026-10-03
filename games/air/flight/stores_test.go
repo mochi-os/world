@@ -107,6 +107,83 @@ func TestBurnOrder(t *testing.T) {
 	}
 }
 
+// TestHeldFuel: INTR WING at INHIBIT holds the wing tanks' fuel out of the feed
+// (NATOPS 2.2.3.3). The engines burn down to what is held and flame out with it
+// aboard, still weighed; reheat does not light on it; and the feed tank the
+// FUEL LO caution reads is short by it, so a STOPped external tank transfers.
+func TestHeldFuel(t *testing.T) {
+	const held = 500.0
+	fly := func(hold float64) *Model {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, 220, held+4)
+		in := Inputs{Throttle: 1, Held: hold}
+		for tick := 0; tick < 240*20; tick++ {
+			m.Step(in)
+			if m.State.Fuel < hold-1e-9 {
+				t.Fatalf("the engines burned into the held fuel: %.3f kg of %.0f", m.State.Fuel, hold)
+			}
+		}
+		return m
+	}
+	free, kept := fly(0), fly(held)
+	if free.State.Fuel > held-10 {
+		t.Fatalf("nothing held, twenty seconds at full power left %.1f kg of %.0f: the control burns nothing", free.State.Fuel, held+4)
+	}
+	if free.State.Engine[0].Spool < 0.9 {
+		t.Fatalf("nothing held, the engine fell to %.2f with %.0f kg aboard", free.State.Engine[0].Spool, free.State.Fuel)
+	}
+	if math.Abs(kept.State.Fuel-held) > 1e-6 {
+		t.Fatalf("holding %.0f kg left %.3f aboard: the engines must burn down to it and stop", held, kept.State.Fuel)
+	}
+	if kept.State.Engine[0].Spool > 0.2 || kept.State.Engine[1].Spool > 0.2 {
+		t.Fatalf("with only the held fuel aboard the engines still turn at %.2f and %.2f: they must flame out", kept.State.Engine[0].Spool, kept.State.Engine[1].Spool)
+	}
+	kept.weigh()
+	if want := Fighter.Mass.Empty + held; kept.mass < want {
+		t.Fatalf("the held fuel is not weighed: %.0f kg gross, under the empty jet plus it (%.0f)", kept.mass, want)
+	}
+
+	// More held than is aboard is all of it, and the tank never reads negative.
+	over := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	over.State = Level(over, Vec3{Y: 6000}, Vec3{X: 1}, 220, 300)
+	for tick := 0; tick < 240; tick++ {
+		over.Step(Inputs{Throttle: 1, Held: 900})
+	}
+	if over.State.Fuel != 300 {
+		t.Fatalf("900 kg held of 300 aboard left %.3f kg", over.State.Fuel)
+	}
+
+	// Reheat lights on fuel the engines can reach, not on what the wings hold.
+	lit := func(hold float64) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, 220, held)
+		m.State.Engine[0].Spool, m.State.Engine[1].Spool = 1, 1
+		for tick := 0; tick < 60; tick++ {
+			m.Step(Inputs{Throttle: 1, Reheat: 1, Held: hold})
+		}
+		return m.State.Engine[0].Reheat
+	}
+	if on, off := lit(0), lit(held); on < 0.2 || off != 0 {
+		t.Fatalf("reheat after a quarter second: %.2f with nothing held (want it lighting), %.2f with all of it held (want none)", on, off)
+	}
+
+	// The feed tank at FUEL LO opens a STOPped tank's transfer: with the wings
+	// holding fuel it is low that much sooner.
+	moved := func(hold float64) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.Stores(Fighter.Default | mask(t, "pylon5", "tank5"))
+		m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 200, caution+200)
+		m.State.External = Tanks{Centre: 400}
+		for tick := 0; tick < 240; tick++ {
+			m.Step(Inputs{Throttle: 0.6, Held: hold, Transfer: [2]int{-1, -1}})
+		}
+		return 400 - m.State.External.Centre
+	}
+	if clear, low := moved(0), moved(300); clear != 0 || low <= 0 {
+		t.Fatalf("the STOPped centre tank gave %.2f kg with the feed above FUEL LO (want none) and %.2f with 300 kg of it held in the wings (want some)", clear, low)
+	}
+}
+
 // TestTankWeigh: a mounted tank carries dry mass plus its fuel share, and a
 // single wing tank pulls the CG laterally toward its station.
 func TestTankWeigh(t *testing.T) {

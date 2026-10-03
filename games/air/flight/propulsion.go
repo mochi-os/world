@@ -49,7 +49,7 @@ func (m *Model) spool(in Inputs) {
 	if !m.State.Gear.Wow && !m.State.Retracted {
 		throttle = math.Max(throttle, stop)
 	}
-	if m.State.Fuel <= 0 {
+	if m.usable(in) <= 0 {
 		throttle = 0 // flameout: dry tanks wind the cores down and kill reheat
 	}
 	// The zero/negative-g feed limit (NATOPS: ten-second business): the oil
@@ -80,7 +80,7 @@ func (m *Model) spool(in Inputs) {
 		}
 		e.Spool += (target - e.Spool) * Dt / constant
 		lit := 0.0
-		if in.Reheat > 0 && e.Spool > 0.85 && m.State.Fuel > 0 && target > idle {
+		if in.Reheat > 0 && e.Spool > 0.85 && target > idle { // dry tanks zeroed the throttle, and with it the target
 			// The F404 stages reheat in five discrete zones: the fuel control
 			// lights whole segments, so the commanded fraction quantizes up.
 			lit = math.Ceil(clamp(in.Reheat, 0, 1)*5) / 5
@@ -150,6 +150,12 @@ const (
 	refill  = 1.5
 )
 
+// usable is the internal fuel the engines can reach: all of it, less what the
+// INTR WING switch at INHIBIT holds in the wing tanks (NATOPS 2.2.3.3).
+func (m *Model) usable(in Inputs) float64 {
+	return m.State.Fuel - clamp(in.Held, 0, m.State.Fuel)
+}
+
 func (m *Model) burn(in Inputs) {
 	if m.Environment.Cheat.Fuel {
 		return // infinite-fuel cheat: the tank (and with it the leak drain) stays frozen at the spawn load
@@ -170,7 +176,7 @@ func (m *Model) burn(in Inputs) {
 		// one scenario where fuel is the drama (#41).
 		flow += (dry*engine.Flow.Dry + boost*engine.Flow.Reheat) * m.State.Damage.engine(i)
 	}
-	m.State.Fuel = math.Max(0, m.State.Fuel-flow*Dt)
+	m.State.Fuel = math.Max(m.State.Fuel-m.usable(in), m.State.Fuel-flow*Dt) // the engines burn down to what the wings hold, and no further
 	m.transfer(in, flow)
 	m.State.Fuel = math.Max(0, m.State.Fuel-m.State.Damage.Leak*Dt)
 }
@@ -194,7 +200,7 @@ func (m *Model) transfer(in Inputs, flow float64) {
 	if !override && (m.State.Gear.Wow || in.Probe || (in.Hook && in.Gear)) {
 		return // not pressurized
 	}
-	low := m.State.Fuel <= caution && !in.Probe
+	low := m.usable(in) <= caution && !in.Probe // the feed tank is short by what the wings hold
 	wing := t.Wing > 0 && (in.Transfer[0] >= 0 || low)
 	centre := t.Centre > 0 && (in.Transfer[1] >= 0 || low)
 	amount := math.Min(room, (flow+refill)*Dt)

@@ -145,6 +145,54 @@ func TestWeightSchedule(t *testing.T) {
 	}
 }
 
+// TestRevertedLimiter: mission computer 1 lost, the flight control computer
+// has no weight or stores data and the limit is 7.5 g whatever the jet weighs
+// (NATOPS 2.8.2.2, 25.1). At full tanks the same pull that the schedule caps
+// reaches the placard, and the paddle switch's limit loses the schedule too.
+func TestRevertedLimiter(t *testing.T) {
+	pull := func(reverted bool) float64 {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)
+		in := Inputs{Throttle: 1, Reheat: 1, Reverted: reverted}
+		for tick := 0; tick < 240*2; tick++ {
+			m.Step(in)
+		}
+		in.Pitch = 1
+		peak := 0.0
+		for tick := 0; tick < 240*6; tick++ {
+			m.Step(in)
+			peak = math.Max(peak, m.State.Fcs.Normal)
+		}
+		return peak
+	}
+	scheduled, reverted := pull(false), pull(true)
+	t.Logf("full tanks at full stick: %.2f g scheduled, %.2f g reverted", scheduled, reverted)
+	if reverted < Fighter.Limit.Positive-0.35 || reverted > Fighter.Limit.Positive+0.6 {
+		t.Fatalf("reverted, full tanks peaked %.2f g against the %.1f placard", reverted, Fighter.Limit.Positive)
+	}
+	if reverted-scheduled < 0.25 {
+		t.Fatalf("reverted %.2f g vs scheduled %.2f g: the limiter kept its weight schedule", reverted, scheduled)
+	}
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)
+	if m.mass <= Fighter.Limit.Reference {
+		t.Fatalf("full tanks weigh %.0f kg, under the placard's %.0f: nothing here is scheduled", m.mass, Fighter.Limit.Reference)
+	}
+	for _, c := range []struct {
+		override, reverted bool
+		want               float64
+	}{
+		{false, false, Fighter.Limit.Positive * Fighter.Limit.Reference / m.mass},
+		{false, true, Fighter.Limit.Positive},
+		{true, false, Fighter.Limit.Override * Fighter.Limit.Reference / m.mass},
+		{true, true, Fighter.Limit.Override},
+	} {
+		if _, ceiling := m.envelope(0.05, 250, 0, c.override, c.reverted); math.Abs(ceiling-c.want) > 1e-9 {
+			t.Errorf("override %v reverted %v: the ceiling is %.3f g, want %.3f", c.override, c.reverted, ceiling, c.want)
+		}
+	}
+}
+
 // TestStarve: the zero/negative-g feed limit. A sustained push past ten
 // seconds rolls the cores back to idle; recovered positive g relights them.
 func TestStarve(t *testing.T) {
@@ -304,5 +352,14 @@ func TestLean(t *testing.T) {
 	m.Step(Inputs{Throttle: 0.7, Reset: true})
 	if m.State.Fcs.Datum != 0 || m.State.Fcs.Bank != 0 {
 		t.Fatalf("trim reset left datum %.3f bank %.3f", m.State.Fcs.Datum, m.State.Fcs.Bank)
+	}
+
+	// The autopilot disengaged in the landing configuration puts the pitch trim
+	// back to on-speed (NATOPS 2.9.2.1) and nothing else: the roll trim and the
+	// attitude hold's reference are the pilot's.
+	m.State.Fcs.Datum, m.State.Fcs.Bank, m.State.Fcs.Reference = 0.03, 0.04, 0.5
+	m.Step(Inputs{Throttle: 0.7, Onspeed: true})
+	if f := m.State.Fcs; f.Datum != 0 || f.Bank != 0.04 || f.Reference != 0.5 {
+		t.Fatalf("the on-speed reset left datum %.3f bank %.3f reference %.3f, want 0, 0.04 and 0.5", f.Datum, f.Bank, f.Reference)
 	}
 }

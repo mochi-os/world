@@ -291,13 +291,19 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
 	velocity := forward.Scale(speed * math.Cos(path))
 	velocity.Y = speed * math.Sin(path)
+	// The trim is through the air: the state rides the wind, as Level's does.
+	// Left out, a start into the ship's wind over the deck began that much
+	// fast, shed it in a climb, and ballooned off the altitude it was given.
+	velocity = velocity.Add(wind(position, 0, m.Environment, nil)) // the state's clock starts at zero
 	// Attitude = flight path + on-speed alpha: the PA law's neutral demand
 	// exactly, so there is no capture transient to fly out of.
 	side := forward.Cross(Vec3{Y: 1}).Normalize()
 	attitude := Axis(side, path+alpha).Multiply(Look(forward)).Normalize() // +angle pitches the nose UP; see the note in Level, which still carries the opposite sign
 	droop, slat := m.Approaching(0.5 * air(position.Y, m.Environment).Density * speed * speed)
 
-	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel}
+	// The stores' tanks as the trim weighed them: the caller mounts the loadout
+	// first, and a state without their fuel flies lighter than it was trimmed.
+	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel, External: m.State.External}
 	achieved := idle + clamp(throttle, 0, 1)*(1-idle) // the lever commands through the idle floor
 	s.Engine[0] = EngineState{Spool: achieved}
 	s.Engine[1] = EngineState{Spool: achieved}

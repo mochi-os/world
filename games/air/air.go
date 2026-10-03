@@ -1072,6 +1072,9 @@ func input(data map[string]any) flight.Inputs {
 		Trim:       clamp(number(data, "trim"), -1, 1),
 		Lean:       clamp(number(data, "lean"), -1, 1),
 		Reset:      flag("reset"),
+		Onspeed:    flag("onspeed"),                   // the pitch trim alone back to on-speed; an older client never sends it
+		Reverted:   flag("reverted"),                  // mission computer 1 lost: the limiter's weight schedule and the stores' roll limit go
+		Held:       math.Max(0, number(data, "held")), // wing fuel held at INHIBIT, kg: it only takes from what the engines may burn
 		Flap:       clamp(number(data, "flap"), 0, 2),
 		Brake:      flag("brake"),
 		Bypass:     flag("bypass"),       // the ANTI SKID switch OFF; an older client never sends it and keeps protected brakes
