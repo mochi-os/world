@@ -181,14 +181,21 @@ func TestMidairTrail(t *testing.T) {
 }
 
 // TestMidairNearMiss: eight metres between the wingtips is a miss - no
-// damage, no events, nothing on the wire.
+// damage and no collision events. The status relay announces both jets on
+// their first tick, which is no part of the collision, so it is not counted.
 func TestMidairNearMiss(t *testing.T) {
 	i, a, b := pair(t, "furball")
 	posed(a, flight.Vec3{Y: 3000}, 0, 200)
 	posed(b, flight.Vec3{Y: 3000, Z: 2*span(a) + 8}, math.Pi, 200)
 	i.Step(1, nil)
-	if !a.alive || !b.alive || a.body.Damage.Loss != 0 || b.body.Damage.Loss != 0 || len(i.events) != 0 {
-		t.Errorf("near miss: alive %v %v, lost %.0f %.0f, events %v", a.alive, b.alive, a.body.Damage.Loss, b.body.Damage.Loss, i.events)
+	collision := []map[string]any{}
+	for _, e := range i.events {
+		if e["kind"] != "status" {
+			collision = append(collision, e)
+		}
+	}
+	if !a.alive || !b.alive || a.body.Damage.Loss != 0 || b.body.Damage.Loss != 0 || len(collision) != 0 {
+		t.Errorf("near miss: alive %v %v, lost %.0f %.0f, events %v", a.alive, b.alive, a.body.Damage.Loss, b.body.Damage.Loss, collision)
 	}
 }
 
