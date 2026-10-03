@@ -83,6 +83,30 @@ func TestLevel(t *testing.T) {
 	}
 }
 
+// TestLevelLoaded: Level trims the jet as it is loaded and keeps the external
+// fuel it weighed, so a pattern entry flown on the solved power holds its speed
+// and height. The client mounted the loadout after the trim, and a Case I
+// entry lost 14 kt and 31 m in 30 s.
+func TestLevelLoaded(t *testing.T) {
+	load := Fighter.Default | mask(t, "rail2", "9m2", "rail8", "9m8", "rail4", "120c4", "rail6", "120c6", "pylon5", "tank5")
+	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	m.Stores(load)
+	s := Level(m, Vec3{Y: 244}, Vec3{X: 1}, 180, 4877)
+	if s.External.Centre != 1010 {
+		t.Fatalf("the trimmed state carries %.0f kg in the centreline tank the trim weighed full (1,010)", s.External.Centre)
+	}
+	m.State = s
+	in := Inputs{Throttle: (s.Engine[0].Spool - idle) / (1 - idle)}
+	for i := 0; i < 240*30; i++ {
+		m.Step(in)
+	}
+	speed, height := m.State.Velocity.Length(), m.State.Position.Y
+	t.Logf("thirty seconds on the solved power: %.1f m/s of 180, %.0f m of 244", speed, height)
+	if math.Abs(speed-180) > 2.6 || math.Abs(height-244) > 15 {
+		t.Fatalf("the loaded jet flew to %.1f m/s and %.0f m from 180 and 244 on the power its trim solved", speed, height)
+	}
+}
+
 // TestApproachInWind: Approach spawns on-speed through the air whichever way
 // the wind blows, as Level does, and the jet stays there. It spawned at its
 // on-speed figure over the ground, so the Case II start, level at 1,200 ft into

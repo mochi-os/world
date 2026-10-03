@@ -246,6 +246,7 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 		Velocity: forward.Scale(speed).Add(wind(position, 0, m.Environment, nil)), // the state's clock starts at zero
 		Attitude: attitude,
 		Fuel:     fuel,
+		External: m.State.External, // the stores' tanks as the trim weighed them, as Approach keeps them
 	}
 	s.Engine[0] = EngineState{Spool: spool}
 	s.Engine[1] = EngineState{Spool: spool}
