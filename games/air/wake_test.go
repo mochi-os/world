@@ -14,18 +14,18 @@ import (
 )
 
 // trailing flies two jets at 150 m/s along +x through a real session: the
-// leader ahead, the follower 10 s behind on the same line and at the same
-// height, and aside by offset. Both settle a little down from their spawn
-// trim, together, so where the follower flies the leader's wake has sunk
-// under it by about as much as the leader was higher then: the follower
-// rides a few metres over the pair's middle, in its downwash. It reports the
-// most air the follower met at its CG and the largest roll rate it saw.
+// leader ahead, the follower 10 s behind on the same line, and aside by
+// offset. Both hold their trimmed height, and the leader's pair sinks some
+// 12 m in the ten seconds, so the follower flies that much lower, where the
+// wake has gone: level with the leader it passes over it. It reports the most
+// air the follower met at its CG and the largest roll rate it saw.
 func trailing(t *testing.T, offset float64) (swirl float64, roll float64) {
 	t.Helper()
+	const sunk = 12.0 // m
 	i := build(t, "furball", nil, 2)
 	leader, follower := i.aircraft[0], i.aircraft[1]
 	leader.model.State = flight.Level(leader.model, flight.Vec3{X: 1500, Y: 3000, Z: offset}, flight.Vec3{X: 1}, 150, 3000)
-	follower.model.State = flight.Level(follower.model, flight.Vec3{Y: 3000}, flight.Vec3{X: 1}, 150, 3000)
+	follower.model.State = flight.Level(follower.model, flight.Vec3{Y: 3000 - sunk}, flight.Vec3{X: 1}, 150, 3000)
 	leader.latest = flight.Inputs{Throttle: leader.model.State.Engine[0].Spool}
 	follower.latest = flight.Inputs{Throttle: follower.model.State.Engine[0].Spool}
 	for tick := uint64(1); tick <= 60*14; tick++ {

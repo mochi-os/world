@@ -107,6 +107,23 @@ func TestLevelLoaded(t *testing.T) {
 	}
 }
 
+// TestLevelAfterFlight: Level is the same trim on a model that has flown as on
+// a fresh one. Evaluate kept the engines' spool, so on a respawn or a second
+// spawn its forces held the thrust, the drag read near zero and the jet came
+// back at the 0.1 spool floor and a lower alpha.
+func TestLevelAfterFlight(t *testing.T) {
+	fresh := Level(New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 4000)
+	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	m.State = Level(m, Vec3{Y: 3000}, Vec3{Z: 1}, 250, 4000)
+	for i := 0; i < 240*5; i++ {
+		m.Step(Inputs{Throttle: 1, Reheat: 1})
+	}
+	again := Level(m, Vec3{Y: 4572}, Vec3{X: 1}, 220, 4000)
+	if math.Abs(again.Engine[0].Spool-fresh.Engine[0].Spool) > 1e-9 || again.Attitude != fresh.Attitude {
+		t.Fatalf("trimmed after flight at spool %.4f and attitude %+v; fresh at %.4f and %+v", again.Engine[0].Spool, again.Attitude, fresh.Engine[0].Spool, fresh.Attitude)
+	}
+}
+
 // TestApproachInWind: Approach spawns on-speed through the air whichever way
 // the wind blows, as Level does, and the jet stays there. It spawned at its
 // on-speed figure over the ground, so the Case II start, level at 1,200 ft into

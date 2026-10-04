@@ -2180,6 +2180,91 @@ func TestRespawnPristine(t *testing.T) {
 	}
 }
 
+// trimmed is the spawn a craft should have been given: its granted loadout
+// on, its tanks full and no damage, trimmed level where and as the spawn laid
+// it. A match flies still air, so the spawn's speed is its velocity's.
+func trimmed(i *instance, a *craft) flight.State {
+	m := flight.New(a.model.Airframe, i.environment, i.chart.world)
+	m.Stores(a.model.Attached())
+	s := &a.model.State
+	forward := s.Attitude.Rotate(flight.Vec3{X: 1})
+	return flight.Level(m, s.Position, flight.Vec3{X: forward.X, Z: forward.Z}, s.Velocity.Length(), s.Fuel)
+}
+
+// spawned reports where a craft's state is not the trim of the jet it flies.
+func spawned(t *testing.T, name string, i *instance, a *craft) {
+	t.Helper()
+	got, want := a.model.State, trimmed(i, a)
+	near := func(x, y float64) bool { return math.Abs(x-y) < 1e-9 }
+	if !near(got.Attitude.W, want.Attitude.W) || !near(got.Attitude.X, want.Attitude.X) || !near(got.Attitude.Y, want.Attitude.Y) || !near(got.Attitude.Z, want.Attitude.Z) {
+		t.Errorf("%s: spawned at attitude %+v, the loaded jet trims at %+v", name, got.Attitude, want.Attitude)
+	}
+	if !near(got.Engine[0].Spool, want.Engine[0].Spool) {
+		t.Errorf("%s: spawned at spool %.4f, the loaded jet trims at %.4f", name, got.Engine[0].Spool, want.Engine[0].Spool)
+	}
+	if got.External != want.External {
+		t.Errorf("%s: spawned with %+v kg in its tanks, want them full: %+v", name, got.External, want.External)
+	}
+}
+
+// TestSpawnTrimmedLoaded: every way a jet enters a match - a player joining,
+// a bot joining, the joust's start and a respawn - trims the jet as it flies:
+// its granted loadout on and its tanks full, and on a respawn whole, not the
+// last life's wreck. The server trimmed first and armed after, so a join was
+// trimmed bare and a respawn as the wreck with its rails spent. The joust's
+// start lays down jets its joins have just armed.
+func TestSpawnTrimmedLoaded(t *testing.T) {
+	heavy := map[string]any{
+		"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
+		"3": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+		"5": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+		"7": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
+	}
+	i := build(t, "furball", map[string]any{"weapons": "open"}, 0)
+	a := join(t, i, 0, heavy)
+	if a.model.State.External.Wing == 0 || a.model.State.External.Centre == 0 {
+		t.Fatalf("the heavy loadout mounted no tanks: %+v", a.model.State.External)
+	}
+	spawned(t, "a player joining", i, a)
+	join(t, i, 1, nil) // someone to share the sky: an empty room takes a different spawn path
+
+	// A life that ends damaged, with a round fired and the tanks half burned.
+	a.model.State.Damage.Loss = 1500
+	fired := false
+	for k, store := range a.model.Airframe.Stores {
+		if bit := uint64(1) << uint(k); !fired && store.Warhead > 0 && a.model.Attached()&bit != 0 {
+			a.model.Stores(a.model.Attached() &^ bit)
+			fired = true
+		}
+	}
+	if !fired {
+		t.Fatalf("the heavy loadout carries no round to fire")
+	}
+	a.model.State.External.Wing /= 2
+	i.fell(0, -1, "fire", -1)
+	a.wait = 0
+	i.Step(1, nil)
+	if !a.alive {
+		t.Fatalf("slot 0 did not respawn")
+	}
+	spawned(t, "a respawn", i, a)
+
+	bots := build(t, "furball", map[string]any{"weapons": "fox2", "bots": map[string]any{"ace": 1.0}}, 0)
+	for _, slot := range bots.slots() {
+		if b := bots.aircraft[slot]; b.bot {
+			spawned(t, "a bot joining", bots, b)
+		}
+	}
+
+	joust := build(t, "joust", map[string]any{"weapons": "open"}, 0)
+	join(t, joust, 0, heavy)
+	join(t, joust, 1, heavy) // the pair complete: the match starts, both laid down afresh
+	for _, slot := range joust.slots() {
+		spawned(t, "the joust's start", joust, joust.aircraft[slot])
+	}
+}
+
 // TestLethalityBand: a seeded balance gate - from a perfect 300 m tracking
 // position guns kill within a plausible window: never inside half a second,
 // always within thirty.

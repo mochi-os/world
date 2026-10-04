@@ -429,8 +429,11 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	// The crank: while an own round is in midcourse beyond the merge seam, offset
 	// the nose toward the gimbal edge - closure drops, the lock survives, the
 	// datalink holds. It serves spike awareness too. Inside the seam the WVR
-	// arbiter owns the flight path and this yields; the trigger stays live.
-	if span > radar_seam && b.skill.library >= 2 {
+	// arbiter owns the flight path and this yields; the trigger stays live. The
+	// bot cranks on its picture, but the seam is the range, as the defence judges
+	// it: a last look carried on past the target's turn read beyond the seam with
+	// the jet five kilometres off, and the crank took the merge from the arbiter.
+	if span > radar_seam && i.span(a.model, prey.model) > radar_seam && b.skill.library >= 2 {
 		// The novice does not crank: it keeps pressing straight after launch, which
 		// keeps its own geometry honest as well as its toolkit incomplete.
 		overlay := false

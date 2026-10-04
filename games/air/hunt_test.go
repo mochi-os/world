@@ -302,9 +302,10 @@ func TestHuntDefence(t *testing.T) {
 // TestHuntSeam: a BVR fight collapsing to WVR hands the flight path to the
 // dogfight arbiter cleanly - the crank must never fire inside the seam, and the
 // majority of seeds must merge or resolve. Never-closing is a real 1-in-6
-// outcome of symmetric competent BVR, so one seed cannot gate it.
+// outcome of symmetric competent BVR, so one seed cannot gate it. Seed 24 is
+// the one that cranked five kilometres inside the seam on a stale picture.
 func TestHuntSeam(t *testing.T) {
-	seeds := []uint64{11, 12, 13, 14}
+	seeds := []uint64{11, 12, 13, 14, 24}
 	closing := 0
 	for _, seed := range seeds {
 		made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("seam%d", seed), Game: "air", Mode: "joust", Seed: seed,
@@ -619,6 +620,48 @@ func TestRadarPicture(t *testing.T) {
 	want := flight.Vec3{X: 30000 - 250*2, Y: 3000}
 	if b.contact.Subtract(want).Length() > 1e-6 {
 		t.Fatalf("unlocked, the picture is %+v: want the last look carried on two seconds, %+v", b.contact, want)
+	}
+}
+
+// TestCrankSeam: the crank is flown from the picture but yields to the WVR
+// arbiter on the range. With its own round in midcourse and the target in the
+// notch, so the picture is the last look carried on, the machine cranks with
+// the jet beyond the seam, and not with it inside the seam however far off the
+// stale picture puts it - nor with the picture inside, whatever the range.
+func TestCrankSeam(t *testing.T) {
+	cranked := func(truth, picture float64) bool {
+		i, c, a, self := radar_pair(t) // the machine hunts the novice
+		slot := -1
+		for _, s := range i.slots() {
+			if i.aircraft[s] == c {
+				slot = s
+			}
+		}
+		b := a.brain
+		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, flight.Quat{W: 1}
+		a.emitter, a.lock = 1, -1
+		park(c, flight.Vec3{X: truth, Y: 3000}, flight.Vec3{Z: 250}) // on the beam: in the notch, no fresh lock
+		b.target = slot
+		b.known[slot] = &track{when: 0, position: flight.Vec3{X: picture, Y: 3000}, velocity: flight.Vec3{}}
+		own := round.New(flight.Vec3{X: 500, Y: 3000}, flight.Vec3{X: 900}, &round.Target{Position: flight.Vec3{X: picture, Y: 3000}}, 0) // a radar shot: midcourse on the datalinked estimate
+		if own.Phase >= round.Active {
+			t.Fatalf("a fresh round is already %v: no midcourse to crank for", own.Phase)
+		}
+		i.flying = append(i.flying, &missile{radar: own, shooter: self, target: slot, position: own.Position, velocity: own.Velocity, life: 60})
+		i.hunt(self, a, 120)
+		if a.lock == slot {
+			t.Fatalf("the radar locked the target in the notch: the picture is not the last look")
+		}
+		return b.cranked == 120
+	}
+	if !cranked(15000, 15000) {
+		t.Error("no crank with its round in midcourse and the jet 15 km off: the overlay never fires")
+	}
+	if cranked(5000, 15000) {
+		t.Error("cranked with the jet 5 km off, inside the seam, on a stale picture at 15 km")
+	}
+	if cranked(15000, 8000) {
+		t.Error("cranked on a picture inside the seam: the bot believes the merge has come")
 	}
 }
 

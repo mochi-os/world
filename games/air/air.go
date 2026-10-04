@@ -357,7 +357,6 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 					team = []string{"red", "blue"}[total%2] // sideless counts in a team match: alternate
 				}
 				m := flight.New(aircraft.Get("fa18c"), i.environment, i.chart.world)
-				i.spawn(slot, m, team, i.tank)
 				title := fmt.Sprintf("%s%s %d", string(w.level[0]-32), w.level[1:], n)
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
@@ -365,6 +364,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), tank: i.tank, lock: -1}
 				b.arm()
 				b.rearm()
+				i.spawn(slot, m, team, i.tank) // trimmed as it flies: armed first
 				i.aircraft[slot] = b
 				// Wingman pairs (#140): consecutive fighting bots on a side fly
 				// as a section, for the instance's life. Levels are created in
@@ -948,13 +948,15 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	// for. It must be settled BEFORE enter() lays the jet down, and remembered
 	// on the craft, because a respawn re-enters without a join request.
 	tank := stores_fuel(player.Stores, airframe.Mass.Fuel, i.tank)
-	i.enter(player.Slot, m, team, tank)
 	// The requested loadout, validated and clamped against the match's
 	// missiles rule (#17): the granted result spawns and is what everyone is
-	// told about; the client's persisted choice is never echoed back.
+	// told about; the client's persisted choice is never echoed back. It is
+	// mounted before enter() lays the jet down, so the trim is of the jet as
+	// it flies and not the bare airframe.
 	a := &craft{player: player, kind: kind, model: m, alive: true, flared: 1e9, clouded: 1e9, team: team, loadout: stores_grant(player.Stores, i.weapons), tank: tank}
 	a.arm()
 	a.rearm()
+	i.enter(player.Slot, m, team, tank)
 	i.aircraft[player.Slot] = a
 	// The full roster on every join: names, sides, AND loadouts for bots and
 	// humans alike (the transport's own player list carries no team, so a
@@ -1289,10 +1291,12 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
 					a.model = flight.New(respawned, i.environment, i.chart.world)
 				}
-				i.enter(slot, a.model, a.team, a.tank)
 				a.model.State.Damage = flight.DamageState{} // a fresh jet
 				a.arm()
 				a.rearm() // full grant again, tanks refilled — every spawn is a fresh request/clamp cycle (#17)
+				// Trimmed as it flies: whole and armed first, not the last life's
+				// wreck and spent rails.
+				i.enter(slot, a.model, a.team, a.tank)
 				if a.brain != nil {
 					a.brain.reborn()
 				}

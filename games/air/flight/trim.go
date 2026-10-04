@@ -71,6 +71,9 @@ func (m *Model) Evaluate(speed float64, angle float64, altitude float64) (float6
 	s.Attitude = Axis(Vec3{Z: 1}, angle)
 	s.Omega = Vec3{}
 	s.Fcs = FcsState{}
+	// No thrust in the coefficients: a model that had flown kept its spool, and
+	// Level read the thrust as drag near zero and spawned it at the 0.1 floor.
+	s.Engine = [4]EngineState{}
 	s.Gear.Extension = 0 // the static analysis is the CLEAN aircraft (a fresh model carries the deck default, gear down, which silently added the undercarriage plate to every Evaluate consumer — Level's power solve included); the configured analysis composes its own state in approaching
 	m.weigh()
 	m.gust = Vec3{}
