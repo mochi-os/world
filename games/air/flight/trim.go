@@ -120,13 +120,29 @@ func (m *Model) Thrust(speed float64, altitude float64) (float64, float64) {
 // power. Dry power bounds the envelope at both ends before the stabilator's
 // throw does.
 func (m *Model) Cruise(altitude float64, mach float64) (flow float64, speed float64, ok bool) {
+	c, core, speed, ok := m.flat(altitude, mach)
+	if !ok {
+		return 0, speed, false
+	}
+	local := air(altitude, c.Environment)
+	for i := range c.Airframe.Engines {
+		dry, _ := output(EngineState{Spool: core}, &c.Airframe.Engines[i], local.Density, mach)
+		flow += dry * c.Airframe.Engines[i].Flow.Dry * c.State.Damage.engine(i)
+	}
+	return flow, speed, true
+}
+
+// flat solves the level-flight trim Cruise and Climb share, on the scratch
+// model loaded as the jet is: the core fraction that holds it level and the
+// true airspeed. Not ok as Cruise is not.
+func (m *Model) flat(altitude float64, mach float64) (c *Model, core float64, speed float64, ok bool) {
 	if !(altitude >= 0 && altitude <= 20000) {
-		return 0, 0, false
+		return nil, 0, 0, false
 	}
 	if m.cruise == nil {
 		m.cruise = New(m.Airframe, m.Environment, World{Sea: -1e6})
 	}
-	c := m.cruise
+	c = m.cruise
 	c.Environment = m.Environment
 	c.stores = m.stores
 	c.State.Fuel = m.State.Fuel
@@ -134,7 +150,8 @@ func (m *Model) Cruise(altitude float64, mach float64) (flow float64, speed floa
 	c.State.Damage = m.State.Damage
 	local := air(altitude, c.Environment)
 	speed = mach * local.Sound
-	theta, stabilator, core := 0.05, -0.02, 0.5
+	theta, stabilator := 0.05, -0.02
+	core = 0.5
 	// The forces are not perfectly smooth in alpha: they carry steps of the
 	// order of 1e-4 g, and a trim that lands on one has no exact root for
 	// Newton to settle on. The nearest iterate is then the trim, if it is
@@ -164,13 +181,70 @@ func (m *Model) Cruise(altitude float64, mach float64) (flow float64, speed floa
 		core = clamp(core-clamp(step.Z, -0.2, 0.2), -1, 3) // free past both ends: a trim outside the dry range must be found to be refused
 	}
 	if !(least < near) || !(thrust >= 0 && thrust <= 1) {
-		return 0, speed, false
+		return c, thrust, speed, false
 	}
+	return c, thrust, speed, true
+}
+
+// Climb reports the best steady climb on military power at an altitude for
+// the jet as it is now - its weight, stores and damage: the true airspeed
+// that gives the most rate of climb, m/s, and that rate, m/s. It is the climb
+// airspeed the FPAS prompts on the HUD (NATOPS 2.3.1.1.8), whose schedule
+// NATOPS leaves to the performance supplement (7.2.6). The rate at a speed is
+// the military thrust left over from what level flight there needs, along the
+// path, times the speed, over the weight: the climb shallow enough that the
+// level trim's drag stands for its own. The speed is searched over Mach on
+// the level trims Cruise solves.
+//
+// Not ok: an altitude out of range, or no speed there with thrust to spare.
+func (m *Model) Climb(altitude float64) (speed float64, rate float64, ok bool) {
+	// A sweep finds the best Mach to a step; a golden section inside the steps
+	// either side of it finds it to a thousandth.
+	const low, high, step = 0.2, 0.95, 0.025
+	best := -1.0
+	for mach := low; mach <= high+1e-9; mach += step {
+		if v, r, found := m.climbing(altitude, mach); found && (!ok || r > rate) {
+			speed, rate, ok, best = v, r, true, mach
+		}
+	}
+	if !ok {
+		return 0, 0, false
+	}
+	golden := (math.Sqrt(5) - 1) / 2
+	a, b := math.Max(low, best-step), math.Min(high, best+step)
+	for b-a > 1e-3 {
+		x, y := b-golden*(b-a), a+golden*(b-a)
+		_, rx, fx := m.climbing(altitude, x)
+		_, ry, fy := m.climbing(altitude, y)
+		if !fy || (fx && rx >= ry) {
+			b = y
+		} else {
+			a = x
+		}
+	}
+	if v, r, found := m.climbing(altitude, (a+b)/2); found && r > rate {
+		speed, rate = v, r
+	}
+	return speed, rate, true
+}
+
+// climbing is the steady rate of climb on military power at a Mach number,
+// m/s, with the true airspeed: the military thrust left over from what level
+// flight there needs, times the speed, over the weight.
+func (m *Model) climbing(altitude float64, mach float64) (speed float64, rate float64, ok bool) {
+	c, core, speed, ok := m.flat(altitude, mach)
+	if !ok {
+		return speed, 0, false
+	}
+	local := air(altitude, c.Environment)
+	spare := 0.0
 	for i := range c.Airframe.Engines {
-		dry, _ := output(EngineState{Spool: thrust}, &c.Airframe.Engines[i], local.Density, mach)
-		flow += dry * c.Airframe.Engines[i].Flow.Dry * c.State.Damage.engine(i)
+		engine := &c.Airframe.Engines[i]
+		full, _ := output(EngineState{Spool: 1}, engine, local.Density, mach)
+		held, _ := output(EngineState{Spool: core}, engine, local.Density, mach)
+		spare += (full - held) * c.State.Damage.engine(i)
 	}
-	return flow, speed, true
+	return speed, spare * speed / (c.mass * c.Gravity), true
 }
 
 // cruising evaluates the steady-state errors for a trial level-flight trim at

@@ -95,6 +95,13 @@ func (m *Model) Cas() float64 {
 	return calibrated(speed*recovery, m.State.Position.Y, m.Environment)
 }
 
+// Calibrated is the airspeed indicator's reading for a true airspeed at an
+// altitude in this model's air: the climb speed the FPAS prompts is a true
+// airspeed the core finds, shown in the HUD's calibrated knots.
+func (m *Model) Calibrated(tas float64, altitude float64) float64 {
+	return calibrated(tas, altitude, m.Environment)
+}
+
 // calibrated is the same compressible-pitot conversion for an arbitrary
 // point — the V-speed survey prints it so its numbers land in the HUD's
 // units instead of KEAS.

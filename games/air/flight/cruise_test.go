@@ -194,7 +194,7 @@ func TestCruiseEnvelope(t *testing.T) {
 
 // TestCruiseLeavesTheJetAlone: the solve runs on a scratch model. The flying
 // state, damage arrays included, is untouched, and a jet that asks between
-// steps flies exactly as one that never asked.
+// steps flies exactly as one that never asked. Climb searches the same trims.
 func TestCruiseLeavesTheJetAlone(t *testing.T) {
 	build := func() *Model {
 		m := cruiser(3000)
@@ -216,8 +216,9 @@ func TestCruiseLeavesTheJetAlone(t *testing.T) {
 	for _, c := range [][2]float64{{6000, 0.6}, {12000, 0.85}, {9000, 1.3}, {3000, 0.2}} {
 		m.Cruise(c[0], c[1])
 	}
+	m.Climb(6000)
 	if !reflect.DeepEqual(before, m.State) || m.mass != mass || m.center != center {
-		t.Fatal("Cruise changed the flying model")
+		t.Fatal("Cruise or Climb changed the flying model")
 	}
 	for i := 0; i < 240; i++ {
 		m.Cruise(8000, 0.75)
@@ -226,5 +227,136 @@ func TestCruiseLeavesTheJetAlone(t *testing.T) {
 	}
 	if !reflect.DeepEqual(m.State, twin.State) {
 		t.Fatal("a jet that asked for cruise figures between steps flew differently")
+	}
+}
+
+// surplus flies the jet level at a true airspeed on military power, its
+// engines already spooled, and reports its specific excess power, m/s: the
+// rate its energy height grows, which is the rate of climb it could hold at
+// that speed. The energy height counts whatever the stick trades between
+// height and speed, so it is measured from the start, over a second: at
+// military power the jet gains three or four metres a second of speed, and a
+// longer look measures a faster jet.
+func surplus(m *Model, altitude, speed float64) float64 {
+	damage := m.State.Damage
+	m.State = Level(m, Vec3{Y: altitude}, Vec3{X: 1}, speed, m.State.Fuel)
+	m.State.Damage = damage // the jet as it is: Level lays down a whole one
+	for i := range m.State.Engine {
+		if i < len(m.Airframe.Engines) {
+			m.State.Engine[i].Spool = 1
+		}
+	}
+	energy := func() float64 {
+		v := m.State.Velocity.Length()
+		return m.State.Position.Y + v*v/(2*m.Gravity)
+	}
+	hold := func() {
+		m.Step(Inputs{Throttle: 1, Pitch: clamp(0.004*(altitude-m.State.Position.Y)-0.03*m.State.Velocity.Y, -0.3, 0.3)})
+	}
+	before := energy()
+	for i := 0; i < 240; i++ {
+		hold()
+	}
+	return energy() - before
+}
+
+// TestClimbAgreesWithFlight: Climb's rate is the specific excess power the
+// stepping model shows at that speed on military power, and its speed is the
+// best: the jet flown a twentieth of a Mach either side of it gains energy
+// more slowly. A jet with one engine at half thrust agrees too.
+func TestClimbAgreesWithFlight(t *testing.T) {
+	lame := func() *Model { m := cruiser(3629); m.State.Damage.Engine[1] = 0.5; return m }
+	speed, rate, ok := lame().Climb(5000 * foot)
+	if flown := surplus(lame(), 5000*foot, speed); !ok || math.Abs(flown/rate-1) > 0.03 {
+		t.Errorf("one engine at half thrust: Climb %.1f m/s (ok %v) against %.1f flown at %.1f m/s", rate, ok, flown, speed)
+	}
+	for _, feet := range []float64{5000, 25000} {
+		altitude := feet * foot
+		speed, rate, ok := cruiser(3629).Climb(altitude)
+		if !ok {
+			t.Fatalf("%.0f ft: no climb found", feet)
+		}
+		flown := surplus(cruiser(3629), altitude, speed)
+		t.Logf("%.0f ft: Climb %.1f m/s at %.1f m/s, flown %.1f m/s", feet, rate, speed, flown)
+		if math.Abs(flown/rate-1) > 0.03 {
+			t.Errorf("%.0f ft: Climb's %.1f m/s against %.1f m/s of excess power flown at %.1f m/s", feet, rate, flown, speed)
+		}
+		sound := air(altitude, Environment{Seed: 1}).Sound
+		for _, off := range []float64{-0.05, 0.05} {
+			if other := surplus(cruiser(3629), altitude, speed+off*sound); other >= flown {
+				t.Errorf("%.0f ft: %+.2f Mach off the best speed gained %.1f m/s, at it %.1f", feet, off, other, flown)
+			}
+		}
+	}
+}
+
+// TestClimbFindsTheBest: the search lands on the peak of the climb rate over
+// Mach to a thousandth, as a fine grid of the same rate finds it: the coarse
+// sweep alone stops up to a hundredth off, a few knots on the prompt.
+func TestClimbFindsTheBest(t *testing.T) {
+	for _, altitude := range []float64{1500, 7000, 11000} {
+		m := cruiser(3629)
+		speed, rate, ok := m.Climb(altitude)
+		if !ok {
+			t.Fatalf("%.0f m: no climb found", altitude)
+		}
+		best, at := 0.0, 0.0
+		for mach := 0.2; mach <= 0.95; mach += 0.001 {
+			if _, r, found := m.climbing(altitude, mach); found && r > best {
+				best, at = r, mach
+			}
+		}
+		mach := speed / air(altitude, m.Environment).Sound
+		if math.Abs(mach-at) > 0.002 || rate < best-1e-3 {
+			t.Errorf("%.0f m: Climb found Mach %.4f at %.4f m/s; the peak is Mach %.3f at %.4f", altitude, mach, rate, at, best)
+		}
+	}
+}
+
+// TestClimbWeightAndDrag: the climb is for the jet as it is - heavier, with
+// tanks hung or higher up, it climbs more slowly; where military power has
+// nothing to spare, or out of the atmosphere's range, there is none.
+func TestClimbWeightAndDrag(t *testing.T) {
+	at := func(m *Model, feet float64) float64 {
+		_, rate, ok := m.Climb(feet * foot)
+		if !ok {
+			t.Fatalf("%.0f ft: no climb found", feet)
+		}
+		return rate
+	}
+	light, heavy := at(cruiser(1500), 10000), at(cruiser(4900), 10000)
+	tanks := cruiser(1500)
+	tanks.Stores(Fighter.Default | mask(t, "pylon3", "tank3", "pylon7", "tank7", "pylon5", "tank5"))
+	tanks.State.External = Tanks{}
+	hung := at(tanks, 10000)
+	low, high := at(cruiser(1500), 0), at(cruiser(1500), 40000)
+	t.Logf("10,000 ft: %.1f m/s light, %.1f heavy, %.1f with three empty tanks; light at sea level %.1f, at 40,000 ft %.1f", light, heavy, hung, low, high)
+	if !(heavy < light) || !(hung < light) || !(high < light && light < low) {
+		t.Errorf("the climb does not follow the jet: light %.1f, heavy %.1f, tanks %.1f, sea level %.1f, 40,000 ft %.1f", light, heavy, hung, low, high)
+	}
+	single := cruiser(1500)
+	single.State.Damage.Engine[1] = 1 // the right engine's thrust gone
+	if lame := at(single, 10000); lame > light*0.6 {
+		t.Errorf("on one engine the jet climbs at %.1f m/s against %.1f on two: the dead engine's thrust is counted", lame, light)
+	}
+	if _, _, ok := cruiser(4900).Climb(16000); ok {
+		t.Error("a full jet found a climb at 16 km, where military power holds it level and no more")
+	}
+	if _, _, ok := cruiser(1500).Climb(25000); ok {
+		t.Error("a climb found at 25 km, outside the atmosphere the core models")
+	}
+}
+
+// TestCalibrated: the conversion the climb prompt is shown through is the
+// airspeed indicator's - the jet's own reading in steady level flight at
+// height - and in the standard day at sea level it is the true airspeed.
+func TestCalibrated(t *testing.T) {
+	m := cruiser(3000)
+	if cas := m.Calibrated(150, 0); math.Abs(cas-150) > 0.5 {
+		t.Errorf("at sea level 150 m/s true reads %.2f calibrated", cas)
+	}
+	m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, 220, 3000)
+	if got, want := m.Calibrated(220, 6000), m.Cas(); math.Abs(got-want) > 0.5 {
+		t.Errorf("at 6,000 m, 220 m/s true: Calibrated %.2f against the indicator's %.2f", got, want)
 	}
 }

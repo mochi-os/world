@@ -75,6 +75,7 @@ func main() {
 		"gust":     guard(gust),
 		"approach": guard(approach),
 		"cruise":   guard(cruise),
+		"climb":    guard(climb),
 		"clear":    guard(clear),
 	}
 	for name, export := range battles() {
@@ -384,6 +385,23 @@ func cruise(this js.Value, arguments []js.Value) any {
 		flow = -1
 	}
 	return []any{flow, speed}
+}
+
+// climb reports the best steady climb on military power at an altitude (m)
+// for the jet as it is now - its weight, stores and damage - as [true airspeed
+// m/s, rate of climb m/s, calibrated airspeed m/s]: the climb airspeed the
+// FPAS prompts on the HUD (NATOPS 2.3.1.1.8). The rate is negative where there
+// is no climb to be had. The flying state is untouched.
+func climb(this js.Value, arguments []js.Value) any {
+	if model == nil {
+		return []any{0.0, -1.0, 0.0}
+	}
+	altitude := arguments[0].Float()
+	speed, rate, ok := model.Climb(altitude)
+	if !ok {
+		return []any{0.0, -1.0, 0.0}
+	}
+	return []any{speed, rate, model.Calibrated(speed, altitude)}
 }
 
 // stores sets the attached external-store bitmask: the client asserts the
