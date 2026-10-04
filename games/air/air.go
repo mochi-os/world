@@ -1095,7 +1095,7 @@ func input(data map[string]any) flight.Inputs {
 		Fire:       flag("fire"),
 		Flare:      flag("flare"),
 		Chaff:      flag("chaff"),
-		Solo:       flag("solo"),       // the dispenser at BYPASS: the flare alone; an older client never sends it and keeps the mixed programme
+		Solo:       flag("solo"),       // the flare alone - the dispenser at BYPASS, or a programme step without chaff; an older client never sends it and keeps the mixed programme
 		Extinguish: flag("extinguish"), // the FIRE EXTGH pushbutton, an edge
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
