@@ -2741,6 +2741,103 @@ func TestInputSystems(t *testing.T) {
 // on-speed, "reverted" the loss of mission computer 1, and "held" the wing fuel
 // INTR WING holds, kg and never negative; a sample without them (an older
 // client) resets nothing, keeps the limiter's schedules and holds no fuel.
+// TestSighted: the 9M seeker's line while the pilot's helmet slaves it (#103)
+// comes as a world azimuth and elevation in hundredths of a degree, two whole
+// numbers in range, or not at all.
+func TestSighted(t *testing.T) {
+	if v, ok := sighted(map[string]any{"seeker": []any{int64(9000), int64(0)}}); !ok || math.Abs(v.Z-1) > 1e-9 || math.Abs(v.X) > 1e-9 || math.Abs(v.Y) > 1e-9 {
+		t.Errorf("[9000 0] reads %+v %v, want +z", v, ok)
+	}
+	if v, ok := sighted(map[string]any{"seeker": []any{uint64(0), int64(-4500)}}); !ok || math.Abs(v.X-math.Sqrt(0.5)) > 1e-9 || math.Abs(v.Y+math.Sqrt(0.5)) > 1e-9 {
+		t.Errorf("[0 -4500] reads %+v %v, want 45° down along +x", v, ok)
+	}
+	for _, bad := range []any{nil, []any{}, []any{int64(1)}, []any{int64(18001), int64(0)}, []any{int64(0), int64(-9001)}, []any{0.5, int64(0)}, []any{"x", int64(0)}, []any{math.NaN(), int64(0)}, []any{int64(1), int64(2), int64(3)}} {
+		if _, ok := sighted(map[string]any{"seeker": bad}); ok {
+			t.Errorf("%v reads as a line", bad)
+		}
+	}
+	if _, ok := sighted(map[string]any{}); ok {
+		t.Error("a sample without one reads as a line")
+	}
+}
+
+// TestAcquireSlaved: with the helmet slaving the seeker it has the jet nearest
+// the line the pilot looks along inside its 2.5° field - off the nose cone if
+// need be, but inside the 40° gimbal - and not a nearer jet the nose cone
+// holds; without, the nose cone as before.
+func TestAcquireSlaved(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 3)
+	shooter := &i.aircraft[0].model.State
+	forward, right := shooter.Attitude.Rotate(flight.Vec3{X: 1}), shooter.Attitude.Rotate(flight.Vec3{Z: 1})
+	off := func(degrees float64) flight.Vec3 {
+		r := degrees * math.Pi / 180
+		return forward.Scale(math.Cos(r)).Add(right.Scale(math.Sin(r)))
+	}
+	put := func(slot int, degrees, distance float64) {
+		s := &i.aircraft[slot].model.State
+		s.Position = shooter.Position.Add(off(degrees).Scale(distance))
+		s.Attitude, s.Velocity = shooter.Attitude, shooter.Velocity // going away: the tailpipe toward the shooter
+	}
+	look := func(degrees float64) {
+		v := off(degrees)
+		a, e := math.Round(math.Atan2(v.Z, v.X)*180/math.Pi*100), math.Round(math.Asin(v.Y)*180/math.Pi*100)
+		i.aircraft[0].sight, i.aircraft[0].slaved = sighted(map[string]any{"seeker": []any{a, e}})
+	}
+	put(1, 35, 1500)
+	put(2, 60, 20000) // out of it
+	if got := i.acquire(0, i.aircraft[0]); got != -1 {
+		t.Errorf("unslaved, 35° off the nose: acquired %d, want none (the 30° cone)", got)
+	}
+	look(35)
+	if got := i.acquire(0, i.aircraft[0]); got != 1 {
+		t.Errorf("looking at the jet 35° off the nose: acquired %d, want 1", got)
+	}
+	look(39)
+	if got := i.acquire(0, i.aircraft[0]); got != -1 {
+		t.Errorf("looking 4° past it: acquired %d, want none (the 2.5° field)", got)
+	}
+	put(2, 5, 800) // nearer, in the nose cone
+	look(35)
+	if got := i.acquire(0, i.aircraft[0]); got != 1 {
+		t.Errorf("looking at the far jet with a nearer one on the nose: acquired %d, want 1", got)
+	}
+	i.aircraft[0].slaved = false
+	if got := i.acquire(0, i.aircraft[0]); got != 2 {
+		t.Errorf("unslaved with a jet on the nose: acquired %d, want 2", got)
+	}
+	put(1, 35, 1500)
+	put(2, 36.5, 1500) // two inside the field: the one nearest the line, whichever comes first
+	look(35.2)
+	if got := i.acquire(0, i.aircraft[0]); got != 1 {
+		t.Errorf("two jets in the field: acquired %d, want 1, nearest the line", got)
+	}
+	look(36.3)
+	if got := i.acquire(0, i.aircraft[0]); got != 2 {
+		t.Errorf("two jets in the field: acquired %d, want 2, nearest the line", got)
+	}
+	put(2, 60, 20000)
+	put(1, 45, 1500)
+	look(45)
+	if got := i.acquire(0, i.aircraft[0]); got != -1 {
+		t.Errorf("looking at a jet 45° off the nose: acquired %d, want none (the 40° gimbal)", got)
+	}
+}
+
+// TestStepSighted: the session takes the seeker's line from each batch's newest
+// sample, as it takes the status, and a batch whose newest sample has none
+// leaves the seeker on the nose cone.
+func TestStepSighted(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	i.Step(1, map[int][]game.Input{0: {{Sequence: 1, Data: map[string]any{}}, {Sequence: 2, Data: map[string]any{"seeker": []any{int64(9000), int64(0)}}}}})
+	if a := i.aircraft[0]; !a.slaved || math.Abs(a.sight.Z-1) > 1e-9 {
+		t.Errorf("newest carries one: slaved %v sight %+v", a.slaved, a.sight)
+	}
+	i.Step(2, map[int][]game.Input{0: {{Sequence: 3, Data: map[string]any{"seeker": []any{int64(9000), int64(0)}}}, {Sequence: 4, Data: map[string]any{}}}})
+	if i.aircraft[0].slaved {
+		t.Error("newest carries none: still slaved")
+	}
+}
+
 func TestInputReversions(t *testing.T) {
 	in := input(map[string]any{"onspeed": true, "reverted": true, "held": 312.5})
 	if !in.Onspeed || !in.Reverted || in.Held != 312.5 {

@@ -161,6 +161,7 @@ const (
 	missile_range  = 5000.0 // rear-aspect acquisition range (m); weak head-on
 	missile_cone   = 0.866  // cos of the acquisition half-angle (~30°)
 	missile_gimbal = 0.766  // cos of the ±40° seeker gimbal — beyond it the lock breaks
+	missile_field  = 0.9990 // cos of the seeker's 2.5° field about the line the pilot's helmet slaves it to (#103)
 	missile_track  = 0.35   // rad/s seeker track ceiling (~20°/s) — beam it to saturate
 	missile_g      = 35.0   // structural lateral limit, g
 	missile_n      = 3.5    // the proportional-navigation constant
@@ -428,12 +429,14 @@ type craft struct {
 	team       string      // "red"/"blue" in the teams mode, "" otherwise
 	kills      int
 	deaths     int
-	emitter    int    // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
-	lock       int    // the STT'd slot when emitter is 2, -1 otherwise
-	discharged bool   // the fire extinguisher bottle is spent this life (NATOPS 2.14.2): there is one
-	status     status // what this craft's side needs of its IFF and Link 16, as it last reported
-	reporting  bool   // it has reported one: an older client never does
-	told       status // the status the session last sent out for it: none yet has no antenna, which no status has
+	emitter    int         // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
+	lock       int         // the STT'd slot when emitter is 2, -1 otherwise
+	discharged bool        // the fire extinguisher bottle is spent this life (NATOPS 2.14.2): there is one
+	status     status      // what this craft's side needs of its IFF and Link 16, as it last reported
+	reporting  bool        // it has reported one: an older client never does
+	told       status      // the status the session last sent out for it: none yet has no antenna, which no status has
+	sight      flight.Vec3 // the 9M seeker's line, world frame, while the pilot's helmet slaves it (#103)
+	slaved     bool        // the helmet slaves the seeker: acquire searches along sight, not the nose cone
 }
 
 // hostile reports whether two craft may engage each other: everyone in the
@@ -1145,7 +1148,8 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		if a == nil || len(list) == 0 {
 			continue
 		}
-		previous := a.latest // edges span the batch boundary: a held button is one press, not one per sample
+		previous := a.latest                                // edges span the batch boundary: a held button is one press, not one per sample
+		a.sight, a.slaved = sighted(list[len(list)-1].Data) // the newest sample carries it, as it does the status
 		for _, sample := range list {
 			in := input(sample.Data)
 			// Flare and missile are EDGES with server-side cooldowns, never
@@ -1708,12 +1712,15 @@ func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool
 	return distance <= zone.Max
 }
 
-// acquire returns the slot the seeker head would lock right now: the nearest
-// living craft inside the cone and the aspect-weighted range — team-blind,
-// exactly like the hardware (an AIM-9 sees tailpipes, not sides).
+// acquire returns the slot the seeker head would lock right now — team-blind,
+// exactly like the hardware (an AIM-9 sees tailpipes, not sides), inside the
+// aspect-weighted range. Its own line: with the pilot's helmet slaving it
+// (#103, NATOPS 2.21.15), the jet nearest the line the client reports inside
+// the seeker's 2.5° field and the 40° gimbal; otherwise the nearest jet in the
+// 30° cone about the nose.
 func (i *instance) acquire(slot int, a *craft) int {
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
-	best, nearest := -1, missile_range+1
+	best, nearest, closest := -1, missile_range+1, -1.0
 	for _, other := range i.slots() {
 		b := i.aircraft[other]
 		if other == slot || !b.alive {
@@ -1735,6 +1742,12 @@ func (i *instance) acquire(slot int, a *craft) int {
 		if distance > missile_range*(floor+(1-floor)*math.Max(0, tail)) {
 			continue
 		}
+		if a.slaved {
+			if along := direction.Dot(a.sight); along >= missile_field && along > closest && direction.Dot(forward) >= missile_gimbal {
+				best, closest = other, along
+			}
+			continue
+		}
 		if forward.X*direction.X+forward.Y*direction.Y+forward.Z*direction.Z < missile_cone {
 			continue
 		}
@@ -1743,6 +1756,25 @@ func (i *instance) acquire(slot int, a *craft) int {
 		}
 	}
 	return best
+}
+
+// sighted reads the 9M seeker's line from a sample, while the pilot's helmet
+// slaves it (#103): its world azimuth from +x toward +z and its elevation, in
+// hundredths of a degree (the client's helmet.ts pack). Absent - the helmet
+// off, the seeker on a radar track, or an older client - or not two whole
+// numbers in range, there is none.
+func sighted(data map[string]any) (flight.Vec3, bool) {
+	list, _ := data["seeker"].([]any)
+	if len(list) != 2 {
+		return flight.Vec3{}, false
+	}
+	azimuth, one := whole(list[0])
+	elevation, two := whole(list[1])
+	if !one || !two || azimuth < -18000 || azimuth > 18000 || elevation < -9000 || elevation > 9000 {
+		return flight.Vec3{}, false
+	}
+	a, e := float64(azimuth)/100*math.Pi/180, float64(elevation)/100*math.Pi/180
+	return flight.Vec3{X: math.Cos(e) * math.Cos(a), Y: math.Sin(e), Z: math.Cos(e) * math.Sin(a)}, true
 }
 
 // launch fires a missile at the best target in the seeker cone. The seeker
