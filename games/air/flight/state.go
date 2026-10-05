@@ -44,6 +44,7 @@ type Inputs struct {
 	Extinguish bool // the FIRE EXTGH pushbutton (NATOPS 2.14.2): an edge the host judges; flight ignores it
 	Missile    bool
 	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
+	Visual     bool // that trigger edge is a VISUAL shot (#155): no lock, the round's own seeker live off the rail
 	Jammer     bool // the jammer's ARMED state (#31): a level, not an edge — the server judges when it actually radiates
 	Sequence   uint32
 }

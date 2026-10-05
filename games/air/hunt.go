@@ -250,7 +250,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 		return
 	}
 	a.emitter, a.lock = 2, target
-	if i.fox3(slot, a) {
+	if i.fox3(slot, a, false) {
 		if !i.cheat.ammunition {
 			a.amraams--
 			a.model.Stores(a.attach())
@@ -416,7 +416,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 				want = 0 // behind the wing there is no shot at all
 			}
 		}
-		if span <= want && span >= b.zone.Minimum && i.fox3(slot, a) {
+		if span <= want && span >= b.zone.Minimum && i.fox3(slot, a, false) {
 			if !i.cheat.ammunition {
 				a.amraams--
 				a.model.Stores(a.attach())

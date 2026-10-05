@@ -314,11 +314,11 @@ func TestFox3Server(t *testing.T) {
 	if shooter.amraams != 2 {
 		t.Fatalf("cheek pair granted %d AMRAAMs, want 2", shooter.amraams)
 	}
-	if i.fox3(0, shooter) {
+	if i.fox3(0, shooter, false) {
 		t.Fatalf("launched with no lock — the shot must cost an STT the RWR can hear")
 	}
 	shooter.emitter, shooter.lock = 2, 1
-	if !i.fox3(0, shooter) || len(i.flying) != 1 {
+	if !i.fox3(0, shooter, false) || len(i.flying) != 1 {
 		t.Fatalf("a locked shooter could not launch")
 	}
 	if i.flying[0].radar == nil {
@@ -395,6 +395,76 @@ func TestFox3Trigger(t *testing.T) {
 	}
 }
 
+// TestFox3Visual (#155): a VISUAL shot needs no lock. On the trigger edge
+// with the visual flag the round leaves with its seeker live and no estimate,
+// after the jet nearest the nose inside the 7.5° field-of-view circle, any
+// side, or after nothing - and either way the magazine pays, as the client's
+// does. Without the flag and without a lock there is still no shot.
+func TestFox3Visual(t *testing.T) {
+	build := func(count int) (*instance, *craft) {
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		for slot := 0; slot < count; slot++ {
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
+			a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
+				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+				"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			}, "open")}
+			a.arm()
+			a.release = 1e9
+			i.aircraft[slot] = a
+		}
+		return i, i.aircraft[0]
+	}
+	at := func(i *instance, slot int, degrees, distance float64) {
+		r := degrees * math.Pi / 180
+		i.aircraft[slot].model.State.Position = flight.Vec3{X: distance * math.Cos(r), Y: 8000, Z: distance * math.Sin(r)}
+	}
+	press := func(i *instance, data map[string]any) {
+		i.Step(1, map[int][]game.Input{0: {{Sequence: 1, Data: data}}})
+	}
+
+	i, shooter := build(2)
+	at(i, 1, 0, 20000)
+	press(i, map[string]any{"radar": true})
+	if len(i.flying) != 0 || shooter.amraams != 2 {
+		t.Fatalf("no lock and no visual flag: %d rounds, %d AMRAAMs left, want 0 and 2", len(i.flying), shooter.amraams)
+	}
+	i, shooter = build(2)
+	at(i, 1, 5, 20000)
+	press(i, map[string]any{"radar": true, "visual": true})
+	if len(i.flying) != 1 || shooter.amraams != 1 {
+		t.Fatalf("a VISUAL shot: %d rounds, %d AMRAAMs left, want 1 and 1", len(i.flying), shooter.amraams)
+	}
+	if m := i.flying[0]; m.target != 1 || m.radar.Phase != round.Active || m.radar.Loft {
+		t.Fatalf("the VISUAL round took %d, phase %d, loft %v; want the jet 5° off the nose, its seeker live, no loft", m.target, m.radar.Phase, m.radar.Loft)
+	}
+
+	i, shooter = build(3)
+	at(i, 1, 6, 9000)
+	at(i, 2, 2, 25000)
+	if got := i.visual(0, shooter); got != 2 {
+		t.Errorf("two jets in the circle: took %d, want 2, the nearer the nose, not the nearer the jet", got)
+	}
+	i.mode, shooter.team, i.aircraft[2].team = "teams", "blue", "blue"
+	if got := i.visual(0, shooter); got != 2 {
+		t.Errorf("a team mate in the circle: took %d, want 2 - the seeker is team-blind, as the circle warns", got)
+	}
+
+	i, shooter = build(2)
+	at(i, 1, 10, 20000)
+	press(i, map[string]any{"radar": true, "visual": true})
+	if len(i.flying) != 1 || i.flying[0].target != -1 || shooter.amraams != 1 {
+		t.Fatalf("nothing in the circle: %d rounds, target %v, %d AMRAAMs left; want one round after nothing, the magazine paid", len(i.flying), i.flying, shooter.amraams)
+	}
+	for step := 0; step < 120; step++ {
+		i.pursue(1.0/60, uint64(step))
+	}
+	if len(i.flying) != 1 {
+		t.Fatalf("the round after nothing was dropped at once: it should fly on, seeing nothing")
+	}
+}
+
 // TestChaffServer (#29): a defender who beams and dispenses defeats a server
 // round that fuses without the dispense. The bloom is offered through the same
 // fields the flare edge sets, so this pins that wiring too.
@@ -414,7 +484,7 @@ func TestChaffServer(t *testing.T) {
 		target.model.State.Position = flight.Vec3{X: 15000, Y: 8000}
 		target.model.State.Velocity = flight.Vec3{X: -280}
 		shooter.emitter, shooter.lock = 2, 1
-		if !i.fox3(0, shooter) {
+		if !i.fox3(0, shooter, false) {
 			t.Fatalf("launch refused")
 		}
 		m := i.flying[0]
@@ -508,7 +578,7 @@ func TestJammerServer(t *testing.T) {
 	// HOJ. Jamming trades the denied datalink for the granted beacon.
 	i, shooter, target = build()
 	target.latest.Jammer = true
-	if !i.fox3(0, shooter) {
+	if !i.fox3(0, shooter, false) {
 		t.Fatalf("launch refused")
 	}
 	m := i.flying[0]
@@ -557,7 +627,7 @@ func TestJammerServer(t *testing.T) {
 	// quiet control of this same defence is TestChaffServer's.
 	i, shooter, target = build()
 	target.latest.Jammer = true
-	if !i.fox3(0, shooter) {
+	if !i.fox3(0, shooter, false) {
 		t.Fatalf("launch refused")
 	}
 	m = i.flying[0]

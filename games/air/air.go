@@ -162,6 +162,7 @@ const (
 	missile_cone   = 0.866  // cos of the acquisition half-angle (~30°) for a craft that reports no seeker line: the server's bots and older clients
 	missile_gimbal = 0.766  // cos of the ±40° seeker gimbal — beyond it the lock breaks
 	missile_field  = 0.9990 // cos of the seeker's 2.5° field about the line the client reports it slaved to (#103, #143)
+	missile_visual = 0.9914 // cos of the AIM-120's 7.5° field-of-view circle about the nose, where a VISUAL shot's seeker finds its target (#155, the DCS guide)
 	missile_track  = 0.35   // rad/s seeker track ceiling (~20°/s) — beam it to saturate
 	missile_g      = 35.0   // structural lateral limit, g
 	missile_n      = 3.5    // the proportional-navigation constant
@@ -1102,6 +1103,7 @@ func input(data map[string]any) flight.Inputs {
 		Extinguish: flag("extinguish"), // the FIRE EXTGH pushbutton, an edge
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
+		Visual:     flag("visual"), // an older client never sends it, and its VISUAL shot stays refused
 		Jammer:     flag("jammer"),
 		Sequence:   uint32(number(data, "sequence")),
 	}
@@ -1204,7 +1206,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			// separate magazine, a separate edge, and a shot that needs the
 			// shooter's own radar rather than the 9M's rear-aspect cone.
 			if in.Radar && !previous.Radar && a.alive && i.missiles && i.free() && a.amraams > 0 && a.release > 1.0 {
-				if i.fox3(slot, a) {
+				if i.fox3(slot, a, in.Visual) {
 					if !i.cheat.ammunition {
 						a.amraams--
 						a.model.Stores(a.attach())
@@ -1816,43 +1818,76 @@ func (i *instance) launch(slot int, a *craft) bool {
 // cone, this shot is the RADAR's: the shooter must be holding an STT lock,
 // which is exactly the emitter state every client already reports and every
 // RWR already hears — so employing the weapon means being seen doing it. A
-// silent radar has no shot. The round then flies the shared round package,
-// datalinked while that lock lives.
-func (i *instance) fox3(slot int, a *craft) bool {
+// silent radar has no supported shot. The round then flies the shared round
+// package, datalinked while that lock lives. A VISUAL shot (#155) needs no
+// lock: the round leaves with its own seeker live and no estimate, after the
+// jet nearest the nose inside the field-of-view circle (visual), or after
+// nothing - team-blind like the heater, as the pilot was warned by the circle.
+func (i *instance) fox3(slot int, a *craft, visual bool) bool {
 	if len(i.flying) >= 256 {
 		return false
 	}
-	if a.emitter != 2 || a.lock < 0 {
-		return false // no lock, no launch: the VISUAL/boresight shot is the client's own affair until it earns a wire flag
-	}
-	target := i.aircraft[a.lock]
-	if target == nil || !target.alive || a.lock == slot {
-		return false
-	}
-	if i.mode == "teams" && target.team != "" && target.team == a.team {
-		return false // no fratricide in teams. This is the FOX-3 rule only: the
-		// radar shot needs a designated lock the avionics can refuse, so it can
-		// check sides. The heater does not - acquire is team-blind by design,
-		// exactly like an IR seeker, so an AIM-9 can still hit a team mate.
-	}
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	var estimate *round.Target
+	target := -1
+	if visual {
+		target = i.visual(slot, a)
+	} else {
+		if a.emitter != 2 || a.lock < 0 {
+			return false // no lock, no supported launch
+		}
+		b := i.aircraft[a.lock]
+		if b == nil || !b.alive || a.lock == slot {
+			return false
+		}
+		if i.mode == "teams" && b.team != "" && b.team == a.team {
+			return false // no fratricide in teams. This is the FOX-3 rule only: the
+			// radar shot needs a designated lock the avionics can refuse, so it can
+			// check sides. The heater does not - acquire is team-blind by design,
+			// exactly like an IR seeker, so an AIM-9 can still hit a team mate.
+		}
+		target = a.lock
+		estimate = &round.Target{Position: b.model.State.Position, Velocity: b.model.State.Velocity}
+	}
 	i.launched++
 	m := &missile{
 		shooter: slot,
-		target:  a.lock,
+		target:  target,
 		number:  i.launched,
 		life:    round.Battery,
 	}
 	m.radar = round.New(
 		a.model.State.Position.Add(forward.Scale(3)),
 		a.model.State.Velocity.Add(forward.Scale(30)),
-		&round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity},
+		estimate,
 		i.environment.Wrap,
 	)
 	m.position, m.velocity = m.radar.Position, m.radar.Velocity
 	i.flying = append(i.flying, m)
-	i.events = append(i.events, map[string]any{"kind": "fox3", "slot": slot, "target": a.lock})
+	i.events = append(i.events, map[string]any{"kind": "fox3", "slot": slot, "target": target})
 	return true
+}
+
+// visual returns the slot a VISUAL shot's seeker takes as the round leaves the
+// rail: the living jet nearest the shooter's nose inside the AIM-120's
+// field-of-view circle, any side, or -1 with none (#155).
+func (i *instance) visual(slot int, a *craft) int {
+	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
+	best, closest := -1, missile_visual
+	for _, other := range i.slots() {
+		b := i.aircraft[other]
+		if other == slot || !b.alive {
+			continue
+		}
+		direction, distance := i.bearing(a.model.State.Position, b.model.State.Position)
+		if distance < 1 {
+			continue
+		}
+		if along := direction.Dot(forward); along >= closest {
+			best, closest = other, along
+		}
+	}
+	return best
 }
 
 // fly_radar steps one AIM-120 through the shared core and judges its
@@ -1864,7 +1899,13 @@ func (i *instance) fox3(slot int, a *craft) bool {
 func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	target := i.aircraft[m.target]
 	if target == nil {
-		return false
+		if m.target >= 0 {
+			return false // its target has left the session
+		}
+		alive, _, _ := m.radar.Advance(dt, nil, nil) // a VISUAL shot with nothing in its field: it flies on, seeing nothing
+		m.position, m.velocity = m.radar.Position, m.radar.Velocity
+		m.life = m.radar.Life
+		return alive && m.position.Y > 0
 	}
 	var support, truth *round.Target
 	if target.alive {
