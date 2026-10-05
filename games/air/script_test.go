@@ -108,3 +108,52 @@ func TestScriptRecordsItsBranch(t *testing.T) {
 		t.Errorf("the Doctrine channel read \"script\": %v", seen)
 	}
 }
+
+// TestScriptFliesTheAir: the scripted doctrine schedules its regain on the
+// wing's airspeed, not its speed over the ground. In single player the bandit
+// flies the pilot's air, and judged on ground speed it regained at 172 kt into
+// a 40 kt headwind and stayed unloaded, tail to the pilot, until 268 kt
+// (01a10e19). Into a headwind the jet must not enter the regain while its
+// airspeed is above the floor, and must leave it once its airspeed is past the
+// band; with a tailwind it must enter it when its airspeed is under the floor.
+func TestScriptFliesTheAir(t *testing.T) {
+	cases := []struct {
+		name      string
+		wind      float64 // surface wind along the jet's heading, m/s (+ a tailwind)
+		airspeed  float64 // m/s
+		regaining bool    // the regain already flown when the case begins
+		want      bool    // the regain flown at the end
+	}{
+		{"into a headwind, above the floor", -15, 100, false, false},
+		{"into a headwind, past the band", -15, 125, true, false},
+		{"with a tailwind, under the floor", 15, 66, false, true},
+	}
+	for _, c := range cases {
+		b := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, true)
+		b.Stage(16, 1<<16-2)
+		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: c.wind}, Wrap: 250000}
+		b.Air(air)
+		b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: c.airspeed})
+		pm := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
+		pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: 4572}, flight.Vec3{X: 1}, c.airspeed, fuel)
+		words := make([]float64, flight.Size)
+		for tick := 0; tick < 40; tick++ {
+			if tick == 10 {
+				// The fight, not the run-in, once the jet has flown a few steps:
+				// its wind is the one its last step met, and a jet that has never
+				// stepped has met none.
+				b.craft.brain.routine.passed = true
+				b.craft.brain.routine.regaining = c.regaining
+			}
+			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+		}
+		m := b.craft.model
+		ground, airspeed := m.State.Velocity.Length(), m.State.Velocity.Subtract(m.Gust()).Length()
+		if got := b.craft.brain.routine.regaining; got != c.want {
+			t.Errorf("%s: regaining %v at %.0f kt airspeed and %.0f kt over the ground, want %v", c.name, got, airspeed*1.944, ground*1.944, c.want)
+		}
+	}
+}

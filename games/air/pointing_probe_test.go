@@ -310,6 +310,7 @@ type hornet struct {
 	last        flight.Vec3 // his velocity a tick ago: the zone's swing
 	zone        round.Zone  // his heater zone as the cue reads it, refreshed a few times a second
 	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
+	wind        flight.Vec3 // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
 }
 
 // mimic flies the fight the user flew against the stage 15 ace in the sorties
@@ -422,7 +423,8 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		}
 	}
 	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
-	speed := me.Velocity.Length()
+	air := me.Velocity.Subtract(h.wind) // in still air, the velocity itself
+	speed := air.Length()
 	// The wind in body axes gives alpha: X forward, Y up. Read once, used by the
 	// regain trigger, the roll fade and the pull ceiling below. Past about eighty
 	// degrees the forward component vanishes, and reading a bare zero there would
@@ -446,7 +448,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// on, and any further work here should compare like with like before
 	// changing a limit.
 	riding := 90.0
-	if body := me.Attitude.Unrotate(me.Velocity); body.X > 1 {
+	if body := me.Attitude.Unrotate(air); body.X > 1 {
 		riding = math.Atan2(-body.Y, body.X) * 180 / math.Pi
 	}
 	// BFM, not proportional pursuit: roll the lift vector onto him wherever
@@ -870,6 +872,9 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 		peakHis := 0.0                                          // the opponent's peak alpha this seed: a scripted human that departs is the script's defect, and this says which seed to trace
 		rack := i.aircraft[bot].brain.missiles                  // the magazine, so the trace can stop on the event it exists to explain (#168): a launch
 		for tick := uint64(0); tick < uint64(seconds*60); tick++ {
+			if h, ok := pilot.(*hornet); ok {
+				h.wind = i.aircraft[0].model.Gust() // the scripts fly the air their jet is in
+			}
 			data := pilot.fly(me, &i.aircraft[bot].model.State, inbound(i, 0), tick)
 			if os.Getenv("AIR_DEPART") != "" {
 				branch := ""
@@ -1051,13 +1056,6 @@ func TestPilotEngagesTheMush(t *testing.T) {
 	}
 }
 
-// TestDifficulty measures the difficulty target (#45): each tier against
-// mimic, the scripted pilot of the user's fights, from the single-player
-// joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
-// weapons held until the pass - on the stage the user flies (AIR_STAGE,
-// AIR_OMIT). The lead turn alternates toward and away seed by seed. The target
-// is the user's: he wins most against the novice, loses most against the
-// pilot, and rarely or never beats the ace or the superhuman.
 // jousted re-places a sweep's pair at the single-player joust's own start: 5.5
 // km apart head-on at 15,000 ft and 428 kt.
 func jousted(i *instance, bot int) {
@@ -1068,6 +1066,14 @@ func jousted(i *instance, bot int) {
 	him.Attitude, me.Attitude = flight.Look(east), flight.Look(east.Scale(-1))
 }
 
+// TestDifficulty measures the difficulty target (#45): each tier against
+// mimic, the scripted pilot of the user's fights, from the single-player
+// joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
+// weapons held until the pass - on the stage the user flies (AIR_STAGE,
+// AIR_OMIT). The lead turn alternates toward and away seed by seed; AIR_WIND
+// flies both jets in single player's weather. The target is the user's: he
+// wins most against the novice, loses most against the pilot, and rarely or
+// never beats the ace or the superhuman.
 func TestDifficulty(t *testing.T) {
 	if os.Getenv("AIR_POINT") == "" {
 		t.Skip("measurement probe: set AIR_POINT=1")
@@ -1080,13 +1086,30 @@ func TestDifficulty(t *testing.T) {
 	if only := os.Getenv("AIR_TIER"); only != "" {
 		tiers = []string{only}
 	}
-	fmt.Printf("mimic: stage %d omit %d | %d seeds, 150 s, the joust's 5.5 km start\n", doctrine.stage, doctrine.omit, seeds)
+	setup := jousted
+	if os.Getenv("AIR_WIND") != "" {
+		// Single player's weather (engine.ts weather()): 12.9 m/s from 070 at the
+		// surface, about 60 kt at the joust's height. Both jets fly it, each spawned
+		// at the joust's airspeed as single player spawns them (flight.Level).
+		wind := flight.Vec3{X: -12.1, Z: 4.4}
+		setup = func(i *instance, bot int) {
+			jousted(i, bot)
+			for _, slot := range []int{0, bot} {
+				m := i.aircraft[slot].model
+				m.Environment.Wind = wind
+				engines := m.State.Engine
+				m.State = flight.Level(m, m.State.Position, m.State.Velocity.Normalize(), 220, m.State.Fuel)
+				m.State.Engine = engines
+			}
+		}
+	}
+	fmt.Printf("mimic: stage %d omit %d | %d seeds, 150 s, the joust's 5.5 km start, wind %v\n", doctrine.stage, doctrine.omit, seeds, os.Getenv("AIR_WIND") != "")
 	for _, level := range tiers {
 		n := 0
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
 			return mimic([]float64{1, -1}[n%2])
-		}, true, 0, seeds, 150, jousted)
+		}, true, 0, seeds, 150, setup)
 		fmt.Println(report("mimic", level, b))
 		// A tumbling mimic is killed for free: its time past 45 degrees, as the
 		// hornet's own gate reads it, beside every row.
@@ -1262,7 +1285,9 @@ func TestTierAgainstTheHornet(t *testing.T) {
 				// these speeds, not a defect with a fix waiting.
 				//
 				// So this check is EXPECTED RED at 34.8 until the scripted human
-				// is made to fight harder without departing. That is deliberate,
+				// is made to fight harder without departing. (31.7 since the scripts
+				// fly the air their jet is in, the other jet's wake included,
+				// 2026-10-06; 34.4 on the same tree before.) That is deliberate,
 				// and it is the one known-failing check in the package: anything
 				// else going red here is a real regression, not this.
 				high := 100 * float64(b.closeHigh[1]) / math.Max(float64(b.close[1]), 1)

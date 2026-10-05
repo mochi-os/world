@@ -59,7 +59,13 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	axis := me.Attitude.Rotate(flight.Vec3{X: 1})
 	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
-	speed := me.Velocity.Length()
+	// AIRSPEED, not speed over the ground: the regain's floor and exit, the pull
+	// limit and the roll fade are all the wing's numbers. In single player the
+	// bandit flies the pilot's air, and with the ground speed the regain began at
+	// 172 kt into a 40 kt headwind and held until 268 kt, 12.8 s unloaded with its
+	// tail to him (01a10e19). The geometry below stays over the ground, where
+	// both jets' tracks are.
+	speed := me.Velocity.Subtract(m.Gust()).Length()
 
 	// The run-in: a line 400 m beside him, then the lead turn toward his side at
 	// mimic's 1.6 km, held until he has gone by. Flown through steer(), which
