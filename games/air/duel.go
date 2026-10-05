@@ -1111,6 +1111,17 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// because it earns it, and taking the arbiter off it costs kills - which
 	// refutes #174's premise from a second direction and closes the line of
 	// enquiry that treated the play mix as the defect.
+	//
+	// MEASURED AND DECLINED 2026-09-26 against mimic, the scripted pilot of the
+	// user's own fights (TestDifficulty, stage 0): banning the yo-yos only where
+	// a heater-armed pilot sits astern of me, nose on, inside his seeker's reach
+	// on my tailpipe. `high` was the play at the killing shot in all 14 of the
+	// ace's deaths. Banning `high` alone moved them to `low` (11 of 13) and the
+	// ace from 14/14 to 15/13 kills/deaths over 32 fights; banning both yo-yos
+	// spread the deaths over press, screw, pitch and trap, and read ace 25/26 ->
+	// 29/25 and superhuman 24/28 -> 26/26 over 64 fights. Inside the noise, and
+	// far short of the ace winning nine in ten: in that geometry the scorer
+	// prefers some extension whichever plays it is allowed.
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
 	if b.tactics.on(13) && astern(&a.model.State, prey) {
 		// Stage 13: a pilot astern with his nose on me follows whatever I do,

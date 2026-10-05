@@ -37,6 +37,7 @@ type skill struct {
 	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the pilot half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
+	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go, stage 16): how hard this pilot will hold the wing loaded in a turning fight
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a novice flies
@@ -84,9 +85,9 @@ type skill struct {
 // perception, discipline, and trigger-cadence humanities the code applies
 // beyond this table.
 var skills = map[string]skill{
-	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1},
+	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34},
 	// The superhuman IS the ace with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the ace's 600 and 0.06; neither is a human limit (one is gun
@@ -113,7 +114,7 @@ var skills = map[string]skill{
 	// tier IS. If the finding is to be acted on, it belongs in something the
 	// machine may honestly carry - the commitment that governs how long a plan
 	// survives, not the rate at which the jet is allowed to think.
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true, alpha: 34},
 }
 
 // capped is the aero cap applied to a commanded g: never far past what the
@@ -163,6 +164,15 @@ func (b *brain) capped(g, speed, stall float64) float64 {
 		s.cap *= b.tactics.truth.cap
 	}
 	return s.capped(g, speed, stall)
+}
+
+// wander is the aim wander: where this pilot's nose actually points. Re-rolled
+// on a slow clock, NOT per decision — sloppiness is a consistent bias, which is
+// exactly why sloppy pilots are easy to track and gun, while per-decision noise
+// had made even the rookie untrackable to an ace.
+func (i *instance) wander(slot int, b *brain, tick uint64) {
+	b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/150) - 0.5) * 2 * b.skill.wander
+	b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/150) - 0.5) * 2 * b.skill.wander
 }
 
 // commitment is the manoeuvre set that must be flown through rather than
@@ -249,6 +259,14 @@ type tactics struct {
 		floor   float64 // but never later than this range, m
 		angle   float64 // the cut across his side, radians
 		hold    uint64  // ticks the committed turn is flown through the pass
+	}
+	// The scripted doctrine's numbers (script.go, stage 16), mimic's; the alpha
+	// it fights at is the tier's (skill.alpha).
+	script struct {
+		ceiling float64 // the alpha that starts the regain, deg
+		floor   float64 // the speed that starts the regain, m/s
+		band    float64 // the speed that ends it, m/s
+		lead    float64 // the run-in's lead-turn range, m
 	}
 	missile struct {
 		tail   float64 // disciplined shooters demand at least this aspect
@@ -589,6 +607,7 @@ func standard() tactics {
 	t.low.near, t.low.far, t.low.tail, t.low.rise = -30, -140, 0.85, 0.2
 	t.plan.deficit = 400
 	t.lead.closure, t.lead.floor, t.lead.angle, t.lead.hold = 2.0, 600, 1.3, 100
+	t.script.ceiling, t.script.floor, t.script.band, t.script.lead = 38, 70, 110, 1600
 	// step 0.06 -> 0 (#37, measured 2026-08-16). The nose gate was TIGHTENED by
 	// discipline: 0.93 for the instructor tiers against 0.87 for a rookie —
 	// 21.6 degrees where the seeker's own acquisition cone is 30
@@ -866,6 +885,7 @@ type brain struct {
 	demand    Demand          // the g asked for at each stage between the law and the stick, for the journal
 	shaped    bool            // polish() ran this decision and filled demand; a bypass that skips it reports its raw command instead
 	licensed  bool            // the committed play's order carried `alpha` (duel.go, stage 9): polish() leaves its g uncapped and undisciplined
+	routine   routine         // the scripted doctrine's own state (script.go, stage 16)
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -888,6 +908,7 @@ func (b *brain) reborn() {
 	b.cast, b.casted, b.jolted, b.doubt = nil, 0, 0, [4]float64{}
 	b.prey = nil
 	b.known = map[int]*track{}
+	b.routine = routine{}
 }
 
 // pressing reports whether the advantage has been held long enough to finish
@@ -1060,7 +1081,11 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 	i.trigger(slot, a, tick) // the shot is a reflex, not a plan: every tick, whatever the cadence
 	i.hunt(slot, a, tick)    // BVR radar, DLZ shot, crank, and defence (hunt.go): inert without AMRAAMs aboard or radar rounds inbound
-	a.latest = b.steer(a.model, tick)
+	if b.mode == "script" {
+		a.latest = i.drive(slot, a, tick)
+	} else {
+		a.latest = b.steer(a.model, tick)
+	}
 	a.latest.Jammer = b.jam // the armed level, brain-driven for bots the way a client reports it for humans (same equipment, same trade-offs)
 	// The fire drill (#130, deferred from #78): engine fires feed on throttle
 	// and starve at idle (battle.Advance) — chopping the power IS the drill,
@@ -1205,6 +1230,10 @@ func spent(b *brain, m *missile, closing float64) bool {
 func (i *instance) decide(slot int, a *craft, tick uint64) {
 	b := a.brain
 	me := &a.model.State
+	// The scripted doctrine (script.go) flies the fight, the break and the slow
+	// jet itself. Not in a BVR match: the radar fight (hunt.go) steers through
+	// the aim the script does not read.
+	scripted := a.team == "" && b.tactics.on(16) && i.weapons != "open"
 	// The roster is read ONCE, and the track set once below: slots() allocates
 	// and sorts on every call, and decide reads the two eleven times between them.
 	order := i.slots()
@@ -1527,11 +1556,18 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			break
 		}
 	}
+	b.routine.incoming = flight.Vec3{}
 	if threatened {
 		if b.alert == 0 {
 			b.alert = tick
 		}
-		if float64(tick-b.alert) >= math.Max(b.skill.react, threat_confirm)*60 {
+		if scripted && float64(tick-b.alert) >= math.Max(b.skill.react, threat_confirm)*60 {
+			b.routine.incoming = inbound // the script breaks across it, and the flare programme below is the same one
+			if !radar && a.flared > 0.5 && (b.dispensed < 4 || (float64(tick-b.alert) > 240 && b.dispensed < 6)) {
+				b.drop = true
+				b.dispensed++
+			}
+		} else if float64(tick-b.alert) >= math.Max(b.skill.react, threat_confirm)*60 {
 			b.mode = "evade"
 			b.press = 0
 			side := me.Attitude.Rotate(flight.Vec3{Z: 1})
@@ -1716,7 +1752,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// killed it. It predates the duel arbiter by three weeks and the arbiter was built
 	// around it. The section doctrine keeps the old tier: its ladder has its own
 	// floor further down, and the team path is outside this repair.
-	if speed < 70 || (a.team != "" && speed < 0.55*pace) {
+	if (speed < 70 && !scripted) || (a.team != "" && speed < 0.55*pace) {
 		b.mode = "rebuild"
 		b.settle(tick)
 		b.press = 0
@@ -1793,6 +1829,12 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 
 	prey := b.known[b.target]
 	b.prey = prey
+	if scripted {
+		b.mode, b.safed = "script", ""
+		b.shoot = true // the trigger runs before the script's next tick: a machine deciding every tick would otherwise never hold it live
+		i.wander(slot, b, tick)
+		return
+	}
 	// Refresh the orbit estimate whenever the track has a NEW observation: two
 	// spaced samples give the circle BFM is flown against (#206 planner).
 	// The pair must be SPACED: two looks a sixtieth of a second apart carry
@@ -2896,12 +2938,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// they made a bystander of a bandit with a full gun, and in both recorded
 	// human jousts they fired the pilot read the result as a useless bot.
 
-	// The aim wander: where this pilot's nose actually points. Re-rolled on a
-	// slow clock, NOT per decision — sloppiness is a consistent bias, which is
-	// exactly why sloppy pilots are easy to track and gun, while per-decision
-	// noise had made even the rookie untrackable to an ace.
-	b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/150) - 0.5) * 2 * b.skill.wander
-	b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/150) - 0.5) * 2 * b.skill.wander
+	i.wander(slot, b, tick)
 	// The machine's defensive JINK (#236): deliberate, not noise. Perfectly
 	// smooth flight is perfectly predictable flight — the wander tiers get
 	// an accidental jink for free, and the tier without it was measured
@@ -2988,17 +3025,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	aim, want := b.aim, b.g
 
 	// The floor overrides everything: wings level, maximum pull, burner.
-	// Recovery height for the current dive at ~6.5 g, plus a hard 800 m gate.
-	sink := -s.Velocity.Y / speed
-	loss := 0.0
-	if sink > 0 {
-		radius := speed * speed / (6.5 * 9.81)
-		loss = radius * (1 - math.Sqrt(math.Max(0, 1-sink*sink)))
-		if s.Attitude.Rotate(flight.Vec3{Y: 1}).Y < 0.2 {
-			loss *= 1.8 // rolled past the horizon: the recovery must roll upright before the pull exists
-		}
-	}
-	if (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*3.0 < 400 { // 3.0×: the unloaded roll to upright eats altitude before the ideal-g pull exists
+	if deck(s) {
 		flat := flight.Vec3{X: s.Velocity.X, Z: s.Velocity.Z}.Normalize()
 		aim = flat.Add(flight.Vec3{Y: 0.3}).Normalize()
 		want = m.Airframe.Limit.Positive
@@ -3151,11 +3178,15 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	rise := side.Cross(aim).Normalize()
 	aim = aim.Add(side.Scale(b.offset[0])).Add(rise.Scale(b.offset[1])).Normalize()
 
-	// The burst governor (#206): the magazine is 578 rounds and the fight is
-	// minutes long, so fire is a deliberate SQUEEZE — up to ~0.75 s, then a
-	// mandatory half-second pause. When the gun-live fix landed without this,
-	// every tier hosed its ammunition at marginal windows and went Winchester
-	// before the kill geometry arrived: the drone ladder read 0/4/4/1.
+	return b.compose(m, aim, want, b.throttle, b.reheat, b.brake, b.squeeze(m, tick), tick)
+}
+
+// squeeze is the trigger. The burst governor (#206): the magazine is 578
+// rounds and the fight is minutes long, so fire is a deliberate SQUEEZE — up to
+// ~0.75 s, then a mandatory half-second pause. When the gun-live fix landed
+// without this, every tier hosed its ammunition at marginal windows and went
+// Winchester before the kill geometry arrived: the drone ladder read 0/4/4/1.
+func (b *brain) squeeze(m *flight.Model, tick uint64) bool {
 	fire := false
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 {
 		fire = b.solution(m, tick)
@@ -3173,10 +3204,26 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 			b.quiet = tick + rest
 			fire = false
 		}
-	} else if !fire {
+	} else {
 		b.bursting = 0
 	}
-	return b.compose(m, aim, want, b.throttle, b.reheat, b.brake, fire, tick)
+	return fire
+}
+
+// deck reports the floor's recovery due: the height the current dive loses at
+// ~6.5 g, plus a hard 800 m gate.
+func deck(s *flight.State) bool {
+	speed := math.Max(s.Velocity.Length(), 1)
+	sink := -s.Velocity.Y / speed
+	loss := 0.0
+	if sink > 0 {
+		radius := speed * speed / (6.5 * 9.81)
+		loss = radius * (1 - math.Sqrt(math.Max(0, 1-sink*sink)))
+		if s.Attitude.Rotate(flight.Vec3{Y: 1}).Y < 0.2 {
+			loss *= 1.8 // rolled past the horizon: the recovery must roll upright before the pull exists
+		}
+	}
+	return (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*3.0 < 400 // 3.0×: the unloaded roll to upright eats altitude before the ideal-g pull exists
 }
 
 // pipper computes the led gun solution: the direction the bore must point

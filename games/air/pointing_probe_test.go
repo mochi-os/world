@@ -1058,6 +1058,16 @@ func TestPilotEngagesTheMush(t *testing.T) {
 // AIR_OMIT). The lead turn alternates toward and away seed by seed. The target
 // is the user's: he wins most against the novice, loses most against the
 // pilot, and rarely or never beats the ace or the superhuman.
+// jousted re-places a sweep's pair at the single-player joust's own start: 5.5
+// km apart head-on at 15,000 ft and 428 kt.
+func jousted(i *instance, bot int) {
+	east := flight.Vec3{X: 1}
+	him, me := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
+	him.Position, me.Position = flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 2778, Y: 4572}
+	him.Velocity, me.Velocity = east.Scale(220), east.Scale(-220)
+	him.Attitude, me.Attitude = flight.Look(east), flight.Look(east.Scale(-1))
+}
+
 func TestDifficulty(t *testing.T) {
 	if os.Getenv("AIR_POINT") == "" {
 		t.Skip("measurement probe: set AIR_POINT=1")
@@ -1070,20 +1080,13 @@ func TestDifficulty(t *testing.T) {
 	if only := os.Getenv("AIR_TIER"); only != "" {
 		tiers = []string{only}
 	}
-	joust := func(i *instance, bot int) {
-		east := flight.Vec3{X: 1}
-		him, me := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
-		him.Position, me.Position = flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 2778, Y: 4572}
-		him.Velocity, me.Velocity = east.Scale(220), east.Scale(-220)
-		him.Attitude, me.Attitude = flight.Look(east), flight.Look(east.Scale(-1))
-	}
 	fmt.Printf("mimic: stage %d omit %d | %d seeds, 150 s, the joust's 5.5 km start\n", doctrine.stage, doctrine.omit, seeds)
 	for _, level := range tiers {
 		n := 0
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
 			return mimic([]float64{1, -1}[n%2])
-		}, true, 0, seeds, 150, joust)
+		}, true, 0, seeds, 150, jousted)
 		fmt.Println(report("mimic", level, b))
 		// A tumbling mimic is killed for free: its time past 45 degrees, as the
 		// hornet's own gate reads it, beside every row.

@@ -250,6 +250,9 @@ func (b *Bandit) Mode() string {
 	if b.craft == nil || b.craft.brain == nil {
 		return ""
 	}
+	if b.craft.brain.mode == "script" {
+		return b.craft.brain.play // the scripted doctrine's branch this tick (script.go)
+	}
 	return b.craft.brain.mode
 }
 
