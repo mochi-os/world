@@ -23,6 +23,8 @@ import (
 // zones and the launch on the nose (launcher) it read 6/26, 21/11, 18/14,
 // 18/14. With the cold fight, the vertical pass and the 20 degree nose gate:
 // 6/26, 21/11, 30/1, 31/1, and in single player's wind 4/27, 19/12, 29/3,
+// 32/0. With every merge kept outside 150 m, the instructor tiers' run-in at a
+// height off his: 6/26, 18/12, 32/0, 30/1, and in wind 4/27, 21/11, 31/1,
 // 32/0.
 func TestScriptLadder(t *testing.T) {
 	heavy(t)
@@ -110,10 +112,11 @@ func TestScriptCircles(t *testing.T) {
 // TestScriptPass: the scripted doctrine passes the pilot at 150 m or
 // more, a training merge's bubble, whether he flies straight, points at the
 // bandit all the way in, or lead-turns first at 1.6 km toward the bandit's side
-// or away from it, or points at it and turns toward its side inside 600 m
-// (a pilot who turns away that hard at 1.6 km opens the range
-// and never goes by at all); and a second and a half after the pass it is
-// fighting, not still flying the run-in.
+// or away from it, or points at it and turns toward its side inside 600 m (a
+// pilot who turns away that hard at 1.6 km opens the range and never goes by
+// at all); and a second and a half after the pass it is fighting, not still
+// flying the run-in. The ace and the superhuman run in at a height off his and
+// pass at 1.3 bubbles or more, so the bubble never costs them the lead turn.
 func TestScriptPass(t *testing.T) {
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		for seed := uint64(1); seed <= 8; seed++ {
@@ -127,6 +130,8 @@ func TestScriptPass(t *testing.T) {
 					fmt.Printf("%-44s closest %4.0f m  roll %4.0f  reversed %-5v plays %v after %s\n", name, got.closest, got.roll, got.reversed, got.plays, got.after)
 					if got.closest < bubble {
 						t.Errorf("%s: passed %.0f m from him, inside the bubble", name, got.closest)
+					} else if (level == "ace" || level == "superhuman") && got.closest < 1.3*bubble {
+						t.Errorf("%s: passed %.0f m from him: the instructor tiers build the separation into the run-in, so the last-second climb never has to fire", name, got.closest)
 					}
 					if got.after == "line" || got.after == "lead" || got.after == "hold" {
 						t.Errorf("%s: still flying the run-in (%s) a second and a half after the pass", name, got.after)

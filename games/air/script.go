@@ -359,10 +359,28 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	// 17/10), and the stick mapping the flight control law flies (stage 6's
 	// delivery) for the run-in instead (25/6 24/8, inside the bubble in 16 of
 	// 32 fights, closest 39 m).
+	//
+	// The cost was all in one geometry: a pilot lead-turning toward my side
+	// closed the pass inside 1.3 bubbles every time, the escape fired a second
+	// or two before it, and the instructor tiers came out of the merge pointing
+	// at the sky. Against mimic turning toward it the ace won 3 and lost 12 of
+	// 16 (3/6, 7 undecided, in wind) where it had won 14 and lost 1, and fired
+	// the first heater in none of them. So the instructor tiers fly their line
+	// to a pass `vertical` off his height and the separation is there before he
+	// turns: the lead turn goes on, the escape never fires (TestScriptPass:
+	// every instructor pass at 247 m or more, 189-195 m without it), and no
+	// merge comes inside the bubble. Against mimic over 32: ace 32/0 31/1,
+	// superhuman 30/1 32/0, still air then wind, first heater in all 32.
 	stop := margin + 300*b.skill.delay
 	rise := 1.0
 	if me.Position.Y < spot.Y {
 		rise = -1
+	}
+	if b.skill.library >= 3 {
+		// The line climbs, or dives, to the height of the pass: vertical off
+		// his level by the time we meet, at the closure we have.
+		travel := math.Max(me.Velocity.Length()*span/closing, 1)
+		climb = clamp((spot.Y+rise*vertical-me.Position.Y)/travel, -0.15, 0.25)
 	}
 	switch {
 	case s.turning && clear < 1.3*bubble:

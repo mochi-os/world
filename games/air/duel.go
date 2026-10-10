@@ -895,6 +895,11 @@ const (
 	offset = 400.0
 	margin = 250.0
 	veer   = 5 * math.Pi / 180 // his turn rate, rad/s, that reads as his lead turn begun
+	// vertical is how far above him, or below when the run-in already sits
+	// below, the instructor tiers fly their line to the pass (script.go
+	// approach): the bubble's separation built in before his lead turn can take
+	// it, not bought with the turn in the last second.
+	vertical = 200.0
 )
 
 // TRIED AND DECLINED (2026-09-23, #31): HIS heater priced in every rehearsed
