@@ -176,7 +176,11 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
 		if s.away.Length() < 0.5 {
-			if miss, when := nearest(&seen, me, now, own); when > 0.1 && when < 5 && miss.Length() < 1.6*bubble {
+			ahead, room := 5.0, 1.6*bubble
+			if b.skill.library >= 3 {
+				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
+			}
+			if miss, when := nearest(&seen, me, now, own); when > 0.1 && when < ahead && miss.Length() < room {
 				s.away = miss.Normalize()
 				if miss.Length() < bubble/2 { // too near a collision for its direction to mean anything: over him, or under when below
 					s.away = flight.Vec3{Y: 1}
@@ -201,13 +205,48 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// The lift vector onto him, wherever he sits round the nose, and the pull
 	// sized by how far off he is; inside 1.5 km the fighting alpha is held
 	// whatever the nose is doing, which is what sustains the turn.
+	//
+	// On the gun, near the nose, the direction of a small offset means nothing:
+	// him 3 degrees low asked for the lift vector rolled under the canopy, and
+	// behind a jet 300 m dead ahead the bandit barrel-rolled through 360
+	// degrees at full roll stick, its nose 33 degrees off him, and never fired.
+	// So inside `fine` of the nose on the gun the lift vector blends to wings
+	// level against gravity and the pull to the alpha that holds a g, plus
+	// twice the offset in the plane of the wings, signed: a push when he sits
+	// below. It fires on 135 frames of 240 there, within 1.1 degrees (116 and
+	// 1.9 at the offset's own gain).
+	//
+	// Flown away from the gun as well against a jet that is not turning, with
+	// the pull eased below corner speed while he outran it beyond a kilometre,
+	// it cut the chase of a jet flying straight away from 93 s of four minutes
+	// below 194 kt to 54 s, but the fights with a close approach inside 150 m
+	// after the merge went from 1 of 256 to 6 against mimic. Declined.
+	const fine = 10.0
+	w := 1.0
+	if gunning {
+		w = clamp(angle/fine, 0, 1)
+	}
 	roll := 0.0
+	lift := flight.Vec3{}
 	if aside := want.Subtract(axis.Scale(want.Dot(axis))); aside.Length() > 1e-6 {
-		aside = aside.Normalize()
-		roll = clamp(math.Atan2(aside.Dot(right), aside.Dot(up))*2.5, -1, 1)
+		lift = aside.Normalize().Scale(w)
+	}
+	if w < 1 {
+		if sky := (flight.Vec3{Y: 1}).Subtract(axis.Scale(axis.Y)); sky.Length() > 1e-6 {
+			lift = lift.Add(sky.Normalize().Scale(1 - w))
+		}
+	}
+	if lift.Length() > 1e-6 {
+		lift = lift.Normalize()
+		roll = clamp(math.Atan2(lift.Dot(right), lift.Dot(up))*2.5, -1, 1)
 	}
 	limit := clamp((speed-60)/90, 0.15, 1)
 	goal := clamp(angle/180*math.Pi*3, 0, 1) * b.skill.alpha
+	if w < 1 {
+		one := riding * math.Max(up.Y, 0) / math.Max(m.Nz(), 0.5) // the alpha that holds a g in the plane of the wings
+		offset := math.Atan2(want.Dot(up), want.Dot(axis)) * 180 / math.Pi
+		goal = goal*w + (one+2*offset)*(1-w)
+	}
 	// Inside 1.5 km the fighting alpha is held whatever the nose is doing, which
 	// is what sustains a turning fight; against a jet that is not turning the
 	// pull is sized by the angle as it is further out. Held at the full alpha,

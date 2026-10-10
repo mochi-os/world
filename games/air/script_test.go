@@ -418,3 +418,31 @@ func TestScriptLowFight(t *testing.T) {
 		t.Error("diving at 29 degrees through 2,300 ft the deck recovery never took the stick")
 	}
 }
+
+// TestScriptStraight: on the gun behind a jet 300 m dead ahead the scripted ace
+// presses on a good part of four seconds with its nose within 1.5 degrees of
+// him. It rolled through 360 degrees, 33 degrees off him, and never fired when
+// the lift vector chased the direction of a 3-degree offset; 116 frames at 1.9
+// degrees with the in-plane correction at half its gain.
+func TestScriptStraight(t *testing.T) {
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: 200})
+	player := flight.Level(b.craft.model, flight.Vec3{X: 300, Y: 4572}, flight.Vec3{X: 1}, 200, 2500)
+	words := make([]float64, flight.Size)
+	firing, worst := 0, 0.0
+	for frame := 0; frame < 240; frame++ {
+		player.Position = flight.Vec3{X: 300 + 200*float64(frame)/60, Y: 4572}
+		player.Encode(words)
+		b.Mirror(words, false, true)
+		if fire, _, _, _, _ := b.Step(); fire {
+			firing++
+		}
+		s := b.State()
+		if frame > 60 {
+			worst = math.Max(worst, math.Acos(clamp(s.Attitude.Rotate(flight.Vec3{X: 1}).Dot(player.Position.Subtract(s.Position).Normalize()), -1, 1))*180/math.Pi)
+		}
+	}
+	if firing < 125 || worst > 1.5 {
+		t.Errorf("a jet 300 m dead ahead: the trigger held %d frames of 240, the nose up to %.1f degrees off him after the first second", firing, worst)
+	}
+}
