@@ -14,6 +14,7 @@ package air
 import (
 	"math"
 	"strconv"
+	"strings"
 
 	"world/game"
 	"world/games/air/aircraft"
@@ -332,6 +333,19 @@ func stores_amraams(lo loadout) []string {
 	ring([]int{2, 8})
 	ring([]int{3, 7})
 	return out
+}
+
+// stores_eject reports whether an AMRAAM entry leaves on an EJECTOR (the cheek
+// LAU-116 and the inboard pylon's LAU-115C punch the round down) rather than
+// sliding off a LAU-127 rail: the wing rails and every twin point are rails.
+// The mirror of the client's eject().
+func stores_eject(lo loadout, name string) bool {
+	key := strings.TrimRight(strings.TrimPrefix(name, "120c"), "ab")
+	s, found := lo[key]
+	if !found || s.Fixture == "twin" {
+		return false
+	}
+	return key == "3" || key == "4" || key == "6" || key == "7"
 }
 
 // stores_mask is the flight-core attach bitmask for a loadout with `fired`

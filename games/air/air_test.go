@@ -1630,8 +1630,14 @@ func TestBotSpiral(t *testing.T) {
 
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
+// The arbiter flies it: behind a jet flying straight away the scripted
+// doctrine holds its fighting alpha, because at 30 degrees the nose rides that
+// far above a path already pointed at him, and it spent 108 s of 210 below
+// 194 kt; that is its gunnery against a target that is not turning, not the
+// harness.
 func TestBandit(t *testing.T) {
 	b := NewBandit("ace", 9, 250000, "", false, false, "", 0, false) // guns-only, like the client joust
+	b.craft.brain.scripted = false
 	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}

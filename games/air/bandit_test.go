@@ -157,8 +157,9 @@ func TestBanditJoustHold(t *testing.T) {
 		aboard  int    // heaters aboard at spawn
 		track   []flight.Vec3
 	}
-	joust := func(level string, seed uint64, weapons string, hold bool, recoil bool) outcome {
+	joust := func(level string, seed uint64, weapons string, hold, recoil, scripted bool) outcome {
 		b := NewBandit(level, seed, 250000, "", false, weapons != "guns", weapons, 0, hold)
+		b.craft.brain.scripted = scripted
 		if !recoil {
 			quiet := *b.craft.model.Airframe
 			quiet.Gun.Recoil = 0
@@ -204,14 +205,14 @@ func TestBanditJoustHold(t *testing.T) {
 		return result
 	}
 
-	free := joust("ace", 7, "fox2", false, true)
+	free := joust("ace", 7, "fox2", false, true, true)
 	if free.early == 0 {
 		t.Fatalf("unheld, the ace fired nothing before the merge at tick %d: the geometry no longer reproduces the recorded shot, so the held run proves nothing", free.crossed)
 	}
 	if free.freed != 1 {
 		t.Errorf("a bandit started without the hold reported its weapons free first at tick %d, want the first frame", free.freed)
 	}
-	held := joust("ace", 7, "fox2", true, true)
+	held := joust("ace", 7, "fox2", true, true, true)
 	if held.early != 0 {
 		t.Errorf("held, %d missiles left the ace's rails before the merge at tick %d", held.early, held.crossed)
 	}
@@ -222,10 +223,16 @@ func TestBanditJoustHold(t *testing.T) {
 		t.Errorf("%d heaters aboard at the merge, want all %d", held.stores, held.aboard)
 	}
 
-	kicked := joust("novice", 3, "guns", true, true)
-	quiet := joust("novice", 3, "guns", true, false)
+	// The gun half flies the arbiter: the scripted run-in holds the stick on its
+	// line and never presses the gun before the merge, so only the arbiter's
+	// novice still takes the head-on snapshot the hold has to swallow.
+	kicked := joust("novice", 3, "guns", true, true, false)
+	quiet := joust("novice", 3, "guns", true, false, false)
 	if kicked.pressed == 0 {
 		t.Fatal("the novice never pulled the trigger on the run-in: the gun half of the hold is untested")
+	}
+	if scripted := joust("novice", 3, "guns", true, true, true); scripted.pressed != 0 {
+		t.Errorf("the scripted novice pressed the gun for %d frames on the run-in", scripted.pressed)
 	}
 	for tick := range kicked.track {
 		if tick >= len(quiet.track) || kicked.track[tick].Subtract(quiet.track[tick]).Length() > 1e-9 {

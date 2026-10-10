@@ -76,6 +76,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 	evading := func(phase float64) bool {
 		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2", 0, false)
 		bandit.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
+		bandit.craft.brain.routine.passed = true // the fight: a joust's hold keeps every round on the rail through the run-in
 
 		environment := flight.Environment{Seed: 1, Wrap: 250000}
 		player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
@@ -89,7 +90,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 			// closing — well inside the 4,500 m the evade logic watches.
 			bandit.Menace(menace(flight.Vec3{X: 1000, Y: 5000}, flight.Vec3{X: -300}, 0, phase))
 			bandit.Step()
-			if bandit.Mode() == "evade" {
+			if bandit.Mode() == "break" { // the scripted doctrine's defence: across the inbound round
 				return true
 			}
 		}
@@ -97,7 +98,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 	}
 
 	if !evading(-1) {
-		t.Error("a live heater inside 4.5 km did not put the bandit into evade: the defence is not reachable in single player at all")
+		t.Error("a live heater inside 4.5 km did not make the bandit break: the defence is not reachable in single player at all")
 	}
 	if evading(-2) {
 		t.Error("the bandit went defensive for a round it could see was already beaten: the -2 sentinel is not reaching `beaten`")

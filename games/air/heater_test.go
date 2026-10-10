@@ -38,32 +38,60 @@ func recorded() []shot {
 	}
 }
 
-// TestHeatSlowing: the launch zone a stage-11 bot draws flies the target the
-// way its forecast does. A target running away at 300 m/s and slowing at 3 g is
-// caught further out than one holding his speed - the zone's own flight shows
-// it; the zone itself stops at the seeker's reach well inside, here 5 km - and
-// a target that is not slowing gets exactly the flight and the zone every other
-// caller gets.
-func TestHeatSlowing(t *testing.T) {
-	shooter := round.Target{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: 205}}
-	target := round.Target{Position: flight.Vec3{X: 3000, Y: 4000}, Velocity: flight.Vec3{X: 300}}
-	slowing := flight.Vec3{X: -3 * 9.80665}
-	for _, trial := range []float64{8000, 9000} {
-		if reaches(shooter, target, flight.Vec3{X: 1}, slowing, 0, trial, false, 0) {
-			t.Fatalf("%.0f m: the round catches a 300 m/s target holding his speed, so this range cannot tell the flights apart", trial)
-		}
-		if !reaches(shooter, target, flight.Vec3{X: 1}, slowing, 0, trial, false, 80) {
-			t.Errorf("%.0f m: believing his 3 g slowing, the round still does not catch him", trial)
+// TestHeatAlongTheNose: a heater leaves the rail along the NOSE, and the zone
+// is drawn for that round. A jet at 30 degrees of alpha with the pilot it is
+// pulling onto 15 degrees above its nose has him 45 degrees off its flight
+// path, outside the seeker's 40 degree gimbal from there: a zone drawn off the
+// flight path came out empty for exactly this shot, which the stage 16 ace
+// therefore never took (01a10e335a), and the server's round, launched along
+// the flight path plus 30 m/s along the nose, broke lock leaving the rail.
+func TestHeatAlongTheNose(t *testing.T) {
+	path := flight.Vec3{X: 1}
+	pitch := 30 * math.Pi / 180
+	nose := flight.Vec3{X: math.Cos(pitch), Y: math.Sin(pitch)}
+	up := flight.Vec3{X: -math.Sin(pitch), Y: math.Cos(pitch)}
+	above := 45 * math.Pi / 180
+	line := flight.Vec3{X: math.Cos(above), Y: math.Sin(above)}
+	jet := flight.State{Position: flight.Vec3{Y: 4500}, Velocity: path.Scale(120), Attitude: flight.Basis(nose, up)}
+	him := round.Target{Position: jet.Position.Add(line.Scale(1100)), Velocity: line.Scale(150)}
+	if z := Heat(launcher(&jet), him, flight.Vec3{}, 1, 0); !(1100 > z.Minimum && 1100 <= z.Max) {
+		t.Errorf("the round off the nose does not arrive at 1,100 m: %+v", z)
+	}
+	if z := Heat(round.Target{Position: jet.Position, Velocity: jet.Velocity}, him, flight.Vec3{}, 1, 0); z.Max > 0 {
+		t.Errorf("the control is not a control: drawn off the flight path the zone should be empty, got %+v", z)
+	}
+
+	// The server's launch, which every Go fight and multiplayer fly.
+	session := game.Session{Identifier: "nose", Game: "air", Mode: "furball", Capacity: 8, Seed: 1, Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 1.0}}}
+	bots_live.Store(0)
+	made, err := New().Create(session)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	defer i.Close()
+	if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+		t.Fatal(err)
+	}
+	bot := -1
+	for slot, a := range i.aircraft {
+		if a != nil && a.brain != nil {
+			bot = slot
 		}
 	}
-	steady := flight.Vec3{Z: 30}
-	for trial := 4000.0; trial <= 10000; trial += 1000 {
-		if reaches(shooter, target, flight.Vec3{X: 1}, steady, 0, trial, false, 80) != reaches(shooter, target, flight.Vec3{X: 1}, steady, 0, trial, false, 0) {
-			t.Errorf("%.0f m: a target turning without slowing flew differently at stage 11", trial)
-		}
+	shooter, target := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
+	shooter.Position, shooter.Velocity, shooter.Attitude = jet.Position, jet.Velocity, jet.Attitude
+	target.Position, target.Velocity, target.Attitude = him.Position, him.Velocity, flight.Look(line)
+	before := len(i.flying)
+	if !i.launch(bot, i.aircraft[bot]) || len(i.flying) != before+1 {
+		t.Fatal("the seeker did not acquire a target 15 degrees off the nose")
 	}
-	if a, b := Heat(shooter, target, steady, 0, 0), heat(shooter, target, steady, 0, 0, 80); a != b {
-		t.Errorf("a target that is not slowing drew a different zone at stage 11: %+v against %+v", b, a)
+	fired := i.flying[len(i.flying)-1]
+	if off := math.Acos(clamp(fired.velocity.Normalize().Dot(nose), -1, 1)) * 180 / math.Pi; off > 0.5 {
+		t.Errorf("the round left the rail %.1f degrees off the nose", off)
+	}
+	if speed := fired.velocity.Length(); math.Abs(speed-150) > 0.5 {
+		t.Errorf("the round left the rail at %.1f m/s, want the jet's 120 and the launcher's 30", speed)
 	}
 }
 
@@ -116,7 +144,7 @@ func TestHeatZone(t *testing.T) {
 	// #104's real invariant: every range the ladder endorses must arrive.
 	beamward := shortest(shooter.Position, place(math.Pi/2).Position, 0).Normalize()
 	for _, trial := range []float64{beam.Minimum, (beam.Minimum + beam.Max) / 2, beam.Max} {
-		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false, 0) {
+		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false) {
 			t.Errorf("the ladder endorses %.0f m on a cold beam but its own round refuses it: %+v", trial, beam)
 		}
 	}

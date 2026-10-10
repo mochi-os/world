@@ -311,6 +311,7 @@ type hornet struct {
 	zone        round.Zone  // his heater zone as the cue reads it, refreshed a few times a second
 	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
 	wind        flight.Vec3 // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
+	full        bool        // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 ace
 }
 
 // mimic flies the fight the user flew against the stage 15 ace in the sorties
@@ -342,8 +343,8 @@ func (h *hornet) tone(me, foe *flight.State, span float64, tick uint64) bool {
 	if locked {
 		if h.zoned == 0 || tick-h.zoned >= 15 {
 			swing := foe.Velocity.Subtract(h.last).Scale(60)
-			h.zone = heat(round.Target{Position: me.Position, Velocity: me.Velocity},
-				round.Target{Position: foe.Position, Velocity: foe.Velocity}, swing, lit, 0, 0)
+			h.zone = Heat(launcher(me),
+				round.Target{Position: foe.Position, Velocity: foe.Velocity}, swing, lit, 0)
 			h.zoned = tick
 		}
 		locked = span > h.zone.Minimum && span <= h.zone.Max
@@ -515,6 +516,9 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		goal = fight
 	}
 	pitch := clamp((goal-riding)/8, -1, limit)
+	if h.full && span < 1500 && speed < 129 {
+		pitch = 1 // below 250 kt, as the user flew it; the regain below still unloads past the ceiling
+	}
 	h.branch = "track"
 	// The merge. Pursuit on a nose-to-nose target is a straight line into his
 	// guns, which is what the mush flies and why it dies at the pass; the
@@ -792,6 +796,8 @@ type bout struct {
 	slowest                [2]float64 // m/s
 	rebuilds               int        // bot ticks rebuilding energy below its floor
 	plays                  map[string]int
+	merges, passes         int     // fights whose merge, and whose later closest approaches, went inside the bubble
+	merge, pass            float64 // the closest merge and the closest later pass in any fight, m
 }
 
 // sweep runs one tier against one scripted opponent across the seeds. mode is
@@ -810,7 +816,7 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 // single-player joust's own start through it.
 func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int, setup func(i *instance, bot int)) bout {
 	t.Helper()
-	b := bout{plays: map[string]int{}, slowest: [2]float64{math.MaxFloat64, math.MaxFloat64}}
+	b := bout{plays: map[string]int{}, slowest: [2]float64{math.MaxFloat64, math.MaxFloat64}, merge: math.Inf(1), pass: math.Inf(1)}
 	for seed := uint64(1); seed <= uint64(seeds); seed++ {
 		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{level: 1.0}}
 		if missiles {
@@ -871,6 +877,19 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 		trace := os.Getenv("AIR_TRACE") != "" && seed == traced // one seed (AIR_TRACE_SEED, default 1), the opponent's seat, twice a second: what the script commanded and what the jet did
 		peakHis := 0.0                                          // the opponent's peak alpha this seed: a scripted human that departs is the script's defect, and this says which seed to trace
 		rack := i.aircraft[bot].brain.missiles                  // the magazine, so the trace can stop on the event it exists to explain (#168): a launch
+
+		// The first closest approach is the merge; every later one is a pass in
+		// the fight, at whatever closure: the bubble is a separation.
+		merge, pass, previous, falling := math.Inf(1), math.Inf(1), math.Inf(1), true
+		closest, departure := "", ""                                // the closest later pass, described: when, both noses, the bandit's branch; and the bandit's first departure
+		ahead := func(s *flight.State, other flight.Vec3) float64 { // degrees between a jet's nose and the other jet
+			line := other.Subtract(s.Position)
+			return math.Acos(clamp(s.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize()), -1, 1)) * 180 / math.Pi
+		}
+		var prior struct {
+			bot, him float64
+			branch   string
+		}
 		for tick := uint64(0); tick < uint64(seconds*60); tick++ {
 			if h, ok := pilot.(*hornet); ok {
 				h.wind = i.aircraft[0].model.Gust() // the scripts fly the air their jet is in
@@ -930,6 +949,23 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 				break
 			}
 			b.ticks++
+			if gap := i.aircraft[0].model.State.Position.Subtract(i.aircraft[bot].model.State.Position).Length(); gap > previous && falling {
+				falling = false // the last tick was a closest approach
+				if math.IsInf(merge, 1) {
+					merge = previous
+				} else if previous < pass {
+					pass = previous
+					closest = fmt.Sprintf("seed %d: %.0f m at %.1f s, the bandit's nose %.0f deg off him flying %s, his %.0f deg off it, %.0f m/s apart",
+						seed, previous, float64(tick)/60, prior.bot, prior.branch, prior.him, i.aircraft[0].model.State.Velocity.Subtract(i.aircraft[bot].model.State.Velocity).Length())
+				}
+				previous = gap
+			} else {
+				falling, previous = falling || gap < previous, gap
+			}
+			{
+				me, it := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
+				prior.bot, prior.him, prior.branch = ahead(it, me.Position), ahead(me, it.Position), i.aircraft[bot].brain.play
+			}
 			brain := i.aircraft[bot].brain
 			if brain.reheat > 0.5 {
 				b.burner++
@@ -961,6 +997,9 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 				}
 				if alpha > 45 {
 					b.departed[seat]++
+					if seat == 0 && departure == "" {
+						departure = fmt.Sprintf("seed %d: the bandit departed at %.1f s flying %s at %.0f kt, %.0f ft", seed, float64(tick)/60, prior.branch, v*1.944, s.Position.Y*3.281)
+					}
 				}
 				// The flying band, bounded for the same reason the engaged share
 				// below is: a departed jet is not fighting at high alpha.
@@ -999,6 +1038,19 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 				}
 			}
 		}
+		if merge < bubble {
+			b.merges++
+		}
+		if pass < bubble {
+			b.passes++
+			if os.Getenv("AIR_POINT") != "" {
+				fmt.Println("       " + closest)
+			}
+		}
+		if departure != "" && os.Getenv("AIR_POINT") != "" {
+			fmt.Println("       " + departure)
+		}
+		b.merge, b.pass = math.Min(b.merge, merge), math.Min(b.pass, pass)
 		b.launches += started - i.aircraft[bot].brain.missiles
 		_, flared := pilot.spent()
 		b.flares += flared
@@ -1069,11 +1121,13 @@ func jousted(i *instance, bot int) {
 // TestDifficulty measures the difficulty target (#45): each tier against
 // mimic, the scripted pilot of the user's fights, from the single-player
 // joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
-// weapons held until the pass - on the stage the user flies (AIR_STAGE,
-// AIR_OMIT). The lead turn alternates toward and away seed by seed; AIR_WIND
-// flies both jets in single player's weather. The target is the user's: he
-// wins most against the novice, loses most against the pilot, and rarely or
-// never beats the ace or the superhuman.
+// weapons held until the pass - flying the scripted doctrine the user meets
+// there. The lead turn alternates toward and away seed by seed; AIR_WIND
+// flies both jets in single player's weather, and AIR_FULL flies mimic at full
+// aft stick in the close fight. Each tier's line says how many merges, and how
+// many later passes, came inside the 150 m bubble the never-list holds the
+// bandit to. The target is the user's: they win most against the novice, lose
+// most against the pilot, and rarely or never beat the ace or the superhuman.
 func TestDifficulty(t *testing.T) {
 	if os.Getenv("AIR_POINT") == "" {
 		t.Skip("measurement probe: set AIR_POINT=1")
@@ -1103,14 +1157,23 @@ func TestDifficulty(t *testing.T) {
 			}
 		}
 	}
-	fmt.Printf("mimic: stage %d omit %d | %d seeds, 150 s, the joust's 5.5 km start, wind %v\n", doctrine.stage, doctrine.omit, seeds, os.Getenv("AIR_WIND") != "")
+	weather := setup
+	setup = func(i *instance, bot int) {
+		weather(i, bot)
+		i.aircraft[bot].brain.scripted = true
+	}
+	fmt.Printf("mimic: %d seeds, 150 s, the joust's 5.5 km start, wind %v\n", seeds, os.Getenv("AIR_WIND") != "")
 	for _, level := range tiers {
 		n := 0
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
-			return mimic([]float64{1, -1}[n%2])
+			pilot := mimic([]float64{1, -1}[n%2])
+			pilot.full = os.Getenv("AIR_FULL") != ""
+			return pilot
 		}, true, 0, seeds, 150, setup)
 		fmt.Println(report("mimic", level, b))
+		fmt.Printf("       inside %.0f m: the merge in %d of %d fights (closest %.0f m), a later pass in %d (closest %.0f m)\n", bubble, b.merges, b.seeds, b.merge, b.passes, b.pass)
+		fmt.Printf("       bandit departed %.2f%% of %.0f s flown\n", 100*float64(b.departed[0])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60)
 		// A tumbling mimic is killed for free: its time past 45 degrees, as the
 		// hornet's own gate reads it, beside every row.
 		fmt.Printf("       mimic departed %.2f%% of %.0f s flown\n", 100*float64(b.departed[1])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60)

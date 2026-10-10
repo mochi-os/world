@@ -80,7 +80,7 @@ const (
 
 var separation = sync.OnceValue(func() float64 {
 	ladder := round.Ladder(
-		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: flight.Vec3{X: bvrspeed}},
+		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
 		0,
 	)
@@ -124,7 +124,7 @@ func Draw(seed uint64, wrap float64) Opening {
 	for pass := 0; pass < 4; pass++ {
 		reach := 0.0
 		for slot := 0; slot < 2; slot++ {
-			reach = math.Max(reach, round.Ladder(o.state(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max)
+			reach = math.Max(reach, round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max)
 		}
 		o.Apart = reach + commit
 	}
@@ -141,6 +141,14 @@ func (o Opening) state(slot int, apart float64) round.Target {
 	side := 1.0 - 2*float64(slot%2)
 	heading := flight.Vec3{X: -side * math.Cos(o.Flank), Z: -side * math.Sin(o.Flank)}
 	return round.Target{Position: flight.Vec3{X: side * apart / 2, Y: o.Altitude[slot%2]}, Velocity: heading.Scale(o.Speed)}
+}
+
+// shooter is a slot's state at the opening as the ladder takes a shooter: its
+// round fired along its heading (rail), level at the spawn, nose on its path.
+func (o Opening) shooter(slot int, apart float64) round.Target {
+	s := o.state(slot, apart)
+	s.Velocity = rail(s.Velocity, o.Speed)
+	return s
 }
 
 // Missile constants: pursuit guidance with an aspect-aware seeker, graded
@@ -1653,15 +1661,13 @@ func (i *instance) glow(b *brain) float64 {
 }
 
 // zoned is the heater ladder's verdict on the shot the brain wants (#48):
-// Heat() flies the round from the rail — off the jet's VELOCITY, not its
-// nose — against the track's present turn and burner, with the seeker's
-// gimbal and track-rate ceiling, and says whether it arrives from here. The
-// crude gate before it (rear aspect, inside 2,600 m, nose within 30°) passed
-// beam shots at 700 m whose line-of-sight rate saturated the seeker on its
-// first armed frame, and high-alpha shots whose round left the rail 40-50°
-// off the target — six of six in the recorded fight broke lock at 0.5 s.
-// The disciplined tiers fire only inside the no-escape rung; the rest take
-// any shot the seeker can fly.
+// Heat() flies the round from the rail, along the nose as launch() fires it,
+// against the track's present turn and burner, with the seeker's gimbal and
+// track-rate ceiling, and says whether it arrives from here. The crude gate
+// before it (rear aspect, inside 2,600 m, nose within 30°) passed beam shots
+// at 700 m whose line-of-sight rate saturated the seeker on its first armed
+// frame. The disciplined tiers fire only inside the no-escape rung; the rest
+// take any shot the seeker can fly.
 func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool {
 	if b.prey == nil || b.target < 0 || a.model == nil {
 		return false
@@ -1695,13 +1701,9 @@ func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool
 	// not the clock.
 	if b.heated == 0 || tick-b.heated >= 60 || b.warmed != b.target || b.glowed != lit {
 		me := &a.model.State
-		floor := b.prey.floor // stage 11: a slowing that has lasted is zoned as evolve() flies it
-		if b.prey.lasted < lasting {
-			floor = 0
-		}
-		b.heat = heat(round.Target{Position: me.Position, Velocity: me.Velocity},
+		b.heat = Heat(launcher(me),
 			round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
-			b.prey.swing, lit, i.environment.Wrap, floor)
+			b.prey.swing, lit, i.environment.Wrap)
 		b.heated, b.warmed, b.glowed = tick, b.target, lit
 	}
 	zone := b.heat
@@ -1780,6 +1782,42 @@ func sighted(data map[string]any) (flight.Vec3, bool) {
 	return flight.Vec3{X: math.Cos(e) * math.Cos(a), Y: math.Sin(e), Z: math.Cos(e) * math.Sin(a)}, true
 }
 
+// rail is the velocity a missile leaves its rail with: the jet's speed and the
+// launcher's 30 m/s, along the NOSE, as the client has always fired both the
+// heater and the AMRAAM (engine.ts launch_missile, launch_amraam) and launch()
+// and fox3() fire them here. The round's body leaves pointing where the jet
+// points, and at any alpha that is where its seeker looks from.
+func rail(nose flight.Vec3, speed float64) flight.Vec3 {
+	return nose.Normalize().Scale(speed + 30)
+}
+
+// departure is the velocity the next AIM-120 leaves with, by the station it
+// leaves from (stores_amraams order): off a LAU-127 rail as rail gives, off an
+// ejector (the cheek LAU-116, the inboard pylon's LAU-115C) along the nose at
+// the jet's speed and 15 m/s, punched 8 m/s down. The mirror of the client's
+// amraam_departure.
+func departure(a *craft) flight.Vec3 {
+	s := &a.model.State
+	nose := s.Attitude.Rotate(flight.Vec3{X: 1}).Normalize()
+	speed := s.Velocity.Length()
+	order := stores_amraams(a.loadout)
+	if next := len(order) - a.amraams; next >= 0 && next < len(order) && stores_eject(a.loadout, order[next]) {
+		return nose.Scale(speed + 15).Add(flight.Vec3{Y: -8})
+	}
+	return rail(nose, speed)
+}
+
+// fired is a shooter as round.Ladder takes him: the next round's own launch,
+// from where the jet is at the velocity departure gives. The ladder flies the velocity it
+// is handed, and handed the jet's own it drew the AMRAAM's zone for a round
+// leaving along the flight path without the launcher's speed: at 23,000 ft and
+// 486 kt against a head-on target its no-escape range read 24.9 km, where
+// the round the client fires at 3 degrees of alpha reaches 39.2 km and the one
+// fox3 fired along the flight path 28.1 km.
+func fired(a *craft) round.Target {
+	return round.Target{Position: a.model.State.Position, Velocity: departure(a)}
+}
+
 // launch fires a missile at the best target in the seeker cone. The seeker
 // is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
 // than a cold nose head-on.
@@ -1793,7 +1831,14 @@ func (i *instance) launch(slot int, a *craft) bool {
 		return false
 	}
 	i.launched++
-	separation := a.model.State.Velocity.Add(forward.Scale(30)) // off the rail at aircraft speed; the motor does the rest
+	// Along the NOSE, at the jet's speed and the launcher's 30 m/s: the round
+	// leaves the rail pointing where the jet points, and its seeker looks from
+	// there, so a target in the lock cone is inside the gimbal at any alpha.
+	// Single player has always launched this way (engine.ts launch_missile).
+	// Here the round left along the flight path, which at 30 degrees of alpha
+	// runs about 24 degrees below the nose, so a pilot pulling his nose onto a
+	// target heard tone and fired a round that broke lock leaving the rail.
+	separation := rail(forward, a.model.State.Velocity.Length())
 	// The boresight reference is taken from where the ROUND is, not where the
 	// jet is: the two are 3 m apart, and now that the track rate is judged
 	// from the first frame (#207) a sight referenced 3 m astern reads as a
@@ -1858,7 +1903,7 @@ func (i *instance) fox3(slot int, a *craft, visual bool) bool {
 	}
 	m.radar = round.New(
 		a.model.State.Position.Add(forward.Scale(3)),
-		a.model.State.Velocity.Add(forward.Scale(30)),
+		departure(a),
 		estimate,
 		i.environment.Wrap,
 	)

@@ -37,7 +37,7 @@ type skill struct {
 	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the pilot half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
-	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go, stage 16): how hard this pilot will hold the wing loaded in a turning fight
+	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go): how hard this pilot will hold the wing loaded in a turning fight
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a novice flies
@@ -159,11 +159,7 @@ func (s skill) capped(g, speed, stall float64) float64 {
 // it, so a cap fitted to the old delivery is a different cap; tactics.truth.cap
 // scales it there, and only there, for the retune to find where it belongs.
 func (b *brain) capped(g, speed, stall float64) float64 {
-	s := b.skill
-	if b.tactics.truthful(capped) && b.tactics.truth.cap > 0 {
-		s.cap *= b.tactics.truth.cap
-	}
-	return s.capped(g, speed, stall)
+	return b.skill.capped(g, speed, stall)
 }
 
 // wander is the aim wander: where this pilot's nose actually points. Re-rolled
@@ -260,13 +256,19 @@ type tactics struct {
 		angle   float64 // the cut across his side, radians
 		hold    uint64  // ticks the committed turn is flown through the pass
 	}
-	// The scripted doctrine's numbers (script.go, stage 16), mimic's; the alpha
+	// The scripted doctrine's numbers (script.go), mimic's; the alpha
 	// it fights at is the tier's (skill.alpha).
 	script struct {
 		ceiling float64 // the alpha that starts the regain, deg
 		floor   float64 // the speed that starts the regain, m/s
 		band    float64 // the speed that ends it, m/s
 		lead    float64 // the run-in's lead-turn range, m
+		step    float64 // the heater's nose gate tightened by discipline, as missile.step: cos 0.87 (30 deg) for a rookie
+		cold    struct {
+			cone  float64 // deg: inside the heater span, military power while his nose bears within this of me
+			wide  float64 // deg: the same above the speed below, where the energy is there to spend
+			speed float64 // m/s airspeed
+		}
 	}
 	missile struct {
 		tail   float64 // disciplined shooters demand at least this aspect
@@ -334,82 +336,6 @@ type tactics struct {
 	wounded struct {
 		weight float64 // target-selection discount for a visibly hurt contact (#144): the smoking, burning, wing-shy bird pulls the eye
 	}
-	// stage is the structural change under evaluation (claude/plans/air-bot-arbiter.md,
-	// Part II): 0 is the brain as it stands, N flies stage N's revised branch. It
-	// is per brain so a revised bot can fight the current bot of the SAME tier in
-	// the ladder loops (TestRevisedAgainstCurrent), which is the only comparison
-	// that does not lean on gates fitted to the old doctrine. Each stage deletes
-	// its old branch when it is accepted, so this is only ever one stage wide.
-	stage int
-	// omit leaves individual stages OUT of the stack beneath `stage`, one bit per
-	// stage number, so a stage can be read on its own: the stages were designed
-	// to build on one another, and a stack inherits the faults of whatever is
-	// under it. Evaluation only; an accepted stage loses its switch altogether.
-	//
-	// Stage 11 is the forecast that believes a slowing opponent (duel.go slowing,
-	// track.floor); flown on stage 6 alone it is stage 11 with 7-10 omitted,
-	// &stage=11&omit=1920 in the developer client. Stage 12 charges a rehearsed
-	// line for the energy lead over him it gives up (duel.go surplus, tactics.tariff).
-	// Stage 13 rehearses against a pilot astern who follows, and charges every
-	// instant his weapons could hold me (duel.go exposed, tactics.exposure).
-	// Stage 14 rehearses steer()'s roll law and the pull it holds back while the
-	// wings roll (rollout.go glide, order.rolling), and flies all four of stage
-	// 6's corrections with the scorer re-tuned on that rehearsal (evaluate):
-	// &stage=14&omit=14208 in the developer client.
-	// Stage 15 flies each head-on pass as one committed merge (duel.go meeting
-	// and merge): &stage=15&omit=14208 in the developer client.
-	omit int
-	// futures and hedge shape stage 7's re-ranking (duel.go hedge): how many
-	// opponent futures the leading plays are rehearsed against, and how much of a
-	// play's WORST future counts beside its weighted mean.
-	futures int
-	hedge   float64
-	// peril weights stage 7's other half (duel.go peril): HIS gun solution on me,
-	// priced in every rehearsed instant. A knob so the stages above can be flown
-	// without it (0) and the two halves of stage 7 told apart.
-	peril float64
-	// tariff is stage 12's price on energy lead given up, per corner-speed unit
-	// of specific energy (duel.go surplus), before the posture's energy weight.
-	tariff float64
-	// exposure is stage 13's weight on how well his weapons could hold me
-	// (duel.go exposed), before the posture's threat weight.
-	//
-	// MEASURED AND DECLINED (2026-09-24), 64 seeds against the scripted humans,
-	// the bandit's kills / deaths and the share of the fight it stayed engaged:
-	//
-	//                       mush v ace     hornet v ace   mush v super   hornet v super
-	//   stage 12, omit 1152  33/27  89%    19/25  56%     32/28  80%     17/23  60%
-	//     + 13, exposure 1.5 24/38  48%    10/36  64%     21/40  46%     17/30  68%
-	//     + 13, exposure 4   27/30  50%    10/25  64%     26/33  50%      7/22  70%
-	//   stages 6 and 11      19/20  91%    45/6   52%     34/18  79%     59/3   36%
-	//     + 13, exposure 1.5 22/36  46%     6/25  68%     12/46  40%      5/44  69%
-	//
-	// Choice at the recorded re-plans of the hornet fights it was built for did
-	// not move: `high` still won at 1.5 and at 4. On the stage 12 stack it loses
-	// more than it wins at either weight and halves the engagement against the
-	// mush, and on the stack that already beats the hornet it turns 59/3 into 5/44.
-	// The fault there is execution, not choice: the plays aim at him, and the jet
-	// cannot bring the nose round (the capped wing and #27's delivery in a steady
-	// pull, then steer()'s lift-plane gate once the aim is past 140 degrees, which
-	// glide() does not mirror).
-	exposure float64
-	// steady and startled tie stage 7's commitment to how well the opponent has
-	// been keeping to his forecast (duel.go surprised, and the re-plan site).
-	//
-	// MEASURED 2026-09-18, the two halves apart (quick gates, and 48 seeds a
-	// side against the current ace, guns / heaters):
-	//
-	//                              gates red                         v current
-	//   neither (the first build)  ladder (14/16 undecided)          13-5 / 33-12
-	//   both                       ladder inverted, spiral           13-7 / 12-36
-	//   break early only           ladder (13/16 undecided)          12-8 / 30-14
-	//   extend only                ladder inverted, spiral           14-6 / 12-35
-	//
-	// Extending a commitment against an opponent who has been flying the arc
-	// is what costs the heater fights: the ace holds a line past the moment a
-	// missile defence needed a re-plan. So `steady` defaults to 0, the
-	// extension off, and stage 7 breaks early and nothing else.
-	steady, startled float64
 	// span overrides a duel play's rehearsal span, seconds; 0 keeps the table's
 	// (duel.go plays). The three long-window plays only: the sweep the plan asks
 	// for under stage 6, where a rehearsal that flies the real jet may no longer
@@ -465,86 +391,6 @@ type tactics struct {
 	// awards every turn free height stops choosing the turning plays, and the
 	// doctrine above it was built on them.
 	gravity bool
-	// truth holds stage 6's own values, where the truer jet needs different
-	// ones from the brain as it stands; each defaults to what stage 0 flies.
-	truth struct {
-		cap   float64 // multiplies every tier's aero cap; 0 or 1 leaves it
-		parts int     // which of the four corrections stage 6 flies, as bits (0 = all): the screen that says what each one costs
-		// The scorer's own weights, which were fitted against a rehearsal that
-		// climbed a g in every turn: each is the stage 0 value until the retune
-		// moves it, and each applies only at stage 6.
-		stack    float64 // height over him (appraise)
-		keen     float64 // the nose term's exponent
-		threat   float64 // his gun on me
-		closing  float64 // the chase gradient outside the gun band
-		point    float64 // the nose toward him at any range: a reversal's value before it reaches the gun band
-		offence  float64 // multiplies the offence term itself
-		overtake float64 // m/s of closure past which the nose reward fades (to 40% at three times it); 0 = never. MEASURED AND LEFT OFF: it cured the pilot's dive at the mush target and gave back everything else (see appraise)
-	}
-}
-
-// on reports whether a structural stage's branch is flown: at or under the
-// stage under evaluation, and not omitted from the stack.
-func (t *tactics) on(stage int) bool { return t.stage >= stage && t.omit&(1<<stage) == 0 }
-
-// evaluate puts a brain at a structural stage, with the knobs that stage
-// carries: stage 14 flies its own scorer weights, fitted on the rehearsal it
-// makes truthful. The developer client (Bandit.Stage) and the doctrine battery
-// (AIR_STAGE) both come through here, so a sortie flies what the sweep
-// measured, and a knob set in the environment still overrides it.
-//
-// RE-TUNED 2026-09-24 against the scripted humans, under the ruling that the
-// bot is for fighting humans. Stages 6, 11 and 14 (omit 14208), 64 seeds, net
-// kills less deaths over the mush and the hornet against the ace and the
-// superhuman:
-//
-//	stages 6 and 11 as they stand, the stack that beats the hornet     +110
-//	with all four of stage 6's corrections                              +55
-//	and stage 14, on stage 6's weights                                  -26
-//	height over him (stack) 0.3 / 0.2 / 0.1 / 0          +62 / +134 / +67 / +104
-//	stack 0.2, his gun on me (threat) 1.0                              +155
-//	and the offence term 1.25                                          +197
-//
-// Left where they were: the cap (0.85: -92, 1.2: -80, and 1.1 on the pick
-// +75), the nose exponent (2: -28, 6: -25), `high`'s span (8 s: -21, 6 s:
-// -72), the nose toward him at any range (0.25: -29, 0.35: +65, 0.5: -51, and
-// it did not combine), the chase gradient and a larger offence (0.5-0.7 and
-// 1.5 all read +185 to +202 around the pick). Held out, seeds 65-128, the pick
-// reads +193 where the stack as it stands reads +94; over 128 seeds, per
-// matchup as above, 78/11 113/10 102/3 124/3 against 38/41 87/16 68/37 115/10.
-// The stage 12 stack does not take it: stack 0.2 there loses the mush fights
-// 10/41 and 8/48.
-//
-// The gates on the same binary, the pick against the stack as it stands: red
-// where the reference is green, TestDoctrineUnderHumanPressure (the ace sits
-// in a crude pursuer's rear quarter 35% of the fight against a 20% bar, shot
-// down no more) and TestSpiralDefection (perch donated 286k m.s against the
-// ~126k band: the height weight this lowers is the one #42 found load-bearing
-// in bot-against-bot spirals); red on both, TestLadderDuel (undecided guns
-// fights, 10 and 12 of 16); green on both, TestJink, TestPounceExposure, the
-// tier ladder against the hornet, the pilot against the mush, and the
-// head-to-head with the brain as it stands (guns 11-9, heaters 21-26).
-func (t *tactics) evaluate(stage, omit int) {
-	t.stage, t.omit = stage, omit
-	if t.on(14) {
-		t.truth.parts = 0 // all four of stage 6's corrections, the delivery of the g commanded included
-		t.truth.stack, t.truth.threat, t.truth.offence = 0.2, 1.0, 1.25
-	}
-}
-
-// The four corrections stage 6 carries, so a screen can fly them one at a time.
-// Each makes the rehearsal, or the jet it stands for, honest in one way.
-const (
-	capped   = 1 << iota // rehearse the aero cap and corner discipline the live jet flies under
-	gravity              // pay gravity across the rehearsed turn: it used to climb a g's worth for nothing
-	carried              // the jet's own weight and stores, and the g ceiling the limiter schedules from it
-	delivery             // ask the pitch law for the load in its own terms, so the g commanded is the g flown
-)
-
-// truthful reports whether stage 6 flies one of its corrections (bot.go
-// tactics.truth.parts; 0, the default, is all four).
-func (t *tactics) truthful(part int) bool {
-	return t.on(6) && (t.truth.parts == 0 || t.truth.parts&part != 0)
 }
 
 // standard is the doctrine every brain flies today: the defaults the tuning
@@ -553,36 +399,6 @@ func (t *tactics) truthful(part int) bool {
 // a reason is a bot-metagame artifact, not doctrine (#143).
 func standard() tactics {
 	var t tactics
-	// Stage 6's retune, read by appraise() at stage 6 only; stage 0 keeps its
-	// literals. RULING 2026-09-22 (user): the bot is for fighting humans, so the
-	// recorded-human scripts (the hornet, the mush) and the recorded scenes are
-	// the measure and the bot-against-bot ladders are secondary. This is the
-	// human-facing form: the cap correction alone, with the nose exponent 6 -> 3,
-	// height 0.45 -> 0.50 and threat 1.3 -> 1.5. Against the hornet with the
-	// merge shot allowed the ace kills it 12 of 16 and dies once (8 and 3 as it
-	// stands); after a denied merge, 48 seeds, the ace reads 12-18-18 won-lost-
-	// undecided against 4-22-22; it dies to the mush 7 times in 16 against 11.
-	// It costs the pounce proxy (the regain bailout is never entered) and the
-	// wide BVR rung (superhuman v ace 41-84 over 144 seeds), both bot-against-bot.
-	//
-	// The bot-facing form is recorded here because it is the opposite pick:
-	// parts capped|gravity|carried, keen 3, point 0.30, stack 0.50, threat 1.5
-	// (AIR_TRUTH_PARTS=7 AIR_TRUTH_POINT=0.30 reproduces it). It beats the brain
-	// as it stands 37-23 guns and 71-23 heaters over 96 seeds, holds every gate
-	// and the BVR rung (69-74), and flips the dump scene - and against the hornet
-	// after a denied merge its superhuman reads 6-31-11. The rehearsal
-	// corrections that make it truer (78% agreement with the full model against
-	// 50%) make it more cautious against a human who pulls hard; each of the
-	// geometry and weight corrections alone reads worse than the brain as it
-	// stands there. The delivery correction stays out of both: heaters 15-31.
-	t.truth.parts = capped
-	t.truth.stack, t.truth.keen, t.truth.threat, t.truth.closing = 0.50, 3, 1.5, 0.35
-	t.truth.point, t.truth.offence, t.truth.overtake = 0.15, 1, 0
-	t.peril = 1.3                // as appraise() weighs its own threat term
-	t.tariff = 0.5               // stage 12: the sweep's pick (duel.go surplus)
-	t.exposure = 4               // stage 13: the better of the two weights swept, declined (see the field)
-	t.steady, t.startled = 0, 42 // metres of miss per second of lookahead; steady 0 = never extend (see the field)
-	t.futures, t.hedge = 4, 0.25 // stage 7 (duel.go hedge): continue, unload, reverse, tighten; a quarter of the worst future beside the weighted mean
 	// drag.span 900 -> 720 (#145 sweep): the range inside which an extension
 	// hands him the saddle, so the break stays mandatory. Measured at 200 seeds
 	// the tighter threshold improves the section's survival edge over solo.
@@ -608,6 +424,22 @@ func standard() tactics {
 	t.plan.deficit = 400
 	t.lead.closure, t.lead.floor, t.lead.angle, t.lead.hold = 2.0, 600, 1.3, 100
 	t.script.ceiling, t.script.floor, t.script.band, t.script.lead = 38, 70, 110, 1600
+	t.script.cold.cone, t.script.cold.wide, t.script.cold.speed = 40, 60, 130
+	// The scripted doctrine's nose gate: 0.94 (20 deg) at discipline 1, where
+	// missile.step below opened it to the whole 30 deg cone (#37). That was
+	// measured against a zone drawn off the flight path, empty at fighting
+	// alpha, so the cone's edge was the only shot left; with the zone drawn
+	// along the nose (launcher) the edge shot is the worst one. The round
+	// leaves the rail 29 degrees off him and passes 22-26 m away, inside the
+	// fuse and outside the kill: the superhuman's first pair in the fast
+	// one-circle fight (TestScriptCircles) did that in 9 of 12 seeds. Measured
+	// with the vertical pass (approach), won/lost against mimic over 24 for
+	// the fast one-circle, slow one-circle and slow two-circle fights, then the
+	// joust's 32 (mimic's deaths/the bandit's), ace then superhuman:
+	//   - step 0 (30 deg): 23/1 17/7, 22/1 19/3, 23/1 22/1, 30/2 32/0
+	//   - 0.04 (24.5 deg): 21/1 22/2, 22/1 20/3, 24/0 23/1, 25/5 29/3
+	//   - 0.07 (20 deg, this): 22/1 19/3, 19/1 18/3, 23/0 22/1, 30/1 31/1
+	t.script.step = 0.07
 	// step 0.06 -> 0 (#37, measured 2026-08-16). The nose gate was TIGHTENED by
 	// discipline: 0.93 for the instructor tiers against 0.87 for a rookie —
 	// 21.6 degrees where the seeker's own acquisition cone is 30
@@ -685,9 +517,6 @@ type track struct {
 	nose     flight.Vec3 // his bore at the last sighting (#251): the planform cue — you can SEE where a close jet is pointing, and a bore swinging into lead on you is the shot forming
 	wobble   float64     // jerk estimate, m/s^3: how fast his acceleration has been CHANGING. This is the target's unpredictability — a steady circle carries a small constant jerk (the acceleration vector rotates with the turn), a reversal spikes it an order of magnitude. The trigger prices its shot against it: a predictable target rewards waiting for a converged solution, an erratic one never converges and the snapshot is the only shot there is (#235).
 	heard    bool        // the picture came over the radio (#146), not my own eyes — replaced by a real sighting, which is the TALLY moment
-	pursuit  bool        // a rehearsed FUTURE only (duel.go futures): he flies at me, closed-loop, instead of along this track's arc
-	floor    float64     // stage 11: the speed evolve() flies his measured slowing down to, m/s (slowest); 0 holds his speed, as every earlier stage does
-	lasted   float64     // s his speed has kept falling faster than 2 m/s^2, look after look: a turn's bleed is brief, a slowing on purpose keeps on
 }
 
 // orbit is the opponent's estimated turning circle — the object BFM is flown
@@ -842,9 +671,6 @@ type brain struct {
 	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
 	futiled   int         // the target that futility was counted against; a new target resets the lesson
 	turned    uint64      // tick the lead turn was committed
-	merging   bool        // stage 15: a committed merge holds the controls until the pass ahead is spent (duel.go meeting)
-	course    flight.Vec3 // the line a committed merge holds on the way in, level (duel.go merge)
-	meet      crossing    // stage 15's pass, decided once per merge (duel.go plan, merge)
 	aimed     float64     // last tick's pointing error, sin of the angle off the aim
 	closing   float64     // smoothed rate that error is shrinking, rad/s: the anticipation that stops the turn overshooting
 	jink      uint64      // tick to re-roll the jink direction
@@ -877,15 +703,11 @@ type brain struct {
 	play      string          // the duel arbiter's committed manoeuvre (duel.go)
 	until     uint64          // tick that manoeuvre is re-judged
 	picked    uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
-	cast      []track         // the opponent futures rehearsed against at the last re-plan (duel.go hedge, stage 7)
-	casted    uint64          // the tick they were cast
-	jolted    uint64          // the cast that has already broken a commitment (duel.go surprised): one early re-plan per cast
-	doubt     [4]float64      // running miss of each future, metres per second of lookahead: what turns into the weights
 	journal   *journal        // the decision journal (journal.go): nil costs nothing, and only the single-player harness allocates one
 	demand    Demand          // the g asked for at each stage between the law and the stick, for the journal
 	shaped    bool            // polish() ran this decision and filled demand; a bypass that skips it reports its raw command instead
-	licensed  bool            // the committed play's order carried `alpha` (duel.go, stage 9): polish() leaves its g uncapped and undisciplined
-	routine   routine         // the scripted doctrine's own state (script.go, stage 16)
+	routine   routine         // the scripted doctrine's own state (script.go)
+	scripted  bool            // flies the scripted doctrine (script.go) in guns and heater fights: single player's bandit
 }
 
 // mind builds a brain for a fighting level, or nil for drone/unknown.
@@ -905,7 +727,6 @@ func (b *brain) reborn() {
 	b.turning, b.turned = 0, 0
 	b.told, b.tallied = -1, -1
 	b.play, b.until, b.promise = "", 0, 0
-	b.cast, b.casted, b.jolted, b.doubt = nil, 0, 0, [4]float64{}
 	b.prey = nil
 	b.known = map[int]*track{}
 	b.routine = routine{}
@@ -1048,7 +869,11 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	}
 	tail := direction.Dot(prey.velocity.Normalize())
 	nose := me.Attitude.Rotate(flight.Vec3{X: 1})
-	margin := b.tactics.missile.margin + b.tactics.missile.step*b.skill.discipline
+	step := b.tactics.missile.step
+	if b.mode == "script" {
+		step = b.tactics.script.step
+	}
+	margin := b.tactics.missile.margin + step*b.skill.discipline
 	limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) *
 		(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
 	b.gate.live = true
@@ -1070,7 +895,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	}
 	if b.decided == 0 || tick-b.decided >= b.skill.cadence {
 		b.decided = tick
-		b.shaped, b.licensed = false, false
+		b.shaped = false
 		i.decide(slot, a, tick)
 		if !b.shaped {
 			b.demand.Law, b.demand.Corner, b.demand.Capped = b.g, b.g, b.g // a bypass that never reached polish(): its raw command is the whole stack
@@ -1233,7 +1058,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// The scripted doctrine (script.go) flies the fight, the break and the slow
 	// jet itself. Not in a BVR match: the radar fight (hunt.go) steers through
 	// the aim the script does not read.
-	scripted := a.team == "" && b.tactics.on(16) && i.weapons != "open"
+	scripted := b.scripted && a.team == "" && i.weapons != "open"
 	// The roster is read ONCE, and the track set once below: slots() allocates
 	// and sorts on every call, and decide reads the two eleven times between them.
 	order := i.slots()
@@ -1288,9 +1113,6 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		if seen {
 			fresh := &track{when: tick, position: c.model.State.Position, velocity: c.model.State.Velocity, wobble: 45,
 				nose: c.model.State.Attitude.Rotate(flight.Vec3{X: 1})}
-			if b.tactics.on(11) {
-				fresh.floor = slowest
-			}
 			if t, found := b.known[other]; found {
 				fresh.wobble = t.wobble // carried between looks; a fresh contact starts at 45 — treat the unknown as manoeuvring until watched
 				least := 0.05
@@ -1306,9 +1128,6 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 					// roughly half-second memory whatever the refresh rate.
 					jerk := fresh.swing.Subtract(t.swing).Length() / gap
 					fresh.wobble = t.wobble + clamp(gap*3, 0.05, 1)*(jerk-t.wobble)
-					if speed := fresh.velocity.Length(); speed > 1 && fresh.swing.Dot(fresh.velocity.Scale(1/speed)) < -2 {
-						fresh.lasted = t.lasted + gap
-					}
 				}
 				// TALLY (#146): my own eyes replace the radio picture — tell
 				// the lead his call was picked up. Once per bandit per life.
@@ -1973,20 +1792,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// never dropped the track (b.known keeps it) but closed every weapons
 		// gate, so a target drifting through the sights could not be shot. A
 		// reflex may take the controls; it must not disarm the pilot.
-		// A committed bleed (stage 9) is slow ON PURPOSE: the arbiter priced the
-		// dump and chose it, and a reflex that then unloads the jet halfway round
-		// leaves it slow, wide and pointing nowhere - the worst of both. The
-		// loss-of-control tier above (70 m/s) still takes the controls.
-		//
-		// The bleed keeps the jet for as long as the arbiter keeps choosing it,
-		// not only until its commitment runs out: this clause runs before the
-		// re-plan, and its hysteresis then holds the jet unloaded until 1.3 times
-		// the gate, so the arbiter never got to choose again. In recording
-		// 01a0cf57 that cut a bleed off after 3.3 s, its nose come round from 76
-		// to 31 degrees off the pilot, and flew it nose-down in burner across
-		// his nose for 5.4 s into a pair of heaters.
-		spending := b.tactics.on(9) && b.play == "bleed"
-		if !spending && i.starved(b, &b.spent, me, speed, 0.55*pace, menace) {
+		if i.starved(b, &b.spent, me, speed, 0.55*pace, menace) {
 			b.mode = "rebuild"
 			b.press = 0
 			flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
@@ -2817,15 +2623,6 @@ func (i *instance) starved(b *brain, flag *bool, me *flight.State, speed, floor 
 			if span < 900 && quarry.velocity.Length() > 1 && direction.Dot(quarry.velocity.Normalize()) > 0.35 {
 				return false // saddled
 			}
-			if b.tactics.on(9) && (menace < 0 || menace == b.target) && speed > 1 {
-				him := quarry.velocity.Length()
-				richer := speed*speed/2+9.81*me.Position.Y > him*him/2+9.81*quarry.position.Y
-				behind := direction.Dot(me.Attitude.Rotate(flight.Vec3{X: 1})) < 0 // aft of my 3/9 line, as the menace check reads it
-				aimed := quarry.nose.Dot(direction.Scale(-1)) > math.Cos(30*math.Pi/180)
-				if richer && !behind && !aimed {
-					return false // richer, and he is neither behind me nor pointing at me
-				}
-			}
 		}
 	}
 	if speed < floor {
@@ -2850,11 +2647,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// Corner discipline (tier 3+): pulling the full limiter while slow just
 	// bleeds the jet — scale the commanded g by the speed margin. Rookies
 	// keep yanking; that bleed is authentic.
-	if b.licensed {
-		// The licensed play (bleed, stage 9) keeps its whole demand: the point
-		// of it is to take the wing past the lift peak, which discipline and the
-		// aero cap exist to prevent everywhere else.
-	} else if b.skill.library >= 3 {
+	if b.skill.library >= 3 {
 		b.g = disciplined(b.g, speed, pace)
 	} else {
 		// The low tiers cannot hold smooth g: the pull wobbles on a slow
@@ -2907,9 +2700,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 
 	// The aero cap, by tier (skill.capped): every play, so no play is ever
 	// the one without a departure guard near the stall.
-	if !b.licensed {
-		b.g = b.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
-	}
+	b.g = b.capped(b.g, speed, pace/math.Sqrt(a.model.Airframe.Limit.Positive))
 	b.demand.Capped = b.g
 
 	// Missile request: the launch gates with discipline-scaled margin. The
@@ -3507,16 +3298,6 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// and the turn, at right angles. Aligned and settled it falls to `level` —
 	// stick centred, wings level, no self-inflicted nose excursion to chase.
 	neutral := level
-	if b.tactics.truthful(delivery) {
-		// Truth (stage 6): ask the law for the load in the law's own terms, so the
-		// g the brain commands is the g that arrives - and the g the rollout
-		// rehearsed. The rolling tax keeps its above-corner gating (see
-		// `limited`); the weight schedule and the alpha-backed centre come from
-		// the law itself.
-		var top float64
-		neutral, top = m.Envelope(0, false)
-		ceiling = top * (1 - 0.2*limited*clamp((math.Abs(rolled)-0.25)/0.75, 0, 1))
-	}
 	pitch := clamp((math.Hypot(level, turn)*plane-neutral)/math.Max(ceiling-neutral, 0.5), -1, 1)
 	if want < 0.5 {
 		pitch = clamp((want-level)/3.5, -1, 0) // pushes bypass the lift-plane gate: recovery, not pursuit

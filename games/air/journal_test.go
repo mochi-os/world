@@ -21,6 +21,7 @@ import (
 func skirmish(t *testing.T, journalled bool, seconds int, watch func(tick uint64, b *Bandit)) *Bandit {
 	t.Helper()
 	b := NewBandit("ace", 7, 250000, "", false, false, "guns", 0, false)
+	b.craft.brain.scripted = false // the journal is the arbiter's: the scripted doctrine re-plans nothing
 	if !journalled {
 		b.craft.brain.journal = nil
 	}

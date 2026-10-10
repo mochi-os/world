@@ -5,11 +5,12 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // Outcome gates on recorded human flying (footage_test.go explains the reader,
-// the open-loop limit, and AIR_FOOTAGE). All are from recording 01a0b090
+// the open-loop limit, and AIR_FOOTAGE). Most are from recording 01a0b090
 // (joust, ace, 2026-09-17), the fight the human won in 187 s without the ace
 // ever producing a gun solution, and each is a decision the brain got wrong
-// THEN - so each is expected RED until the stage of
-// claude/plans/air-bot-arbiter.md that repairs it lands.
+// then. The scenes that judge where the fight ends up fly the scripted doctrine
+// single player now gives the bandit; those that pin the arbiter's own choices
+// fly the arbiter, which a teamless bot still flies in a furball.
 
 package air
 
@@ -51,7 +52,7 @@ func TestSceneThreatOnTheSix(t *testing.T) {
 	var detail []string
 	for seed := uint64(1); seed <= seeds; seed++ {
 		rebuilding := 0
-		replay(t, reel, "ace", seed, 156, 4, func(g glimpse) {
+		replay(t, reel, "ace", seed, 156, 4, false, func(g glimpse) {
 			if g.mode == "rebuild" {
 				rebuilding++
 			}
@@ -84,7 +85,7 @@ func TestSceneThreatIsAnswered(t *testing.T) {
 	for seed := uint64(1); seed <= seeds; seed++ {
 		ticks, share, speed, sighted := 0, 0.0, 0.0, 0
 		flown := map[string]int{}
-		replay(t, reel, "ace", seed, 156, 4, func(g glimpse) {
+		replay(t, reel, "ace", seed, 156, 4, false, func(g glimpse) {
 			if g.second < 1 {
 				return // the picture is still forming
 			}
@@ -119,7 +120,7 @@ func TestSceneTheDump(t *testing.T) {
 	var detail []string
 	for seed := uint64(1); seed <= seeds; seed++ {
 		astern := 0
-		replay(t, reel, "ace", seed, 44, 14, func(g glimpse) {
+		replay(t, reel, "ace", seed, 44, 14, true, func(g glimpse) {
 			if g.second > 11 && g.trailed < 30 && g.distance < 2000 {
 				astern++
 			}
@@ -151,7 +152,7 @@ func TestSceneUnderGuns(t *testing.T) {
 	for seed := uint64(1); seed <= seeds; seed++ {
 		tracked, attacking := 0, 0
 		chosen := map[string]int{}
-		replay(t, reel, "ace", seed, 88, 10, func(g glimpse) {
+		replay(t, reel, "ace", seed, 88, 10, false, func(g glimpse) {
 			if g.trailed < 45 && g.distance < 600 && g.play != "" {
 				tracked++
 				chosen[g.play]++
@@ -171,64 +172,32 @@ func TestSceneUnderGuns(t *testing.T) {
 	majority(t, "with a gun tracking from its six inside 600 m the ace must mostly fly a defensive play", passed, detail)
 }
 
-// flying sets the stage every scene in this test flies, whatever AIR_STAGE
-// says, for scenes that exist to pin one stage's behaviour.
-func flying(t *testing.T, stage, omit int) {
-	t.Helper()
-	before, was := evaluating, doctrine.omit
-	evaluating, doctrine.omit = stage, omit
-	t.Cleanup(func() { evaluating, doctrine.omit = before, was })
-}
-
-// Richer, and not threatened (recording 01a0cf7e, stages 8, 9 and 11, t=33-37).
-// The ace had bled to 201 kt at 16,100 ft, 1,340 ft of energy above a pilot
-// 1,240 m off its beam with his nose 56 degrees away, and its arbiter chose to
-// press him; the "too slow to fight" reflex dived it away instead, and the pilot
-// had tone three seconds later. At stage 9 the reflex yields to a richer jet
-// that is neither behind nor aimed at (bot.go starved), so the ace keeps flying
-// what it chose.
-func TestSceneRicherKeepsTheArbiter(t *testing.T) {
-	flying(t, 11, 1<<7|1<<10)
-	reel := view(t, "01a0cf7ea27b7e4288b4019cd40bf296")
+// The first turn the user won against the scripted ace (recording 01a10e335a,
+// t=12.5-20.7): both jets came out of the merge at 460 kt and the pilot, at 33
+// degrees of alpha, fired a heater on tone at 20.7 s that killed it. The ace
+// had its nose 2.5-27 degrees off him at 1.0-1.3 km for the last 2.7 s and
+// fired nothing, because its zone flew a round off its flight path, 30 degrees
+// below the nose, and came out empty (launcher). With the zone drawn along the
+// nose it must have its own heater away before his.
+func TestSceneFirstTurnTone(t *testing.T) {
+	reel := view(t, "01a10e335a2173cd8285943513b220b0")
 	passed := 0
 	var detail []string
 	for seed := uint64(1); seed <= seeds; seed++ {
-		rebuilding := 0
-		replay(t, reel, "ace", seed, 33, 4, func(g glimpse) {
-			if g.mode == "rebuild" {
-				rebuilding++
+		first, rack := -1.0, -1
+		replay(t, reel, "ace", seed, 12.5, 8.2, true, func(g glimpse) {
+			if rack < 0 {
+				rack = g.missiles
+			}
+			if first < 0 && g.missiles < rack {
+				first = 12.5 + g.second
 			}
 		})
-		ok := rebuilding == 0
+		ok := first > 0
 		if ok {
 			passed++
 		}
-		detail = append(detail, fmt.Sprintf("seed %d: rebuilding %4.1f s of 4  %v", seed, float64(rebuilding)/60, ok))
+		detail = append(detail, fmt.Sprintf("seed %d: first heater at %5.1f s (the pilot's at 20.7)  %v", seed, first, ok))
 	}
-	majority(t, "the richer ace must keep its own choice against a pilot off its beam and looking away", passed, detail)
-}
-
-// ...and the case the old energy-only yield was withdrawn over (recording
-// 01a0b090, t=124-128): the human in the ace's rear quarter at 550-650 m, his
-// nose 16-22 degrees off it, 2,500 ft of energy below it. Extending was right
-// there, and at stage 9 the ace must still do it.
-func TestSceneRicherStillExtends(t *testing.T) {
-	flying(t, 11, 1<<7|1<<10)
-	reel := view(t, tape)
-	passed := 0
-	var detail []string
-	for seed := uint64(1); seed <= seeds; seed++ {
-		rebuilding := 0
-		replay(t, reel, "ace", seed, 124, 4, func(g glimpse) {
-			if g.mode == "rebuild" {
-				rebuilding++
-			}
-		})
-		ok := rebuilding > 0
-		if ok {
-			passed++
-		}
-		detail = append(detail, fmt.Sprintf("seed %d: rebuilding %4.1f s of 4  %v", seed, float64(rebuilding)/60, ok))
-	}
-	majority(t, "the ace must still extend from a poorer pilot sitting in its rear quarter with his nose on it", passed, detail)
+	majority(t, "the ace must fire its heater before the pilot's tone shot in the first turn", passed, detail)
 }

@@ -48,6 +48,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 		thought = mind("ace")
 	}
 	thought.journal = &journal{} // one bot, and the only place a journal is ever allocated: the server's rosters fly without one
+	thought.scripted = true      // single player's bandit flies the scripted doctrine; the server's rosters fly the planner
 	fighter := &craft{player: game.Player{Name: "bandit", Slot: 1}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9,
 		bot: true, brain: thought, lock: -1, loadout: bots_loadout(weapons)}
@@ -219,18 +220,6 @@ func (b *Bandit) Model() *flight.Model { return b.craft.model }
 func (b *Bandit) Instruments() (alpha, beta, nz, mach, cas float64) {
 	m := b.craft.model
 	return m.Alpha(), m.Beta(), m.Nz(), m.Mach(), m.Cas()
-}
-
-// Stage selects the structural change this bandit flies (tactics.stage): 0 the
-// brain as it stands, N the revised branch under evaluation. The developer
-// client sets it from the URL so a stage can be flown against before cutover.
-//
-// omit leaves stages out of the stack beneath it, one bit per stage number
-// (tactics.omit): stage 8 with 128 omitted is truth and ends without hypotheses.
-func (b *Bandit) Stage(stage, omit int) {
-	if b.craft != nil && b.craft.brain != nil {
-		b.craft.brain.tactics.evaluate(stage, omit)
-	}
 }
 
 // Journal drains the brain's decision journal (journal.go) - the developer

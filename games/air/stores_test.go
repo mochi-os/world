@@ -663,13 +663,67 @@ func TestJammerServer(t *testing.T) {
 	}
 }
 
+// TestAmraamAlongTheNose: an AIM-120 leaves along the NOSE, as the client fires
+// it - off a wing rail at the jet's speed and the launcher's 30 m/s, off a cheek
+// ejector at the speed and 15 m/s punched 8 m/s down - and the DLZ is drawn for
+// the next round as it will leave (fired). Drawn for a round leaving along the
+// flight path at the jet's own speed, the no-escape range came out 14 km short
+// of the round single player flies, and fox3 fired a third round, the flight
+// path plus 30 m/s along the nose, that matched neither.
+func TestAmraamAlongTheNose(t *testing.T) {
+	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+	for _, slot := range []int{0, 1} {
+		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+		m.State = flight.Level(m, flight.Vec3{Y: 7000}, flight.Vec3{X: 1}, 250, 2500)
+		a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
+			"2": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		}, "open")}
+		a.arm()
+		i.aircraft[slot] = a
+	}
+	shooter, target := i.aircraft[0], i.aircraft[1]
+	pitch := 10 * math.Pi / 180
+	nose := flight.Vec3{X: math.Cos(pitch), Y: math.Sin(pitch)}
+	shooter.model.State.Velocity = flight.Vec3{X: 250}
+	shooter.model.State.Attitude = flight.Basis(nose, flight.Vec3{X: -math.Sin(pitch), Y: math.Cos(pitch)})
+	target.model.State.Position, target.model.State.Velocity = flight.Vec3{X: 30000, Y: 7000}, flight.Vec3{X: -250}
+	shooter.emitter, shooter.lock = 2, 1
+	him := round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
+	honest := round.Ladder(fired(shooter), him, 0)
+	for k, want := range []struct {
+		station string
+		launch  flight.Vec3
+	}{
+		{"cheek ejector", nose.Scale(265).Add(flight.Vec3{Y: -8})},
+		{"wing rail", nose.Scale(280)},
+	} {
+		drawn := fired(shooter).Velocity
+		if !i.fox3(0, shooter, false) || len(i.flying) != k+1 {
+			t.Fatalf("%s: a locked shooter could not launch", want.station)
+		}
+		shooter.amraams--
+		launched := i.flying[k].velocity
+		if launched.Subtract(want.launch).Length() > 0.5 {
+			t.Errorf("%s: the round left at %+v, want %+v", want.station, launched, want.launch)
+		}
+		if drawn.Subtract(launched).Length() > 1e-6 {
+			t.Errorf("%s: the DLZ was drawn for a round leaving at %+v, and fox3 fired one at %+v", want.station, drawn, launched)
+		}
+	}
+	path := round.Ladder(round.Target{Position: shooter.model.State.Position, Velocity: shooter.model.State.Velocity}, him, 0)
+	if honest.Escape < path.Escape+5000 {
+		t.Errorf("the no-escape range barely moved off the flight path (%.0f m against %.0f m): the control is not a control", honest.Escape, path.Escape)
+	}
+}
+
 // TestSeparation (#32): the BVR spawn distance is DERIVED from the round's
 // own ladder — head-on Rmax at the spawn state plus the fifteen-mile commit
 // buffer — so a flight-model retune moves the match geometry automatically.
 // This pins the relationship and the sanity band, not a number.
 func TestSeparation(t *testing.T) {
 	ladder := round.Ladder(
-		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: flight.Vec3{X: bvrspeed}},
+		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
 		0,
 	)
@@ -732,7 +786,7 @@ func TestOpening(t *testing.T) {
 			split++
 		}
 		for slot := 0; slot < 2; slot++ {
-			if reach := round.Ladder(o.state(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max; o.Apart < reach+commit-1 {
+			if reach := round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max; o.Apart < reach+commit-1 {
 				t.Fatalf("seed %d: slot %d's Rmax %.0f m plus the commit buffer reaches past the %.0f m apart", seed, slot, reach, o.Apart)
 			}
 		}

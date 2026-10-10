@@ -192,7 +192,7 @@ func (i *instance) minute(a *craft, b *brain, sim *flight.Model, prey *track, ti
 		horizon = b.horizon(p)
 		b.journal.path = b.journal.path[:0]
 		b.journal.tracing = true
-		i.rehearse(a, b, sim, p, prey, tick, horizon, 0)
+		i.rehearse(a, b, sim, p, prey, tick, horizon)
 		b.journal.tracing = false
 		break
 	}

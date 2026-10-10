@@ -250,19 +250,22 @@ type glimpse struct {
 	asked    float64 // the g the brain commanded after its cap
 	afforded float64 // the g this pilot's aero cap allows at this speed: what a whole-hearted pull would ask for
 	speed    float64 // m/s
+	missiles int     // heaters still on the brain's rails
 }
 
 // replay opens a scene: the bandit spawned at its recorded state, the human
 // flown open-loop from the tape into slot 0 exactly as Bandit.Mirror would
-// place him, for `length` seconds from `start`.
-func replay(t *testing.T, reel footage, level string, seed uint64, start, length float64, watch func(glimpse)) {
+// place him, for `length` seconds from `start`. Scripted, the bandit flies the
+// doctrine single player gives it (script.go); otherwise the arbiter (duel.go)
+// that a teamless bot flies in a furball, for the scenes that pin its choices.
+func replay(t *testing.T, reel footage, level string, seed uint64, start, length float64, scripted bool, watch func(glimpse)) {
 	t.Helper()
 	position, velocity, forward, up, sample, _, found := reel.at(2, start)
 	if !found {
 		t.Fatalf("the recording has no bandit at t=%.1f", start)
 	}
 	b := NewBandit(level, seed, 250000, "", false, true, "fox2", sample.fuel, false)
-	b.Stage(evaluating, doctrine.omit) // AIR_STAGE, AIR_OMIT: the scenes judge whichever brain is under evaluation
+	b.craft.brain.scripted = scripted
 	b.Spawn(position, velocity)
 	b.craft.model.State.Attitude = flight.Basis(forward, up)
 	human := b.arena.aircraft[0]
@@ -293,6 +296,7 @@ func replay(t *testing.T, reel footage, level string, seed uint64, start, length
 			trailed: angle(line, tail), faced: angle(nose, line.Scale(-1)), asked: b.craft.brain.demand.Capped,
 			afforded: b.craft.brain.skill.capped(b.craft.brain.skill.pull, me.Velocity.Length(), corner(b.craft.model)/math.Sqrt(b.craft.model.Airframe.Limit.Positive)),
 			speed:    me.Velocity.Length(),
+			missiles: b.craft.brain.missiles,
 		})
 	}
 }

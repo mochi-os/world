@@ -243,7 +243,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	}
 	_, span := i.bearing(a.model.State.Position, prey.model.State.Position)
 	zone := round.Ladder(
-		round.Target{Position: a.model.State.Position, Velocity: a.model.State.Velocity},
+		fired(a),
 		round.Target{Position: prey.model.State.Position, Velocity: prey.model.State.Velocity},
 		i.environment.Wrap)
 	if span > zone.Max || span < zone.Minimum {
@@ -339,7 +339,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 	if tick-b.assessed >= 60 || b.assessed == 0 {
 		b.assessed = tick
 		b.zone = round.Ladder(
-			round.Target{Position: a.model.State.Position, Velocity: a.model.State.Velocity},
+			fired(a),
 			round.Target{Position: position, Velocity: velocity},
 			i.environment.Wrap)
 	}

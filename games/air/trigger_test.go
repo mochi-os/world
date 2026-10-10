@@ -82,7 +82,10 @@ func TestRecoilServed(t *testing.T) {
 // before each frame. A guns bandit with a player 300 m dead ahead holds the
 // trigger for a good part of four seconds and the recoil costs it the
 // impulse over its mass, measured against the same hunt flown with a gun
-// that kicks nothing; told its belt is empty, the brain never presses.
+// that kicks nothing; told its belt is empty, the brain never presses. The
+// arbiter flies the hunt: the scripted doctrine sizes its pull by the angle
+// off him, sags below a jet flying straight ahead and never presses, which is
+// its gunnery and not the belt.
 func TestBanditLoad(t *testing.T) {
 	fresh := NewBandit("ace", 1, 250000, "", false, false, "", 0, false)
 	fresh.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
@@ -95,6 +98,7 @@ func TestBanditLoad(t *testing.T) {
 	}
 	hunt := func(belt int, kick bool) (firing int, speed float64) {
 		b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+		b.craft.brain.scripted = false
 		b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 		if !kick {
 			quiet := *b.craft.model.Airframe
