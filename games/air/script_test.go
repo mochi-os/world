@@ -339,3 +339,82 @@ func approached(t *testing.T, level string, seed uint64, entry, offset float64, 
 	t.Fatalf("%s seed %d: no pass in 25 s", level, seed)
 	return out
 }
+
+// TestScriptClearsTheCrossing: after the merge the pilot tier and the novice
+// keep a crossing jet outside the bubble. He crosses the bandit's path at 60,
+// 90 or 120 degrees on a course that would meet it four or five seconds on;
+// the fight law alone points the lift vector at him and passes at 93-149 m.
+// Three seconds out is too late for either tier to climb 150 m at the pull
+// it has (99-106 m with the guard, 52-64 m without).
+func TestScriptClearsTheCrossing(t *testing.T) {
+	for _, level := range []string{"novice", "pilot"} {
+		for _, out := range []float64{4, 5} {
+			for _, angle := range []float64{60, 90, 120} {
+				b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+				b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 180})
+				b.craft.brain.routine.passed = true
+				r := angle * math.Pi / 180
+				heading := flight.Vec3{X: -math.Cos(r), Z: math.Sin(r)}
+				meet := flight.Vec3{X: 180 * out, Y: 4500}
+				pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+				pm.State = flight.Level(pm, meet.Subtract(heading.Scale(180*out)), heading, 180, fuel)
+				words := make([]float64, flight.Size)
+				least := math.Inf(1)
+				for tick := 0; tick < int(60*(out+3)); tick++ {
+					pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+					pm.State.Encode(words)
+					b.Mirror(words, false, true)
+					b.Step()
+					least = math.Min(least, pm.State.Position.Subtract(b.State().Position).Length())
+				}
+				if least < bubble {
+					t.Errorf("%s: a jet crossing at %.0f degrees, %.0f s out, went by at %.0f m, inside the bubble", level, angle, out, least)
+				}
+			}
+		}
+	}
+}
+
+// TestScriptLowFight: below 8,200 ft the fight law sets the stick as it does
+// above, easing off to a third of the stick or less when he sits ahead of the
+// nose; mimic's floor there, a third of the stick along the lift vector at any
+// height under 2,500 m, pinned the nose up and the gun off him. The water
+// belongs to the deck recovery, which takes the stick in a dive near it.
+func TestScriptLowFight(t *testing.T) {
+	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
+	b.craft.brain.routine.passed = true
+	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	pm.State = flight.Level(pm, flight.Vec3{X: 600, Y: 2000}, flight.Vec3{X: 1}, 200, fuel)
+	words := make([]float64, flight.Size)
+	least := math.Inf(1)
+	for tick := 0; tick < 60*3; tick++ {
+		pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+		pm.State.Encode(words)
+		b.Mirror(words, false, true)
+		b.Step()
+		least = math.Min(least, b.craft.latest.Pitch)
+	}
+	if least >= 0.35 {
+		t.Errorf("at 6,560 ft behind a jet dead ahead the stick never came below %.2f: something other than the fight law holds it", least)
+	}
+
+	low := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	dive := flight.Vec3{X: math.Cos(0.5), Y: -math.Sin(0.5)}
+	low.Spawn(flight.Vec3{Y: 700}, dive.Scale(200))
+	low.craft.brain.routine.passed = true
+	pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: 400}, flight.Vec3{X: 1}, 200, fuel)
+	recovered := false
+	for tick := 0; tick < 30; tick++ {
+		pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+		pm.State.Encode(words)
+		low.Mirror(words, false, true)
+		low.Step()
+		if low.Mode() == "deck" {
+			recovered = true
+		}
+	}
+	if !recovered {
+		t.Error("diving at 29 degrees through 2,300 ft the deck recovery never took the stick")
+	}
+}

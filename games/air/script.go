@@ -35,6 +35,8 @@ type routine struct {
 	judged    bool        // the first look has said whether this is a head-on meeting at all
 	passed    bool        // he has gone by: the run-in is over and the fight is on
 	branch    string      // the law that set the stick this tick
+	velocity  flight.Vec3 // mine a tick ago: the turn I am flying, for the pass
+	away      flight.Vec3 // the way a pass inside the bubble is being cleared, latched until the range opens; zero while none is
 }
 
 // drive flies the scripted doctrine for one tick, from what decide() last saw.
@@ -42,8 +44,14 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	b, m := a.brain, a.model
 	me := &m.State
 	s := &b.routine
+	own := flight.Vec3{} // the acceleration I am flying: my own turn, for the pass
+	if s.velocity.Length() > 1 {
+		own = me.Velocity.Subtract(s.velocity).Scale(60)
+	}
+	s.velocity = me.Velocity
 	if b.prey == nil || deck(me) {
 		s.branch = "deck"
+		b.play = s.branch       // the recording's Doctrine channel reads it
 		return b.steer(m, tick) // the recovery owns the stick near the water, whatever the plan
 	}
 	age := float64(tick-b.prey.when) / 60
@@ -126,20 +134,64 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		want = want.Add(aside.Scale(b.offset[0])).Add(rise.Scale(b.offset[1])).Normalize() // the tier's aim wander
 	}
 
-	// A guard for the bubble after the merge was measured and declined. Once the
-	// closest approach, both jets flown on as turns at the rates they were
-	// flying, would come inside 1.3 bubbles within three seconds, the lift
-	// vector went the way the miss lay and the gun waited. Against mimic, 32
-	// fights for each of the pilot tier, the ace and the superhuman, still air
+	// The bubble after the merge. Once the closest approach, both jets flown
+	// on as turns at the rates they are flying (nearest), would come inside
+	// 1.6 bubbles within five seconds, the lift vector goes the way the miss
+	// already lies (over him, or under when below, when the miss is too small
+	// to have a direction) and the gun waits, latched until the range opens.
+	// The pilot tier and the novice fly it throughout the fight; the
+	// instructor tiers only on the gun from behind him, an overtake, or it
+	// takes their turning fight. Against mimic, 32 fights per tier, still air
 	// and wind, the fights with a close approach inside 150 m after the merge
-	// went from 11 of 192 to 9, and the fast one-circle went from 21 won and 2
-	// lost to 2 and 10 for the ace (the superhuman 19/3 to 8/9, its slow
-	// one-circle 17/5 to 14/6). Triggered at the bubble itself, 11 and 2/12;
-	// at 1.15 bubbles, 10 and 3/7. Judged on the present line with his turn
-	// alone, or only as a pass of 100 m/s or more, it missed the crossings and
-	// the slow drifts together that most of them are. The rest came in the
-	// regain or under the sea guard, unloaded or held off the water, and
-	// letting the guard steer through those changed none of them.
+	// went from 4 of 256 to 1 (the novice in wind, 131 m, him pressing it with
+	// his nose 63 degrees on), and every circle fight and the ladder held.
+	//
+	// Declined on the way, against mimic over the same fights: flown by every
+	// tier through the whole fight it took the ace's fast one-circle from 21
+	// won and 2 lost to 2 and 10 (the superhuman 19/3 to 8/9); on every gun pass
+	// for the instructor tiers, the slow one-circle to 9/13 and the fast to 2/8.
+	// Three seconds ahead and unlatched it fluttered, turning away until the
+	// projection read clear and straight back in; on a collision course the
+	// miss's own direction pointed back across his path; at 1.3 bubbles the
+	// novice was already too close to open it. Judged on the present line with
+	// his turn alone, or only as a pass of 100 m/s or more, it missed the
+	// crossings and slow drifts together that most of them were.
+	clearing := false
+	// Where he is, whatever the tier's reaction time: inside a kilometre he is
+	// in plain sight, so the bubble is kept on where he really is, and further
+	// out on the last look carried on. On its once-a-second look the novice's
+	// projected miss moved 40 m at every look, and with the guard flying all
+	// the way in it went by at 142 m.
+	seen := *b.prey
+	seen.position = predict(b.prey, age, true)
+	if quarry := i.aircraft[b.target]; quarry != nil && quarry.alive && quarry.model != nil {
+		if direction, gap := i.bearing(me.Position, quarry.model.State.Position); gap < 1000 {
+			seen.position, seen.velocity = me.Position.Add(direction.Scale(gap)), quarry.model.State.Velocity
+		}
+	}
+	now := seen.position
+	astern := gunning && me.Position.Subtract(now).Dot(seen.velocity) < 0 // on the gun from behind him: an overtake
+	if !breaking && (b.skill.library < 3 || astern || s.away.Length() > 0.5) {
+		if now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) >= 0 {
+			s.away = flight.Vec3{} // the range is opening: the pass is over
+		}
+		if s.away.Length() < 0.5 {
+			if miss, when := nearest(&seen, me, now, own); when > 0.1 && when < 5 && miss.Length() < 1.6*bubble {
+				s.away = miss.Normalize()
+				if miss.Length() < bubble/2 { // too near a collision for its direction to mean anything: over him, or under when below
+					s.away = flight.Vec3{Y: 1}
+					if me.Position.Y < now.Y {
+						s.away = flight.Vec3{Y: -1}
+					}
+				}
+			}
+		}
+		if s.away.Length() > 0.5 {
+			want, gunning, clearing = axis.Add(s.away.Scale(2)).Normalize(), false, true
+		}
+	} else {
+		s.away = flight.Vec3{}
+	}
 	// A nose-low slice, the lift vector 20 or 35 degrees below him while he sat
 	// more than 45 degrees off, read 8/8 and 9/7 over the joust's 16 against
 	// 8/8, and in the replay of 01a10e335a moved the ace's first heater from
@@ -173,6 +225,8 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	s.branch = "fight"
 	if breaking {
 		s.branch = "break"
+	} else if clearing {
+		s.branch = "clear"
 	} else if gunning {
 		s.branch = "guns"
 	}
@@ -196,10 +250,13 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	if pitch > 0 {
 		pitch *= clamp((44-riding)/10, 0.08, 1)
 	}
-	if me.Position.Y < 2500 && !s.regaining && riding < 30 {
-		pitch = math.Max(pitch, math.Min(0.35, limit))
-		s.branch = "sea"
-	}
+	// No floor below 8,200 ft: mimic pulls at least a third of the stick along
+	// its lift vector anywhere under 2,500 m, its one concession to the water,
+	// and copied here it pinned the bandit's nose up and the gun off a jet
+	// ahead of it (`sea` in 01a108b8 and 01a10e5e). The water belongs to the
+	// deck recovery above, sized on the dive. The circle fights flown at 4,900
+	// ft read the same with the floor and without it, crashes into the water
+	// included.
 	fire := gunning && b.squeeze(m, tick)
 	b.play, b.rolled = s.branch, roll
 	b.demand.Stick = pitch
@@ -276,6 +333,35 @@ func projected(prey *track, me *flight.State, spot flight.Vec3) flight.Vec3 {
 		pass = pass.Subtract(along.Scale(pass.Subtract(me.Position).Dot(along)))
 	}
 	return pass
+}
+
+// nearest flies both jets on as turns at the rates they are flying, his from
+// his measured swing and mine from the acceleration I am flying, and returns
+// the miss at the closest point inside three seconds (my position less his)
+// and when it comes. Two jets in a hard turning fight each turn a quarter
+// circle or more in that time, which a straight line, or a parabola, does not
+// follow.
+func nearest(prey *track, me *flight.State, spot, own flight.Vec3) (miss flight.Vec3, when float64) {
+	const dt = 0.05
+	rate := func(velocity, swing flight.Vec3) flight.Vec3 { // the turn's rate vector, rad/s
+		speed := velocity.Dot(velocity)
+		if speed < 1 {
+			return flight.Vec3{}
+		}
+		return velocity.Cross(swing).Scale(1 / speed)
+	}
+	mine, his, fly, flown := me.Position, spot, me.Velocity, prey.velocity
+	spin, turn := rate(fly, own), rate(flown, prey.swing)
+	least := math.Inf(1)
+	for k := 0.0; k <= 5; k += dt {
+		if gap := mine.Subtract(his); gap.Length() < least {
+			least, miss, when = gap.Length(), gap, k
+		}
+		fly = fly.Add(spin.Cross(fly).Scale(dt)).Normalize().Scale(fly.Length())
+		flown = flown.Add(turn.Cross(flown).Scale(dt)).Normalize().Scale(flown.Length())
+		mine, his = mine.Add(fly.Scale(dt)), his.Add(flown.Scale(dt))
+	}
+	return miss, when
 }
 
 // approach flies the run-in through steer(): a level line aimed to pass him
