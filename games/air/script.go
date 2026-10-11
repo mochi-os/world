@@ -138,15 +138,23 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 
 	// The bubble after the merge. Once the closest approach, both jets flown
 	// on as turns at the rates they are flying (nearest), would come inside
-	// 1.6 bubbles within five seconds, the lift vector goes the way the miss
-	// already lies (over him, or under when below, when the miss is too small
-	// to have a direction) and the gun waits, latched until the range opens.
-	// The pilot tier and the novice fly it throughout the fight; the
-	// instructor tiers only on the gun from behind him, an overtake, or it
-	// takes their turning fight. Against mimic, 32 fights per tier, still air
-	// and wind, the fights with a close approach inside 150 m after the merge
-	// went from 4 of 256 to 1 (the novice in wind, 131 m, him pressing it with
-	// his nose 63 degrees on), and every circle fight and the ladder held.
+	// 1.6 bubbles within five seconds, the lift vector goes the way escape
+	// chooses and the gun waits, latched until the range opens. The pilot tier
+	// and the novice fly it throughout the fight; the instructor tiers only on
+	// the gun from behind him, an overtake, or it takes their turning fight.
+	// Against mimic, 32 fights per tier, still air and wind, the fights with a
+	// close approach inside 150 m after the merge went from 4 of 256 to 1, and
+	// with the slow clear below to none; every circle fight and the ladder held.
+	//
+	// A slow wing needs longer. The last of those, the novice in wind at 145 m,
+	// cleared at its fighting alpha at 160 kt, where that alpha makes one g,
+	// and a bandit at 146-233 kt let a jet crossing it on a collision course,
+	// found 5 to 8 s out, by inside the bubble in 298 of 576 crossings, the
+	// nearest at 31 m. Below three g of wing the look goes on to eight seconds,
+	// escape counts gravity, and a clear below the wings is pushed: found 7 s
+	// or more out, 2 of 288 still go by inside it (118 and 131 m, a jet
+	// climbing at it at 292 kt). Found 5 s out, a wing that slow cannot open
+	// 150 m (94-120 m).
 	//
 	// Declined on the way, against mimic over the same fights: flown by every
 	// tier through the whole fight it took the ace's fast one-circle from 21
@@ -157,7 +165,11 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// miss's own direction pointed back across his path; at 1.3 bubbles the
 	// novice was already too close to open it. Judged on the present line with
 	// his turn alone, or only as a pass of 100 m/s or more, it missed the
-	// crossings and slow drifts together that most of them were.
+	// crossings and slow drifts together that most of them were. The look
+	// stretched by corner speed over speed, up to 1.6 times, read 250 kt at
+	// 14,000 ft as slow and cost the pilot tier 11 of 128 fights (72 won and
+	// 54 lost to 61 and 62); the clear held over the regain's floor changed
+	// nothing in 256 fights once the slow clear was pushed.
 	clearing := false
 	// Where he is, whatever the tier's reaction time: inside a kilometre he is
 	// in plain sight, so the bubble is kept on where he really is, and further
@@ -178,18 +190,15 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
 		if s.away.Length() < 0.5 {
+			wing := math.Min(b.skill.pull, m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2)) // the g the wing has at this speed
 			ahead, room := 5.0, 1.6*bubble
 			if b.skill.library >= 3 {
 				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
+			} else {
+				ahead += 3 * clamp((3-wing)/2, 0, 1)
 			}
-			if miss, when := nearest(&seen, me, now, own); when > 0.1 && when < ahead && miss.Length() < room {
-				s.away = miss.Normalize()
-				if miss.Length() < bubble/2 { // too near a collision for its direction to mean anything: over him, or under when below
-					s.away = flight.Vec3{Y: 1}
-					if me.Position.Y < now.Y {
-						s.away = flight.Vec3{Y: -1}
-					}
-				}
+			if miss, when := nearest(&seen, me, now, own, math.Max(ahead, 5)); when > 0.1 && when < ahead && miss.Length() < room {
+				s.away = escape(miss, when, me, me.Position.Y < now.Y, wing)
 			}
 		}
 		if s.away.Length() > 0.5 {
@@ -288,6 +297,16 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		goal = b.skill.alpha
 	}
 	pitch := clamp((goal-riding)/8, -1, limit)
+	// A clear below the wings is pushed, rolled so the push goes the way it
+	// lies. Rolled inverted to pull, a slow wing spent the clear in the roll,
+	// a quarter of the stick at 165 kt, pulling up the while: 64 m by the
+	// pass where the push gave 118.
+	if clearing && s.away.Dot(up) < -0.3 {
+		if under := s.away.Scale(-1).Subtract(axis.Scale(-s.away.Dot(axis))); under.Length() > 1e-6 {
+			roll = clamp(math.Atan2(under.Dot(right), under.Dot(up))*2.5, -1, 1)
+		}
+		pitch = -1
+	}
 	s.branch = "fight"
 	if breaking {
 		s.branch = "break"
@@ -405,11 +424,11 @@ func projected(prey *track, me *flight.State, spot flight.Vec3) flight.Vec3 {
 
 // nearest flies both jets on as turns at the rates they are flying, his from
 // his measured swing and mine from the acceleration I am flying, and returns
-// the miss at the closest point inside three seconds (my position less his)
-// and when it comes. Two jets in a hard turning fight each turn a quarter
+// the miss at the closest point inside the horizon (my position less his) and
+// when it comes. Two jets in a hard turning fight each turn a quarter
 // circle or more in that time, which a straight line, or a parabola, does not
 // follow.
-func nearest(prey *track, me *flight.State, spot, own flight.Vec3) (miss flight.Vec3, when float64) {
+func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float64) (miss flight.Vec3, when float64) {
 	const dt = 0.05
 	rate := func(velocity, swing flight.Vec3) flight.Vec3 { // the turn's rate vector, rad/s
 		speed := velocity.Dot(velocity)
@@ -421,7 +440,7 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3) (miss flight.
 	mine, his, fly, flown := me.Position, spot, me.Velocity, prey.velocity
 	spin, turn := rate(fly, own), rate(flown, prey.swing)
 	least := math.Inf(1)
-	for k := 0.0; k <= 5; k += dt {
+	for k := 0.0; k <= horizon; k += dt {
 		if gap := mine.Subtract(his); gap.Length() < least {
 			least, miss, when = gap.Length(), gap, k
 		}
@@ -430,6 +449,41 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3) (miss flight.
 		mine, his = mine.Add(fly.Scale(dt)), his.Add(flown.Scale(dt))
 	}
 	return miss, when
+}
+
+// escape is the way to clear a pass coming inside the bubble: the way the miss
+// already lies, or over him, or under when below, when the miss is too small
+// to have a direction, kept while the wing can open the pass to 1.6 bubbles by
+// the time it comes. A slow wing that cannot takes whichever of that, over and
+// under opens it most, gravity counted: over him the lift is spent holding the
+// jet up, under him gravity adds to it. At 165 kt over him came to 71 m by a
+// pass 5 s out. The water is the deck recovery's.
+func escape(miss flight.Vec3, when float64, me *flight.State, below bool, wing float64) flight.Vec3 {
+	away := miss.Normalize()
+	if miss.Length() < bubble/2 {
+		away = flight.Vec3{Y: 1}
+		if below {
+			away = flight.Vec3{Y: -1}
+		}
+	}
+	path := me.Velocity.Normalize()
+	reach := func(d flight.Vec3) (flight.Vec3, float64) { // the way, across my path, and the miss it makes by the pass
+		d = d.Subtract(path.Scale(d.Dot(path)))
+		if d.Length() < 0.1 {
+			return d, -1
+		}
+		d = d.Normalize()
+		return d, miss.Add(d.Scale(0.5 * 9.81 * math.Max(wing-d.Y, 0) * when * when)).Length()
+	}
+	if _, kept := reach(away); kept < 1.6*bubble {
+		best := kept
+		for _, c := range []flight.Vec3{{Y: 1}, {Y: -1}, miss} {
+			if d, far := reach(c); far > best {
+				best, away = far, d
+			}
+		}
+	}
+	return away
 }
 
 // approach flies the run-in through steer(): a level line aimed to pass him

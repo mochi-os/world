@@ -26,19 +26,25 @@ import (
 // 32/0. With every merge kept outside 150 m, the instructor tiers' run-in at a
 // height off his: 6/26, 18/12, 32/0, 30/1, and in wind 4/27, 21/11, 31/1,
 // 32/0.
+//
+// Flown on 64 fights a tier. On 16 the pilot's row read 9/7, and the slow
+// clear turned it red at 7/8 by flipping two fights, while over 128 in both
+// airs the pilot read 71/54 against 72/54 before it: sixteen measured two
+// coin flips, not the tier.
 func TestScriptLadder(t *testing.T) {
 	heavy(t)
+	const fights = 64
 	net := map[string]int{}
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		n := 0
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
 			return mimic([]float64{1, -1}[n%2])
-		}, true, 0, 16, 150, func(i *instance, bot int) {
+		}, true, 0, fights, 150, func(i *instance, bot int) {
 			jousted(i, bot)
 			i.aircraft[bot].brain.scripted = true // the doctrine single player flies, in a server bot
 		})
-		fmt.Printf("%-10s against mimic: won %2d lost %2d of 16\n", level, b.downed, b.lost)
+		fmt.Printf("%-10s against mimic: won %2d lost %2d of %d\n", level, b.downed, b.lost, fights)
 		net[level] = b.downed - b.lost
 		switch level {
 		case "novice":
@@ -50,8 +56,8 @@ func TestScriptLadder(t *testing.T) {
 				t.Errorf("the pilot won %d and lost %d: the user should lose most fights against it", b.downed, b.lost)
 			}
 		default:
-			if b.lost > 1 {
-				t.Errorf("the %s lost %d of 16: the user should rarely or never beat it", level, b.lost)
+			if b.lost > fights/16 {
+				t.Errorf("the %s lost %d of %d: the user should rarely or never beat it", level, b.lost, fights)
 			}
 		}
 	}
@@ -346,29 +352,50 @@ func approached(t *testing.T, level string, seed uint64, entry, offset float64, 
 // the fight law alone points the lift vector at him and passes at 93-149 m.
 // Three seconds out is too late for either tier to climb 150 m at the pull
 // it has (99-106 m with the guard, 52-64 m without).
+//
+// Slow, the bandit at 146 or 194 kt with the jet at 214 or 292 kt, climbing,
+// level or diving at 15 degrees, seven seconds out: a wing that slow has under
+// three g, and the guard as it was let 37 of these 72 by inside the bubble, at
+// 60-108 m. Each of the slow clear's parts is needed: without the longer look
+// the same 37 went by inside it, without escape's gravity 24 (85-93 m), and
+// pulled rather than pushed 43 (50-142 m).
 func TestScriptClearsTheCrossing(t *testing.T) {
+	cross := func(level string, own, his, out, angle, dive, height float64) float64 {
+		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b.Spawn(flight.Vec3{Y: height}, flight.Vec3{X: own})
+		b.craft.brain.routine.passed = true
+		r, d := angle*math.Pi/180, dive*math.Pi/180
+		heading := flight.Vec3{X: -math.Cos(r) * math.Cos(d), Y: -math.Sin(d), Z: math.Sin(r) * math.Cos(d)}
+		meet := flight.Vec3{X: own * out, Y: height}
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm.State = flight.Level(pm, meet.Subtract(heading.Scale(his*out)), heading, his, fuel)
+		pm.State.Velocity = heading.Scale(his)
+		words := make([]float64, flight.Size)
+		least := math.Inf(1)
+		for tick := 0; tick < int(60*(out+3)); tick++ {
+			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+			least = math.Min(least, pm.State.Position.Subtract(b.State().Position).Length())
+		}
+		return least
+	}
 	for _, level := range []string{"novice", "pilot"} {
-		for _, out := range []float64{4, 5} {
-			for _, angle := range []float64{60, 90, 120} {
-				b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
-				b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 180})
-				b.craft.brain.routine.passed = true
-				r := angle * math.Pi / 180
-				heading := flight.Vec3{X: -math.Cos(r), Z: math.Sin(r)}
-				meet := flight.Vec3{X: 180 * out, Y: 4500}
-				pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
-				pm.State = flight.Level(pm, meet.Subtract(heading.Scale(180*out)), heading, 180, fuel)
-				words := make([]float64, flight.Size)
-				least := math.Inf(1)
-				for tick := 0; tick < int(60*(out+3)); tick++ {
-					pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
-					pm.State.Encode(words)
-					b.Mirror(words, false, true)
-					b.Step()
-					least = math.Min(least, pm.State.Position.Subtract(b.State().Position).Length())
-				}
-				if least < bubble {
+		for _, angle := range []float64{60, 90, 120} {
+			for _, out := range []float64{4, 5} {
+				if least := cross(level, 180, 180, out, angle, 0, 4500); least < bubble {
 					t.Errorf("%s: a jet crossing at %.0f degrees, %.0f s out, went by at %.0f m, inside the bubble", level, angle, out, least)
+				}
+			}
+			for _, own := range []float64{75, 100} {
+				for _, his := range []float64{110, 150} {
+					for _, dive := range []float64{-15, 0, 15} {
+						if least := cross(level, own, his, 7, angle, dive, 2700); least < bubble {
+							t.Errorf("%s at %.0f kt: a jet at %.0f kt crossing at %.0f degrees, diving %.0f, 7 s out, went by at %.0f m, inside the bubble",
+								level, own*1.944, his*1.944, angle, dive, least)
+						}
+					}
 				}
 			}
 		}
