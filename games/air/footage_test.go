@@ -18,10 +18,13 @@
 // shoots at what is offered - never whether it out-flew a pursuer who cannot
 // see it.
 //
-// Recordings stay outside the repository: they are a user's own flying.
-// AIR_FOOTAGE names the directory (the dev instance's recordings). Unset, or a
-// file missing, the scene SKIPS and names what it wanted - so a run must be
-// read for skips before its green means anything.
+// A scene's recording lives in testdata as <id>.acmi.gz, so the scene runs in
+// every test run; the copy carries the flying and nothing of the pilot's own
+// (callsign, stick and date neutralised; the reader uses none of them). The
+// live store held four scenes' recording until it pruned it, and they could
+// never run again. AIR_FOOTAGE names the dev instance's recordings directory
+// for cutting a new scene; a recording in neither place SKIPS the scene and
+// names what it wanted.
 
 package air
 
@@ -63,17 +66,19 @@ type still struct {
 // by the recorder's object id (1 the ownship, 2 the bandit).
 type footage map[int][]still
 
-// view opens a recording by id from AIR_FOOTAGE, or skips the test saying why.
+// view opens a recording by id from testdata, or else from AIR_FOOTAGE, or
+// skips the test saying why.
 func view(t *testing.T, id string) footage {
 	t.Helper()
-	root := os.Getenv("AIR_FOOTAGE")
-	if root == "" {
-		t.Skipf("scene needs recording %s: set AIR_FOOTAGE to the recordings directory", id)
-	}
-	path := filepath.Join(root, id)
-	file, err := os.Open(path)
+	file, err := os.Open(filepath.Join("testdata", id+".acmi.gz"))
 	if err != nil {
-		t.Skipf("scene needs recording %s, absent from AIR_FOOTAGE=%s", id, root)
+		root := os.Getenv("AIR_FOOTAGE")
+		if root == "" {
+			t.Skipf("scene needs recording %s: absent from testdata, and AIR_FOOTAGE names no recordings directory", id)
+		}
+		if file, err = os.Open(filepath.Join(root, id)); err != nil {
+			t.Skipf("scene needs recording %s, absent from testdata and from AIR_FOOTAGE=%s", id, root)
+		}
 	}
 	defer file.Close()
 	zipped, err := gzip.NewReader(file)
