@@ -37,6 +37,8 @@ type routine struct {
 	branch    string      // the law that set the stick this tick
 	velocity  flight.Vec3 // mine a tick ago: the turn I am flying, for the pass
 	away      flight.Vec3 // the way a pass inside the bubble is being cleared, latched until the range opens; zero while none is
+	running   int         // ticks he has been running away from me: faster, not turning, the range opening beyond 600 m
+	chasing   bool        // pursuing him, from three seconds of his running until he is inside gun range or turns
 }
 
 // drive flies the scripted doctrine for one tick, from what decide() last saw.
@@ -196,6 +198,28 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	} else {
 		s.away = flight.Vec3{}
 	}
+
+	// THE CHASE: a jet faster than me, flying straight and opening the range
+	// beyond 600 m cannot be caught by turning, and the fight law's full alpha
+	// behind him bled the ace to the regain's floor and back for minutes (106 s
+	// of four below 194 kt), handing a pilot who turns back a slow bandit. Once
+	// he has run for three seconds the bandit pursues: the near-nose blend of
+	// the gun, and a pull only as hard as the speed affords, the fighting
+	// alpha scaled by the speed over corner squared, until he stops running.
+	// Three seconds keeps it out of the turning fight, where his regain opens
+	// the range for a second or two: the fights against mimic read as they did
+	// without it. A cap of two g lost him (21 km behind at 650 kt), and a
+	// floor on the push changed nothing. Held only while he ran, rather than
+	// to gun range or his turn, a novice fight went by at 94 m in its deck
+	// recovery: 2 of 256 with a close approach after the merge against 1.
+	steady := !breaking && !gunning && !clearing && span > 600 && bending(&seen) <= 15
+	if steady && seen.velocity.Length() > speed && now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) > 0 {
+		s.running++
+	} else {
+		s.running = 0
+	}
+	s.chasing = steady && (s.chasing || s.running >= 180) // held until he is inside gun range or turns
+	pursuing := s.chasing
 	// A nose-low slice, the lift vector 20 or 35 degrees below him while he sat
 	// more than 45 degrees off, read 8/8 and 9/7 over the joust's 16 against
 	// 8/8, and in the replay of 01a10e335a moved the ace's first heater from
@@ -223,7 +247,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// after the merge went from 1 of 256 to 6 against mimic. Declined.
 	const fine = 10.0
 	w := 1.0
-	if gunning {
+	if gunning || pursuing {
 		w = clamp(angle/fine, 0, 1)
 	}
 	roll := 0.0
@@ -247,6 +271,9 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		offset := math.Atan2(want.Dot(up), want.Dot(axis)) * 180 / math.Pi
 		goal = goal*w + (one+2*offset)*(1-w)
 	}
+	if pursuing {
+		goal = math.Min(goal, b.skill.alpha*clamp(math.Pow(speed/corner(m), 2), 0.3, 1)) // only as hard as the speed affords
+	}
 	// Inside 1.5 km the fighting alpha is held whatever the nose is doing, which
 	// is what sustains a turning fight; against a jet that is not turning the
 	// pull is sized by the angle as it is further out. Held at the full alpha,
@@ -264,6 +291,8 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	s.branch = "fight"
 	if breaking {
 		s.branch = "break"
+	} else if pursuing {
+		s.branch = "pursue"
 	} else if clearing {
 		s.branch = "clear"
 	} else if gunning {

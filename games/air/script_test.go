@@ -419,11 +419,14 @@ func TestScriptLowFight(t *testing.T) {
 	}
 }
 
-// TestScriptStraight: on the gun behind a jet 300 m dead ahead the scripted ace
-// presses on a good part of four seconds with its nose within 1.5 degrees of
-// him. It rolled through 360 degrees, 33 degrees off him, and never fired when
-// the lift vector chased the direction of a 3-degree offset; 116 frames at 1.9
-// degrees with the in-plane correction at half its gain.
+// TestScriptStraight: against a jet that is not turning. On the gun behind one
+// 300 m dead ahead the scripted ace presses on a good part of four seconds with
+// its nose within 1.5 degrees of him. It rolled through 360 degrees, 33 degrees
+// off him, and never fired when the lift vector chased the direction of a
+// 3-degree offset; 116 frames at 1.9 degrees with the in-plane correction at
+// half its gain. Chasing one that flies straight away and outruns it, it
+// pursues him inside 4 km and spends under 70 s of four minutes below 194 kt;
+// at full fighting alpha it cycled to the regain's floor and back for 93.
 func TestScriptStraight(t *testing.T) {
 	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: 200})
@@ -444,5 +447,29 @@ func TestScriptStraight(t *testing.T) {
 	}
 	if firing < 125 || worst > 1.5 {
 		t.Errorf("a jet 300 m dead ahead: the trigger held %d frames of 240, the nose up to %.1f degrees off him after the first second", firing, worst)
+	}
+
+	c := NewBandit("ace", 9, 250000, "", false, false, "", 0, false)
+	c.Spawn(flight.Vec3{X: 2778, Y: altitude}, flight.Vec3{X: -220})
+	target := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
+	target.State.Position, target.State.Velocity, target.State.Attitude = flight.Vec3{X: -2778, Y: altitude}, flight.Vec3{X: 170}, flight.Look(flight.Vec3{X: 1})
+	slow, pursued, farthest := 0, 0, 0.0
+	for tick := 0; tick < 60*240; tick++ {
+		target.Step(flight.Inputs{Throttle: 0.45})
+		target.State.Encode(words)
+		c.Mirror(words, false, true)
+		c.Step()
+		if tick > 60*30 && c.State().Velocity.Length() < 100 {
+			slow++
+		}
+		if c.Mode() == "pursue" {
+			pursued++
+		}
+		if tick > 60*30 {
+			farthest = math.Max(farthest, target.State.Position.Subtract(c.State().Position).Length())
+		}
+	}
+	if slow > 60*70 || pursued == 0 || farthest > 4000 {
+		t.Errorf("chasing a jet flying straight away it spent %d s below 194 kt and %d s pursuing, and let him get %.0f m away", slow/60, pursued/60, farthest)
 	}
 }
