@@ -38,6 +38,7 @@ type skill struct {
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
 	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go): how hard this pilot will hold the wing loaded in a turning fight
+	plume      float64 // how much of the cold cone the scripted doctrine flies in military power while his nose bears (script.go reheat): 0 never, 1 the whole of it
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a novice flies
@@ -85,9 +86,16 @@ type skill struct {
 // perception, discipline, and trigger-cadence humanities the code applies
 // beyond this table.
 var skills = map[string]skill{
+	// The scripted novice wins about one fight in eleven against mimic, short
+	// of the one in four the target sets. Declined, flying the script on its
+	// own row: the pilot's library (the led aim and the run-in's lead turn), a
+	// 0.75 s look and the pilot's 16-tick cadence won 15 and lost 48 of 64, but
+	// met him at 139 m in TestScriptPass's pursuit; with half the wander as
+	// well, 11 and 53 with passes inside the bubble down to 16 m. Its own
+	// run-in with the led aim won 4 of 63, and no single dial moved it.
 	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1},
 	// The superhuman IS the ace with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the ace's 600 and 0.06; neither is a human limit (one is gun
@@ -114,7 +122,7 @@ var skills = map[string]skill{
 	// tier IS. If the finding is to be acted on, it belongs in something the
 	// machine may honestly carry - the commitment that governs how long a plan
 	// survives, not the rate at which the jet is allowed to think.
-	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true, alpha: 34},
+	"superhuman": {delay: 0, cadence: 1, wander: 0, pull: 7.5, library: 4, discipline: 1.0, react: 0, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, machine: true, alpha: 34, plume: 1},
 }
 
 // capped is the aero cap applied to a commanded g: never far past what the
@@ -909,6 +917,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	if b.mode == "script" {
 		a.latest = i.drive(slot, a, tick)
 	} else {
+		i.overtake(a, b)
 		a.latest = b.steer(a.model, tick)
 	}
 	a.latest.Jammer = b.jam // the armed level, brain-driven for bots the way a client reports it for humans (same equipment, same trade-offs)

@@ -185,20 +185,54 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	now := seen.position
 	astern := gunning && me.Position.Subtract(now).Dot(seen.velocity) < 0 // on the gun from behind him: an overtake
-	if !breaking && (b.skill.library < 3 || astern || s.away.Length() > 0.5) {
+	// Fast in a guns match: closing faster than 60 m/s with no missiles in the
+	// match. With no missiles the fight comes back round to a second merge,
+	// and the instructor tiers met it on the gun at 98-139 m and crossed later
+	// at 14-63 m: against mimic with the missiles off, 76 of 128 fights had a
+	// pass inside the bubble after the merge, and 1 with this (in the deck
+	// recovery, which outranks every branch near the water). At 100 m/s it
+	// tripped late on a jet climbing nose on at the bandit and left 3; held to
+	// head-on, both noses within 30 degrees of the other jet, it left 9.
+	// Declined: in every match, on every gun pass closing faster than 100 m/s, it left 19
+	// (15 with the five-second look) but took the circles, the ace's fast
+	// one-circle from 21/1 to 7/3, the superhuman's to 7/11, the ace's slow
+	// one-circle to 15/6; on every fast pass, gun or not, the superhuman's
+	// heater jousts went from 29/2 and 32/0 to 16/12 and 20/11; head-on in a
+	// heater match as well, the superhuman's in wind to 20/11. A floor of 1.5 s
+	// before the pass on the trip, which the gun-tied form needed, read the
+	// same 128 fights here.
+	fast := false
+	if gap := now.Subtract(me.Position); !i.missiles && gap.Length() > 1 {
+		fast = me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize()) > 60
+	}
+	if !breaking && (b.skill.library < 3 || astern || fast || s.away.Length() > 0.5) {
 		if now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) >= 0 {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
 		if s.away.Length() < 0.5 {
 			wing := math.Min(b.skill.pull, m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2)) // the g the wing has at this speed
+			// The five-second look on a fast pass as well: with the overtake's
+			// three seconds, 5 of the 36 head-on passes went inside the bubble.
 			ahead, room := 5.0, 1.6*bubble
-			if b.skill.library >= 3 {
-				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
-			} else {
+			switch {
+			case b.skill.library < 3:
 				ahead += 3 * clamp((3-wing)/2, 0, 1)
+			case !fast:
+				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
 			}
 			if miss, when := nearest(&seen, me, now, own, math.Max(ahead, 5)); when > 0.1 && when < ahead && miss.Length() < room {
-				s.away = escape(miss, when, me, me.Position.Y < now.Y, wing)
+				// Chased: his nose within 30 degrees of me and his turn carrying
+				// it toward me. A jet crossing on a straight line to the meeting
+				// point has its nose on me too, and does not follow.
+				from := me.Position.Subtract(now) // him to me
+				chased := false
+				if from.Length() > 1 && bending(&seen) > 10 {
+					from = from.Normalize()
+					path := seen.velocity.Normalize()
+					toward := from.Subtract(path.Scale(from.Dot(path)))
+					chased = b.prey.nose.Dot(from) > math.Cos(30*math.Pi/180) && seen.swing.Dot(toward) > 0
+				}
+				s.away = escape(miss, when, me, me.Position.Y < now.Y, chased, wing)
 			}
 		}
 		if s.away.Length() > 0.5 {
@@ -229,6 +263,17 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	s.chasing = steady && (s.chasing || s.running >= 180) // held until he is inside gun range or turns
 	pursuing := s.chasing
+	// Conceded height. Under a jet perched 300 m or more above with the energy
+	// to stay there, the fight law zooms at a climb it cannot finish and bleeds
+	// to the regain's floor: in the perch probes (guns, 24 fights each) the
+	// script lingered beneath him 77.6% and 44.2% of the fight, handing the
+	// pouncer 2.1 s of gun windows a fight, and lost none. Declined: extending
+	// level away while he held the height and was not pointing at it, beyond
+	// 2 km or turning under a g, in matches without missiles, took that to
+	// 10.9%, 27.8% and 0.2 s, but in guns jousts against mimic he came down on
+	// its tail and the fights with a pass inside 150 m went from 5 to 18 of
+	// 256 (closest 12 m); flown as a level turn in heater matches at every
+	// range, the ace's heater jousts fell from 32/0 31/1 to 23/7 19/13.
 	// A nose-low slice, the lift vector 20 or 35 degrees below him while he sat
 	// more than 45 degrees off, read 8/8 and 9/7 over the joust's 16 against
 	// 8/8, and in the replay of 01a10e335a moved the ace's first heater from
@@ -296,6 +341,17 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	if span < 1500 && bending(b.prey) > 15 {
 		goal = b.skill.alpha
 	}
+	// The regulator is proportional on alpha alone and the flight control law
+	// takes the stick as g, so at no error the stick asks for one g: above
+	// about 250 kt the pull droops and the bandit porpoises, alpha 28 to 2
+	// degrees and back every 1.8 s with the stick at 0.9. Declined, the stick
+	// that holds the present g fed forward, (nz - 1) / (limit - 1): the alpha
+	// held steady and the circles strengthened (slow one-circle, ace 18/2 to
+	// 23/0, superhuman 18/3 to 24/0), but the tighter fights brought passes
+	// inside the bubble in 4 of 256 heater jousts against none and 12 of 256
+	// guns jousts against 7, and the fast-pass guard in every match that would
+	// hold them took the slow two-circle to 0/19. Fed forward only while
+	// clearing it left 9 of 256 guns jousts.
 	pitch := clamp((goal-riding)/8, -1, limit)
 	// A clear below the wings is pushed, rolled so the push goes the way it
 	// lies. Rolled inverted to pull, a slow wing spent the clear in the roll,
@@ -371,14 +427,20 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 //     23/1, 16/6, 20/3, 12/4; 90 deg 21/3, 11/9, 22/1, 11/4
 //   - 40 deg, 60 above 130 m/s (this): 23/1, 22/1, 23/1, 13/2; 60 above
 //     150 m/s 22/2, 22/1, 23/1, 13/2; 90 above 150 m/s 21/2, 22/1, 23/1, 11/4
+//
+// The pilot tier flies three-quarters of that cone (plume): against mimic, 32
+// fights in still air and wind, it won 41 and lost 18 where it won 34 and lost
+// 29 without the plume, the two in three the target asks for; with the whole
+// cone 45 and 10, with half 37 and 23. Flown cold through a clear as well, a
+// clear tripped and short of speed met him at 106 m, so a clear is lit.
 func (i *instance) reheat(b *brain, me *flight.State, span, speed float64) float64 {
 	n := &b.tactics.script.cold
-	if b.skill.library < 3 || !i.missiles || span >= b.tactics.missile.span || b.routine.regaining {
-		return 1
+	if b.skill.plume == 0 || !i.missiles || span >= b.tactics.missile.span || b.routine.regaining || b.routine.away.Length() > 0.5 {
+		return 1 // and lit while clearing a pass: the speed is what opens it
 	}
-	cone := n.cone
+	cone := n.cone * b.skill.plume
 	if speed > n.speed {
-		cone = n.wide
+		cone = n.wide * b.skill.plume
 	}
 	if back, _ := i.bearing(b.prey.position, me.Position); b.prey.nose.Dot(back) > math.Cos(cone*math.Pi/180) {
 		return 0
@@ -451,6 +513,52 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float
 	return miss, when
 }
 
+// overtake is the planner's reflex against flying into its target from
+// behind: once the pass, both jets flown on as turns, would come inside 1.2
+// bubbles within three seconds while it closes on him from astern faster than
+// 100 m/s, the aim
+// goes the way escape chooses at the full pull and the gun waits, latched
+// until the range opens. The planner's rehearsal scores a line inside 70 m
+// down, but against a constant arc: in TestJink the ace overtook a jinker
+// reversing every second or two at 170 m/s through high, low, saddle, lag and
+// screw and rammed it. With this nobody rams it and the rounds landed still
+// climb the ladder (pilot 97, ace 184, superhuman 314). At any closure it broke
+// off ordinary gun attacks on a drone flying straight, whose pass projects as
+// a collision course: TestDroneKill's kills fell from 3, 12, 11 and 12 to 1,
+// 9, 12 and 10, and the ladder inverted.
+func (i *instance) overtake(a *craft, b *brain) {
+	s := &b.routine
+	me := &a.model.State
+	if b.prey == nil || b.target < 0 {
+		s.away = flight.Vec3{}
+		return
+	}
+	quarry := i.aircraft[b.target]
+	if quarry == nil || !quarry.alive || quarry.model == nil {
+		s.away = flight.Vec3{}
+		return
+	}
+	him := &quarry.model.State
+	gap := him.Position.Subtract(me.Position)
+	if gap.Length() > 1500 || gap.Dot(him.Velocity.Subtract(me.Velocity)) >= 0 {
+		s.away = flight.Vec3{} // far, or the range is opening: the pass is over
+		return
+	}
+	if s.away.Length() < 0.5 && me.Position.Subtract(him.Position).Dot(him.Velocity) < 0 && me.Velocity.Subtract(him.Velocity).Dot(gap.Normalize()) > 100 {
+		seen := *b.prey
+		seen.position, seen.velocity = him.Position, him.Velocity // in plain sight this close
+		if miss, when := nearest(&seen, me, him.Position, flight.Vec3{}, 3); when > 0.1 && when < 3 && miss.Length() < 1.2*bubble {
+			speed := me.Velocity.Subtract(a.model.Gust()).Length()
+			wing := math.Min(b.skill.pull, a.model.Airframe.Limit.Positive*math.Pow(speed/corner(a.model), 2))
+			s.away = escape(miss, when, me, me.Position.Y < him.Position.Y, false, wing)
+		}
+	}
+	if s.away.Length() > 0.5 {
+		b.aim = me.Velocity.Normalize().Add(s.away.Scale(2)).Normalize()
+		b.g, b.shoot = b.skill.pull, false
+	}
+}
+
 // escape is the way to clear a pass coming inside the bubble: the way the miss
 // already lies, or over him, or under when below, when the miss is too small
 // to have a direction, kept while the wing can open the pass to 1.6 bubbles by
@@ -458,7 +566,15 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float
 // under opens it most, gravity counted: over him the lift is spent holding the
 // jet up, under him gravity adds to it. At 165 kt over him came to 71 m by a
 // pass 5 s out. The water is the deck recovery's.
-func escape(miss flight.Vec3, when float64, me *flight.State, below bool, wing float64) flight.Vec3 {
+//
+// Chased, his nose within 30 degrees of me, his path follows mine, and the way
+// across his height meets him: the ace at 151 kt, 950 ft above mimic climbing
+// at it nose on, took under for gravity and passed him at 66 m. So chased, the
+// choice is the vertical away from him or the miss's own way kept level. Held to that
+// against every jet, 28 of the 84 crossings in TestScriptClearsTheCrossing went
+// inside the bubble: a jet crossing in a straight line from below carries on
+// above the meeting point, and under is the way out.
+func escape(miss flight.Vec3, when float64, me *flight.State, below, chased bool, wing float64) flight.Vec3 {
 	away := miss.Normalize()
 	if miss.Length() < bubble/2 {
 		away = flight.Vec3{Y: 1}
@@ -477,7 +593,14 @@ func escape(miss flight.Vec3, when float64, me *flight.State, below bool, wing f
 	}
 	if _, kept := reach(away); kept < 1.6*bubble {
 		best := kept
-		for _, c := range []flight.Vec3{{Y: 1}, {Y: -1}, miss} {
+		ways := []flight.Vec3{{Y: 1}, {Y: -1}, miss}
+		if chased { // over him or under when below, or the miss's own way kept level
+			ways = []flight.Vec3{{Y: 1}, {X: miss.X, Z: miss.Z}}
+			if below {
+				ways[0] = flight.Vec3{Y: -1}
+			}
+		}
+		for _, c := range ways {
 			if d, far := reach(c); far > best {
 				best, away = far, d
 			}

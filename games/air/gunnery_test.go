@@ -485,11 +485,14 @@ func TestJink(t *testing.T) {
 			}
 			place(i, 0, bot, 1800)
 			me := &i.aircraft[0].model.State
-			done := false
+			done, rammed := false, false
 			for tick := uint64(0); tick < 60*180 && !done; tick++ {
 				i.events = i.events[:0]
 				i.Step(tick, map[int][]game.Input{0: {{Sequence: 1, Data: jinker(me, &i.aircraft[bot].model.State, tick)}}})
 				for _, e := range i.events {
+					if e["kind"] == "kill" && e["slot"] == 0 && e["cause"] == "midair" {
+						rammed = true
+					}
 					if e["kind"] != "hit" {
 						continue
 					}
@@ -506,6 +509,9 @@ func TestJink(t *testing.T) {
 				}
 				human := i.aircraft[0]
 				if human.model == nil || !human.alive {
+					if rammed { // a midair has no damager either: the bot flew into its target, which the never-list forbids
+						t.Fatalf("%s seed %d: the %s collided with the jinker at %.1f s", level, seed, level, float64(tick)/60)
+					}
 					if human.condition.Damager < 0 {
 						t.Fatalf("%s seed %d: the jinker flew into the sea at %.1f s with nobody having hit it — the instrument is measuring its own script, not the bot",
 							level, seed, float64(tick)/60)

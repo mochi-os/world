@@ -402,6 +402,130 @@ func TestScriptClearsTheCrossing(t *testing.T) {
 	}
 }
 
+// TestScriptClearsTheHeadOn: in a guns match the fight comes back round to a
+// second merge, and the instructor tiers, whose guard flies only on a gun
+// attack from astern, met it on the gun. A jet meets the ace or the superhuman
+// head-on after the merge as it did there, the bandit at 301 kt and he at 282,
+// dead ahead or 10 or 20 degrees off its nose, level, climbing or diving 10
+// degrees, 5.5 or 7 s out: it goes by at 150 m or more.
+func TestScriptClearsTheHeadOn(t *testing.T) {
+	for _, level := range []string{"ace", "superhuman"} {
+		for _, out := range []float64{5.5, 7} {
+			for _, angle := range []float64{180, 170, 160} {
+				for _, dive := range []float64{-10, 0, 10} {
+					b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+					b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 155})
+					b.craft.brain.routine.passed = true
+					r, d := angle*math.Pi/180, dive*math.Pi/180
+					heading := flight.Vec3{X: math.Cos(r) * math.Cos(d), Y: -math.Sin(d), Z: math.Sin(r) * math.Cos(d)}
+					meet := flight.Vec3{X: 155 * out, Y: 4500}
+					pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+					pm.State = flight.Level(pm, meet.Subtract(heading.Scale(145*out)), heading, 145, fuel)
+					pm.State.Velocity = heading.Scale(145)
+					words := make([]float64, flight.Size)
+					least := math.Inf(1)
+					for tick := 0; tick < int(60*(out+3)); tick++ {
+						pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+						pm.State.Encode(words)
+						b.Mirror(words, false, true)
+						b.Step()
+						least = math.Min(least, pm.State.Position.Subtract(b.State().Position).Length())
+					}
+					if least < bubble {
+						t.Errorf("%s: a jet head-on %.0f degrees, diving %.0f, %.1f s out, went by at %.0f m, inside the bubble", level, 180-angle, dive, out, least)
+					}
+				}
+			}
+		}
+	}
+}
+
+// TestEscapeKeepsHisHeight: a slow wing chased by a jet below it never clears
+// downward across his height, and one above it never upward; against a jet
+// that is not pointing at it, under is still taken for the gravity it adds
+// (the crossings in TestScriptClearsTheCrossing). The case is mimic climbing
+// nose on at the ace at 151 kt, 950 ft below it, 4.6 s from a collision.
+func TestEscapeKeepsHisHeight(t *testing.T) {
+	me := &flight.State{Position: flight.Vec3{Y: 1700}, Velocity: flight.Vec3{X: 78}}
+	miss := flight.Vec3{Y: 20}
+	if away := escape(miss, 4.6, me, false, true, 1.4); away.Y < 0 {
+		t.Errorf("chased from below, the clear went %+.2f: down across his height", away.Y)
+	}
+	if away := escape(miss.Scale(-1), 4.6, me, true, true, 1.4); away.Y > 0 {
+		t.Errorf("chased from above, the clear went %+.2f: up across his height", away.Y)
+	}
+	if away := escape(miss, 4.6, me, false, false, 1.4); away.Y > -0.5 {
+		t.Errorf("not chased, the slow wing took %+.2f: under, with gravity, opens it furthest", away.Y)
+	}
+}
+
+// TestScriptClearsAPursuerAway: a jet 300 m below the slow bandit climbing at
+// it nose on and turning after it at up to 3 g follows wherever it goes, so the
+// clear goes up, away from his height, never down into him (the ace in a guns
+// joust took under for gravity and passed mimic at 66 m).
+func TestScriptClearsAPursuerAway(t *testing.T) {
+	for _, level := range []string{"pilot", "ace"} {
+		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 80})
+		b.craft.brain.routine.passed = true
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		start := flight.Vec3{X: 900, Y: 1700}
+		pm.State = flight.Level(pm, start, b.State().Position.Subtract(start).Normalize(), 115, fuel)
+		words := make([]float64, flight.Size)
+		lowest := 1.0
+		for tick := 0; tick < 60*8; tick++ {
+			v := pm.State.Velocity
+			want := b.State().Position.Subtract(pm.State.Position).Normalize()
+			if turn := math.Acos(clamp(v.Normalize().Dot(want), -1, 1)); turn > 1e-6 {
+				step := math.Min(turn, 3*9.81/v.Length()/60) // at most 3 g of turn
+				v = v.Normalize().Scale(math.Cos(step)).Add(want.Subtract(v.Normalize().Scale(v.Normalize().Dot(want))).Normalize().Scale(math.Sin(step))).Scale(v.Length())
+			}
+			pm.State.Velocity = v
+			pm.State.Attitude = flight.Look(v.Normalize())
+			pm.State.Position = pm.State.Position.Add(v.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+			if b.craft.brain.play == "clear" {
+				lowest = math.Min(lowest, b.craft.brain.routine.away.Y)
+			}
+		}
+		if lowest > 0.99 {
+			t.Fatalf("%s: the guard never cleared from a pursuer climbing at it", level)
+		}
+		if lowest < 0 {
+			t.Errorf("%s: chased from below, the clear went %+.2f, down across his height", level, lowest)
+		}
+	}
+}
+
+// TestOvertakeClears: the planner's ace, 1,200 m behind a jet flying straight
+// and slow, overtaking at 130 m/s, does not fly into it: it goes by at 150 m
+// or more. Without the overtake reflex it passed through.
+func TestOvertakeClears(t *testing.T) {
+	for _, level := range []string{"pilot", "ace", "superhuman"} {
+		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b.craft.brain.scripted = false // the planner, as every server bot flies it
+		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 240})
+		b.craft.brain.routine.passed = true
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm.State = flight.Level(pm, flight.Vec3{X: 1200, Y: 4500}, flight.Vec3{X: 1}, 110, fuel)
+		pm.State.Velocity = flight.Vec3{X: 110}
+		words := make([]float64, flight.Size)
+		least := math.Inf(1)
+		for tick := 0; tick < 60*15; tick++ {
+			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+			least = math.Min(least, pm.State.Position.Subtract(b.State().Position).Length())
+		}
+		if least < bubble {
+			t.Errorf("%s: overtaking a slow jet from behind it went by at %.0f m", level, least)
+		}
+	}
+}
+
 // TestScriptLowFight: below 8,200 ft the fight law sets the stick as it does
 // above, easing off to a third of the stick or less when he sits ahead of the
 // nose; mimic's floor there, a third of the stick along the lift vector at any

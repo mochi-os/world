@@ -1123,8 +1123,9 @@ func jousted(i *instance, bot int) {
 // joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
 // weapons held until the pass - flying the scripted doctrine the user meets
 // there. The lead turn alternates toward and away seed by seed; AIR_WIND
-// flies both jets in single player's weather, and AIR_FULL flies mimic at full
-// aft stick in the close fight. Each tier's line says how many merges, and how
+// flies both jets in single player's weather, AIR_FULL flies mimic at full
+// aft stick in the close fight, and AIR_GUNS flies the guns joust, with the
+// missiles off, where a fight comes back round to a second merge. Each tier's line says how many merges, and how
 // many later passes, came inside the 150 m bubble the never-list holds the
 // bandit to. The target is the user's: they win most against the novice, lose
 // most against the pilot, and rarely or never beat the ace or the superhuman.
@@ -1170,7 +1171,7 @@ func TestDifficulty(t *testing.T) {
 			pilot := mimic([]float64{1, -1}[n%2])
 			pilot.full = os.Getenv("AIR_FULL") != ""
 			return pilot
-		}, true, 0, seeds, 150, setup)
+		}, os.Getenv("AIR_GUNS") == "", 0, seeds, 150, setup)
 		fmt.Println(report("mimic", level, b))
 		fmt.Printf("       inside %.0f m: the merge in %d of %d fights (closest %.0f m), a later pass in %d (closest %.0f m)\n", bubble, b.merges, b.seeds, b.merge, b.passes, b.pass)
 		fmt.Printf("       bandit departed %.2f%% of %.0f s flown\n", 100*float64(b.departed[0])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60)
