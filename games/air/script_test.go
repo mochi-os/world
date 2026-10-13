@@ -440,6 +440,60 @@ func TestScriptClearsTheHeadOn(t *testing.T) {
 	}
 }
 
+// TestScriptClearsTheSlowGunPass: on their fight weight the superhuman met
+// mimic nose to nose on the gun in heater jousts, at 165-200 kt and 32 degrees
+// of alpha with under 2 g of wing, and went by inside the bubble at about 32 s
+// in 11 of 64 (closest 55 m). Those eleven fights, flown again to 40 s: it
+// goes by at 150 m or more in every one.
+func TestScriptClearsTheSlowGunPass(t *testing.T) {
+	heavy(t)
+	b := sweepFrom(t, "superhuman", "joust", func() flyer { return mimic(1) }, true, 0, 0, 40, func(i *instance, bot int) {
+		jousted(i, bot)
+		i.aircraft[bot].brain.scripted = true
+	}, 4, 18, 22, 28, 40, 42, 48, 50, 56, 62, 64)
+	if b.pass < bubble {
+		t.Errorf("the superhuman went by mimic at %.0f m after the merge in %d of the %d fights, inside the bubble", b.pass, b.passes, b.seeds)
+	}
+}
+
+// TestScriptMergesClear: on their fight weight the pilot tier and the novice,
+// flying their run-in level, met mimic at the merge at 93-149 m, mimic's lead
+// turn closing the pass faster than they saw it. Those fights flown again to
+// the merge: every one goes by at 150 m or more.
+func TestScriptMergesClear(t *testing.T) {
+	heavy(t)
+	for _, c := range []struct {
+		level      string
+		guns, wind bool
+		seeds      []uint64
+	}{
+		{"pilot", false, false, []uint64{40, 64}},
+		{"pilot", false, true, []uint64{4, 8, 12, 40, 56, 58, 64}},
+		{"pilot", true, false, []uint64{40, 64}},
+		{"pilot", true, true, []uint64{4, 56, 64}},
+		{"novice", false, false, []uint64{56}},
+		{"novice", false, true, []uint64{56}},
+		{"novice", true, false, []uint64{56}},
+		{"novice", true, true, []uint64{56}},
+	} {
+		start := jousted
+		if c.wind {
+			start = blown
+		}
+		n := uint64(0)
+		b := sweepFrom(t, c.level, "joust", func() flyer {
+			n++
+			return mimic([]float64{1, -1}[c.seeds[n-1]%2])
+		}, !c.guns, 0, 0, 15, func(i *instance, bot int) {
+			start(i, bot)
+			i.aircraft[bot].brain.scripted = true
+		}, c.seeds...)
+		if b.merges > 0 {
+			t.Errorf("the %s, guns %v, wind %v: the merge came inside the bubble in %d of %d fights, closest %.0f m", c.level, c.guns, c.wind, b.merges, b.seeds, b.merge)
+		}
+	}
+}
+
 // TestEscapeKeepsHisHeight: a slow wing chased by a jet below it never clears
 // downward across his height, and one above it never upward; against a jet
 // that is not pointing at it, under is still taken for the gravity it adds
@@ -462,7 +516,10 @@ func TestEscapeKeepsHisHeight(t *testing.T) {
 // TestScriptClearsAPursuerAway: a jet 300 m below the slow bandit climbing at
 // it nose on and turning after it at up to 3 g follows wherever it goes, so the
 // clear goes up, away from his height, never down into him (the ace in a guns
-// joust took under for gravity and passed mimic at 66 m).
+// joust took under for gravity and passed mimic at 66 m). Judged while he is
+// below and his nose is on the bandit: once he has climbed past it a clear
+// takes the way his climb leaves open, and with a 2-bubble margin a second
+// one does, down while his climb carries him up through its height.
 func TestScriptClearsAPursuerAway(t *testing.T) {
 	for _, level := range []string{"pilot", "ace"} {
 		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
@@ -472,7 +529,7 @@ func TestScriptClearsAPursuerAway(t *testing.T) {
 		start := flight.Vec3{X: 900, Y: 1700}
 		pm.State = flight.Level(pm, start, b.State().Position.Subtract(start).Normalize(), 115, fuel)
 		words := make([]float64, flight.Size)
-		lowest := 1.0
+		lowest, cleared := 1.0, false
 		for tick := 0; tick < 60*8; tick++ {
 			v := pm.State.Velocity
 			want := b.State().Position.Subtract(pm.State.Position).Normalize()
@@ -486,11 +543,16 @@ func TestScriptClearsAPursuerAway(t *testing.T) {
 			pm.State.Encode(words)
 			b.Mirror(words, false, true)
 			b.Step()
+			line := b.State().Position.Subtract(pm.State.Position)
+			chasing := line.Y > 0 && v.Normalize().Dot(line.Normalize()) > math.Cos(30*math.Pi/180)
 			if b.craft.brain.play == "clear" {
-				lowest = math.Min(lowest, b.craft.brain.routine.away.Y)
+				cleared = true
+				if chasing {
+					lowest = math.Min(lowest, b.craft.brain.routine.away.Y)
+				}
 			}
 		}
-		if lowest > 0.99 {
+		if !cleared {
 			t.Fatalf("%s: the guard never cleared from a pursuer climbing at it", level)
 		}
 		if lowest < 0 {

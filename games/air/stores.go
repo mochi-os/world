@@ -207,12 +207,15 @@ func bots_loadout(weapons string) loadout {
 	switch weapons {
 	case "guns":
 		return stores_normalize(nil)
-	case "open":
+	case "open": // the client's Fox 3 preset, its centreline tank included (2026-10-12)
 		return stores_normalize(map[string]any{
 			"1": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
 			"2": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"3": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
 			"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"5": map[string]any{"fixture": "pylon", "stores": []any{"tank"}},
 			"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			"7": map[string]any{"fixture": "pylon", "stores": []any{"120c"}},
 			"8": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
 			"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
 		})
@@ -224,6 +227,29 @@ func bots_loadout(weapons string) loadout {
 			"9": map[string]any{"fixture": "rail", "stores": []any{"9m"}},
 		})
 	}
+}
+
+// bots_fuel is the internal fuel a bot spawns with for its weapons class
+// (decided 2026-10-12). Within visual range it is the most that leaves its fit
+// at the weight the 7.5 g placard is written at, so it fights on the whole of
+// its wing from the merge: 4,000 kg with the gun alone, 2,904 kg on the twin
+// rails. The BVR fit flies full internal, as its fight opens where nobody
+// pulls the placard for minutes. A human's stores presets load a round figure
+// near the same weight; the bot no longer copies the player's slider, which
+// may be the wrong choice.
+func bots_fuel(weapons string) float64 {
+	airframe := aircraft.Get("fa18c")
+	if weapons == "open" || airframe.Limit.Reference <= 0 {
+		return airframe.Mass.Fuel
+	}
+	room := airframe.Limit.Reference - airframe.Mass.Empty
+	mask := stores_mask(bots_loadout(weapons), 0, 0)
+	for i := range airframe.Stores {
+		if mask&(1<<uint(i)) != 0 {
+			room -= airframe.Stores[i].Mass + airframe.Stores[i].Fuel
+		}
+	}
+	return math.Max(0, math.Min(room, airframe.Mass.Fuel))
 }
 
 // stores_entries names the catalog entries a station's slot attaches: the

@@ -12,6 +12,7 @@ import (
 
 	"world/game"
 	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 // pounds is the wire's unit — the UI speaks it like the IFEI — so every
@@ -133,5 +134,52 @@ func TestFuelRidesWithTheLoadout(t *testing.T) {
 	}
 	if _, found := a.loadout["fuel"]; found {
 		t.Errorf("the loadout grew a %q station from the fuel key", "fuel")
+	}
+}
+
+// A bot spawns on the load its fit fights best on, never the match's default
+// or the player's (decided 2026-10-12). Within visual range its fit and fuel
+// weigh what the 7.5 g placard is written at, so the flight control system
+// grants the whole of it; the BVR fit is the Fox 3 preset, tank included, on
+// full internal. Single player's bandit carries the same load as a server bot.
+func TestBotsFuel(t *testing.T) {
+	_, airframe := aircraft.Grant("")
+	for _, weapons := range []string{"guns", "fox2", "open"} {
+		i := build(t, "furball", map[string]any{"weapons": weapons, "fuel": 10800.0, "bots": map[string]any{"drone": 1.0}}, 0)
+		var bot *craft
+		for _, a := range i.aircraft {
+			if a.bot {
+				bot = a
+			}
+		}
+		if bot == nil {
+			t.Fatalf("%s: the match spawned no bot", weapons)
+		}
+		i.Step(1, nil)
+		bandit := NewBandit("ace", 1, 250000, "", false, weapons != "guns", weapons, 0, false)
+		bandit.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
+		bandit.Step()
+		for name, a := range map[string]*craft{"server bot": bot, "bandit": bandit.craft} {
+			m := a.model
+			if weapons == "open" {
+				if math.Abs(m.State.Fuel-airframe.Mass.Fuel) > 1 {
+					t.Errorf("%s %s: spawned with %.0f kg, want full internal %.0f", weapons, name, m.State.Fuel, airframe.Mass.Fuel)
+				}
+				if m.State.External.Centre < 1000 || len(stores_amraams(a.loadout)) != 6 {
+					t.Errorf("%s %s: carries %.0f kg on the centreline and %d AMRAAMs, want the Fox 3 preset's full tank and six", weapons, name, m.State.External.Centre, len(stores_amraams(a.loadout)))
+				}
+				continue
+			}
+			if math.Abs(m.Mass()-airframe.Limit.Reference) > 2 {
+				t.Errorf("%s %s: weighs %.0f kg on %.0f kg of fuel, want the %.0f kg the full placard is written at", weapons, name, m.Mass(), m.State.Fuel, airframe.Limit.Reference)
+			}
+		}
+	}
+	// An explicit load is bounded by the tank, as a player's is: a scene that
+	// read a recording's empty first sample asked for 7,782 kg and flew it.
+	over := NewBandit("ace", 1, 250000, "", false, false, "guns", 7782, false)
+	over.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
+	if got := over.craft.model.State.Fuel; got > airframe.Mass.Fuel+1 {
+		t.Errorf("a 7,782 kg request spawned the bandit with %.0f kg, past the tank's %.0f", got, airframe.Mass.Fuel)
 	}
 }

@@ -201,11 +201,28 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// heater match as well, the superhuman's in wind to 20/11. A floor of 1.5 s
 	// before the pass on the trip, which the gun-tied form needed, read the
 	// same 128 fights here.
-	fast := false
-	if gap := now.Subtract(me.Position); !i.missiles && gap.Length() > 1 {
-		fast = me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize()) > 60
+	//
+	// Slow on the gun, in a heater match: on the gun but not astern of him,
+	// closing faster than 100 m/s, with under three g of wing. When both jets
+	// flew their fight weight (bots_fuel, the presets' fuel, 2026-10-12) the
+	// superhuman met mimic nose to nose on the gun at 165-200 kt, 32 degrees
+	// of alpha and under 2 g, and went by inside the bubble in 11 of 64 heater
+	// jousts at about 32 s (closest 55 m). With this it is none, the ace's one
+	// pass at 58 m apart, at a price: the superhuman lost 10 of 64 in still air
+	// where it lost 2, and the slow one-circles stayed red (ace 13/6,
+	// superhuman 15/7). The bubble outranks the record (ruled 2026-10-09, and
+	// for this trade 2026-10-12). Declined, the same 64 fights a tier, still
+	// air and wind, ace then superhuman: fast in every match at 60 m/s, 33/29
+	// 30/33 and 40/22 37/27; fast in a heater match only above 100 m/s, 34/28
+	// 30/31 and 41/22 37/27; the slow condition left out, the fast one-circle
+	// went from 24/0 to 1/23; a three or two second look never caught the pass.
+	fast, slow := false, false
+	if gap := now.Subtract(me.Position); gap.Length() > 1 {
+		closure := me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize())
+		fast = !i.missiles && closure > 60
+		slow = i.missiles && gunning && !astern && closure > 100 && m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2) < 3
 	}
-	if !breaking && (b.skill.library < 3 || astern || fast || s.away.Length() > 0.5) {
+	if !breaking && (b.skill.library < 3 || astern || fast || slow || s.away.Length() > 0.5) {
 		if now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) >= 0 {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
@@ -213,9 +230,31 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			wing := math.Min(b.skill.pull, m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2)) // the g the wing has at this speed
 			// The five-second look on a fast pass as well: with the overtake's
 			// three seconds, 5 of the 36 head-on passes went inside the bubble.
+			//
+			// On their fight weight (bots_fuel, the presets' fuel, 2026-10-12)
+			// mimic, lighter and pointing at the bandit, followed those clears:
+			// the guns jousts had a pass inside the bubble in 59 of 1,024 fights
+			// (seeds 1-128, every tier, still air and wind), closest 20 m. A
+			// seven-second look clearing to 2 bubbles left 36, the records the
+			// same (0-3 either way a tier); six seconds and 1.8 bubbles read 38
+			// on seeds 1-64 alone, where five read 31 and seven 21. The margin
+			// is what clears them: the seven-second look alone read 73 of the
+			// 1,024 and a nine-second one 74. Declined with it, against the
+			// passes this margin opens: choosing a clear again once he begins
+			// to chase it, and never taking a way back across the miss (31 to
+			// 28 on seeds 1-64, the ace's heater pass from 58 m to 37).
+			// Declined too, the clear let go once the miss it makes is past 1.3
+			// times the margin: the superhuman held one for 3.5 s from 600 m
+			// and went by at 364 m, its nose swung 129 degrees off him, and
+			// lost to his heater at 34.5 s; released, its still-air heater
+			// jousts read 53/9 for 53/10, with 2 passes inside the bubble where
+			// there were none, and the guns jousts 28 on seeds 1-64 for 21.
 			ahead, room := 5.0, 1.6*bubble
+			if fast {
+				ahead, room = 7, 2*bubble
+			}
 			switch {
-			case b.skill.library < 3:
+			case b.skill.library < 3 || slow:
 				ahead += 3 * clamp((3-wing)/2, 0, 1)
 			case !fast:
 				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
@@ -356,7 +395,15 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// A clear below the wings is pushed, rolled so the push goes the way it
 	// lies. Rolled inverted to pull, a slow wing spent the clear in the roll,
 	// a quarter of the stick at 165 kt, pulling up the while: 64 m by the
-	// pass where the push gave 118.
+	// pass where the push gave 118. Below the wings is the jet's own frame, so
+	// a banked jet pushes a clear that is level or climbing in the world too,
+	// at -0.3 to -1 g against the 2 g its pull had (2026-10-13). Pushed only
+	// when the clear goes down in the world, the superhuman's still-air heater
+	// jousts read 54/7 for 53/10, but 5 passed inside the bubble where none
+	// had, the guns jousts 48 on seeds 1-64 for 21, and the slow gun pass came
+	// back inside it. Declined. So was crediting the push in escape() with the
+	// third of the pull it delivers (full forward stick at 165 kt gave -0.36 g,
+	// at 272 kt -0.93): 13 of the crossings went inside the bubble.
 	if clearing && s.away.Dot(up) < -0.3 {
 		if under := s.away.Scale(-1).Subtract(axis.Scale(-s.away.Dot(axis))); under.Length() > 1e-6 {
 			roll = clamp(math.Atan2(under.Dot(right), under.Dot(up))*2.5, -1, 1)
@@ -637,7 +684,6 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	apart := me.Position.Subtract(pass).Dot(s.side)
 	clear := me.Position.Subtract(pass).Length() // the same miss in three dimensions
 	flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
-	climb := clamp(me.Velocity.Y/math.Max(me.Velocity.Length(), 1), -0.15, 0.25)
 	if span < b.tactics.script.lead && b.skill.library >= 2 {
 		s.turning = true // the novice holds its line through the pass and turns after it
 	}
@@ -702,17 +748,26 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	// every instructor pass at 247 m or more, 189-195 m without it), and no
 	// merge comes inside the bubble. Against mimic over 32: ace 32/0 31/1,
 	// superhuman 30/1 32/0, still air then wind, first heater in all 32.
+	//
+	// Every tier flies that line since both jets flew their fight weight
+	// (bots_fuel, the presets' fuel, 2026-10-12). Lighter, mimic's lead turn
+	// closed the pass faster than the pilot tier and the novice, flying their
+	// line level, saw it: the pilot met him at 115-149 m in 9 of 128 heater
+	// jousts and 5 of 128 guns jousts, its escape starting 875 m out and
+	// diving from wings level, a half roll before any pull; the novice at
+	// 93-110 m in 2 and 2, moving its line out from 1 km. On the vertical line
+	// no merge came inside the bubble in any of the 512, and won and lost in
+	// the heater jousts, still air then wind, went pilot 41/23 46/18 -> 38/25
+	// 55/8, novice 2/62 7/57 -> 3/61 6/57.
 	stop := margin + 300*b.skill.delay
 	rise := 1.0
 	if me.Position.Y < spot.Y {
 		rise = -1
 	}
-	if b.skill.library >= 3 {
-		// The line climbs, or dives, to the height of the pass: vertical off
-		// his level by the time we meet, at the closure we have.
-		travel := math.Max(me.Velocity.Length()*span/closing, 1)
-		climb = clamp((spot.Y+rise*vertical-me.Position.Y)/travel, -0.15, 0.25)
-	}
+	// The line climbs, or dives, to the height of the pass: vertical off his
+	// level by the time we meet, at the closure we have.
+	travel := math.Max(me.Velocity.Length()*span/closing, 1)
+	climb := clamp((spot.Y+rise*vertical-me.Position.Y)/travel, -0.15, 0.25)
 	switch {
 	case s.turning && clear < 1.3*bubble:
 		s.branch = "hold"

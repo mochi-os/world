@@ -264,10 +264,11 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		i.cheat.fuel, _ = cheats["fuel"].(bool)
 		i.environment.Cheat.Fuel = i.cheat.fuel // the flight core itself freezes the tank — every model made from this environment (bots here, humans at Join) inherits it, and the client's wasm core mirrors it from the welcome
 	}
-	// The match's fuel is now only a DEFAULT — for bots, which have no join
-	// request, and for a client that sends none. Every human takes the load
-	// they asked for at Join. It is read through the same bound as theirs, so
-	// there is one rule about what the tank holds rather than two.
+	// The match's fuel is now only a DEFAULT, for a client that sends none.
+	// Every human takes the load they asked for at Join, and every bot the
+	// load its fit fights best on (bots_fuel). It is read through the same
+	// bound as theirs, so there is one rule about what the tank holds rather
+	// than two.
 	i.tank = stores_fuel(session.Parameters, fuel, fuel)
 	// Practice bots: the parameter is a per-level count map {"drone": n,
 	// "novice": n, ...} — the match creator chooses how many of each. A bare
@@ -371,10 +372,10 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 				if team != "" {
 					title = fmt.Sprintf("%s%s %s", string(team[0]-32), team[1:], title)
 				}
-				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), tank: i.tank, lock: -1}
+				b := &craft{player: game.Player{Name: title, Slot: slot}, kind: "fa18c", model: m, alive: true, flared: 1e9, clouded: 1e9, bot: true, brain: mind(w.level), team: team, loadout: bots_loadout(i.weapons), tank: bots_fuel(i.weapons), lock: -1}
 				b.arm()
 				b.rearm()
-				i.spawn(slot, m, team, i.tank) // trimmed as it flies: armed first
+				i.spawn(slot, m, team, b.tank) // trimmed as it flies: armed first
 				i.aircraft[slot] = b
 				// Wingman pairs (#140): consecutive fighting bots on a side fly
 				// as a section, for the instance's life. Levels are created in

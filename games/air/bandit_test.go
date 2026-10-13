@@ -277,3 +277,26 @@ func TestMirrorShortFrame(t *testing.T) {
 		t.Fatalf("a full frame after a refused one decoded to %v, want %v", reflection.model.State.Position, flown)
 	}
 }
+
+// TestBanditCarriesItsStores: single player's bandit weighs what a server bot
+// with the same fit weighs, its missiles and rails included, from the spawn.
+func TestBanditCarriesItsStores(t *testing.T) {
+	for _, c := range []struct {
+		weapons  string
+		missiles bool
+	}{{"guns", false}, {"fox2", true}, {"open", true}} {
+		b := NewBandit("ace", 1, 250000, "", false, c.missiles, c.weapons, 2000, false)
+		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
+		b.Step()
+		m := b.craft.model
+		want := m.Airframe.Mass.Empty + m.State.Fuel + m.State.External.Wing + m.State.External.Centre
+		for i, store := range m.Airframe.Stores {
+			if stores_mask(b.craft.loadout, 0, 0)&(1<<uint(i)) != 0 {
+				want += store.Mass
+			}
+		}
+		if math.Abs(m.Mass()-want) > 1 {
+			t.Errorf("%s: the bandit weighs %.0f kg where its fit and fuel come to %.0f", c.weapons, m.Mass(), want)
+		}
+	}
+}

@@ -269,7 +269,12 @@ func replay(t *testing.T, reel footage, level string, seed uint64, start, length
 	if !found {
 		t.Fatalf("the recording has no bandit at t=%.1f", start)
 	}
-	b := NewBandit(level, seed, 250000, "", false, true, "fox2", sample.fuel, false)
+	// The load the bandit fights on now, less what the recorded one had burned
+	// by the start: the recording's own figure is the player's slider, which
+	// the bandit copied until 2026-10-12. On the recorded 4,878 kg the first
+	// turn's heater left 0.1 s after the pilot's in three seeds of eight.
+	tank := bots_fuel("fox2") - (reel[2][1].fuel - sample.fuel) // the first sample is the object's declaration, with no fuel on it
+	b := NewBandit(level, seed, 250000, "", false, true, "fox2", tank, false)
 	b.craft.brain.scripted = scripted
 	b.Spawn(position, velocity)
 	b.craft.model.State.Attitude = flight.Basis(forward, up)

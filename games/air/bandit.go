@@ -11,6 +11,8 @@
 package air
 
 import (
+	"math"
+
 	"world/game"
 	"world/games/air/aircraft"
 	"world/games/air/battle"
@@ -54,8 +56,9 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 		bot: true, brain: thought, lock: -1, loadout: bots_loadout(weapons)}
 	fighter.arm()
 	if tank <= 0 {
-		tank = fuel // the server's default load; the client passes the player's own so the joust is fought on equal tanks
+		tank = bots_fuel(weapons) // what a server bot of this class carries; the client passed the player's own until 2026-10-12, and his choice may be the wrong one
 	}
+	tank = math.Min(tank, fighter.model.Airframe.Mass.Fuel) // the tank's capacity bounds the bandit's load as stores_fuel bounds a player's
 	// A started joust, so free() and merge() hold the brain exactly as they hold
 	// it on the server. The arena was a furball, whose weapons are always free:
 	// the client held its own trigger and the bandit's gun, and the brain fired
@@ -95,6 +98,11 @@ func (b *Bandit) Spawn(position, velocity flight.Vec3) {
 	// Level, not a hand-rolled literal: a nose-on-velocity spawn carries zero
 	// alpha, sits off trim, and rides the barely-damped phugoid - accidental
 	// gun-target armour.
+	// Its stores hung first, as the server re-arms every jet before laying it
+	// down: the bare model carries only the wingtip rails, so the bandit flew a
+	// heater joust 1,100 kg light, at 7.5 g where its weight allows 6.6, until
+	// its first launch hung the rest of its missiles on it.
+	b.craft.rearm()
 	s := &b.craft.model.State
 	*s = flight.Level(b.craft.model, position, velocity, velocity.Length(), b.tank)
 	s.Engine[0] = flight.EngineState{Spool: 0.9}

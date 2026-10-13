@@ -814,10 +814,32 @@ func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles boo
 // sweepFrom is sweep with a setup that re-places the two jets after the
 // standard merge (the bot's slot is passed): the difficulty probe flies the
 // single-player joust's own start through it.
-func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int, setup func(i *instance, bot int)) bout {
+// preset is the join request of a player who pressed the client's stores
+// preset for the match (stores.ts PRESETS and FUEL): the Fox 2 fit on 6,500 lb,
+// or the gun alone on 9,000 lb. The probes' human flies what a player flies,
+// where it used to join with nothing and take the armed wingtips on the match's
+// full internal, 800-1,000 kg heavier than either preset and half a g short.
+func preset(missiles bool) map[string]any {
+	if !missiles {
+		return map[string]any{"fuel": 9000.0}
+	}
+	heater := func(fixture string) map[string]any {
+		return map[string]any{"fixture": fixture, "stores": []any{"9m"}}
+	}
+	return map[string]any{"fuel": 6500.0, "1": heater("rail"), "2": heater("rail"), "3": heater("pylon"), "7": heater("pylon"), "8": heater("rail"), "9": heater("rail")}
+}
+
+// sweepFrom flies seeds 1 to seeds, or only the seeds named in only: a test
+// that pins particular fights of a sweep flies those fights exactly.
+func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int, setup func(i *instance, bot int), only ...uint64) bout {
 	t.Helper()
 	b := bout{plays: map[string]int{}, slowest: [2]float64{math.MaxFloat64, math.MaxFloat64}, merge: math.Inf(1), pass: math.Inf(1)}
-	for seed := uint64(1); seed <= uint64(seeds); seed++ {
+	if len(only) == 0 {
+		for seed := uint64(1); seed <= uint64(seeds); seed++ {
+			only = append(only, seed)
+		}
+	}
+	for _, seed := range only {
 		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{level: 1.0}}
 		if missiles {
 			parameters["weapons"] = "fox2"
@@ -833,7 +855,7 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 			t.Fatal(err)
 		}
 		i := made.(*instance)
-		if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0}); err != nil {
+		if _, err := i.Join(game.Player{Identity: "", Name: "human", Slot: 0, Stores: preset(missiles)}); err != nil {
 			t.Fatal(err)
 		}
 		bot := -1
@@ -881,7 +903,7 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 		// The first closest approach is the merge; every later one is a pass in
 		// the fight, at whatever closure: the bubble is a separation.
 		merge, pass, previous, falling := math.Inf(1), math.Inf(1), math.Inf(1), true
-		closest, departure := "", ""                                // the closest later pass, described: when, both noses, the bandit's branch; and the bandit's first departure
+		met, closest, departure := "", "", ""                       // the merge and the closest later pass, described: when, both noses, the bandit's branch; and the bandit's first departure
 		ahead := func(s *flight.State, other flight.Vec3) float64 { // degrees between a jet's nose and the other jet
 			line := other.Subtract(s.Position)
 			return math.Acos(clamp(s.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line.Normalize()), -1, 1)) * 180 / math.Pi
@@ -951,12 +973,12 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 			b.ticks++
 			if gap := i.aircraft[0].model.State.Position.Subtract(i.aircraft[bot].model.State.Position).Length(); gap > previous && falling {
 				falling = false // the last tick was a closest approach
+				described := fmt.Sprintf("seed %d: %.0f m at %.1f s, the bandit's nose %.0f deg off him flying %s, his %.0f deg off it, %.0f m/s apart",
+					seed, previous, float64(tick)/60, prior.bot, prior.branch, prior.him, i.aircraft[0].model.State.Velocity.Subtract(i.aircraft[bot].model.State.Velocity).Length())
 				if math.IsInf(merge, 1) {
-					merge = previous
+					merge, met = previous, "merge "+described
 				} else if previous < pass {
-					pass = previous
-					closest = fmt.Sprintf("seed %d: %.0f m at %.1f s, the bandit's nose %.0f deg off him flying %s, his %.0f deg off it, %.0f m/s apart",
-						seed, previous, float64(tick)/60, prior.bot, prior.branch, prior.him, i.aircraft[0].model.State.Velocity.Subtract(i.aircraft[bot].model.State.Velocity).Length())
+					pass, closest = previous, described
 				}
 				previous = gap
 			} else {
@@ -1040,6 +1062,9 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 		}
 		if merge < bubble {
 			b.merges++
+			if os.Getenv("AIR_POINT") != "" {
+				fmt.Println("       " + met)
+			}
 		}
 		if pass < bubble {
 			b.passes++
@@ -1110,6 +1135,36 @@ func TestPilotEngagesTheMush(t *testing.T) {
 
 // jousted re-places a sweep's pair at the single-player joust's own start: 5.5
 // km apart head-on at 15,000 ft and 428 kt.
+// fresh is the seeds AIR_FIRST names, AIR_FIRST to AIR_FIRST+seeds-1, or
+// none when it is unset and the sweep flies 1 to seeds: a change measured on
+// one set of fights is checked on fights it was not chosen on.
+func fresh(seeds int) []uint64 {
+	first, err := strconv.ParseUint(os.Getenv("AIR_FIRST"), 10, 64)
+	if err != nil {
+		return nil
+	}
+	var out []uint64
+	for seed := first; seed < first+uint64(seeds); seed++ {
+		out = append(out, seed)
+	}
+	return out
+}
+
+// blown is the joust's start in single player's weather (engine.ts
+// weather()): 12.9 m/s from 070 at the surface, about 60 kt at the joust's
+// height. Both jets fly it, each spawned at the joust's airspeed as single
+// player spawns them (flight.Level).
+func blown(i *instance, bot int) {
+	jousted(i, bot)
+	for _, slot := range []int{0, bot} {
+		m := i.aircraft[slot].model
+		m.Environment.Wind = flight.Vec3{X: -12.1, Z: 4.4}
+		engines := m.State.Engine
+		m.State = flight.Level(m, m.State.Position, m.State.Velocity.Normalize(), 220, m.State.Fuel)
+		m.State.Engine = engines
+	}
+}
+
 func jousted(i *instance, bot int) {
 	east := flight.Vec3{X: 1}
 	him, me := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
@@ -1143,20 +1198,7 @@ func TestDifficulty(t *testing.T) {
 	}
 	setup := jousted
 	if os.Getenv("AIR_WIND") != "" {
-		// Single player's weather (engine.ts weather()): 12.9 m/s from 070 at the
-		// surface, about 60 kt at the joust's height. Both jets fly it, each spawned
-		// at the joust's airspeed as single player spawns them (flight.Level).
-		wind := flight.Vec3{X: -12.1, Z: 4.4}
-		setup = func(i *instance, bot int) {
-			jousted(i, bot)
-			for _, slot := range []int{0, bot} {
-				m := i.aircraft[slot].model
-				m.Environment.Wind = wind
-				engines := m.State.Engine
-				m.State = flight.Level(m, m.State.Position, m.State.Velocity.Normalize(), 220, m.State.Fuel)
-				m.State.Engine = engines
-			}
-		}
+		setup = blown
 	}
 	weather := setup
 	setup = func(i *instance, bot int) {
@@ -1171,7 +1213,7 @@ func TestDifficulty(t *testing.T) {
 			pilot := mimic([]float64{1, -1}[n%2])
 			pilot.full = os.Getenv("AIR_FULL") != ""
 			return pilot
-		}, os.Getenv("AIR_GUNS") == "", 0, seeds, 150, setup)
+		}, os.Getenv("AIR_GUNS") == "", 0, seeds, 150, setup, fresh(seeds)...)
 		fmt.Println(report("mimic", level, b))
 		fmt.Printf("       inside %.0f m: the merge in %d of %d fights (closest %.0f m), a later pass in %d (closest %.0f m)\n", bubble, b.merges, b.seeds, b.merge, b.passes, b.pass)
 		fmt.Printf("       bandit departed %.2f%% of %.0f s flown\n", 100*float64(b.departed[0])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60)

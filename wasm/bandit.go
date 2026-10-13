@@ -42,7 +42,7 @@ func bandits() map[string]any {
 }
 
 // bandit_initialize builds the harness from a JSON payload: level, seed, wrap,
-// sky (cloud preset), night, missiles, weapons, fuel, hold, air. Returns an error string, or "" on success.
+// sky (cloud preset), night, missiles, weapons, hold, air. Returns an error string, or "" on success.
 func bandit_initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
 		Level    string
@@ -52,14 +52,13 @@ func bandit_initialize(this js.Value, arguments []js.Value) any {
 		Night    bool
 		Missiles bool
 		Weapons  string
-		Fuel     float64             // kg; the player's own spawn load, so the bandit fights on the same tank (0 = the server default)
 		Hold     bool                // the joust's weapons hold: the brain fires nothing until the merge (false: the BVR start, free from spawn)
 		Air      *flight.Environment // the player's own environment, so the bandit flies the same wind (absent: still air)
 	}{}
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, payload.Fuel, payload.Hold)
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, 0, payload.Hold) // 0: the load a bot of its class carries, not the player's
 	if payload.Air != nil {
 		bandit.Air(*payload.Air)
 	}
