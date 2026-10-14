@@ -31,6 +31,13 @@ import (
 // clear turned it red at 7/8 by flipping two fights, while over 128 in both
 // airs the pilot read 71/54 against 72/54 before it: sixteen measured two
 // coin flips, not the tier.
+//
+// The superhuman may lose 1 in 6 (ruled 2026-10-13). With both jets on their
+// fight weight and mimic carrying the Fox 2 preset's six heaters, the slow
+// nose-to-nose gun pass left two outcomes: cleared, it keeps the bubble and
+// loses 10 of 64 to his close heaters, where the ace is held to 1 in 16;
+// turned through, it loses 7 and passes inside the bubble in 22 of 64. The
+// bubble wins.
 func TestScriptLadder(t *testing.T) {
 	heavy(t)
 	const fights = 64
@@ -55,9 +62,13 @@ func TestScriptLadder(t *testing.T) {
 			if b.downed <= b.lost {
 				t.Errorf("the pilot won %d and lost %d: the user should lose most fights against it", b.downed, b.lost)
 			}
-		default:
+		case "ace":
 			if b.lost > fights/16 {
 				t.Errorf("the %s lost %d of %d: the user should rarely or never beat it", level, b.lost, fights)
+			}
+		default:
+			if b.lost > fights/6 {
+				t.Errorf("the %s lost %d of %d: the user should rarely beat it", level, b.lost, fights)
 			}
 		}
 	}
@@ -93,14 +104,20 @@ func circled(i *instance, bot, n int, one bool, speed float64) {
 // already, against mimic. 01a10e5e was a one-circle fight the pilot won slow
 // while the bandit held full burner at 460 kt, and 01a10e335a a first turn won
 // on a tone shot at 33 degrees of alpha. The ace and the superhuman must win at
-// least three times as many as they lose in each.
+// least three times as many as they lose in each, and twice as many in the slow
+// one-circle (ruled 2026-10-13): there the two jets meet nose to nose on the
+// gun at 165-200 kt, and against mimic on the Fox 2 preset's six heaters and
+// its fight weight the clear that keeps the bubble reads 13/6 and 15/7, where
+// turning through the pass read 21/2 and 22/2 and broke the bubble in a third
+// of the heater jousts.
 func TestScriptCircles(t *testing.T) {
 	heavy(t)
 	for _, f := range []struct {
-		name  string
-		one   bool
-		speed float64
-	}{{"slow two-circle", false, 108}, {"slow one-circle", true, 108}, {"fast one-circle", true, 230}} {
+		name   string
+		one    bool
+		speed  float64
+		margin int
+	}{{"slow two-circle", false, 108, 3}, {"slow one-circle", true, 108, 2}, {"fast one-circle", true, 230, 3}} {
 		for _, level := range []string{"ace", "superhuman"} {
 			n := 0
 			b := sweepFrom(t, level, "furball", func() flyer {
@@ -108,7 +125,7 @@ func TestScriptCircles(t *testing.T) {
 				return mimic(0)
 			}, true, 0, 24, 90, func(i *instance, bot int) { circled(i, bot, n, f.one, f.speed) })
 			fmt.Printf("%-10s %s at %.0f kt against mimic: won %2d lost %2d of 24\n", level, f.name, f.speed*1.944, b.downed, b.lost)
-			if b.downed < 3*b.lost {
+			if b.downed < f.margin*b.lost {
 				t.Errorf("the %s won %d and lost %d of the %s: the user should rarely or never beat it", level, b.downed, b.lost, f.name)
 			}
 		}

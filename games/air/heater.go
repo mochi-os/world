@@ -50,6 +50,34 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 		return reaches(shooter, target, direction, swing, wrap, trial, breaking)
 	}
 
+	// The seeker's reach at this aspect, exactly as acquire() judges a lock:
+	// full range square at a tailpipe, the plume's floor head-on.
+	tail := 0.0
+	if speed := target.Velocity.Length(); speed > 1 {
+		tail = math.Max(0, direction.Dot(target.Velocity.Scale(1/speed)))
+	}
+	// The fuse floor: the closure while the fuse arms, plus turn-in room. It
+	// also has to buy the round a SEDUCTION it can survive (#213). reaches()
+	// cannot price flares - it says so - so before this the ladder scored a
+	// close head-on shot purely on kinematics and endorsed it. Measured across
+	// 16 fights, the superhuman then took twenty of them at a mean 733 m, half
+	// were decoyed and NOT ONE arrived: a seduced seeker stares at the lure for
+	// flare_blind seconds, and a round with less flight than that remaining
+	// when the flare goes off is simply gone.
+	//
+	// So the round must carry flare_blind seconds of closure as well as its
+	// arming time, weighted by how likely the seduction actually is at this
+	// aspect and plume. That is self-scaling in the way a tuned constant would
+	// not be: head-on against a cold jet the chance is 0.41 and the floor
+	// climbs by six tenths of a second of closure, while dead astern it is
+	// 0.19 against a closure near zero and the floor barely moves, which is
+	// the one shot in the recorded fight that DID work.
+	closing := shooter.Velocity.Subtract(target.Velocity).Dot(direction)
+	if closing < 0 {
+		closing = 0
+	}
+	floor := math.Max(300, closing*(missile_arm+0.5+seduction(tail, lit)*flare_blind))
+
 	// Bisect the range band satisfying a criterion, walking the floor outward
 	// first as the AMRAAM's ladder does: a shooter whose velocity is off the
 	// line cannot make the turn-in at point-blank range while a mid-range shot
@@ -67,7 +95,21 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// at 998 m. The floor walk already pays for the bracket the inner edge
 	// lives in, so refining it costs nothing at the aspects where the walk
 	// never had to move.
-	rung := func(good func(float64) bool) (float64, float64) {
+	//
+	// The walk starts at 400 m, so when its first rung arrives the band below it
+	// is still unknown, and the fuse floor would stand as the inner edge
+	// unflown. Against a crossing target that is the band the seeker cannot
+	// hold: at the 313 m launch of a recorded superhuman fight the round
+	// arrived from 350 m out and not from 300 or 320 m, the zone read its
+	// minimum as the 300 m floor, SHOOT lit, and the seeker went loose within
+	// half a second. So with floored, a first rung that arrives is checked against
+	// the floor as well, and the edge bisected between them when the floor's shot
+	// fails. Only the rung against the target flying on: the no-escape rung's beam
+	// break saturates any close shot, and floored there it raised the inner edge
+	// past shots that kill a target that does not break - the scripted ace held
+	// the 337 m pair that downed mimic in 10 of 24 slow one-circle fights, and
+	// won 1 and lost 22 of them where it had won 13 and lost 6.
+	rung := func(good func(float64) bool, floored bool) (float64, float64) {
 		low, high := 400.0, 12000.0
 		refused := 0.0
 		for !good(low) {
@@ -76,6 +118,9 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 			if low > high/2 {
 				return 0, 0
 			}
+		}
+		if floored && refused == 0 && floor < low && !good(floor) {
+			refused = floor
 		}
 		inner := 0.0
 		if refused > 0 {
@@ -101,47 +146,23 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 		return inner, low
 	}
 	zone := round.Zone{}
-	near, far := rung(func(r float64) bool { return arrives(r, false) })
+	near, far := rung(func(r float64) bool { return arrives(r, false) }, true)
 	zone.Max = far
-	// The seeker's reach at this aspect, exactly as acquire() judges a lock:
-	// full range square at a tailpipe, the plume's floor head-on.
-	tail := 0.0
-	if speed := target.Velocity.Length(); speed > 1 {
-		tail = math.Max(0, direction.Dot(target.Velocity.Scale(1/speed)))
-	}
-	floor := 0.15 + 0.35*clamp(lit, 0, 1)
-	if reach := missile_range * (floor + (1-floor)*tail); zone.Max > reach {
+	// The seeker's reach caps the zone, at the aspect tail gives.
+	plume := 0.15 + 0.35*clamp(lit, 0, 1)
+	if reach := missile_range * (plume + (1-plume)*tail); zone.Max > reach {
 		zone.Max = reach
 	}
 	zone.Aero = zone.Max
-	brink, escape := rung(func(r float64) bool { return arrives(r, true) })
+	brink, escape := rung(func(r float64) bool { return arrives(r, true) }, false)
 	zone.Escape = escape
 	if zone.Escape > zone.Max {
 		zone.Escape = zone.Max
 	}
 	// Escape equals Max at most aspects: the seeker's reach sits well inside the
 	// round's kinematic reach, so the beam escape buys nothing inside acquisition
-	// range. The floor is the closure while the fuse arms, plus turn-in room.
-	closing := shooter.Velocity.Subtract(target.Velocity).Dot(direction)
-	if closing < 0 {
-		closing = 0
-	}
-	// The floor also has to buy the round a SEDUCTION it can survive (#213).
-	// reaches() above cannot price flares - it says so - so before this the
-	// ladder scored a close head-on shot purely on kinematics and endorsed it.
-	// Measured across 16 fights, the superhuman then took twenty of them at a
-	// mean 733 m, half were decoyed and NOT ONE arrived: a seduced seeker
-	// stares at the lure for flare_blind seconds, and a round with less flight
-	// than that remaining when the flare goes off is simply gone.
-	//
-	// So the round must carry flare_blind seconds of closure as well as its
-	// arming time, weighted by how likely the seduction actually is at this
-	// aspect and plume. That is self-scaling in the way a tuned constant would
-	// not be: head-on against a cold jet the chance is 0.41 and the floor
-	// climbs by six tenths of a second of closure, while dead astern it is
-	// 0.19 against a closure near zero and the floor barely moves, which is
-	// the one shot in the recorded fight that DID work.
-	zone.Minimum = math.Max(300, closing*(missile_arm+0.5+seduction(tail, lit)*flare_blind))
+	// range.
+	zone.Minimum = floor
 	// The band's own inner edge, where it sits outside the fuse floor. Both
 	// rungs contribute: the disciplined tiers fire inside Escape and everyone
 	// else inside Max, and a single Minimum has to be honest for both.

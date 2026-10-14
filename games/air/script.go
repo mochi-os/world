@@ -216,6 +216,15 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// 30/33 and 40/22 37/27; fast in a heater match only above 100 m/s, 34/28
 	// 30/31 and 41/22 37/27; the slow condition left out, the fast one-circle
 	// went from 24/0 to 1/23; a three or two second look never caught the pass.
+	// Declined too, the instructor tiers clearing as a yo-yo, the lift vector
+	// kept on him with the nose 1.5 or 3 parts above or below his height and
+	// no push: it won the slow one-circles back (ace 13/6 to 21/2, superhuman
+	// 15/7 to 22/2) and the superhuman's still-air jousts went 53/10 to 54/7,
+	// but 22 of those 64 passed inside the bubble (closest 19 m), the guns
+	// jousts 60-70 of 256 against 21, and the ace's still air 62/1 to 59/5.
+	// Flown as a yo-yo until 2.5 or 3.5 s before the pass and as this clear
+	// after it, the superhuman read 45/14 and 42/18 with 22 inside; as a yo-yo
+	// only away from this pass and the guns jousts, 51/12, the circles red.
 	fast, slow := false, false
 	if gap := now.Subtract(me.Position); gap.Length() > 1 {
 		closure := me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize())

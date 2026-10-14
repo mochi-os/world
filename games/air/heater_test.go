@@ -277,6 +277,56 @@ func TestHeaterRefusesTheSaturatingBeamShot(t *testing.T) {
 	}
 }
 
+// TestHeatFloorFlown: the walk's first rung is 400 m, and when it arrives the band
+// under it must still be flown down to the fuse floor. At the 313 m launch of a
+// recorded superhuman fight (01a13721, 53.8 s: the pilot diving after a bandit
+// spiralling down across his nose) the round arrives from 350 m and not from 300
+// or 320 m, yet the zone read its minimum as the 300 m floor and lit SHOOT.
+func TestHeatFloorFlown(t *testing.T) {
+	nose := flight.Vec3{X: 0.4951, Y: -0.5793, Z: -0.6475}
+	shooter := round.Target{Position: flight.Vec3{Y: 2809.2}, Velocity: nose.Scale(112.8)}
+	target := round.Target{Position: flight.Vec3{X: 142.4, Y: 2610.0, Z: -195.4}, Velocity: flight.Vec3{X: -51.6, Y: -99.1, Z: 1.4}}
+	direction := target.Position.Subtract(shooter.Position)
+	span := direction.Length()
+	if reaches(shooter, target, direction.Normalize(), flight.Vec3{}, 0, 320, false) {
+		t.Fatal("the recorded geometry no longer saturates the seeker at 320 m: the test has lost its subject")
+	}
+	z := Heat(shooter, target, flight.Vec3{}, 0, 0)
+	if span > z.Minimum {
+		t.Errorf("the zone endorses the %.0f m shot its own round misses: %+v", span, z)
+	}
+	if !reaches(shooter, target, direction.Normalize(), flight.Vec3{}, 0, z.Minimum+5, false) {
+		t.Errorf("the inner edge %.0f m sits inside the band the round cannot fly", z.Minimum)
+	}
+
+	// The positive control: dead astern at the same range the floor's shot arrives,
+	// and the floor stays the inner edge.
+	chase := nose
+	stern := round.Target{Position: shooter.Position.Add(chase.Scale(320)), Velocity: chase.Scale(100)}
+	if z := Heat(shooter, stern, flight.Vec3{}, 0, 0); !(320 > z.Minimum && 320 <= z.Max) {
+		t.Errorf("a stern chase at 320 m should still be a shot, got %+v", z)
+	}
+}
+
+// TestHeatNoEscapeEdgeUnfloored: the floor check is the flying-on rung's alone. Here,
+// 340 m out 10 degrees off the nose and heading 45 degrees across it at 210 kt, the
+// round arrives from the 300 m floor against the target flying on, and against one
+// breaking into the beam at launch only from about 398 m. Floored there as well, the
+// no-escape rung's edge refused this shot, and the scripted ace held the pair that
+// downed mimic in 10 of 24 slow one-circle fights.
+func TestHeatNoEscapeEdgeUnfloored(t *testing.T) {
+	shooter := round.Target{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 108}}
+	b, h := 10*math.Pi/180, 45*math.Pi/180
+	target := round.Target{Position: flight.Vec3{X: 340 * math.Cos(b), Y: 3000, Z: 340 * math.Sin(b)}, Velocity: flight.Vec3{X: 108 * math.Cos(h), Z: 108 * math.Sin(h)}}
+	direction := target.Position.Subtract(shooter.Position).Normalize()
+	if !reaches(shooter, target, direction, flight.Vec3{}, 0, 300, false) || reaches(shooter, target, direction, flight.Vec3{}, 0, 340, true) {
+		t.Fatal("the geometry no longer splits the two rungs at the floor: the test has lost its subject")
+	}
+	if z := Heat(shooter, target, flight.Vec3{}, 0, 0); !(340 > z.Minimum && 340 <= z.Max) {
+		t.Errorf("the shot that arrives against the target flying on is refused: %+v", z)
+	}
+}
+
 // TestHeatZoneCached pins the shape of the #139 fix: the ZONE is cached, the
 // range test against it is not.
 //

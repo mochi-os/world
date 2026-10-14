@@ -304,6 +304,27 @@ func TestLadder(t *testing.T) {
 	}
 }
 
+// TestLadderInnerEdge: the band under the first arriving rung is flown, not taken
+// on trust down to the floor. With the shooter's nose on a target 1,500 m out
+// crossing at 300 m/s, the round misses by more than 500 m from every range
+// between 800 and 1,800 m; crossing at 250 m/s it misses from 1,200 and 1,400 m
+// with the shorter shots arriving under that hole. Neither shot is in the zone.
+func TestLadderInnerEdge(t *testing.T) {
+	shooter := Target{Position: flight.Vec3{Y: 6000}, Velocity: flight.Vec3{X: 250}}
+	for _, crossing := range []float64{300, 250} {
+		z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{Z: crossing}}, 0)
+		if z.Minimum <= 1500 || z.Minimum >= z.Max {
+			t.Errorf("crossing at %.0f m/s: the zone endorses the 1,500 m shot its round misses: %+v", crossing, z)
+		}
+	}
+
+	// The positive control: a stern chase at the same range arrives, and keeps
+	// the floor as its inner edge.
+	if z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{X: 200}}, 0); !(z.Minimum < 1500 && 1500 <= z.Max) {
+		t.Errorf("a stern chase at 1,500 m should still be a shot, got %+v", z)
+	}
+}
+
 // TestTerminalMiss: the endgame must be TIGHT — a well-guided round passes
 // close enough that the warhead does the rest, against a straight target and
 // against one breaking hard. A graze at 8-12 m is a miss in everything but
