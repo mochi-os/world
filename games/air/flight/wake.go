@@ -108,10 +108,56 @@ type mark struct {
 	broken      bool // the track jumped here (a respawn or reset): no piece joins it to the mark before
 }
 
-// trail is one aircraft's marks, oldest first.
+// trail is one aircraft's marks, oldest first, and what every aircraft asking
+// at one moment shares of them: the marks aged to that moment, and the trail's
+// length. Neither depends on who asks, and a 99-jet furball worked both for
+// every jet in every tick, a quarter of its tick, until they were kept here,
+// each keyed on everything it reads so a cached value is exactly the one a
+// fresh computation would give.
 type trail struct {
-	marks []mark
+	marks   []mark
+	version uint64 // counts the changes to marks
+
+	pairs                         []pair  // the marks aged to moment over sea at turbulence
+	pieces                        []piece // the vortex pieces between them, two to a pair of marks
+	runs                          []run   // runs of those pieces, each in one sphere
+	moment, sea, turbulence, wrap float64 // what they were worked for
+	stood                         uint64  // one past the version they were worked for (0: none yet)
+
+	length   float64 // the trail's length
+	measured uint64  // one past the version length was measured for (0: none yet)
 }
+
+// pair is a mark's two vortices as aged() leaves them at one moment.
+type pair struct {
+	left, right       Vec3
+	circulation, core float64
+}
+
+// piece is one vortex piece between two marks at one moment, with what Near
+// tests of it: its middle, and its bound, beyond which from the middle it
+// induces nothing (its reach plus half its length).
+type piece struct {
+	vortex Vortex
+	middle Vec3
+	bound  float64
+	time   float64 // the later mark's: an aircraft never meets its own wake younger than wake_fresh
+	skip   bool    // the later mark broke the trail, or either end has decayed to nothing
+}
+
+// run is a stretch of a trail's pieces, pieces[first:last], whose middles all lie
+// within radius of centre, and whose largest bound is bound. An aircraft further
+// than radius plus bound from centre is beyond every piece in it, so Near skips
+// the run without looking at a piece: on a torus the minimum-image distance is
+// a true metric, so the triangle inequality the test rests on holds across the
+// wrap. A 99-jet furball tested every piece of every trail for every jet.
+type run struct {
+	centre        Vec3
+	radius, bound float64
+	first, last   int
+}
+
+const wake_run = 32 // pieces to a run: sixteen pairs of marks, 3.2 s of a trail
 
 // Wakes keeps each aircraft's recent track. The zero value is ready to use.
 type Wakes struct {
@@ -178,6 +224,7 @@ func (w *Wakes) Shed(id int, time float64, position Vec3, attitude Quat, velocit
 		drop++
 	}
 	t.marks = append(t.marks[drop:], next)
+	t.version++
 }
 
 // Forget drops an aircraft's trail: it has left the match.
@@ -274,27 +321,21 @@ func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap floa
 		if distance(position, newest.left, wrap) > margin && distance(position, oldest.left, wrap) > margin {
 			continue
 		}
-		for k := 1; k < n; k++ {
-			earlier, later := t.marks[k-1], t.marks[k]
-			if later.broken || (owner == id && time-later.time < wake_fresh) {
+		pieces, runs := w.stand(t, time, sea, wrap)
+		for _, b := range runs {
+			if distance(position, b.centre, wrap)-b.radius > b.bound+1 { // a metre over: rounding can never skip a piece in reach
 				continue
 			}
-			l0, r0, g0, c0 := w.aged(earlier, time, sea)
-			l1, r1, g1, c1 := w.aged(later, time, sea)
-			if g0 == 0 || g1 == 0 {
-				continue
-			}
-			strength, core := (g0+g1)/2, (c0+c1)/2
-			reach := wake_reach * (earlier.spacing + later.spacing) / 2
-			// The left vortex turns with the lift's circulation along the track,
-			// the right against it: downwash between them, upwash outboard.
-			for _, piece := range []Vortex{{A: l0, B: l1, Circulation: strength, Core: core, Reach: reach}, {A: r0, B: r1, Circulation: -strength, Core: core, Reach: reach}} {
-				middle := piece.A.Add(piece.B).Scale(0.5)
-				d := distance(position, middle, wrap)
-				if d > reach+piece.B.Subtract(piece.A).Length()/2 {
+			for k := b.first; k < b.last; k++ {
+				p := &pieces[k]
+				if p.skip || (owner == id && time-p.time < wake_fresh) {
 					continue
 				}
-				keep(candidate{piece, d})
+				d := distance(position, p.middle, wrap)
+				if d > p.bound {
+					continue
+				}
+				keep(candidate{p.vortex, d})
 			}
 		}
 	}
@@ -305,12 +346,54 @@ func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap floa
 	return out
 }
 
-// path is the length of a trail, oldest mark to newest.
+// stand is a trail's pieces at time over sea, and its runs: worked by the
+// first aircraft to ask at that moment and shared by the rest.
+func (w *Wakes) stand(t *trail, time float64, sea float64, wrap float64) ([]piece, []run) {
+	if t.stood == t.version+1 && t.moment == time && t.sea == sea && t.turbulence == w.Turbulence && t.wrap == wrap {
+		return t.pieces, t.runs
+	}
+	t.pairs = t.pairs[:0]
+	for k := range t.marks {
+		left, right, circulation, core := w.aged(t.marks[k], time, sea)
+		t.pairs = append(t.pairs, pair{left: left, right: right, circulation: circulation, core: core})
+	}
+	t.pieces = t.pieces[:0]
+	for k := 1; k < len(t.marks); k++ {
+		earlier, later := &t.marks[k-1], &t.marks[k]
+		p0, p1 := &t.pairs[k-1], &t.pairs[k]
+		skip := later.broken || p0.circulation == 0 || p1.circulation == 0
+		strength, core := (p0.circulation+p1.circulation)/2, (p0.core+p1.core)/2
+		reach := wake_reach * (earlier.spacing + later.spacing) / 2
+		// The left vortex turns with the lift's circulation along the track,
+		// the right against it: downwash between them, upwash outboard.
+		for _, v := range []Vortex{{A: p0.left, B: p1.left, Circulation: strength, Core: core, Reach: reach}, {A: p0.right, B: p1.right, Circulation: -strength, Core: core, Reach: reach}} {
+			t.pieces = append(t.pieces, piece{vortex: v, middle: v.A.Add(v.B).Scale(0.5), bound: reach + v.B.Subtract(v.A).Length()/2, time: later.time, skip: skip})
+		}
+	}
+	t.runs = t.runs[:0]
+	for first := 0; first < len(t.pieces); first += wake_run {
+		last := min(first+wake_run, len(t.pieces))
+		b := run{centre: t.pieces[first].middle, first: first, last: last}
+		for k := first; k < last; k++ {
+			b.radius = math.Max(b.radius, distance(b.centre, t.pieces[k].middle, wrap))
+			b.bound = math.Max(b.bound, t.pieces[k].bound)
+		}
+		t.runs = append(t.runs, b)
+	}
+	t.stood, t.moment, t.sea, t.turbulence, t.wrap = t.version+1, time, sea, w.Turbulence, wrap
+	return t.pieces, t.runs
+}
+
+// path is the length of a trail, oldest mark to newest, measured once a change.
 func (t *trail) path() float64 {
+	if t.measured == t.version+1 {
+		return t.length
+	}
 	sum := 0.0
 	for k := 1; k < len(t.marks); k++ {
 		sum += t.marks[k].left.Subtract(t.marks[k-1].left).Length()
 	}
+	t.length, t.measured = sum, t.version+1
 	return sum
 }
 

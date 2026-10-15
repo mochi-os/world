@@ -8,6 +8,7 @@ package flight
 
 import (
 	"math"
+	"reflect"
 	"testing"
 )
 
@@ -491,4 +492,129 @@ func TestWakeBudget(t *testing.T) {
 	if float64(deep) > 2.5*float64(clean) {
 		t.Fatalf("a step in a full wake costs %d ns, %.1f times one in clean air (%d ns)", deep, float64(deep)/float64(clean), clean)
 	}
+}
+
+// TestWakeSharesEachMoment: Near shares each trail's pieces with every
+// aircraft asking at the same moment and skips runs of them out of reach, and
+// what it hands out must be exactly what ageing every mark for each asker and
+// testing every piece gives: the same pieces, bit for bit, in the same order.
+// Six jets circle one another for 70 s, past the longest wake's life, in open
+// air and in a world so small its wrap runs through their circles; one more
+// mark is laid between askers within a moment, the turbulence moves between
+// two askers, and askers sit over different seas.
+func TestWakeSharesEachMoment(t *testing.T) {
+	for _, wrap := range []float64{0, 1100} {
+		var w Wakes
+		lay := func(id int, time float64, phase float64, height float64) {
+			position := Vec3{X: 800 * math.Cos(phase), Y: height, Z: 800 * math.Sin(phase)}
+			heading := Vec3{X: -math.Sin(phase), Z: math.Cos(phase)}
+			w.Shed(id, time, position, Look(heading), heading.Scale(220), 16000*9.81*3, 11.4, 0.9, Vec3{X: 6})
+		}
+		shed := func(id int, time float64) { lay(id, time, time*0.12+float64(id), 3000+40*float64(id)) }
+		asked := 0
+		for tick := 0; tick < 70*20; tick++ {
+			time := float64(tick) / 20
+			for id := 1; id <= 6; id++ {
+				shed(id, time)
+			}
+			for id := 1; id <= 6; id++ {
+				if id == 4 { // a mark laid between two askers at one moment, beside the second
+					lay(7, time, time*0.12+4.28, 3150)
+				}
+				if tick == 600 && id == 3 { // the turbulence moving between two askers
+					w.Turbulence = 1.5
+				}
+				sea := 0.0
+				if tick >= 900 && id%2 == 0 { // askers over different seas at one moment, just under the pieces they meet
+					sea = 3015 + 40*float64(id)
+				}
+				phase := time*0.12 + float64(id) + 0.3
+				at := Vec3{X: 790 * math.Cos(phase), Y: 2990 + 40*float64(id), Z: 790 * math.Sin(phase)}
+				got := w.Near(id, at, time, sea, wrap)
+				want := everything(&w, id, at, time, sea, wrap)
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("wrap %.0f, t=%.2f s, jet %d: the shared wake is not every piece tested afresh (%d pieces against %d)", wrap, time, id, len(got), len(want))
+				}
+				asked += len(got)
+			}
+		}
+		if asked == 0 {
+			t.Fatalf("wrap %.0f: no jet met a single piece, so the comparison is between empty wakes", wrap)
+		}
+	}
+}
+
+// TestWakeRunsFollowTheWrap: a run's radius is measured in the world it is
+// asked about. A trail laid across a 1,100 m world's seam, its runs worked for
+// that world, would read a run's pieces closer together than they are in an
+// open one and skip it with a piece in reach.
+func TestWakeRunsFollowTheWrap(t *testing.T) {
+	var w Wakes
+	for k := 0; k <= 68; k++ {
+		time := float64(k) / 20
+		w.Shed(9, time, Vec3{X: 200 + 220*time, Y: 3000}, Look(Vec3{X: 1}), Vec3{X: 220}, 16000*9.81*3, 11.4, 0.9, Vec3{})
+	}
+	time, at := 68.0/20, Vec3{X: 860, Y: 2995}
+	w.Near(1, at, time, 0, 1100)
+	got := w.Near(1, at, time, 0, 0)
+	want := everything(&w, 1, at, time, 0, 0)
+	if len(want) == 0 {
+		t.Fatal("no piece in reach: the case is not built")
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("asked in an open world after a wrapped one, %d pieces against %d", len(got), len(want))
+	}
+}
+
+// everything is Near as it was before it shared or skipped anything: every
+// mark aged for this one asker, every piece of every trail tested.
+func everything(w *Wakes, id int, position Vec3, time float64, sea float64, wrap float64) []Vortex {
+	type candidate struct {
+		vortex   Vortex
+		distance float64
+	}
+	var found []candidate
+	keep := func(c candidate) {
+		at := len(found)
+		for at > 0 && found[at-1].distance > c.distance {
+			at--
+		}
+		if at >= wake_pieces {
+			return
+		}
+		if len(found) < wake_pieces {
+			found = append(found, candidate{})
+		}
+		copy(found[at+1:], found[at:len(found)-1])
+		found[at] = c
+	}
+	for _, owner := range w.owners {
+		t := w.trails[owner]
+		for k := 1; k < len(t.marks); k++ {
+			earlier, later := t.marks[k-1], t.marks[k]
+			if later.broken || (owner == id && time-later.time < wake_fresh) {
+				continue
+			}
+			l0, r0, g0, c0 := w.aged(earlier, time, sea)
+			l1, r1, g1, c1 := w.aged(later, time, sea)
+			if g0 == 0 || g1 == 0 {
+				continue
+			}
+			strength, core := (g0+g1)/2, (c0+c1)/2
+			reach := wake_reach * (earlier.spacing + later.spacing) / 2
+			for _, piece := range []Vortex{{A: l0, B: l1, Circulation: strength, Core: core, Reach: reach}, {A: r0, B: r1, Circulation: -strength, Core: core, Reach: reach}} {
+				middle := piece.A.Add(piece.B).Scale(0.5)
+				d := distance(position, middle, wrap)
+				if d > reach+piece.B.Subtract(piece.A).Length()/2 {
+					continue
+				}
+				keep(candidate{piece, d})
+			}
+		}
+	}
+	out := make([]Vortex, len(found))
+	for k := range found {
+		out[k] = found[k].vortex
+	}
+	return out
 }
