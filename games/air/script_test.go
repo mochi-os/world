@@ -32,6 +32,15 @@ import (
 // airs the pilot read 71/54 against 72/54 before it: sixteen measured two
 // coin flips, not the tier.
 //
+// The novice's row flies unwarned, which sees a heater only 1.8 s after it
+// leaves the rail and flares at none ahead of a launch, as the user does: mimic
+// was handed every round at launch. The user's six losses in seven to the
+// novice (2026-10-13 and 2026-10-14) came from the turn after the pass going
+// downhill while the novice climbed, which no novice of any realism loses to;
+// the remedy ruled 2026-10-15 is the user's lift vector kept on it. Measured
+// then on 64 fights: won 6 and lost 58 against unwarned, 3 and 61 against
+// mimic.
+//
 // The superhuman may lose 1 in 6 (ruled 2026-10-13). With both jets on their
 // fight weight and mimic carrying the Fox 2 preset's six heaters, the slow
 // nose-to-nose gun pass left two outcomes: cleared, it keeps the bubble and
@@ -43,15 +52,21 @@ func TestScriptLadder(t *testing.T) {
 	const fights = 64
 	net := map[string]int{}
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
-		n := 0
+		n, name := 0, "mimic"
+		if level == "novice" {
+			name = "unwarned"
+		}
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
+			if level == "novice" {
+				return unwarned([]float64{1, -1}[n%2])
+			}
 			return mimic([]float64{1, -1}[n%2])
 		}, true, 0, fights, 150, func(i *instance, bot int) {
 			jousted(i, bot)
 			i.aircraft[bot].brain.scripted = true // the doctrine single player flies, in a server bot
 		})
-		fmt.Printf("%-10s against mimic: won %2d lost %2d of %d\n", level, b.downed, b.lost, fights)
+		fmt.Printf("%-10s against %-8s won %2d lost %2d of %d\n", level, name+":", b.downed, b.lost, fights)
 		net[level] = b.downed - b.lost
 		switch level {
 		case "novice":

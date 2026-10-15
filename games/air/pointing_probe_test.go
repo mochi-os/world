@@ -312,6 +312,9 @@ type hornet struct {
 	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
 	wind        flight.Vec3 // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
 	full        bool        // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 ace
+	late        float64     // seconds the rounds inbound have flown before the pilot sees them (0: at launch)
+	slice       float64     // after the pass, the lift vector this many degrees below him: the user's descending turn (0: on him)
+	sighted     uint64      // one past the tick the rounds inbound were first in the air (0: none inbound)
 }
 
 // mimic flies the fight the user flew against the stage 15 ace in the sorties
@@ -326,6 +329,30 @@ type hornet struct {
 // 1.5 km, as they did at 25.7-29.8 s of 01a0d51c against a pair.
 func mimic(lead float64) *hornet {
 	return &hornet{armed: true, lead: lead, floor: 70, band: 110, alpha: 34, ceiling: 38, stick: 1, cued: true, wary: true}
+}
+
+// unwarned is mimic defending against a heater as the user does, which is the
+// novice's yardstick. Mimic is handed every round the moment it leaves
+// the rail and breaks at once, and flares whenever the bandit's nose comes on
+// inside 1.5 km. The user has no missile warner, only the smoke: across the
+// seven novice jousts of 2026-10-13 and 2026-10-14 they dropped no flare before
+// a launch, flared 1.8 s after one in two fights at the soonest, and later or
+// never in the other five. Every one of the seven went to the novice's
+// heaters, where mimic beats the same novice 61 times in 64.
+//
+// The warning is not the gap. Seeing rounds this late, unwarned still beat the
+// novice 29 and 27 times in 32 (still air, single player's wind). The gap is
+// the vertical: from the pass to its first launch the user went downhill
+// 870-7,200 ft in six of the seven, the novice climbed 400-3,200 ft in six,
+// and in six the user never had it within 20 degrees of the nose inside
+// 2.5 km. AIR_SLICE flies that turn, the lift
+// vector placed that many degrees below the bandit: at 20 the novice read 24/8
+// and 18/14, at 35 30/2 and 26/6, the user's own six in seven, and at 50 31/1
+// and 32/0.
+func unwarned(lead float64) *hornet {
+	h := mimic(lead)
+	h.late, h.wary = 1.8, false
+	return h
 }
 
 // tone is the shoot cue mimic fires on: its seeker would lock, by the rule the
@@ -382,6 +409,18 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// every law below (lift vector onto it, pull by how far off it is, the
 	// alpha ceiling) then applies unchanged.
 	breaking := false
+	if h.late > 0 { // a round in the air for less than the pilot's reaction is not yet a known threat
+		if len(threats) == 0 {
+			h.sighted = 0
+		} else {
+			if h.sighted == 0 {
+				h.sighted = tick + 1
+			}
+			if float64(tick+1-h.sighted) < h.late*60 {
+				threats = nil
+			}
+		}
+	}
 	if nearest, span := (*threat)(nil), math.Inf(1); true {
 		for k := range threats {
 			line := threats[k].position.Subtract(me.Position)
@@ -421,6 +460,13 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 			}
 		} else {
 			h.beam = flight.Vec3{} // nothing inbound: the next round gets a fresh decision
+		}
+	}
+	if h.slice > 0 && h.passed && !breaking { // the turn let downhill: the lift vector placed below him
+		down := flight.Vec3{Y: -1}
+		if across := down.Subtract(want.Scale(down.Dot(want))); across.Length() > 1e-6 {
+			tilt := h.slice * math.Pi / 180
+			want = want.Scale(math.Cos(tilt)).Add(across.Normalize().Scale(math.Sin(tilt))).Normalize()
 		}
 	}
 	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
@@ -1177,7 +1223,7 @@ func jousted(i *instance, bot int) {
 // mimic, the scripted pilot of the user's fights, from the single-player
 // joust's own start - 5.5 km apart nose to nose at 15,000 ft and 428 kt, with
 // weapons held until the pass - flying the scripted doctrine the user meets
-// there. The lead turn alternates toward and away seed by seed; AIR_WIND
+// there. AIR_UNWARNED flies unwarned in mimic's place. The lead turn alternates toward and away seed by seed; AIR_WIND
 // flies both jets in single player's weather, AIR_FULL flies mimic at full
 // aft stick in the close fight, and AIR_GUNS flies the guns joust, with the
 // missiles off, where a fight comes back round to a second merge. Each tier's line says how many merges, and how
@@ -1211,6 +1257,12 @@ func TestDifficulty(t *testing.T) {
 		b := sweepFrom(t, level, "joust", func() flyer {
 			n++
 			pilot := mimic([]float64{1, -1}[n%2])
+			if os.Getenv("AIR_UNWARNED") != "" {
+				pilot = unwarned([]float64{1, -1}[n%2])
+			}
+			if v, err := strconv.ParseFloat(os.Getenv("AIR_SLICE"), 64); err == nil {
+				pilot.slice = v
+			}
 			pilot.full = os.Getenv("AIR_FULL") != ""
 			return pilot
 		}, os.Getenv("AIR_GUNS") == "", 0, seeds, 150, setup, fresh(seeds)...)
@@ -1594,5 +1646,36 @@ func TestHornetBreaks(t *testing.T) {
 	after := gone.fly(me, foe, []threat{past}, 0)
 	if after["flare"] == true {
 		t.Error("flared at a round flying away: the closure test is what keeps the magazine for the ones that matter")
+	}
+}
+
+// TestUnwarnedSeesTheRoundLate pins the user-shaped stand-in's defence: with
+// no missile warner a round is unseen until it has flown the pilot's reaction,
+// then broken and flared against as mimic does, and the clock restarts for
+// the next round once the air is clear. It drops no flare before a launch.
+func TestUnwarnedSeesTheRoundLate(t *testing.T) {
+	north := flight.Vec3{X: 1}
+	me := &flight.State{Position: flight.Vec3{Y: 5000}, Velocity: north.Scale(344 / 1.944), Attitude: flight.Look(north)}
+	foe := &flight.State{Position: flight.Vec3{X: 4000, Y: 5000}, Velocity: north.Scale(-300)}
+	round := threat{position: flight.Vec3{X: 1500, Y: 5000, Z: 1500}, velocity: flight.Vec3{X: -420, Z: -420}}
+	broke := func(data map[string]any) bool { return data["flare"] == true }
+
+	h := unwarned(1)
+	if h.late != 1.8 || h.wary {
+		t.Fatalf("unwarned sees a round %.1f s late and wary=%v: the user saw one 1.8 s late at the soonest and never flared ahead of a launch", h.late, h.wary)
+	}
+	h = &hornet{armed: true, late: 1.8}
+	if broke(h.fly(me, foe, []threat{round}, 30)) {
+		t.Error("broke the tick the round appeared: the user has no missile warner")
+	}
+	if broke(h.fly(me, foe, []threat{round}, 120)) {
+		t.Error("broke 1.5 s after the launch: the user's soonest reaction was 1.8 s")
+	}
+	if !broke(h.fly(me, foe, []threat{round}, 150)) {
+		t.Error("no break 2 s after the launch: a round seen is defended as mimic defends it")
+	}
+	h.fly(me, foe, nil, 180)
+	if broke(h.fly(me, foe, []threat{round}, 210)) {
+		t.Error("broke at once against a new round after the air was clear: each round is seen late")
 	}
 }

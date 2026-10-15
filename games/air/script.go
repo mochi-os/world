@@ -326,6 +326,11 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// more than 45 degrees off, read 8/8 and 9/7 over the joust's 16 against
 	// 8/8, and in the replay of 01a10e335a moved the ace's first heater from
 	// 19.6 s, a second before the pilot's, to 21.7 s. Declined.
+	// Declined for the novice (2026-10-14), the flat fight real novices fly,
+	// the lift vector's height outside the gun, a clear and a break scaled to
+	// 0.3 or to none: 31/0 and 32/0, then 28/4 and 31/1, against unwarned
+	// slicing at 35 degrees, where the novice read 30/2 and 26/6 (32 fights,
+	// still air and wind). A jet that never points is beaten flat as well.
 	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
 	riding := m.Alpha() * 180 / math.Pi
 	// The lift vector onto him, wherever he sits round the nose, and the pull

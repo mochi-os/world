@@ -882,6 +882,11 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 		step = b.tactics.script.step
 	}
 	margin := b.tactics.missile.margin + step*b.skill.discipline
+	// Declined for the novice (2026-10-14), the impatient long shot: the whole
+	// seeker reach in place of this discipline-shrunk envelope took it from 2/30
+	// and 4/28 against mimic to 16/16 and 15/17 (32 fights, still air and wind),
+	// and left it 30/2 and 26/6 against unwarned slicing at 35 degrees. A long
+	// heater arrives here; the shrunk reach is what keeps the novice's rack honest.
 	limit := missile_range * (b.tactics.missile.base + b.tactics.missile.slope*math.Max(0, tail)) *
 		(b.tactics.missile.floor + b.tactics.missile.gain*b.skill.discipline)
 	b.gate.live = true

@@ -1714,6 +1714,11 @@ func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool
 	if b.skill.discipline >= 0.7 {
 		return distance <= zone.Escape
 	}
+	// Declined for the novice (2026-10-14), the zone skipped so it fires on the
+	// seeker's tone alone: the same 74 and 60 launches and the same 30/2 and
+	// 26/6 against unwarned slicing at 35 degrees (32 fights, still air and
+	// wind). The novice's own reach, shrunk by its discipline in trigger(),
+	// lies inside the zone, so the zone never held one of its shots.
 	return distance <= zone.Max
 }
 
