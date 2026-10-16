@@ -23,7 +23,7 @@ func TestBvrLadder(t *testing.T) {
 	type tally struct {
 		strong, weak, draws int
 		closest             float64
-		spent               int
+		spent, carried      int
 	}
 	pairs := [][2]string{
 		{"superhuman", "novice"},
@@ -90,7 +90,9 @@ func TestBvrLadder(t *testing.T) {
 			}
 			for _, a := range []*craft{top, low} {
 				if a != nil {
-					r.spent += 4 - a.amraams
+					rack := len(stores_amraams(a.loadout))
+					r.spent += rack - a.amraams
+					r.carried += rack
 				}
 			}
 			i.Close() // return this fight's share of the server-wide bot budget: leaked reservations starve every later bot-spawning test in the binary
@@ -99,8 +101,8 @@ func TestBvrLadder(t *testing.T) {
 	for _, pair := range pairs {
 		key := pair[0] + " v " + pair[1]
 		r := results[key]
-		fmt.Printf("bvr %-22s %d-%d, %d no result | closest %6.0f m | AMRAAMs spent %2d of 48\n",
-			key, r.strong, r.weak, r.draws, r.closest, r.spent)
+		fmt.Printf("bvr %-22s %d-%d, %d no result | closest %6.0f m | AMRAAMs spent %2d of %d\n",
+			key, r.strong, r.weak, r.draws, r.closest, r.spent, r.carried)
 	}
 	// THE GATES. Order and health, not tallies: see the header.
 	end := results["superhuman v novice"]
@@ -120,15 +122,15 @@ func TestBvrLadder(t *testing.T) {
 			t.Fatalf("%s v %s never closed inside 20 km: degenerate never-closing play (closest %.0f m)", pair[0], pair[1], r.closest)
 		}
 		// MAGAZINE DISCIPLINE IS NOT GATED HERE, and six seeds is why (#225).
-		// Spend is capped at 48, two aces average 6.69 a fight with a deviation
-		// of 1.43 (48-seed measurement), so six fights centre on 40 and the cap
-		// itself stands only 2.2 deviations up. The gate that used to sit here,
+		// On the four-round fit spend was capped at 48, two aces averaged 6.69 a
+		// fight with a deviation of 1.43, so six fights centred on 40 and the cap
+		// itself stood only 2.2 deviations up. The gate that used to sit here,
 		// at 44, was 1.25 deviations above the mean - about one run in nine red
 		// on the draw alone, which is exactly how it read 45 and failed at
 		// cbe8af7 and 44 and passed at HEAD with nothing tuned in between. No
 		// threshold under the cap was quiet enough to be worth having, so the
-		// judgement moved to TestBvrWide, where 24 seeds put the cap 4.5
-		// deviations up and a three-deviation allowance fits beneath it. The
-		// spend is still PRINTED above: the number was always the useful part.
+		// judgement moved to TestBvrWide, where 24 seeds put the cap well clear
+		// and a three-deviation allowance fits beneath it. The spend is still
+		// PRINTED above: the number was always the useful part.
 	}
 }

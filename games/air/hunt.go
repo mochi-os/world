@@ -58,7 +58,8 @@ func pressing(library int) press {
 // The bot's radar is the pilot's (apps/air/web/src/game/radar.ts): the same
 // detection range by aspect and against the sea, the same doppler notch on the
 // target's own speed along the line of sight, one look per antenna frame at
-// the same odds, and the same memory before a starved lock drops. The scan
+// the same odds, a jammer outside burnthrough starving the lock as the notch
+// does, and the same memory before a starved lock drops. The scan
 // cone matches the seeker's gimbal constant, and in elevation it covers the
 // pilot's default four bars, a beam each, about where the antenna points.
 // hunt_test.go holds the two in step.
@@ -177,8 +178,11 @@ func (i *instance) antenna(a *craft, tick uint64) float64 {
 
 // trackable reports whether a bot's radar can hold an STT on the prey, on the
 // jet as it is: inside the gimbal cone, inside the detection range - or
-// radar_hold of it for a lock already held - and out of the notch, or starved
-// by it for no longer than the memory, after which the lock drops.
+// radar_hold of it for a lock already held - and fed, or starved for no
+// longer than the memory, after which the lock drops. The notch starves it,
+// and so does a jammer radiating from outside burnthrough: without that the
+// jammer cost its pilot home-on-jam against a bot's round and denied the
+// bot nothing.
 func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
 	b := a.brain
 	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
@@ -186,7 +190,7 @@ func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
 	if locked {
 		reach *= radar_hold
 	}
-	starved := notched(line, prey.model.State.Velocity)
+	starved := notched(line, prey.model.State.Velocity) || (prey.loud && span > round.Burnthrough)
 	if !locked || !starved {
 		b.notching = 0
 	} else if b.notching == 0 {
@@ -488,11 +492,6 @@ func poising(library int) poise {
 	}
 }
 
-// guard_quiet is the terminal call: inside this range the machine drops its
-// jammer, because a loud target hands an inbound round bearing-only
-// home-on-jam that overrides every other defence.
-const guard_quiet = 6000.0
-
 // chance is a deterministic per-engagement roll, seeded like the flare
 // rolls: same instance, slot, round and salt — same outcome, every replay.
 func chance(seed uint64, slot int, number uint64, salt uint64) float64 {
@@ -508,7 +507,7 @@ func chance(seed uint64, slot int, number uint64, salt uint64) float64 {
 // defend is behaviour 3: the reaction to an inbound radar round, from the
 // moment a human's RWR calls MISSILE (the round past Active). Returns true
 // while the defence owns the flight path. Beam then dispense, degraded by the
-// poise dials; the machine also arms its jammer until the terminal call.
+// poise dials.
 func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b := a.brain
 	var threat *missile
@@ -524,7 +523,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 		}
 	}
 	if threat == nil {
-		b.alerted, b.guarding, b.jam = 0, 0, false
+		b.alerted, b.guarding = 0, 0
 		return false
 	}
 	if b.alerted == 0 {
@@ -547,7 +546,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 				continue
 			}
 			if _, d := i.bearing(a.model.State.Position, c.model.State.Position); d < 3000 {
-				b.guarding, b.jam = 0, false
+				b.guarding = 0
 				return false
 			}
 		}
@@ -607,20 +606,16 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
-	// MACHINE ONLY, and measured rather than assumed (2026-09-08). The
-	// argument for giving this to the ace was strong: arming is one range
-	// comparison against a span this function has already computed, no reflex
-	// and no perception the ace lacks, and the equipment is identical on every
-	// craft (air.go's loud rules, and the player's own XMIT switch). It was
-	// tried, and the symmetric BVR seam collapsed -- ace v ace went from 3 of 4
-	// seeds merging or resolving to 1 of 4, while machine v machine, where BOTH
-	// sides already jam, stayed at 3 of 4. Two jamming pilots can hold no lock
-	// on each other, and only machine reflexes recover the fight from that; at
-	// the ace's 0.4 s react and 12-tick cadence it simply never resolves. So
-	// the emission trade is not a pure doctrine axis after all: its value is
-	// coupled to reaction time, and it stays with the tier that can pay for it.
-	if b.skill.machine {
-		b.jam = span > guard_quiet // armed while spoofable, quiet at the terminal call
-	}
+	// No bot arms its jammer: the superhuman flies the ace's doctrine, and the
+	// ace never carried one. Measured at 48 seeds, superhuman v ace
+	// (2026-10-15): arming it while a seeker was up and beyond 6 km, as the
+	// superhuman did, lost 11-35, and 19-27 with it off. Home-on-jam overrides
+	// the beam and the chaff, and the datalink jamming denies no longer
+	// steers a round whose seeker is on. Arming it only while a hostile STT
+	// held the jet and no seeker was up measured 19-26, no better than never:
+	// the shooter's lock starves and drops, the jammer falls quiet with
+	// nothing painting it, and a bot locks again on the next tick. Given to the
+	// ace (2026-09-08), it took the symmetric BVR seam from 3 of 4 seeds
+	// merging or resolving to 1 of 4, while a bot's radar ignored jamming.
 	return true
 }

@@ -672,10 +672,9 @@ type brain struct {
 	beam      flight.Vec3 // the held beam heading between re-squares: it DRIFTS as the LOS rotates, which is the characterised pilot failure
 	askew     float64     // this engagement's beam error sample, radians (the geometry-tolerance dial)
 	lapse     bool        // this engagement reverts to drag (the seeded lapse: some defences simply fail)
-	jam       bool        // brain-driven jammer arming (the machine's emission trade); applied to latest.Jammer after steer
 	contact   flight.Vec3 // last place a BVR contact was held (hunt.go): the fight's address when the picture goes dark
 	contacted uint64      // tick of that memory; a defence drops both radars into each other's notch at once, and without this the pair politely flies apart forever
-	notching  uint64      // tick this bot's STT went into the notch, 0 while it tracks: the lock coasts radar_memory on memory, then drops
+	notching  uint64      // tick this bot's STT was starved, by the notch or a jammer outside burnthrough, 0 while it tracks: the lock coasts radar_memory on memory, then drops
 	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
 	futiled   int         // the target that futility was counted against; a new target resets the lesson
 	turned    uint64      // tick the lead turn was committed
@@ -925,7 +924,6 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		i.overtake(a, b)
 		a.latest = b.steer(a.model, tick)
 	}
-	a.latest.Jammer = b.jam // the armed level, brain-driven for bots the way a client reports it for humans (same equipment, same trade-offs)
 	// The fire drill (#130, deferred from #78): engine fires feed on throttle
 	// and starve at idle (battle.Advance) — chopping the power IS the drill,
 	// and it overrides every plan except a live missile evade (twenty seconds
@@ -2553,7 +2551,7 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 	if b.intent == "finish" && !c.latest.Fire {
 		return
 	}
-	if b.walked > 0 && b.walked < 30 && !b.skill.machine {
+	if b.walked > 0 && b.walked < 30 {
 		return // my pipper is nearly on: the exchange favours me
 	}
 	b.dodge = tick + uint64(45+((tick/30)%3)*15) // 0.75-1.25 s of evasion, varied so a shooter cannot time it

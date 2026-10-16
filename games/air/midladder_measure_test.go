@@ -32,7 +32,7 @@ func TestMidladderMeasure(t *testing.T) {
 	}
 	for _, pair := range pairs {
 		strong, weak := pair[0], pair[1]
-		wins, losses, draws, spent := 0, 0, 0, 0
+		wins, losses, draws, spent, carried := 0, 0, 0, 0, 0
 		closest := math.MaxFloat64
 		for seed := uint64(1); seed <= 20; seed++ {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("midladder%s%s%d", strong, weak, seed),
@@ -79,7 +79,9 @@ func TestMidladderMeasure(t *testing.T) {
 			used := 0
 			for _, a := range []*craft{top, low} {
 				if a != nil {
-					used += 4 - a.amraams
+					rack := len(stores_amraams(a.loadout))
+					used += rack - a.amraams
+					carried += rack
 				}
 			}
 			spent += used
@@ -95,7 +97,7 @@ func TestMidladderMeasure(t *testing.T) {
 				strong+" v "+weak, seed, verdict, when, used)
 			i.Close()
 		}
-		fmt.Printf("midladder %-18s TOTAL %d-%d, %d draws | closest %6.0f m | spent %d of 160\n",
-			strong+" v "+weak, wins, losses, draws, closest, spent)
+		fmt.Printf("midladder %-18s TOTAL %d-%d, %d draws | closest %6.0f m | spent %d of %d\n",
+			strong+" v "+weak, wins, losses, draws, closest, spent, carried)
 	}
 }

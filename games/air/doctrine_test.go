@@ -312,11 +312,9 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 // 2026-09-08: the machine is not a different pilot, it is the ace with the
 // human dials at zero. Every other dial must match.
 //
-// It covers the skill TABLE. One divergence lives outside it and is deliberate:
-// the jammer policy in hunt.go stays on the machine flag, because giving it to
-// the ace was measured to collapse the symmetric BVR seam (see
-// TestJammerStaysWithTheMachine). That is the exception that proves the rule --
-// it was kept only because a measurement earned it.
+// It covers the skill TABLE. Beyond the table the machine flag switches off
+// perception and reflex limits and nothing else: TestNoBotJams and
+// TestFlinchHoldsAWalkedBurst pin the two doctrine branches it used to carry.
 //
 // This exists because divergence is expensive and quiet. #106 spent a full
 // 48-seed sweep discovering that the machine's own BVR shot depth lost 18-29
@@ -350,5 +348,55 @@ func TestSuperhumanIsTheAceWithoutHumanLimits(t *testing.T) {
 				"with the reason; otherwise the tiers have re-acquired a doctrine axis (#106).",
 				name, ace.Field(at), machine.Field(at))
 		}
+	}
+}
+
+// TestFlinchHoldsAWalkedBurst: with his gun lining up from 400 m astern, the
+// ace and the superhuman both jink - unless their own burst is walking onto
+// him, when both hold the track and take the exchange. The superhuman reads
+// the cue sooner, which is perception; whether to hold is doctrine, and it is
+// the ace's.
+func TestFlinchHoldsAWalkedBurst(t *testing.T) {
+	for _, level := range []string{"ace", "superhuman"} {
+		made, err := (&Air{}).Create(game.Session{Identifier: "flinch" + level, Game: "air", Mode: "furball", Capacity: 8, Seed: 3,
+			Parameters: map[string]any{"bots": map[string]any{level: 1.0, "drone": 1.0}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		i := made.(*instance)
+		var me, him *craft
+		for _, slot := range i.slots() {
+			if c := i.aircraft[slot]; c != nil && c.bot {
+				if c.brain != nil {
+					me = c
+				} else {
+					him = c
+				}
+			}
+		}
+		if me == nil || him == nil {
+			t.Fatalf("%s: roster wrong", level)
+		}
+		base, forward := flight.Vec3{Y: 4000}, flight.Vec3{X: 220}
+		dodged := func(walked float64) bool {
+			aloft(me, base, forward)
+			aloft(him, base.Add(flight.Vec3{X: -400}), forward) // dead astern, bore on me
+			b := me.brain
+			b.walked, b.intent, b.glimpsed, b.dodge = walked, "", 0, 0
+			for _, tick := range []uint64{100, 140} { // the second look comes after the ace's 0.4 s reaction
+				i.flinch(me.player.Slot, me, tick, him.player.Slot, 400)
+			}
+			return b.dodge > 140
+		}
+		if !dodged(0) {
+			t.Errorf("%s did not jink with his gun lining up from 400 m astern", level)
+		}
+		if dodged(10) {
+			t.Errorf("%s jinked with its own burst 10 m off him: the exchange favours it, and the ace holds", level)
+		}
+		if !dodged(40) {
+			t.Errorf("%s held the track with its burst 40 m off him, where the ace jinks", level)
+		}
+		i.Close()
 	}
 }

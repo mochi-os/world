@@ -153,9 +153,9 @@ func TestHuntDefence(t *testing.T) {
 	//
 	// What it uniquely holds is statistical - the tier ladder's two ends, over
 	// 24 fights - which is exactly what a sweep is for. The behavioural rule it
-	// also happens to check, that only the machine tier arms a jammer, is
-	// covered in full and in milliseconds by TestJammerStaysWithTheMachine
-	// below, so nothing fast is lost by moving this behind the gate.
+	// also happens to check, that no tier arms a jammer, is covered in full and
+	// in milliseconds by TestNoBotJams below, so nothing fast is lost by moving
+	// this behind the gate.
 	heavy(t)
 	type outcome struct {
 		alive    float64 // s the defender lasted (full fight = the limit)
@@ -167,8 +167,6 @@ func TestHuntDefence(t *testing.T) {
 	const limit = 300.0
 	score := map[string]*outcome{}
 	survived := map[string]int{}
-	loud := map[string]bool{}
-	quieted := map[string]bool{}
 	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
 		score[level] = &outcome{}
 		for seed := uint64(1); seed <= 6; seed++ {
@@ -218,14 +216,8 @@ func TestHuntDefence(t *testing.T) {
 			o := score[level]
 			for tick := uint64(0); tick < uint64(60*limit); tick++ {
 				i.Step(tick, nil)
-				if defender.brain.jam {
-					loud[level] = true
-					if !defender.brain.skill.machine {
-						t.Fatalf("%s armed the jammer: the emission trade belongs to the machine tier", level)
-					}
-				}
-				if loud[level] && !defender.brain.jam && defender.alive && defender.brain.alerted > 0 {
-					quieted[level] = true
+				if defender.latest.Jammer {
+					t.Fatalf("%s armed the jammer: no tier carries it", level)
 				}
 				current := map[*missile]bool{}
 				if defender.alive && defender.model != nil {
@@ -294,9 +286,6 @@ func TestHuntDefence(t *testing.T) {
 	if ratio(score["superhuman"]) < ratio(score["novice"])-0.34 {
 		t.Fatalf("the machine defeats a smaller share of inbound rounds than the novice: %.2f vs %.2f", ratio(score["superhuman"]), ratio(score["novice"]))
 	}
-	if !loud["superhuman"] {
-		t.Fatal("the machine never armed its jammer with a round inbound")
-	}
 }
 
 // TestHuntSeam: a BVR fight collapsing to WVR hands the flight path to the
@@ -357,18 +346,13 @@ func TestHuntSeam(t *testing.T) {
 	}
 }
 
-// TestJammerStaysWithTheMachine pins a tier boundary that measurement chose
-// over argument. Every craft carries the same jammer and the same loud rules,
-// and arming it is one range comparison -- by every structural test it is
-// doctrine, which would put it at library >= 3 alongside the ace. Measured
-// 2026-09-08, that collapses the symmetric BVR seam: ace v ace fell from 3 of
-// 4 seeds merging or resolving to 1 of 4, while machine v machine, where both
-// sides already jam, held at 3 of 4. Two jamming pilots hold no lock on each
-// other and only machine reflexes recover the fight. TestHuntSeam catches the
-// regression indirectly, after seventy seconds of simulation; this names it.
-func TestJammerStaysWithTheMachine(t *testing.T) {
+// TestNoBotJams: the superhuman flies the ace's doctrine, and no tier arms
+// the jammer - not under an inbound whose seeker is up, beyond or inside 6 km,
+// and not under a hostile STT with no round in the air. hunt.go's defend()
+// records why, with the measurements.
+func TestNoBotJams(t *testing.T) {
 	// Driven through the real defensive path, not by restating the condition.
-	arm := func(level string, span float64) bool {
+	armed := func(level string, span float64, inbound bool) bool {
 		b := NewBandit(level, 1, 250000, "", false, true, "open", 0, false)
 		b.Spawn(flight.Vec3{X: span, Y: 8000}, flight.Vec3{X: -240})
 		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
@@ -377,21 +361,29 @@ func TestJammerStaysWithTheMachine(t *testing.T) {
 		player.State.Encode(words)
 		for tick := 0; tick < 90; tick++ {
 			b.Mirror(words, false, true)
-			b.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
+			if inbound {
+				b.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
+			} else {
+				b.Menace(nil)
+				reflection := b.arena.aircraft[0]
+				reflection.emitter, reflection.lock = 2, b.craft.player.Slot // his STT on the bandit
+			}
 			b.Step()
+			if b.craft.latest.Jammer {
+				return true
+			}
 		}
-		return b.craft.brain.jam && b.craft.latest.Jammer
+		return false
 	}
-
-	if !arm("superhuman", guard_quiet+6000) {
-		t.Error("the machine did not arm its jammer against a spoofable inbound")
-	}
-	if arm("superhuman", guard_quiet-3000) {
-		t.Error("the machine kept radiating inside the terminal call, where home-on-jam overrides every other defence")
-	}
-	for _, level := range []string{"novice", "pilot", "ace"} {
-		if arm(level, guard_quiet+6000) {
-			t.Errorf("%s armed a jammer: below the machine the trade does not pay (see the comment above)", level)
+	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+		if armed(level, 12000, true) {
+			t.Errorf("%s armed its jammer under a seeker 12 km out: home-on-jam overrides its beam and chaff", level)
+		}
+		if armed(level, 3000, true) {
+			t.Errorf("%s armed its jammer under a seeker 3 km out", level)
+		}
+		if armed(level, 20000, false) {
+			t.Errorf("%s armed its jammer under a hostile STT at 20 km", level)
 		}
 	}
 }
@@ -545,6 +537,43 @@ func TestRadarMemory(t *testing.T) {
 	}
 }
 
+// TestRadarJammer: a target radiating its jammer from outside burnthrough
+// starves the lock as the notch does, four seconds on memory and then gone, as
+// the pilot's STT has it; inside burnthrough the echo wins and the lock holds,
+// and a quiet target at the same range is tracked throughout.
+func TestRadarJammer(t *testing.T) {
+	hold := func(span float64, loud bool) float64 { // seconds the lock held, up to the memory and a second past it
+		i, a, c, slot := radar_pair(t)
+		b := a.brain
+		b.target = slot
+		park(c, flight.Vec3{X: span, Y: 3000}, flight.Vec3{X: -250})
+		b.known[slot] = &track{when: 0, position: c.model.State.Position, velocity: c.model.State.Velocity}
+		i.hunt(0, a, 1)
+		if a.emitter != 2 || a.lock != slot {
+			t.Fatalf("no STT on a hot target at %.0f m (emitter %d, lock %d)", span, a.emitter, a.lock)
+		}
+		c.loud = loud
+		for tick := uint64(2); tick <= 2+radar_memory+60; tick++ {
+			park(c, flight.Vec3{X: span, Y: 3000}, flight.Vec3{X: -250}) // held at the range under test
+			i.hunt(0, a, tick)
+			if a.emitter != 2 || a.lock != slot {
+				return float64(tick-2) / 60
+			}
+		}
+		return float64(radar_memory+60) / 60
+	}
+	memory := float64(radar_memory) / 60
+	if s := hold(30000, true); s <= memory || s > memory+0.1 {
+		t.Errorf("a jammer at 30 km held the lock %.2f s, want its %.0f s memory and no longer", s, memory)
+	}
+	if s := hold(30000, false); s <= memory+0.5 {
+		t.Errorf("a quiet target at 30 km lost the lock after %.2f s", s)
+	}
+	if s := hold(round.Burnthrough-1000, true); s <= memory+0.5 {
+		t.Errorf("a jammer inside burnthrough broke the lock after %.2f s: the echo wins there", s)
+	}
+}
+
 // TestRadarHold: a lock acquires inside the detection range and, once held,
 // holds out to radar_hold of it; the cone and the notch gate both.
 func TestRadarHold(t *testing.T) {
@@ -694,6 +723,7 @@ func TestRadarParity(t *testing.T) {
 		{"HOLD", read(`const HOLD = ([0-9.]+)`), radar_hold},
 		{"MEMORY", read(`const MEMORY = ([0-9.]+)`), radar_memory / 60},
 		{"NOTCH", read(`const NOTCH = ([0-9.]+)`), round.Notch},
+		{"BURNTHROUGH", read(`const BURNTHROUGH = ([0-9.]+)`), round.Burnthrough},
 		{"aspect", read(`return 1 - ([0-9.]+) \* along`), 1 - aspect(flight.Vec3{X: 1}, flight.Vec3{X: 100})},
 		{"BEAM", read(`const BEAM = ([0-9.]+)`), radar_beam},
 		{"TILT", read(`const TILT = ([0-9.]+)`), radar_tilt},

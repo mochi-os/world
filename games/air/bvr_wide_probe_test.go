@@ -18,8 +18,9 @@ import (
 
 // magazine summarises a per-fight expenditure: the range, the middle,
 // and how many fights emptied the rack, which is the behaviour the
-// magazine-discipline gate is really about.
-func magazine(fights []int) string {
+// magazine-discipline gate is really about. full is what both jets carried
+// between them.
+func magazine(fights []int, full int) string {
 	if len(fights) == 0 {
 		return "none"
 	}
@@ -28,7 +29,7 @@ func magazine(fights []int) string {
 	empty, total := 0, 0
 	for _, v := range sorted {
 		total += v
-		if v == 8 {
+		if v == full {
 			empty++
 		}
 	}
@@ -38,8 +39,8 @@ func magazine(fights []int) string {
 		spread += (float64(v) - mean) * (float64(v) - mean)
 	}
 	spread = math.Sqrt(spread / float64(len(sorted)))
-	return fmt.Sprintf("low %d, median %d, high %d, mean %.2f, deviation %.2f | %d of %d fights spent all eight",
-		sorted[0], sorted[len(sorted)/2], sorted[len(sorted)-1], mean, spread, empty, len(sorted))
+	return fmt.Sprintf("low %d, median %d, high %d, mean %.2f, deviation %.2f | %d of %d fights spent all %d",
+		sorted[0], sorted[len(sorted)/2], sorted[len(sorted)-1], mean, spread, empty, len(sorted), full)
 }
 
 func TestBvrWide(t *testing.T) {
@@ -66,11 +67,11 @@ func TestBvrWide(t *testing.T) {
 	}
 	for _, pair := range pairs {
 		strong, weak := pair[0], pair[1]
-		wins, losses, draws, spent := 0, 0, 0, 0
+		wins, losses, draws, spent, carried, full := 0, 0, 0, 0, 0, 0
 		mirror := strong == weak
 		// The mirror rung is here for a SUM over 2n jets, not a win-loss margin,
 		// and a sum converges faster than a margin: 24 seeds already puts the
-		// 48-round ceiling 4.5 deviations above the mean, which is all the
+		// 288-round ceiling 9 deviations above the mean, which is all the
 		// magazine gate below needs. Half the depth, half the sixteen minutes it
 		// adds to a doctrine battery already running near its own timeout.
 		count := seeds
@@ -123,51 +124,56 @@ func TestBvrWide(t *testing.T) {
 				draws++
 			}
 			fight := 0
+			full = 0
 			for _, a := range []*craft{top, low} {
-				fight += 4 - a.amraams
+				rack := len(stores_amraams(a.loadout))
+				fight += rack - a.amraams
+				full += rack
 			}
 			spent += fight
+			carried += full
 			expenditure = append(expenditure, fight)
 			i.Close()
 		}
-		fmt.Printf("bvr wide %-11s v %-7s %d-%d, %d no result | AMRAAMs spent %d of %d\n", strong, weak, wins, losses, draws, spent, 8*count)
+		fmt.Printf("bvr wide %-11s v %-7s %d-%d, %d no result | AMRAAMs spent %d of %d\n", strong, weak, wins, losses, draws, spent, carried)
 		// The distribution, not just the total: a six-seed gate is a sample of
 		// this, and whether 44 of 48 is typical or a tail is exactly what the
 		// total cannot say (#225).
-		fmt.Printf("         spend per fight: %s\n", magazine(expenditure))
+		fmt.Printf("         spend per fight: %s\n", magazine(expenditure, full))
 		// THE GATE (#46): symmetric competent BVR neutralises, so order is not
 		// demanded of these rungs - losing them beyond the seed band is.
 		//
-		// The band SCALES with the sample (#106). A win-loss margin wanders as
-		// the square root of the fights, so the +3 that is right at 24 seeds is
-		// about +4 at 48; a fixed number would mean raising the seed count
-		// silently TIGHTENED the gate rather than only resolving it better.
-		// THE MAGAZINE GATE (#225), which lived at six seeds and could not.
-		// Measured at HEAD over 48 seeds: two aces spend 6.69 AMRAAMs a fight
-		// with a deviation of 1.43, so n fights centre on 6.7n and wander by
-		// 1.43*sqrt(n). The allowance is three of those deviations.
+		// The band SCALES with the sample (#106), and it is two deviations of
+		// the draw (2026-10-16). The margin between evenly matched jets wanders
+		// by about the square root of the fights: two aces read 28-18 over 48
+		// seeds, and the superhuman flying the ace's doctrine 19-27 on seeds
+		// 1-48 and 22-21 on 49-96. The old band, 3*sqrt(n/24) or 4.2 at 48
+		// seeds, was under one deviation, so an even pair failed it about one
+		// run in four. Two deviations still catch the inversion this gate
+		// exists for: 11-35 when the superhuman jammed under every seeker.
 		//
-		// WHY IT MOVED. The quantity is capped at 8n, and at six seeds the cap
-		// sits only 2.2 deviations above the mean - so the old gate at 44 of 48
-		// stood at 1.25, tripping about one run in nine on nothing but the draw,
-		// and even a gate at the ceiling itself would have tripped on one in
-		// eighty. No threshold was both meaningful and quiet at that sample; the
-		// ladder now prints the number and this judges it. At 24 seeds the cap is
-		// 4.5 deviations up and the three-deviation line clears it comfortably:
-		// the rung reads 164 of 192 against an allowance of 182, a margin of 2.6
-		// deviations - about one false red in 190 runs, against the old gate's
-		// one in nine.
+		// THE MAGAZINE GATE (#225), which lived at six seeds and could not.
+		// Measured over 48 seeds on the Fox 3 fit, six rounds a jet: two aces
+		// spend 8.08 AMRAAMs a fight with a deviation of 2.04, so n fights
+		// centre on 8.1n and wander by 2.04*sqrt(n). The allowance is three of
+		// those deviations.
+		//
+		// WHY IT MOVED. On the four-round fit the six-seed cap sat only 2.2
+		// deviations above the mean, so the old gate at 44 of 48 tripped about
+		// one run in nine on nothing but the draw. No threshold was both
+		// meaningful and quiet at that sample; the ladder now prints the number
+		// and this judges it, at 24 seeds, with the cap far above the line.
 		//
 		// The novice ripples by design and the pilot's long fights legitimately
-		// empty the rack (measured 7.42 a fight against the ace's 6.69), so only
+		// empty the rack (measured 8.90 a fight against the ace's 8.08), so only
 		// pairings where BOTH sides hold rounds are judged.
 		if weak != "novice" && weak != "pilot" {
-			if allowed := 6.7*float64(count) + 4.3*math.Sqrt(float64(count)); float64(spent) > allowed {
+			if allowed := 8.1*float64(count) + 6.1*math.Sqrt(float64(count)); float64(spent) > allowed {
 				t.Errorf("bvr wide: %s v %s dumped magazines: %d of %d AMRAAMs spent over %d seeds, past an allowance of %.0f",
-					strong, weak, spent, 8*count, count, allowed)
+					strong, weak, spent, carried, count, allowed)
 			}
 		}
-		band := 3 * math.Sqrt(float64(count)/24)
+		band := 2 * math.Sqrt(float64(count))
 		// A mirror rung has no order to invert - the loser is whichever identical
 		// jet drew the short seed - so only the pairings with a real ladder are
 		// gated. Asserting a coin flip here would fail on its own variance.
