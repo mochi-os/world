@@ -21,9 +21,9 @@ import (
 func TestBvrLadder(t *testing.T) {
 	heavy(t)
 	type tally struct {
-		strong, weak, draws int
-		closest             float64
-		spent, carried      int
+		strong, weak, trades, draws int
+		closest                     float64
+		spent, carried              int
 	}
 	pairs := [][2]string{
 		{"superhuman", "novice"},
@@ -76,12 +76,15 @@ func TestBvrLadder(t *testing.T) {
 						r.closest = span
 					}
 				}
-				switch {
-				case low.model == nil || !low.alive:
+				switch ending(top, low) {
+				case "won":
 					r.strong++
 					decided = true
-				case top.model == nil || !top.alive:
+				case "lost":
 					r.weak++
+					decided = true
+				case "traded":
+					r.trades++
 					decided = true
 				}
 			}
@@ -101,8 +104,8 @@ func TestBvrLadder(t *testing.T) {
 	for _, pair := range pairs {
 		key := pair[0] + " v " + pair[1]
 		r := results[key]
-		fmt.Printf("bvr %-22s %d-%d, %d no result | closest %6.0f m | AMRAAMs spent %2d of %d\n",
-			key, r.strong, r.weak, r.draws, r.closest, r.spent, r.carried)
+		fmt.Printf("bvr %-22s %d-%d, %d traded, %d no result | closest %6.0f m | AMRAAMs spent %2d of %d\n",
+			key, r.strong, r.weak, r.trades, r.draws, r.closest, r.spent, r.carried)
 	}
 	// THE GATES. Order and health, not tallies: see the header.
 	end := results["superhuman v novice"]

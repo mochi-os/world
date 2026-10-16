@@ -35,6 +35,53 @@ func heavy(t *testing.T) {
 	t.Cleanup(func() { bots_live.Store(0) })
 }
 
+// ending reads a ladder fight after a step, from the stronger jet's side:
+// "won" when only the weaker is down, "lost" when only the stronger is,
+// "traded" when both fell in the same step, "" while both fly. A trade is
+// neither side's win: the ladders that tested one death first credited every
+// trade to whichever jet they tested.
+func ending(top, low *craft) string {
+	down := func(c *craft) bool { return c.model == nil || !c.alive }
+	switch {
+	case down(top) && down(low):
+		return "traded"
+	case down(low):
+		return "won"
+	case down(top):
+		return "lost"
+	}
+	return ""
+}
+
+// TestEndingScoresATrade: a ladder fight where both jets fall in one step is a
+// trade, whichever jet a ladder looks at first, and a jet whose model was torn
+// down in the death step is down.
+func TestEndingScoresATrade(t *testing.T) {
+	jet := func(alive, torn bool) *craft {
+		c := &craft{alive: alive, model: new(flight.Model)}
+		if torn {
+			c.model = nil
+		}
+		return c
+	}
+	for _, c := range []struct {
+		top, low *craft
+		want     string
+	}{
+		{jet(true, false), jet(true, false), ""},
+		{jet(true, false), jet(false, false), "won"},
+		{jet(false, false), jet(true, false), "lost"},
+		{jet(false, false), jet(false, false), "traded"},
+		{jet(true, true), jet(false, false), "traded"},
+		{jet(true, false), jet(true, true), "won"},
+	} {
+		if got := ending(c.top, c.low); got != c.want {
+			t.Errorf("top alive %v torn %v, low alive %v torn %v: %q, want %q",
+				c.top.alive, c.top.model == nil, c.low.alive, c.low.model == nil, got, c.want)
+		}
+	}
+}
+
 func build(t *testing.T, mode string, parameters map[string]any, players int) *instance {
 	t.Helper()
 	// The bot budget is server-wide and released only by Close, which a test never

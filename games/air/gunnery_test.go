@@ -147,7 +147,7 @@ func TestLadderDuel(t *testing.T) {
 		}
 		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
 			strong, weak := pair[0], pair[1]
-			wins, losses, draws := 0, 0, 0
+			wins, losses, trades, draws := 0, 0, 0, 0
 			var times []float64
 			// Sixteen seeds: two-way missile fights are chaotic - at n=8 this arm read
 			// 0-3 while the same pairing over 24 seeds ran 5-4 forward.
@@ -183,14 +183,18 @@ func TestLadderDuel(t *testing.T) {
 					// in the death tick, so model-nil IS a kill — breaking on it
 					// before the switch silently scored every detonation as no
 					// result, which under real drag is most kills.
-					switch {
-					case low.model == nil || !low.alive:
+					switch ending(top, low) {
+					case "won":
 						wins++
 						times = append(times, float64(tick)/60)
 						done = true
-					case top.model == nil || !top.alive:
+					case "lost":
 						losses++
 						times = append(times, float64(tick)/60)
+						done = true
+					case "traded":
+						trades++
+						times = append(times, float64(tick)/60) // decided, by both at once
 						done = true
 					}
 				}
@@ -205,8 +209,8 @@ func TestLadderDuel(t *testing.T) {
 			if len(times) > 0 {
 				mean /= float64(len(times))
 			}
-			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
-				arm, strong, weak, wins, losses, draws, mean)
+			fmt.Printf("%-8s %-11s vs %-7s  won %d  lost %d  traded %d  no result %d  (of 16)  mean time to kill %5.1f s\n",
+				arm, strong, weak, wins, losses, trades, draws, mean)
 			// EVERY DECIDED FIGHT IS TIMED, IN BOTH DIRECTIONS (#216). This
 			// averaged only the STRONG side's wins, which at an inverted rung is
 			// three fights - and the claim it makes ("the fight is being decided

@@ -234,7 +234,7 @@ func TestGunLadderWide(t *testing.T) {
 	wide(t)
 	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
 		strong, weak := pair[0], pair[1]
-		wins, losses, draws := 0, 0, 0
+		wins, losses, trades, draws := 0, 0, 0, 0
 		for seed := uint64(1); seed <= 48; seed++ {
 			g := New()
 			made, err := g.Create(game.Session{Identifier: fmt.Sprintf("wide%s%d", strong, seed),
@@ -259,12 +259,15 @@ func TestGunLadderWide(t *testing.T) {
 			done := false
 			for tick := uint64(0); tick < 60*240 && !done; tick++ {
 				i.Step(tick, nil)
-				switch {
-				case low.model == nil || !low.alive:
+				switch ending(top, low) {
+				case "won":
 					wins++
 					done = true
-				case top.model == nil || !top.alive:
+				case "lost":
 					losses++
+					done = true
+				case "traded":
+					trades++
 					done = true
 				}
 			}
@@ -272,7 +275,7 @@ func TestGunLadderWide(t *testing.T) {
 				draws++
 			}
 		}
-		fmt.Printf("wide guns %-11s vs %-7s  won %d  lost %d  no result %d  (of 48)\n", strong, weak, wins, losses, draws)
+		fmt.Printf("wide guns %-11s vs %-7s  won %d  lost %d  traded %d  no result %d  (of 48)\n", strong, weak, wins, losses, trades, draws)
 		// THE GATE (#46): order, with the band forty-eight seeds earns - about three.
 		// At sixteen seeds an inversion passed unseen.
 		if losses > wins+3 {
