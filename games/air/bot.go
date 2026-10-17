@@ -675,6 +675,7 @@ type brain struct {
 	contact   flight.Vec3 // last place a BVR contact was held (hunt.go): the fight's address when the picture goes dark
 	contacted uint64      // tick of that memory; a defence drops both radars into each other's notch at once, and without this the pair politely flies apart forever
 	notching  uint64      // tick this bot's STT was starved, by the notch or a jammer outside burnthrough, 0 while it tracks: the lock coasts radar_memory on memory, then drops
+	recovery  bool        // the deck recovery holds the stick until the jet stops descending (recovers)
 	futile    int         // own AMRAAMs that have DIED against the current target without a kill (hunt.go): the look half of shoot-look-shoot
 	futiled   int         // the target that futility was counted against; a new target resets the lesson
 	turned    uint64      // tick the lead turn was committed
@@ -2828,7 +2829,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	aim, want := b.aim, b.g
 
 	// The floor overrides everything: wings level, maximum pull, burner.
-	if deck(s) {
+	if b.recovers(s) {
 		flat := flight.Vec3{X: s.Velocity.X, Z: s.Velocity.Z}.Normalize()
 		aim = flat.Add(flight.Vec3{Y: 0.3}).Normalize()
 		want = m.Airframe.Limit.Positive
@@ -3013,20 +3014,56 @@ func (b *brain) squeeze(m *flight.Model, tick uint64) bool {
 	return fire
 }
 
-// deck reports the floor's recovery due: the height the current dive loses at
-// ~6.5 g, plus a hard 800 m gate.
+// The deck recovery's height budget, fitted to the recovery itself (2026-10-17):
+// steer()'s wings-level pull flown from 3,000, 6,000 and 9,000 m at 250-550 kt,
+// in dives of 20-85 degrees and banks of 0, 90 and 180 degrees. The model below
+// reads 1.00-1.32 of the height each actually lost, which was 85-1,654 m. The
+// pull and its delay go by the air's dynamic pressure, so they read equivalent
+// airspeed; the arc's radius is the true one. The budget it replaces, the ideal
+// 6.5 g arc times 3, and 1.8 again past the horizon, missed both ways: short of
+// a slow pull-out's loss, and four times a fast one's inverted, so it called a
+// 500 kt dive at 10,000 ft an emergency with the wings past the horizon and not
+// with them level, and the fight's roll toward him flickered it on and off.
+const (
+	recovery_delay  = 20000.0 // m²/s²: the seconds before the pull bites, times the equivalent airspeed squared
+	recovery_roll   = 1.75    // rad/s: rolling the lift vector into the pull-out, its onset included
+	recovery_corner = 150.0   // m/s equivalent: below this the wing, not the placard, sets the pull
+	recovery_pull   = 5.0     // g: what the pull-out holds on average once it bites
+	recovery_margin = 1.5     // on the budget, which is already at or over the measured loss
+)
+
+// deck reports the floor's recovery due: the height the current dive would
+// lose rolling the lift vector into the pull-out and pulling out, with a margin,
+// plus a hard 900 m gate.
 func deck(s *flight.State) bool {
 	speed := math.Max(s.Velocity.Length(), 1)
-	sink := -s.Velocity.Y / speed
+	path := s.Velocity.Scale(1 / speed)
+	sink := -path.Y
 	loss := 0.0
 	if sink > 0 {
-		radius := speed * speed / (6.5 * 9.81)
-		loss = radius * (1 - math.Sqrt(math.Max(0, 1-sink*sink)))
-		if s.Attitude.Rotate(flight.Vec3{Y: 1}).Y < 0.2 {
-			loss *= 1.8 // rolled past the horizon: the recovery must roll upright before the pull exists
+		equivalent := speed * math.Sqrt(flight.Atmosphere(s.Position.Y, flight.Environment{}).Density/1.225)
+		pull := math.Max(math.Min(recovery_pull, 7.5*(equivalent/recovery_corner)*(equivalent/recovery_corner)), 1.2)
+		radius := speed * speed / (pull * 9.81)
+		roll := 0.0
+		if lift := (flight.Vec3{Y: 1}).Subtract(path.Scale(path.Y)); lift.Length() > 0.01 { // where the pull-out's lift points: world up, across the path
+			roll = math.Acos(clamp(s.Attitude.Rotate(flight.Vec3{Y: 1}).Dot(lift.Normalize()), -1, 1))
 		}
+		loss = speed*sink*(recovery_delay/(equivalent*equivalent)+roll/recovery_roll) + radius*(1-math.Sqrt(math.Max(0, 1-sink*sink)))
 	}
-	return (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*3.0 < 400 // 3.0×: the unloaded roll to upright eats altitude before the ideal-g pull exists
+	return (s.Position.Y < 900 && s.Velocity.Y < 0) || s.Position.Y-loss*recovery_margin < 400
+}
+
+// recovers is deck() held: once the recovery takes the stick it keeps it until
+// the jet stops descending. Judged afresh each tick, the wings-level roll the
+// recovery flies could clear the predicate and the fight's roll back toward him
+// trip it again, an unloaded jet rolling to and fro down the dive.
+func (b *brain) recovers(s *flight.State) bool {
+	if deck(s) {
+		b.recovery = true
+	} else if s.Velocity.Y >= 0 {
+		b.recovery = false
+	}
+	return b.recovery
 }
 
 // pipper computes the led gun solution: the direction the bore must point

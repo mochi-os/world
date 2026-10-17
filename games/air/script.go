@@ -51,7 +51,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		own = me.Velocity.Subtract(s.velocity).Scale(60)
 	}
 	s.velocity = me.Velocity
-	if b.prey == nil || deck(me) {
+	if b.prey == nil || b.recovers(me) {
 		s.branch = "deck"
 		b.play = s.branch       // the recording's Doctrine channel reads it
 		return b.steer(m, tick) // the recovery owns the stick near the water, whatever the plan

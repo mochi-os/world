@@ -7,6 +7,7 @@
 package air
 
 import (
+	"math"
 	"testing"
 
 	"world/games/air/aircraft"
@@ -70,5 +71,127 @@ func TestRecoveryOutranksTheJink(t *testing.T) {
 	calm, jinking := seat(6000, 0, false), seat(6000, 0, true)
 	if calm.Pitch == jinking.Pitch && calm.Roll == jinking.Roll {
 		t.Error("high and level, a live jink changed neither pitch nor roll: the evasion block is not running, so the ordering above is untested")
+	}
+}
+
+// diving lays a jet in a dive at height metres: knots along the flight path,
+// the dive and the bank in degrees, the bank rolled about the path from wings
+// level. A negative dive climbs.
+func diving(height, knots, dive, bank float64) *flight.Model {
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+	speed := knots / 1.944
+	d := dive * math.Pi / 180
+	path := flight.Vec3{X: math.Cos(d), Y: -math.Sin(d)}
+	m.State = flight.Level(m, flight.Vec3{Y: height}, flight.Vec3{X: 1}, speed, 2904)
+	m.State.Velocity = path.Scale(speed)
+	m.State.Attitude = flight.Axis(path, bank*math.Pi/180).Multiply(flight.Axis(flight.Vec3{Z: 1}, -d))
+	return m
+}
+
+// TestDeckBudgetsTheRecovery: from the highest point at which deck() calls the
+// recovery, steer()'s own pull-out clears the 400 m floor, and the call never
+// comes more than 2.5 times the height the pull-out actually loses above it.
+// The budget this replaced let a 250 kt pull-out bottom out under 200 m and
+// called a 550 kt inverted dive at 3.5 times its loss.
+func TestDeckBudgetsTheRecovery(t *testing.T) {
+	for _, knots := range []float64{250, 450, 550} {
+		for _, dive := range []float64{45, 75, 85} {
+			for _, bank := range []float64{0, 180} {
+				low, high := 0.0, 12000.0
+				for k := 0; k < 40; k++ {
+					if middle := (low + high) / 2; deck(&diving(middle, knots, dive, bank).State) {
+						low = middle
+					} else {
+						high = middle
+					}
+				}
+				m := diving(low, knots, dive, bank)
+				b := &brain{skill: skills["ace"], aim: flight.Vec3{X: 1}, g: 4, throttle: 1}
+				bottom := low
+				for tick := uint64(0); tick < 60*30; tick++ {
+					in := b.steer(m, tick)
+					for k := 0; k < 4; k++ {
+						m.Step(in)
+					}
+					bottom = math.Min(bottom, m.State.Position.Y)
+					if m.State.Velocity.Y > 0 && tick > 30 {
+						break
+					}
+				}
+				lost := low - bottom
+				if bottom < 400 {
+					t.Errorf("%.0f kt, %.0f degree dive, bank %.0f: called at %.0f ft, the pull-out bottomed at %.0f ft, under the 1,300 ft floor",
+						knots, dive, bank, low*3.281, bottom*3.281)
+				}
+				if low-400 > 2.5*lost {
+					t.Errorf("%.0f kt, %.0f degree dive, bank %.0f: called %.0f ft above the floor for a pull-out that loses %.0f ft",
+						knots, dive, bank, (low-400)*3.281, lost*3.281)
+				}
+			}
+		}
+	}
+}
+
+// TestRecoveryHoldsUntilClimbing: once deck() calls the recovery it keeps the
+// stick while the jet descends, even after rolling upright clears the call, and
+// lets go once the jet climbs.
+func TestRecoveryHoldsUntilClimbing(t *testing.T) {
+	inverted, upright := diving(2400, 500, 75, 180), diving(2400, 500, 75, 0)
+	if !deck(&inverted.State) || deck(&upright.State) {
+		t.Fatalf("the fixture is wrong: at 7,900 ft deck() reads %v inverted and %v upright, want true and false",
+			deck(&inverted.State), deck(&upright.State))
+	}
+	b := &brain{}
+	if !b.recovers(&inverted.State) {
+		t.Fatal("inverted in a 75 degree dive at 7,900 ft, the recovery was not called")
+	}
+	if !b.recovers(&upright.State) {
+		t.Error("rolled upright and still diving, the recovery let go of the stick")
+	}
+	if b.recovers(&diving(2400, 500, -10, 0).State) {
+		t.Error("climbing, the recovery kept the stick")
+	}
+}
+
+// TestScriptDiveHoldsTheFight: the scripted ace in a dive, rolled toward a
+// pilot below. At 10,000 ft in a 75 degree dive at 500 kt that is a fight, and
+// the doctrine flies it without the deck recovery. At 6,200 ft in a 60 degree
+// dive at 450 kt the recovery takes the stick once and keeps it: judged afresh
+// each tick it took the stick 9 times before the jet climbed, as each roll
+// toward him called it and each roll upright cleared it.
+func TestScriptDiveHoldsTheFight(t *testing.T) {
+	fly := func(height, knots, dive float64) (deck, entries int) {
+		b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+		b.Spawn(flight.Vec3{Y: height}, flight.Vec3{X: 257})
+		b.craft.brain.routine.passed = true
+		dove := diving(height, knots, dive, 150)
+		b.craft.model.State.Velocity, b.craft.model.State.Attitude = dove.State.Velocity, dove.State.Attitude
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: height - 1500, Z: 300}, flight.Vec3{X: 1}, 200, fuel)
+		words := make([]float64, flight.Size)
+		previous := ""
+		for tick := 0; tick < 60*8; tick++ {
+			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+			if b.Mode() == "deck" {
+				deck++
+				if previous != "deck" {
+					entries++
+				}
+			}
+			previous = b.Mode()
+			if b.craft.model.State.Velocity.Y > 0 {
+				break
+			}
+		}
+		return deck, entries
+	}
+	if ticks, _ := fly(3048, 500, 75); ticks > 0 {
+		t.Errorf("diving at 10,000 ft the deck recovery took the stick for %.1f s: a 75 degree dive at 500 kt loses about 4,000 ft", float64(ticks)/60)
+	}
+	if ticks, entries := fly(1900, 450, 60); ticks == 0 || entries > 1 {
+		t.Errorf("diving at 6,200 ft the deck recovery took the stick %d times for %.1f s in all, want once", entries, float64(ticks)/60)
 	}
 }
