@@ -388,6 +388,49 @@ func TestNoBotJams(t *testing.T) {
 	}
 }
 
+// TestBanditStarvesOnTheJammer: single player's bandit holds its STT on the
+// player as a server bot does, and loses it the same way. The client says when
+// the player's jammer radiates (Radiate, from the mirror's flags), and outside
+// burnthrough the lock starves to memory and drops; quiet, it holds.
+func TestBanditStarvesOnTheJammer(t *testing.T) {
+	held := func(loud bool) float64 { // seconds the lock held once the jammer began, up to eight
+		b := NewBandit("novice", 1, 250000, "", false, true, "open", 0, false)
+		b.Spawn(flight.Vec3{X: 30000, Y: 8000}, flight.Vec3{X: -250})
+		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
+		player.State = flight.Level(player, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 250, fuel)
+		words := make([]float64, flight.Size)
+		began := -1
+		for tick := 0; tick < 60*30; tick++ {
+			player.State.Position = player.State.Position.Add(player.State.Velocity.Scale(1.0 / 60))
+			player.State.Encode(words)
+			b.Mirror(words, false, true)
+			locked := b.craft.emitter == 2 && b.craft.lock == 0
+			if began < 0 && locked {
+				began = tick
+			}
+			b.Radiate(loud && began >= 0)
+			b.Step()
+			if began >= 0 {
+				if b.craft.emitter != 2 || b.craft.lock != 0 {
+					return float64(tick-began) / 60
+				}
+				if tick-began >= 60*8 {
+					return 8
+				}
+			}
+		}
+		t.Fatal("the bandit never locked the player head-on from 30 km")
+		return 0
+	}
+	memory := float64(radar_memory) / 60
+	if s := held(true); s < memory || s > memory+0.5 {
+		t.Errorf("the player's jammer radiating from outside burnthrough: the bandit's lock held %.2f s, want its %.0f s memory", s, memory)
+	}
+	if s := held(false); s < 8 {
+		t.Errorf("the player quiet: the bandit's lock dropped after %.2f s", s)
+	}
+}
+
 // radar_pair parks a BVR joust's two bots for the radar tests: the novice,
 // which never withholds its lock, at the origin with its nose east at 250 m/s
 // and 3,000 m, searching; the machine where each test puts it.

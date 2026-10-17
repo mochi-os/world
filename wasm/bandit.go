@@ -23,7 +23,7 @@ import (
 
 var (
 	bandit *air.Bandit
-	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive)
+	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive, 4 the jammer radiating)
 	back   [flight.Size + 5]float64 // bandit state out, plus the instrument tail (alpha, beta, nz, mach, cas) at the ownship's own indices
 	shots  [64]float64              // up to eight rounds in the air, eight words each: position, velocity, shooter, phase
 )
@@ -82,7 +82,8 @@ func bandit_place(this js.Value, arguments []js.Value) any {
 }
 
 // bandit_mirror updates the player's reflection: flight.Size encoded state
-// words plus one flags word (bit 1 firing, bit 2 alive).
+// words plus one flags word (bit 1 firing, bit 2 alive, bit 3 the jammer
+// radiating).
 func bandit_mirror(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return "uninitialised"
@@ -90,6 +91,7 @@ func bandit_mirror(this js.Value, arguments []js.Value) any {
 	receive(arguments[0], mirror[:])
 	flags := int(mirror[flight.Size])
 	bandit.Mirror(mirror[:flight.Size], flags&1 != 0, flags&2 != 0)
+	bandit.Radiate(flags&4 != 0)
 	return ""
 }
 

@@ -17,7 +17,8 @@
 //
 // round_step input words: 0 slot, 1 dt, 2 support (1 = fresh datalink),
 // 3-5 support position, 6-8 support velocity, 9 truth (1 = a target
-// exists), 10-12 truth position, 13-15 truth velocity. Output words:
+// exists), 10-12 truth position, 13-15 truth velocity, 16 beacon (1 = the
+// target's jammer is radiating: home-on-jam). Output words:
 // 0 alive, 1 phase, 2-4 position, 5-7 velocity, 8 estimate range,
 // 9 stale seconds, 10 time, 11 life, 12 fused (against the truth),
 // 13 Mach, 14 closest approach so far.
@@ -106,7 +107,7 @@ func round_launch(this js.Value, arguments []js.Value) any {
 }
 
 func round_step(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:16])
+	receive(arguments[0], quiver[:17])
 	slot := int(quiver[0])
 	if slot < 0 || slot >= len(flying) || flying[slot] == nil {
 		return "slot"
@@ -119,6 +120,7 @@ func round_step(this js.Value, arguments []js.Value) any {
 	if quiver[9] > 0.5 {
 		truth = &round.Target{Position: vec(quiver, 10), Velocity: vec(quiver, 13)}
 	}
+	m.Beacon = quiver[16] > 0.5 && truth != nil
 	alive, fired, burst := m.Advance(quiver[1], support, truth)
 	out := quiver[:15]
 	out[0] = 0

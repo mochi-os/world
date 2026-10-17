@@ -122,6 +122,13 @@ func (b *Bandit) Mirror(words []float64, firing bool, alive bool) {
 	reflection.alive = alive
 }
 
+// Radiate says whether the player's jammer is radiating this frame, armed and
+// painted as the client judges it: the server's loud truth, so the bandit's
+// radar starves on it outside burnthrough as a server bot's does.
+func (b *Bandit) Radiate(loud bool) {
+	b.arena.aircraft[0].loud = loud
+}
+
 // Menace declares every missile in the air, eight words each: position,
 // velocity, shooter (0 player, 1 bandit), phase (-1 live heater, -2 already
 // beaten, else the radar round's guidance phase). Rebuilt every frame.
