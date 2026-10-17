@@ -1665,6 +1665,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		b.mode, b.safed = "script", ""
 		b.shoot = true // the trigger runs before the script's next tick: a machine deciding every tick would otherwise never hold it live
 		i.wander(slot, b, tick)
+		menace, gap := i.pursuer(b, me, known)
+		i.flinch(slot, a, tick, menace, gap) // the guns defence, read at the tier's own cadence: drive() flies the jink
 		return
 	}
 	// Refresh the orbit estimate whenever the track has a NEW observation: two
@@ -1704,15 +1706,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	mine := me.Position.Y + speed*speed/19.62
 	theirs := prey.position.Y + prey.velocity.Length()*prey.velocity.Length()/19.62
 
-	// Defensive check: a known contact behind my 3/9 inside 2 km, nose on me.
-	menace, gap := -1, 2000.0
-	for _, s := range known {
-		t := b.known[s]
-		to, span := i.bearing(t.position, me.Position)
-		if span < gap && me.Attitude.Unrotate(to.Scale(-1)).X < -0.2 && t.velocity.Normalize().Dot(to) > 0.6 {
-			menace, gap = s, span
-		}
-	}
+	menace, gap := i.pursuer(b, me, known)
 	i.flinch(slot, a, tick, menace, gap)
 
 	// Rejoin discipline (#144): never cross into a distant fight single-ship.
@@ -2477,6 +2471,21 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 
 	i.polish(slot, a, tick, speed, pace, nose, direction, distance, tail)
+}
+
+// pursuer is the defensive check: the nearest known contact behind my 3/9 line
+// inside 2 km with his nose on me, and how far off he is; -1 and 2,000 m when
+// there is none.
+func (i *instance) pursuer(b *brain, me *flight.State, known []int) (int, float64) {
+	menace, gap := -1, 2000.0
+	for _, s := range known {
+		t := b.known[s]
+		to, span := i.bearing(t.position, me.Position)
+		if span < gap && me.Attitude.Unrotate(to.Scale(-1)).X < -0.2 && t.velocity.Normalize().Dot(to) > 0.6 {
+			menace, gap = s, span
+		}
+	}
+	return menace, gap
 }
 
 // flinch is the shot-cue jink's detection (#251): is the attacker LINING UP?

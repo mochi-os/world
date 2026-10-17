@@ -30,6 +30,14 @@ func launcher(s *flight.State) round.Target {
 	return round.Target{Position: s.Position, Velocity: s.Attitude.Rotate(flight.Vec3{X: 1}).Scale(s.Velocity.Length())}
 }
 
+// arming is a heater shot's fuse floor: the closure while the fuse arms, plus
+// turn-in room, plus the seduction it must survive at this aspect (tail, 1
+// square astern) and plume (lit, 0..1). No heater launched from inside it
+// arrives, whoever fires it.
+func arming(closing, tail, lit float64) float64 {
+	return math.Max(300, math.Max(0, closing)*(missile_arm+0.5+seduction(tail, lit)*flare_blind))
+}
+
 // Heat computes the AIM-9M zone for a shooter against a target, in the AMRAAM's
 // shape: Aero and Max coincide (outermost arriving range against the target
 // flying on as now), Escape assumes he breaks 7.5 g into the beam, Minimum is
@@ -72,11 +80,7 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// climbs by six tenths of a second of closure, while dead astern it is
 	// 0.19 against a closure near zero and the floor barely moves, which is
 	// the one shot in the recorded fight that DID work.
-	closing := shooter.Velocity.Subtract(target.Velocity).Dot(direction)
-	if closing < 0 {
-		closing = 0
-	}
-	floor := math.Max(300, closing*(missile_arm+0.5+seduction(tail, lit)*flare_blind))
+	floor := arming(shooter.Velocity.Subtract(target.Velocity).Dot(direction), tail, lit)
 
 	// Bisect the range band satisfying a criterion, walking the floor outward
 	// first as the AMRAAM's ladder does: a shooter whose velocity is off the

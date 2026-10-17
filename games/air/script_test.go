@@ -722,3 +722,79 @@ func TestScriptStraight(t *testing.T) {
 		t.Errorf("chasing a jet flying straight away it spent %d s below 194 kt and %d s pursuing, and let him get %.0f m away", slow/60, pursued/60, farthest)
 	}
 }
+
+// astern flies a scripted bandit at 215 kt and 10,000 ft for four seconds with
+// the pilot held gap metres behind it and a little high, over its shoulder
+// where it can see him, his nose on it, firing or not: what it flew, tick by
+// tick, and in what power.
+func astern(level string, gap float64, firing bool) (plays []string, lit []bool) {
+	b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
+	b.Spawn(flight.Vec3{Y: 3050}, flight.Vec3{X: 110})
+	b.craft.brain.routine.passed = true
+	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	words := make([]float64, flight.Size)
+	for tick := 0; tick < 60*4; tick++ {
+		me := b.craft.model.State
+		ahead := me.Velocity.Normalize()
+		his := me.Position.Subtract(ahead.Scale(gap)).Add(flight.Vec3{Y: 0.3 * gap})
+		pm.State = flight.Level(pm, his, flight.Vec3{X: ahead.X, Z: ahead.Z}, me.Velocity.Length(), fuel)
+		pm.State.Velocity = me.Velocity
+		if line := me.Position.Subtract(his).Normalize(); (flight.Vec3{X: 1}).Cross(line).Length() > 1e-9 {
+			pm.State.Attitude = flight.Axis((flight.Vec3{X: 1}).Cross(line).Normalize(), math.Acos(clamp(line.X, -1, 1)))
+		}
+		pm.State.Encode(words)
+		b.Mirror(words, firing, true)
+		b.Step()
+		plays = append(plays, b.Mode())
+		lit = append(lit, b.craft.latest.Reheat > 0.5)
+	}
+	return plays, lit
+}
+
+// TestScriptPlumeFloor: with the pilot astern and his nose on it, the ace and
+// the superhuman fly cold to hide the plume from his heater, but not inside his
+// heater's fuse floor, where no round he fires arrives and the gun is the
+// threat: there the burner buys the turn.
+func TestScriptPlumeFloor(t *testing.T) {
+	share := func(lit []bool, want bool) float64 {
+		n := 0
+		for _, v := range lit {
+			if v == want {
+				n++
+			}
+		}
+		return float64(n) / float64(len(lit))
+	}
+	for _, level := range []string{"ace", "superhuman"} {
+		if _, lit := astern(level, 200, false); share(lit, true) < 0.9 {
+			t.Errorf("%s with him 200 m astern, inside his heater's floor: lit %.0f%% of the time, want the burner", level, 100*share(lit, true))
+		}
+		if _, lit := astern(level, 1200, false); share(lit, false) < 0.5 {
+			t.Errorf("%s with him 1,200 m astern, inside his heater's reach: cold %.0f%% of the time, want the plume hidden", level, 100*share(lit, false))
+		}
+	}
+}
+
+// TestScriptJinks: his gun firing and tracking from 300 m astern, the ace and
+// the superhuman jink out of it, the planner's guns defence read at their own
+// cue and cadence; the novice never sees it coming.
+func TestScriptJinks(t *testing.T) {
+	for _, level := range []string{"novice", "ace", "superhuman"} {
+		plays, _ := astern(level, 300, true)
+		first := -1
+		for tick, play := range plays {
+			if play == "jink" {
+				first = tick
+				break
+			}
+		}
+		switch {
+		case level == "novice" && first >= 0:
+			t.Errorf("the novice jinked at %.2f s: the tier never sees a gun coming", float64(first)/60)
+		case level != "novice" && first < 0:
+			t.Errorf("%s under his gun from 300 m astern never jinked", level)
+		case level != "novice" && first > 90:
+			t.Errorf("%s under his gun from 300 m astern: first jink at %.2f s, want inside 1.5 s", level, float64(first)/60)
+		}
+	}
+}

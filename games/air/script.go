@@ -311,6 +311,25 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	s.chasing = steady && (s.chasing || s.running >= 180) // held until he is inside gun range or turns
 	pursuing := s.chasing
+	// THE JINK: his gun lining up on me, read by flinch() at the tier's own
+	// cadence and cue, gets the planner's guns defence, the jet loaded where its
+	// lift already points, or ninety degrees off it every second window so the
+	// displacement changes plane, for 0.75-1.25 s. A missile's break and the
+	// bubble outrank it, and the gun holds while it flies.
+	jinking := tick < b.dodge && !breaking && !clearing
+	if jinking {
+		lift := up.Subtract(axis.Scale(up.Dot(axis))).Normalize()
+		side := axis.Cross(lift).Normalize()
+		switch (b.dodge / 15) % 4 {
+		case 1:
+			want = axis.Add(side.Scale(0.5)).Normalize()
+		case 3:
+			want = axis.Subtract(side.Scale(0.5)).Normalize()
+		default:
+			want = axis.Add(lift.Scale(0.5)).Normalize()
+		}
+		gunning, pursuing = false, false
+	}
 	// Conceded height. Under a jet perched 300 m or more above with the energy
 	// to stay there, the fight law zooms at a climb it cannot finish and bleeds
 	// to the regain's floor: in the perch probes (guns, 24 fights each) the
@@ -391,7 +410,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// the ace's alpha fell from 32 to 17 degrees at 430 m with its heater pair a
 	// tick from the rail, and it won 1 and lost 17 of 24 against 19 and 1 (the
 	// superhuman 3 and 17 against 17 and 5).
-	if span < 1500 && bending(b.prey) > 15 {
+	if span < 1500 && bending(b.prey) > 15 || jinking {
 		goal = b.skill.alpha
 	}
 	// The regulator is proportional on alpha alone and the flight control law
@@ -427,6 +446,8 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	s.branch = "fight"
 	if breaking {
 		s.branch = "break"
+	} else if jinking {
+		s.branch = "jink"
 	} else if pursuing {
 		s.branch = "pursue"
 	} else if clearing {
@@ -504,6 +525,15 @@ func (i *instance) reheat(b *brain, me *flight.State, span, speed float64) float
 		cone = n.wide * b.skill.plume
 	}
 	if back, _ := i.bearing(b.prey.position, me.Position); b.prey.nose.Dot(back) > math.Cos(cone*math.Pi/180) {
+		// Inside his heater's fuse floor the plume hides nothing he can shoot,
+		// and the gun is the threat: the burner buys the turn.
+		tail := 0.0
+		if v := me.Velocity.Length(); v > 1 {
+			tail = math.Max(0, back.Dot(me.Velocity.Scale(1/v)))
+		}
+		if span < arming(b.prey.velocity.Subtract(me.Velocity).Dot(back), tail, 1) {
+			return 1
+		}
 		return 0
 	}
 	return 1
