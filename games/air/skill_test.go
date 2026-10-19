@@ -9,6 +9,9 @@ package air
 import (
 	"math"
 	"testing"
+
+	"world/games/air/aircraft"
+	"world/games/air/flight"
 )
 
 // TestAeroCapByTier: the aero cap is a skill, not a law of the airframe. One
@@ -121,5 +124,60 @@ func TestTheAceOutTurnsThePilotOnlyAboveCorner(t *testing.T) {
 	if over <= corner {
 		t.Errorf("the crossover sits at %.0f kt, at or below corner (%.0f kt): the slow fight is supposed to be where the cap costs the ace, and this says it costs it nothing",
 			over*1.944, corner*1.944)
+	}
+}
+
+// TestSunGlareByTier: up-sun, a pilot cannot see into the glare about the
+// disc. The pilot and the ace lose a jet within about 5 degrees, where the
+// eye's own veil leaves it about 5% of its contrast (the client draws the same
+// veil); the novice will not look near the sun at all and loses one within 20;
+// the superhuman, a machine, sees straight through. Only by day.
+func TestSunGlareByTier(t *testing.T) {
+	// An observer at 3,000 m flying toward the sun, and a target 3 km away at
+	// an angle from the sun's direction, turned toward the east.
+	look := func(tier string, night bool, angle float64, mind bool) bool {
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, night: night}
+		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+		m.State = flight.Level(m, flight.Vec3{Y: 3000}, flight.Vec3{Z: 1}, 200, 2500)
+		me := &craft{model: m, alive: true}
+		if mind {
+			me.brain = &brain{skill: skills[tier]}
+		}
+		r := angle * math.Pi / 180
+		toward := glare.Scale(math.Cos(r)).Add(flight.Vec3{X: 1}.Scale(math.Sin(r))) // glare is a unit vector and X is square to it
+		n := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+		n.State = flight.Level(n, m.State.Position.Add(toward.Scale(3000)), flight.Vec3{X: 1}, 200, 2500)
+		other := &craft{model: n, alive: true}
+		return i.visible(me, other, 0)
+	}
+	cases := []struct {
+		tier    string
+		angle   float64
+		visible bool
+	}{
+		{"novice", 3, false}, {"novice", 10, false}, {"novice", 19, false}, {"novice", 21, true}, {"novice", 40, true},
+		{"pilot", 3, false}, {"pilot", 5, false}, {"pilot", 6, true}, {"pilot", 19, true},
+		{"ace", 3, false}, {"ace", 5, false}, {"ace", 6, true}, {"ace", 19, true},
+		{"superhuman", 0.5, true}, {"superhuman", 3, true},
+	}
+	for _, c := range cases {
+		if got := look(c.tier, false, c.angle, true); got != c.visible {
+			t.Errorf("%s by day, a jet %.1f degrees from the sun: visible %v, want %v", c.tier, c.angle, got, c.visible)
+		}
+	}
+	for _, tier := range []string{"novice", "pilot", "ace"} {
+		if !look(tier, true, 3, true) {
+			t.Errorf("%s at night lost a jet 3 degrees from the moon: the glare blinds only by day", tier)
+		}
+	}
+	// A pilot with no mind of its own keeps the cone every pilot had (cos 0.996).
+	if look("", false, 4, false) || !look("", false, 6, false) {
+		t.Errorf("an observer with no brain: the 5 degree cone moved")
+	}
+	if math.Abs(math.Cos(skills["pilot"].glare*math.Pi/180)-0.996) > 1e-6 || skills["ace"].glare != skills["pilot"].glare {
+		t.Errorf("the pilot and the ace keep the cone they always had, cos 0.996: pilot %v, ace %v", skills["pilot"].glare, skills["ace"].glare)
+	}
+	if skills["novice"].glare <= 3*skills["pilot"].glare {
+		t.Errorf("the novice will not look near the sun: its cone %v is not wide against the pilot's %v", skills["novice"].glare, skills["pilot"].glare)
 	}
 }

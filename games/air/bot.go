@@ -39,6 +39,7 @@ type skill struct {
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
 	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go): how hard this pilot will hold the wing loaded in a turning fight
 	plume      float64 // how much of the cold cone the scripted doctrine flies in military power while his nose bears (script.go reheat): 0 never, 1 the whole of it
+	glare      float64 // half-angle of the cone about the sun this pilot cannot see into by day, deg: the eye's own glare washes a jet out within about 5 degrees (the client draws the same veil), and a novice will not look near the sun at all
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a novice flies
@@ -93,9 +94,9 @@ var skills = map[string]skill{
 	// met him at 139 m in TestScriptPass's pursuit; with half the wander as
 	// well, 11 and 53 with passes inside the bubble down to 16 m. Its own
 	// run-in with the led aim won 4 of 63, and no single dial moved it.
-	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1},
+	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34, glare: 20},
+	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75, glare: 5.1264},
+	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1, glare: 5.1264},
 	// The superhuman IS the ace with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the ace's 600 and 0.06; neither is a human limit (one is gun
@@ -750,7 +751,8 @@ func (b *brain) pressing(tick uint64) bool {
 }
 
 // visible reports whether me can see other right now: visual range (halved at
-// night), the canopy blind wedge, up-sun glare, and cloud-layer occlusion.
+// night), the canopy blind wedge, up-sun glare (by tier: skill.glare), and
+// cloud-layer occlusion.
 func (i *instance) visible(me, other *craft, tick uint64) bool {
 	s, o := &me.model.State, &other.model.State
 	direction, distance := i.bearing(s.Position, o.Position)
@@ -768,8 +770,12 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 	if body.X < -0.35 && body.Y < 0.25 {
 		return false // the blind wedge behind and below the canopy
 	}
-	if !i.night && o.Position.Y > s.Position.Y && direction.Dot(glare) > 0.996 {
-		return false // up-sun, within ~5° of the disc
+	cone := 5.1264 // degrees: the cone every pilot had before the tiers differed (cos 0.996)
+	if me.brain != nil {
+		cone = me.brain.skill.glare
+	}
+	if !i.night && o.Position.Y > s.Position.Y && cone > 0 && direction.Dot(glare) > math.Cos(cone*math.Pi/180) {
+		return false // up-sun: inside the cone this pilot cannot see into
 	}
 	if l, found := layers[i.sky]; found {
 		low, high := math.Min(s.Position.Y, o.Position.Y), math.Max(s.Position.Y, o.Position.Y)

@@ -329,6 +329,7 @@ func TestSuperhumanIsTheAceWithoutHumanLimits(t *testing.T) {
 		"cadence": true, // thinking rate
 		"wander":  true, // aim noise
 		"react":   true, // reaction to an inbound
+		"glare":   true, // the eye's own glare up-sun
 		"machine": true, // the flag that switches off the rest
 	}
 	ace, machine := reflect.ValueOf(mind("ace").skill), reflect.ValueOf(mind("superhuman").skill)
