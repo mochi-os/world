@@ -25,6 +25,9 @@ const (
 // aero accumulates aerodynamic forces for a trial state.
 func (m *Model) aero(s *State, total *Forces, local Air) {
 	a := m.Airframe
+	if m.prepared != a {
+		m.prepare()
+	}
 	v := s.Attitude.Unrotate(s.Velocity.Subtract(m.gust)) // aircraft velocity relative to the air, body frame
 	if v.Length() < 1 {
 		return // parked in calm air
@@ -125,14 +128,14 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				if surface.Kind == Stabilator {
 					w = w.Subtract(e.Normal.Scale(w.Length() * wash)) // the same tilt pass 2 applies
 				}
-				across := sweep(e)
-				angle, shift := m.section(s, surface, e, w)
-				raw := angle + shift*0.5/math.Sqrt(across) // the flap's incidence share is set streamwise: the swept section sees it over cos
+				c := m.constants[m.base[si]+ei]
+				angle, shift := m.section(s, surface, e, w, c)
+				raw := angle + shift*0.5/c.root // the flap's incidence share is set streamwise: the swept section sees it over cos
 				hold := retention(surface, ei, coupled(surface))
 				if surface.Kind == Wing {
 					hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9)
 				}
-				sectional, _, _ := extended(e.Aerofoil, raw, hold, surface.Slope/math.Sqrt(across))
+				sectional, _, _ := extended(e.Aerofoil, raw, hold, surface.Slope/c.root)
 				// The induced flow is the surface's whole vortex system, shared by
 				// both panels, so its loading takes the symmetric share of the
 				// pressure - cos² of the sweep at small alpha, more as the normal
@@ -142,7 +145,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 				level := Vec3{X: w.X, Y: w.Y}
 				plane := level.Subtract(e.Axis.Scale(level.Dot(e.Axis)))
 				cl := sectional * plane.Dot(plane) / math.Max(level.Dot(level), 1e-9) // the surface's reference coefficient, which the camber and vortex terms are written on
-				body := unswept(raw, across)
+				body := unswept(raw, c.root)
 				if shift != 0 {
 					cl += surface.Slope * shift * 0.55 * math.Cos(clamp(body, -1.2, 1.2))
 				}
@@ -236,15 +239,16 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			// drag-due-to-lift, the polar break, camber, vortex lift and the
 			// compressibility - are all written on the REFERENCE coefficients
 			// and the body alpha and Mach, so they convert on the way in.
-			across := sweep(e)
-			angle, shift := m.section(s, surface, e, section)
-			effective := angle + shift*0.5/math.Sqrt(across) // the flap's incidence share is set streamwise: the swept section sees it over cos
-			body := unswept(effective, across)
+			c := m.constants[m.base[si]+ei]
+			across := c.sweep
+			angle, shift := m.section(s, surface, e, section, c)
+			effective := angle + shift*0.5/c.root // the flap's incidence share is set streamwise: the swept section sees it over cos
+			body := unswept(effective, c.root)
 			hold := retention(surface, ei, coupled(surface))
 			if surface.Kind == Wing {
 				hold = clamp(hold+s.Fcs.Slat/0.44*0.5, 0, 0.9) // slats keep the wing attached
 			}
-			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope/math.Sqrt(across))
+			cl, cd, cm := extended(e.Aerofoil, effective, hold, surface.Slope/c.root)
 			// The calibrated terms are priced on the body dynamic pressure, so
 			// they carry no sweep-at-sideslip sensitivity of their own: the
 			// potential lift's is the dihedral effect; a flap's camber or the
@@ -366,24 +370,35 @@ func sweep(e *Element) float64 {
 	return math.Max(1-e.Axis.X*e.Axis.X, 0.05)
 }
 
-// unswept maps a section alpha back to the body alpha it came from, for the
-// terms calibrated on the body angle.
-func unswept(sectional float64, across float64) float64 {
-	return math.Atan(math.Tan(clamp(sectional, -1.5, 1.5)) * math.Sqrt(across))
+// constant is what an element's geometry fixes for good: its sweep's share of
+// the dynamic pressure, that share's root, and its control's flap effectiveness.
+type constant struct{ sweep, root, effect float64 }
+
+// prepare works the elements' constants out once for the airframe flown, in
+// the order base indexes them.
+func (m *Model) prepare() {
+	m.constants = m.constants[:0]
+	for si := range m.Airframe.Surfaces {
+		for ei := range m.Airframe.Surfaces[si].Elements {
+			e := &m.Airframe.Surfaces[si].Elements[ei]
+			across := sweep(e)
+			m.constants = append(m.constants, constant{sweep: across, root: math.Sqrt(across), effect: Effectiveness(e.Flap)})
+		}
+	}
+	m.prepared = m.Airframe
 }
 
-// incidence is the effective section angle of attack: geometry, control
-// deflection, and any induced correction.
-func (m *Model) incidence(s *State, surface *Surface, e *Element, w Vec3, correction float64) float64 {
-	angle, shift := m.section(s, surface, e, w)
-	return angle + shift*0.5 + correction
+// unswept maps a section alpha back to the body alpha it came from, for the
+// terms calibrated on the body angle: root is the root of the sweep's share.
+func unswept(sectional float64, root float64) float64 {
+	return math.Atan(math.Tan(clamp(sectional, -1.5, 1.5)) * root)
 }
 
 // section splits the raw geometric angle from the control-surface shift:
 // half the flap deflection acts as an incidence change, the rest as camber
 // lift added after the polar (real flaps raise CLmax; a pure alpha shift
 // would just stall the section early).
-func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64, float64) {
+func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3, c constant) (float64, float64) {
 	plane := w.Subtract(e.Axis.Scale(w.Dot(e.Axis)))
 	chord := e.Axis.Cross(e.Normal) // points aft
 	raw := math.Atan2(plane.Dot(e.Normal), plane.Dot(chord))
@@ -394,7 +409,7 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 		if surface.Side < 0 {
 			deflection = s.Fcs.Stabilator.Left
 		}
-		raw += deflection / math.Sqrt(sweep(e))
+		raw += deflection / c.root
 	case Differential:
 		// The flaperon actuator ALREADY carries the PA droop (fcs.go slews it
 		// toward droop±differential; Fcs.Flap is a readout only). Adding Flap
@@ -406,7 +421,7 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 		} else {
 			deflection += s.Fcs.Flaperon.Right
 		}
-		shift = Effectiveness(e.Flap) * deflection
+		shift = c.effect * deflection
 	case Rudder:
 		// Mirrored fin frames flip the meaning of a camber shift: without
 		// the side sign the two rudders' side forces cancel exactly.
@@ -417,7 +432,7 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3) (float64
 			// function of Wow, so replay needs no state.
 			deflection -= m.Airframe.Control.Toe
 		}
-		shift = Effectiveness(e.Flap) * deflection
+		shift = c.effect * deflection
 	}
-	return raw + e.Incidence/math.Sqrt(sweep(e)), shift // the twist is set streamwise; the swept section sees it over cos of the sweep
+	return raw + e.Incidence/c.root, shift // the twist is set streamwise; the swept section sees it over cos of the sweep
 }

@@ -33,3 +33,20 @@ func TestCas(t *testing.T) {
 		}
 	}
 }
+
+// TestClampMatchesTheLibrary: clamp by comparison returns exactly what
+// math.Max(low, math.Min(high, v)) did, to the bit, so swapping it in changed
+// no flight: across NaN, both zeros, the infinities and a high below the low.
+func TestClampMatchesTheLibrary(t *testing.T) {
+	values := []float64{math.NaN(), math.Inf(-1), -2, -1, math.Copysign(0, -1), 0, 0.5, 1, 2, math.Inf(1)}
+	for _, v := range values {
+		for _, low := range values[1:] {
+			for _, high := range values[1:] {
+				got, want := clamp(v, low, high), math.Max(low, math.Min(high, v))
+				if math.Float64bits(got) != math.Float64bits(want) && !(math.IsNaN(got) && math.IsNaN(want)) {
+					t.Errorf("clamp(%v, %v, %v) = %v, the library pair gives %v", v, low, high, got, want)
+				}
+			}
+		}
+	}
+}

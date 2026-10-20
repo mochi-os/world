@@ -157,3 +157,49 @@ func TestShortPeriod(t *testing.T) {
 		}
 	}
 }
+
+// TestElementConstants: the aero loop reads each element's sweep share, its
+// root and its flap effectiveness from constants worked out once for the
+// airframe flown - the same values the loop computed every step before - and
+// works them out again for a swapped airframe.
+func TestElementConstants(t *testing.T) {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State.Position = Vec3{Y: 3000}
+	m.State.Velocity = Vec3{X: 200}
+	m.Step(Inputs{Throttle: 0.8})
+	check := func(a *Airframe) {
+		t.Helper()
+		k, flapped := 0, 0
+		for si := range a.Surfaces {
+			for ei := range a.Surfaces[si].Elements {
+				e := &a.Surfaces[si].Elements[ei]
+				c := m.constants[m.base[si]+ei]
+				if c.sweep != sweep(e) || c.root != math.Sqrt(sweep(e)) || c.effect != Effectiveness(e.Flap) {
+					t.Errorf("element %d of surface %d: constants %+v, computed %v %v %v", ei, si, c, sweep(e), math.Sqrt(sweep(e)), Effectiveness(e.Flap))
+				}
+				if e.Flap > 0 {
+					flapped++
+				}
+				k++
+			}
+		}
+		if len(m.constants) != k || flapped == 0 {
+			t.Fatalf("%d constants for %d elements, %d of them flapped: the airframe exercises nothing", len(m.constants), k, flapped)
+		}
+	}
+	check(Fighter)
+	swapped := *Fighter
+	swapped.Surfaces = append([]Surface(nil), Fighter.Surfaces...)
+	for si := range swapped.Surfaces {
+		elements := append([]Element(nil), swapped.Surfaces[si].Elements...)
+		for ei := range elements {
+			if elements[ei].Flap > 0 {
+				elements[ei].Flap *= 0.5 // a different control chord: a different effectiveness
+			}
+		}
+		swapped.Surfaces[si].Elements = elements
+	}
+	m.Airframe = &swapped
+	m.Step(Inputs{Throttle: 0.8})
+	check(&swapped)
+}

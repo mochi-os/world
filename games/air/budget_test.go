@@ -38,31 +38,46 @@ func TestBudget(t *testing.T) {
 		if i.bots != int(roster) {
 			t.Fatalf("%.0f aces asked for, %d seated: the budget would be measured against an emptier sky than the one it gates", roster, i.bots)
 		}
+		// Ninety seconds, in fifteen-second windows: the fight's own wakes and
+		// manoeuvres grow for most of a minute, and the first fifteen seconds -
+		// all this test used to fly - ran 4 ms under the steady state the 99-ace
+		// roster reaches.
+		const window = 900
 		var spent []float64
-		for tick := uint64(0); tick < 900; tick++ {
+		var means []float64
+		total := 0.0
+		for tick := uint64(0); tick < 6*window; tick++ {
 			start := time.Now()
 			i.Step(tick, nil)
-			spent = append(spent, float64(time.Since(start).Microseconds())/1000)
+			ms := float64(time.Since(start).Microseconds()) / 1000
+			spent = append(spent, ms)
+			total += ms
+			if (tick+1)%window == 0 {
+				means = append(means, total/window)
+				total = 0
+			}
 		}
 		sorted := append([]float64(nil), spent...)
 		sort.Float64s(sorted)
-		total, over := 0.0, 0
+		over := 0
 		for _, v := range spent {
-			total += v
 			if v > 16.6 {
 				over++
 			}
 		}
-		mean, worst := total/float64(len(spent)), sorted[len(sorted)-1]
-		fmt.Printf("furball %2.0f aces | mean %6.2f ms | p99 %6.2f | worst %6.2f ms | over budget %4.1f%%\n",
-			roster, mean, sorted[len(sorted)*99/100], worst, 100*float64(over)/float64(len(spent)))
+		worst, heaviest := sorted[len(sorted)-1], 0.0
+		for _, mean := range means {
+			heaviest = max(heaviest, mean)
+		}
+		fmt.Printf("furball %2.0f aces | window means %.2f ms | p99 %6.2f | worst %6.2f ms | over budget %4.1f%%\n",
+			roster, means, sorted[len(sorted)*99/100], worst, 100*float64(over)/float64(len(spent)))
 		// The worst tick is the gate: a mean inside budget with a multi-second
 		// tail is exactly the shape that evicted everyone.
 		if worst > 100 {
 			t.Errorf("%2.0f aces: worst tick %.0f ms — the session goroutine stalls and the liveness sweep evicts the match", roster, worst)
 		}
-		if mean > 16.6 {
-			t.Errorf("%2.0f aces: mean tick %.1f ms exceeds the 16.6 ms budget — the session cannot hold 60 Hz", roster, mean)
+		if heaviest > 16.6 {
+			t.Errorf("%2.0f aces: a fifteen-second window ticked %.1f ms on average, over the 16.6 ms budget — the session cannot hold 60 Hz", roster, heaviest)
 		}
 	}
 }

@@ -68,6 +68,12 @@ type Model struct {
 	// (Wakes.Near). Empty flies clean air.
 	Wake []Vortex
 
+	// What each element's geometry fixes for good, which the aero loop would
+	// otherwise recompute for every element at every substep: built by
+	// prepare for the airframe flown, and again if it is swapped.
+	constants []constant
+	prepared  *Airframe
+
 	// Per-step caches:
 	mass    float64
 	center  Vec3 // combined CG, body, from datum
