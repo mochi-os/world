@@ -24,23 +24,23 @@ func TestBudget(t *testing.T) {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("budget%.0f", roster), Game: "air",
 			Mode: "furball", Capacity: 16, Seed: 5,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": roster}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": roster}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		i := made.(*instance)
-		defer i.Close() // the bot budget is process-wide; a 99-ace roster left unreleased starves every later bot-spawning test in the binary (#208)
+		defer i.Close() // the bot budget is process-wide; a 99-expert roster left unreleased starves every later bot-spawning test in the binary (#208)
 		// The roster must actually fly. Bots are seated ABOVE the players and
 		// under the seven-bit slot ceiling, so a session's capacity comes off the
 		// room for bots: at the capacity of 128 this test used to ask for, the
 		// room is zero, no bot was ever seated, and every tick measured an empty
 		// sky at 0.00 ms - green, and blind, from the day the ceiling arrived.
 		if i.bots != int(roster) {
-			t.Fatalf("%.0f aces asked for, %d seated: the budget would be measured against an emptier sky than the one it gates", roster, i.bots)
+			t.Fatalf("%.0f experts asked for, %d seated: the budget would be measured against an emptier sky than the one it gates", roster, i.bots)
 		}
 		// Ninety seconds, in fifteen-second windows: the fight's own wakes and
 		// manoeuvres grow for most of a minute, and the first fifteen seconds -
-		// all this test used to fly - ran 4 ms under the steady state the 99-ace
+		// all this test used to fly - ran 4 ms under the steady state the 99-expert
 		// roster reaches.
 		const window = 900
 		var spent []float64
@@ -69,15 +69,15 @@ func TestBudget(t *testing.T) {
 		for _, mean := range means {
 			heaviest = max(heaviest, mean)
 		}
-		fmt.Printf("furball %2.0f aces | window means %.2f ms | p99 %6.2f | worst %6.2f ms | over budget %4.1f%%\n",
+		fmt.Printf("furball %2.0f experts | window means %.2f ms | p99 %6.2f | worst %6.2f ms | over budget %4.1f%%\n",
 			roster, means, sorted[len(sorted)*99/100], worst, 100*float64(over)/float64(len(spent)))
 		// The worst tick is the gate: a mean inside budget with a multi-second
 		// tail is exactly the shape that evicted everyone.
 		if worst > 100 {
-			t.Errorf("%2.0f aces: worst tick %.0f ms — the session goroutine stalls and the liveness sweep evicts the match", roster, worst)
+			t.Errorf("%2.0f experts: worst tick %.0f ms — the session goroutine stalls and the liveness sweep evicts the match", roster, worst)
 		}
 		if heaviest > 16.6 {
-			t.Errorf("%2.0f aces: a fifteen-second window ticked %.1f ms on average, over the 16.6 ms budget — the session cannot hold 60 Hz", roster, heaviest)
+			t.Errorf("%2.0f experts: a fifteen-second window ticked %.1f ms on average, over the 16.6 ms budget — the session cannot hold 60 Hz", roster, heaviest)
 		}
 	}
 }

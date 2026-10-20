@@ -78,7 +78,7 @@ func offer(me *flight.State) map[string]any {
 func TestConvert(t *testing.T) {
 	heavy(t)
 	ladder := map[string]int{}
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		converted, total := 0.0, 0.0
 		killed, fired := 0, 0
 		for seed := uint64(1); seed <= 12; seed++ {
@@ -160,13 +160,13 @@ func TestConvert(t *testing.T) {
 		// Kill counts at 12 deterministic seeds carry about 2 of reshuffle
 		// resolution, so the conversion percentage above is the primary gate and
 		// kills are gated on the ladder's shape plus a floor with slack.
-		floor := map[string]int{"ace": 4, "superhuman": 11}[level]
+		floor := map[string]int{"expert": 4, "superhuman": 11}[level]
 		if killed < floor {
 			t.Errorf("%s killed the straight-and-level offerer in %d/12 seeds (floor %d) — the free kill goes untaken", level, killed, floor)
 		}
 	}
-	if ladder["superhuman"] < ladder["ace"]-1 {
-		t.Errorf("conversion lethality inverts: ace %d kills, superhuman %d", ladder["ace"], ladder["superhuman"])
+	if ladder["superhuman"] < ladder["expert"]-1 {
+		t.Errorf("conversion lethality inverts: expert %d kills, superhuman %d", ladder["expert"], ladder["superhuman"])
 	}
 }
 
@@ -177,7 +177,7 @@ func TestConvert(t *testing.T) {
 // ran.
 func TestOffence(t *testing.T) {
 	heavy(t)
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		sk := skills[level]
 		exist, gate, fired, firedExist, total := 0, 0, 0, 0, 0
 		aspect := [3]float64{} // mean angle off the DEFENDER's tail, per third of the fight: the "is he getting on my six" trace

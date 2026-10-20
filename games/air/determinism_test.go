@@ -25,14 +25,14 @@ func TestDeterminism(t *testing.T) {
 			// The free-for-all: many contacts, so the b.known loops carry ties.
 			game.Session{Identifier: fmt.Sprintf("det%d", seed), Game: "air", Mode: "furball",
 				Capacity: 16, Seed: uint64(seed),
-				Parameters: map[string]any{"bots": map[string]any{"superhuman": 2.0, "ace": 2.0, "pilot": 2.0}}},
+				Parameters: map[string]any{"bots": map[string]any{"superhuman": 2.0, "expert": 2.0, "intermediate": 2.0}}},
 			// The section geometry, exactly as the sweep that caught #225 runs
 			// it: teams, missiles up (seekers, flares), a paired side against a
 			// doubled one. This is the arm that actually diverged.
 			game.Session{Identifier: fmt.Sprintf("sec%d", seed), Game: "air", Mode: "teams",
 				Capacity: 16, Seed: uint64(seed),
 				Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
-					"red": map[string]any{"ace": 2.0}, "blue": map[string]any{"ace": 4.0}}}})
+					"red": map[string]any{"expert": 2.0}, "blue": map[string]any{"expert": 4.0}}}})
 	}
 	for _, session := range sessions {
 		g1, g2 := New(), New()
@@ -85,7 +85,7 @@ func TestSpacedRespawnIsDeterministic(t *testing.T) {
 		bots_live.Store(0)
 		made, err := (&Air{}).Create(game.Session{Identifier: "spacedrespawn", Game: "air",
 			Mode: "furball", Capacity: 8, Seed: 3,
-			Parameters: map[string]any{"spaced": true, "bots": map[string]any{"pilot": 20.0}}})
+			Parameters: map[string]any{"spaced": true, "bots": map[string]any{"intermediate": 20.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

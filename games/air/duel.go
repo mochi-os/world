@@ -208,7 +208,7 @@ var plays = []play{
 		// came down every time. The stager is the vertical speed: once the
 		// nose is down it stays down to the bottom whatever the closure does
 		// on the way, and the next yo-yo starts only from the bottom, with
-		// closure to shed again. Tier 2, not 3: it is the pilot's only way
+		// closure to shed again. Tier 2, not 3: it is the intermediate's only way
 		// up. With every other vertical play at tier 3 or 4 its catalogue
 		// could go flat or DOWN, and against a sinking slow target "300 m
 		// below him in burner" was a dive that never ended - 528 kt mean and
@@ -477,7 +477,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	if b.skill.library < 2 {
 		return // the novice holds no fight-level intent
 	}
-	commit := uint64(600) // 10 s; the pilot switches slower
+	commit := uint64(600) // 10 s; the intermediate switches slower
 	if b.skill.library < 3 {
 		commit = 900
 	}
@@ -573,7 +573,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// other never does. That flatness did not matter while the tracking loop
 	// left a standing error nothing could convert; now that the aim integrator
 	// takes press to 37.9% inside tolerance at 400-600 m (was 1.8%), the scorer
-	// is the thing that cannot see it, and the ace still spends 63% of a fight
+	// is the thing that cannot see it, and the expert still spends 63% of a fight
 	// in `high`.
 	//
 	// keen is the exponent, named so it can be swept rather than guessed - the
@@ -582,19 +582,19 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	//
 	// THE STATED REASON FOR THIS CHANGE WAS REFUTED BY ITS OWN MEASUREMENT, and
 	// it is kept on the result rather than the argument. The expectation was
-	// that rewarding conversion would move the ace out of `high` and into
+	// that rewarding conversion would move the expert out of `high` and into
 	// `press`. The opposite happened - high went 63% -> 68% - and in hindsight
 	// that is obvious: `high` is the REPOSITIONING play, the yo-yo exists to
 	// put the nose on, so rewarding nose-on more sharply favours the manoeuvre
 	// that best achieves it. Do not re-argue the mix from this term.
 	//
 	// What it did measure, all gates green:
-	//   tier ladder, pilot arm (the trustworthy one - the hornet is a
+	//   tier ladder, intermediate arm (the trustworthy one - the hornet is a
 	//     transient there, not the tumble of #214)   11 killed/4 died -> 15/0
-	//   wide missiles superhuman v ace, the marginal top rung   23-21 -> 27-21
-	//   wide guns ace v pilot, fights reaching a decision       9-2/37 no result
+	//   wide missiles superhuman v expert, the marginal top rung   23-21 -> 27-21
+	//   wide guns expert v intermediate, fights reaching a decision       9-2/37 no result
 	//                                                        -> 12-5/31
-	//   guns superhuman v ace                          6-4 -> 4-3, and mean
+	//   guns superhuman v expert                          6-4 -> 4-3, and mean
 	//     time to kill 150 -> 101 s: the one arm that softened, inside noise at
 	//     sixteen seeds and still positive and well clear of the #213 floor.
 	offence := clamp(rear, 0, 1) * math.Pow(clamp(point, 0, 1), sharp) * band
@@ -638,10 +638,10 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// Nash-equilibrium defection, recording 01a0496dbd0a: co-altitude lag at
 	// t=96, low at t=104, dead at t=157). ITS WEIGHT IS LOAD-BEARING, measured
 	// 2026-09-17 (#42): halving it to 0.225 does what the guns stalemate wants -
-	// the ace's stalemate speed rises 388 -> 414 kt, its solution share 0.02%
+	// the expert's stalemate speed rises 388 -> 414 kt, its solution share 0.02%
 	// -> 0.64%, one fight of twelve converts - and fails two quick gates doing
 	// it, the perch donated 256,989 m.s against the fixed band's ~126,000 and
-	// the missile rung inverted, superhuman losing to the ace 10-5. The height
+	// the missile rung inverted, superhuman losing to the expert 10-5. The height
 	// reward and the slow fight are in tension here exactly as the aero cap is
 	// at capped(), and this number stays where the gates are green too.
 	// Relative and zero-sum, dead beyond
@@ -751,12 +751,12 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	//
 	//   cap 0.85/1.0 no term  5/5   (the committed tree)
 	//   cap 0.85/1.0 + term   4/5   guns ladder inverted, superhuman lost 3-1
-	//   cap 1.2      + term   3/5   and the ace shot down 2 of 24 - a real defence loss
+	//   cap 1.2      + term   3/5   and the expert shot down 2 of 24 - a real defence loss
 	//   cap 1.5      no term  1/5
 	//   cap 1.5      + term   3/5   best of the arms: ladder, jink and pounce bought back
 	//
 	// It cannot land. At the committed cap it costs a gate outright; at every
-	// raised cap the ace is tracked 57-67% against the 20% bar while CONVERTING
+	// raised cap the expert is tracked 57-67% against the 20% bar while CONVERTING
 	// 0.0% - the same figure as every point in history. The slow fight the cap
 	// unlocks is trackable without being lethal, so there is nothing on the
 	// other side of the trade. Fading the tariff by range moved which gates
@@ -782,11 +782,11 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// window per candidate, each play on its own span: judging every rival
 	// over the LONGEST span on offer (so a yo-yo and the pursuit it competes
 	// with are compared alike, #169/#174) fixed the yo-yo's dominance - its
-	// share of a slow fight fell from 57% to 18-36%, the ace's heater arm
-	// against the hornet went 9/4 to 14/0, and the #107 anchor's pilot and
+	// share of a slow fight fell from 57% to 18-36%, the expert's heater arm
+	// against the hornet went 9/4 to 14/0, and the #107 anchor's intermediate and
 	// superhuman rows rose to 11/4 and 16/0 - but it cost the BVR rung the
 	// gates exist to hold: the wide missile ladder read superhuman 19-29
-	// against the ace where per-play windows read 18-21, and narrowing the
+	// against the expert where per-play windows read 18-21, and narrowing the
 	// common window to 1,200 m passed the ladder while giving the anchor gain
 	// back (9/6, 13/2). Measured three ways and declined; the asymmetry it
 	// closes is real and wants a scorer that prices it, not a longer look.
@@ -798,7 +798,7 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// toward its own early samples equally and never changes a 12 s window's
 	// standing RELATIVE to a 4 s one. Self-cancelling by construction, and the
 	// guns arm agreed: over d = 1.0/0.97/0.93/0.88 the yo-yo's share held at
-	// 52-65% (it ROSE on the ace arm, 58 -> 65) and kills read 7/8/5/7, which
+	// 52-65% (it ROSE on the expert arm, 58 -> 65) and kills read 7/8/5/7, which
 	// is noise. Pricing the span needs a shape that does not renormalise per
 	// play - and a shape that does not is the sum-versus-mean problem again.
 	//
@@ -809,7 +809,7 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// fiction, and hurt BVR only because a straight-flying target has no
 	// prediction error to fix. With the phantom honest at EVERY horizon it
 	// still breaks the dominance (top `high` 54-66% -> 18-31%, press and
-	// saddle taking over) and the bots still get WORSE: heater ace 15 -> 11
+	// saddle taking over) and the bots still get WORSE: heater expert 15 -> 11
 	// kills, superhuman 16 -> 11 and now dying 3, guns total 5 -> 3, and the
 	// fight degrades enough to drive the scripted hornet into a 69.5 s tumble
 	// (3.70% of the time flown against a 1.00% limit).
@@ -823,11 +823,11 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 	// user's own fights (TestDifficulty, stage 0): banning the yo-yos only where
 	// a heater-armed pilot sits astern of me, nose on, inside his seeker's reach
 	// on my tailpipe. `high` was the play at the killing shot in all 14 of the
-	// ace's deaths. Banning `high` alone moved them to `low` (11 of 13) and the
-	// ace from 14/14 to 15/13 kills/deaths over 32 fights; banning both yo-yos
-	// spread the deaths over press, screw, pitch and trap, and read ace 25/26 ->
+	// expert's deaths. Banning `high` alone moved them to `low` (11 of 13) and the
+	// expert from 14/14 to 15/13 kills/deaths over 32 fights; banning both yo-yos
+	// spread the deaths over press, screw, pitch and trap, and read expert 25/26 ->
 	// 29/25 and superhuman 24/28 -> 26/26 over 64 fights. Inside the noise, and
-	// far short of the ace winning nine in ten: in that geometry the scorer
+	// far short of the expert winning nine in ten: in that geometry the scorer
 	// prefers some extension whichever plays it is allowed.
 	best, top, promise, n := b.play, math.Inf(-1), 0.0, 0
 	for _, p := range plays {
@@ -843,7 +843,7 @@ func (i *instance) choose(slot int, a *craft, b *brain, sim *flight.Model, prey 
 		}
 		horizon := b.horizon(p)
 		score, guns := i.rehearse(a, b, sim, p, prey, tick, horizon)
-		// Selection noise is the skill's wander: the ace nearly argmaxes,
+		// Selection noise is the skill's wander: the expert nearly argmaxes,
 		// the novice sometimes picks the second-best line and flies it well.
 		score += (battle.Roll(i.environment.Seed, uint64(slot)+57, tick, uint64(n)) - 0.5) * b.skill.wander * 2
 		// Personality (#252): a per-MISSION bias on the repertoire - no tick in the

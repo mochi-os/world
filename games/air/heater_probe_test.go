@@ -18,7 +18,7 @@ import (
 )
 
 // TestHeaterEmployment scopes every number to its pairing - pooling lets the
-// pilot's spray contaminate the ace's geometry - and separates how well each
+// intermediate's spray contaminate the expert's geometry - and separates how well each
 // side's rounds arrive from whether heaters decide the fight at all.
 func TestHeaterEmployment(t *testing.T) {
 	if os.Getenv("AIR_HEATER") == "" {
@@ -51,7 +51,7 @@ func TestHeaterEmployment(t *testing.T) {
 	books := map[string]*record{}
 	order := []string{}
 
-	for _, pair := range [][2]string{{"superhuman", "ace"}, {"ace", "pilot"}} {
+	for _, pair := range [][2]string{{"superhuman", "expert"}, {"expert", "intermediate"}} {
 		name := fmt.Sprintf("%s v %s", pair[0], pair[1])
 		book := &record{wins: map[string]int{}, missiles: map[string]int{}, rounds: map[string]int{},
 			envelope: map[string]int{}, asked: map[string]int{}, threat: map[string]int{}, blocked: map[string]int{}}
@@ -136,7 +136,7 @@ func TestHeaterEmployment(t *testing.T) {
 						delete(live, number)
 					}
 				}
-				// Time under threat: does the ace's volume simply keep the
+				// Time under threat: does the expert's volume simply keep the
 				// machine defensive, and is that where the positional deficit
 				// comes from?
 				for _, m := range i.flying {

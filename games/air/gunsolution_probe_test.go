@@ -183,7 +183,7 @@ func TestGunSolution(t *testing.T) {
 }
 
 // TestGunSolutionByRange: does a pursuit law convert BETTER at longer range, or
-// is it flat? (#42, from the 2026-09-12 joust.) The live ace held its nose 89 to
+// is it flat? (#42, from the 2026-09-12 joust.) The live expert held its nose 89 to
 // 123 degrees off the target and converted 2-3% of samples at EVERY range band
 // from 250 m to 1500 m - flat. If that flatness is a property of the catalogue,
 // a scripted pursuer flying a textbook law should NOT be flat: it should convert
@@ -328,14 +328,14 @@ func TestGunSolutionByRange(t *testing.T) {
 				sorted[len(sorted)/2], 100*float64(on5)/float64(len(v)), 100*float64(on20)/float64(len(v)))
 		}
 	}
-	fmt.Println("\nfield comparison (live ace, 2026-09-12, post-Winchester, its own nose off the target):")
+	fmt.Println("\nfield comparison (live expert, 2026-09-12, post-Winchester, its own nose off the target):")
 	fmt.Println("  <250 122.9 deg on<20deg 0.0% | 250-400 102.4 deg 3.0% | 400-600 113.0 deg 2.8% | 600-900 99.7 deg 2.9% | 900-1500 88.9 deg 2.2%")
 }
 
 // TestGunSolutionBotSeat: #177's own "NEXT (not done)", and the question
 // TestGunSolutionByRange forces. The scripted laws convert against the level
 // turner - lead pursuit points within 20 deg for 41-74% of the run and holds a
-// real gun solution 42-48% of the time at 400-900 m - while the live ace in the
+// real gun solution 42-48% of the time at 400-900 m - while the live expert in the
 // 2026-09-12 joust pointed within 20 deg for 0-3% of samples at EVERY range. So
 // the airframe can point and a textbook law can point. Can the bot's OWN play
 // laws point, with the arbitration taken out of it?
@@ -397,7 +397,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 		// The fine-tracking boost's real reach, derived from the tactics the bot
 		// actually flies (skill.open * aim.reach) so this can never again report
 		// a boundary the bot has stopped applying.
-		edge := skills["ace"].open * standard().aim.reach
+		edge := skills["expert"].open * standard().aim.reach
 		sumThrottle, sumBrake, sumG, budget := 0.0, 0.0, 0.0, 0
 		// The terminal discipline's own accounting (#42). press spends its
 		// overtake on RANGE alone - goal := clamp((distance-250)*0.15, 0, 45)
@@ -413,7 +413,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 				theta := entry * math.Pi / 180
 				at := flight.Vec3{X: -start * math.Cos(theta), Y: height, Z: start * math.Sin(theta)}
 				me := build(at, flight.Vec3{X: 1}, speed+60/1.944)
-				b := &brain{skill: skills["ace"], tactics: standard()}
+				b := &brain{skill: skills["expert"], tactics: standard()}
 				// steer()'s fine-tracking loop - the block that drives the
 				// pipper onto the lead point and is THE gun-solution refinement
 				// - is gated on b.shoot, b.prey, b.magazine and the two timers.
@@ -473,7 +473,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 					// hardcoded at 690 m with the halves labelled "boost ON" and
 					// "boost OFF", which was true when aim.reach was 1.15 and has
 					// been false since #42 raised it to 1.5 - the boost now runs
-					// to 900 m for the ace and the probe was reporting a gate the
+					// to 900 m for the expert and the probe was reporting a gate the
 					// bot had stopped applying. The conversion difference across
 					// the old line is real and survives (press 40.2% inside,
 					// 11.8% outside), but it is a RANGE effect, not a gate, and
@@ -648,7 +648,7 @@ func TestGunSolutionAimSweep(t *testing.T) {
 				theta := entry * math.Pi / 180
 				me := build(flight.Vec3{X: -start * math.Cos(theta), Y: height, Z: start * math.Sin(theta)},
 					flight.Vec3{X: 1}, speed+60/1.944)
-				b := &brain{skill: skills["ace"], tactics: doc}
+				b := &brain{skill: skills["expert"], tactics: doc}
 				b.shoot, b.magazine, b.quiet, b.dodge = true, 578, 0, 0
 				b.prey = &track{}
 				sampleP, sampleV, sampled := target.State.Position, target.State.Velocity, uint64(0)

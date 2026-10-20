@@ -161,12 +161,12 @@ func TestPairDiscipline(t *testing.T) {
 	heavy(t)
 	worst, fights := 0, 0
 	var quick int // third-or-later rounds that followed inside the look
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		for seed := uint64(1); seed <= 6; seed++ {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("pair%s%d", level, seed),
 				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 				Parameters: map[string]any{"missiles": true, "weapons": "fox2",
-					"bots": map[string]any{level: 1.0, "pilot": 1.0}}})
+					"bots": map[string]any{level: 1.0, "intermediate": 1.0}}})
 			if err != nil {
 				t.Fatal(err)
 			}

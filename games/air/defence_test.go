@@ -14,22 +14,22 @@ import (
 	"world/game"
 )
 
-// TestMachineDefendsLikeTheAce bounds how much of a heater fight the machine
+// TestMachineDefendsLikeTheExpert bounds how much of a heater fight the machine
 // spends inside the defensive programme (#216).
 //
 // The machine carries no reaction delay, and react was doing a second job that
 // nothing had named: b.alert resets whenever the threat test flickers off, so
 // react was also the only debounce on that test. At zero the machine broke,
 // cut its burner and cancelled its press for rounds that were in the window for
-// a single tick - measured against the ace over these seeds, 7.82% of the fight
+// a single tick - measured against the expert over these seeds, 7.82% of the fight
 // against 0.13%, arriving 41 kt slower and surviving 2 of 16 against 10.
 // threat_confirm is the shared floor that fixed it; post-fix this reads 3.01%
-// against the ace's 0.18%, and the machine is now the FASTER of the two.
+// against the expert's 0.18%, and the machine is now the FASTER of the two.
 //
 // The outcome gates (TestLadderDuel, TestMissileLadderWide) already catch the
 // consequence. This catches the CAUSE, which is what took a day to find: when
 // those rungs go red again, run this first.
-func TestMachineDefendsLikeTheAce(t *testing.T) {
+func TestMachineDefendsLikeTheExpert(t *testing.T) {
 	heavy(t)
 	evading, flying := map[bool]int{}, map[bool]int{}
 	speed := map[bool]float64{}
@@ -38,7 +38,7 @@ func TestMachineDefendsLikeTheAce(t *testing.T) {
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("defence%d", seed),
 			Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 			Parameters: map[string]any{"missiles": true, "weapons": "fox2",
-				"bots": map[string]any{"superhuman": 1.0, "ace": 1.0}}})
+				"bots": map[string]any{"superhuman": 1.0, "expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -74,7 +74,7 @@ func TestMachineDefendsLikeTheAce(t *testing.T) {
 		return 100 * float64(evading[machine]) / math.Max(1, float64(flying[machine]))
 	}
 	for _, m := range []bool{false, true} {
-		who := "ace"
+		who := "expert"
 		if m {
 			who = "superhuman"
 		}
@@ -88,7 +88,7 @@ func TestMachineDefendsLikeTheAce(t *testing.T) {
 	// repair: a regression that re-opens this reaches for the whole aircraft, it
 	// does not drift a fraction of a percent.
 	if s := share(true); s > 5 {
-		t.Errorf("the machine spends %.2f%% of a heater fight evading against the ace's %.2f%%: "+
+		t.Errorf("the machine spends %.2f%% of a heater fight evading against the expert's %.2f%%: "+
 			"the threat test has lost its confirmation window again (#216)", s, share(false))
 	}
 }

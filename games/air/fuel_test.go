@@ -156,7 +156,7 @@ func TestBotsFuel(t *testing.T) {
 			t.Fatalf("%s: the match spawned no bot", weapons)
 		}
 		i.Step(1, nil)
-		bandit := NewBandit("ace", 1, 250000, "", false, weapons != "guns", weapons, 0, false)
+		bandit := NewBandit("expert", 1, 250000, "", false, weapons != "guns", weapons, 0, false)
 		bandit.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
 		bandit.Step()
 		for name, a := range map[string]*craft{"server bot": bot, "bandit": bandit.craft} {
@@ -177,7 +177,7 @@ func TestBotsFuel(t *testing.T) {
 	}
 	// An explicit load is bounded by the tank, as a player's is: a scene that
 	// read a recording's empty first sample asked for 7,782 kg and flew it.
-	over := NewBandit("ace", 1, 250000, "", false, false, "guns", 7782, false)
+	over := NewBandit("expert", 1, 250000, "", false, false, "guns", 7782, false)
 	over.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
 	if got := over.craft.model.State.Fuel; got > airframe.Mass.Fuel+1 {
 		t.Errorf("a 7,782 kg request spawned the bandit with %.0f kg, past the tank's %.0f", got, airframe.Mass.Fuel)

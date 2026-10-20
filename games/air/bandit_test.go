@@ -15,7 +15,7 @@ import (
 )
 
 func TestBanditSpawnTrimmed(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "", 0, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	s := &b.craft.model.State
 	v := s.Attitude.Unrotate(s.Velocity)
@@ -38,7 +38,7 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 func TestBanditFliesThePlayersAir(t *testing.T) {
 	air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}, Wrap: 250000}
 	for _, east := range []float64{1, -1} {
-		b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, true)
+		b := NewBandit("expert", 7, 250000, "", false, true, "fox2", 0, true)
 		b.Air(air)
 		b.Spawn(flight.Vec3{X: -2778 * east, Y: 4572}, flight.Vec3{X: 220 * east})
 		player := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
@@ -59,7 +59,7 @@ func TestBanditFliesThePlayersAir(t *testing.T) {
 // open class arms it, its radar acquires beyond visual range, a DLZ shot leaves
 // the rail, and the guns class stays byte-inert.
 func TestBanditBvr(t *testing.T) {
-	b := NewBandit("ace", 3, 250000, "", false, true, "open", 0, false)
+	b := NewBandit("expert", 3, 250000, "", false, true, "open", 0, false)
 	if b.craft.amraams == 0 {
 		t.Fatal("open-class bandit spawned without AMRAAMs")
 	}
@@ -125,7 +125,7 @@ func TestBanditBvr(t *testing.T) {
 	}
 
 	// The guns class: today's exact joust, nothing radiates.
-	quiet := NewBandit("ace", 3, 250000, "", false, false, "guns", 0, false)
+	quiet := NewBandit("expert", 3, 250000, "", false, false, "guns", 0, false)
 	quiet.Spawn(flight.Vec3{X: 8000, Y: 3000}, flight.Vec3{X: -272})
 	for tick := 0; tick < 60*5; tick++ {
 		player.State.Encode(words)
@@ -140,7 +140,7 @@ func TestBanditBvr(t *testing.T) {
 
 // TestBanditJoustHold: the single-player joust as the client starts it -
 // head-on from 1.5 NM a side at 220 m/s, the player in burner - which is where
-// recordings 01a0b090, 01a0c91b and 01a0c9e0 all show the ace's heaters leaving
+// recordings 01a0b090, 01a0c91b and 01a0c9e0 all show the expert's heaters leaving
 // at about 8.4 s with neither jet past the other's 3/9 line. Unheld, the same
 // geometry must still produce that shot, or the held run proves nothing. Held,
 // nothing leaves the rails before the crossing, Free reports the crossing on
@@ -205,16 +205,16 @@ func TestBanditJoustHold(t *testing.T) {
 		return result
 	}
 
-	free := joust("ace", 7, "fox2", false, true, true)
+	free := joust("expert", 7, "fox2", false, true, true)
 	if free.early == 0 {
-		t.Fatalf("unheld, the ace fired nothing before the merge at tick %d: the geometry no longer reproduces the recorded shot, so the held run proves nothing", free.crossed)
+		t.Fatalf("unheld, the expert fired nothing before the merge at tick %d: the geometry no longer reproduces the recorded shot, so the held run proves nothing", free.crossed)
 	}
 	if free.freed != 1 {
 		t.Errorf("a bandit started without the hold reported its weapons free first at tick %d, want the first frame", free.freed)
 	}
-	held := joust("ace", 7, "fox2", true, true, true)
+	held := joust("expert", 7, "fox2", true, true, true)
 	if held.early != 0 {
-		t.Errorf("held, %d missiles left the ace's rails before the merge at tick %d", held.early, held.crossed)
+		t.Errorf("held, %d missiles left the expert's rails before the merge at tick %d", held.early, held.crossed)
 	}
 	if held.freed != held.crossed {
 		t.Errorf("Free first reported at tick %d, the crossing is at tick %d: the client's hold and the brain's would open on different frames", held.freed, held.crossed)
@@ -240,7 +240,7 @@ func TestBanditJoustHold(t *testing.T) {
 			break
 		}
 	}
-	t.Logf("ace: %d missiles before the merge at tick %d unheld, %d held, freed at tick %d; novice: %d frames on the trigger held", free.early, free.crossed, held.early, held.freed, kicked.pressed)
+	t.Logf("expert: %d missiles before the merge at tick %d unheld, %d held, freed at tick %d; novice: %d frames on the trigger held", free.early, free.crossed, held.early, held.freed, kicked.pressed)
 }
 
 // TestMirrorShortFrame: the exported entry the panic was found through. Mirror
@@ -249,7 +249,7 @@ func TestBanditJoustHold(t *testing.T) {
 // the Go program page-wide rather than being refused. The reflection has to
 // stay flyable afterwards, not merely not crash.
 func TestMirrorShortFrame(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{X: 2000, Y: 6096}, flight.Vec3{X: -250})
 	reflection := b.arena.aircraft[0]
 
@@ -285,7 +285,7 @@ func TestBanditCarriesItsStores(t *testing.T) {
 		weapons  string
 		missiles bool
 	}{{"guns", false}, {"fox2", true}, {"open", true}} {
-		b := NewBandit("ace", 1, 250000, "", false, c.missiles, c.weapons, 2000, false)
+		b := NewBandit("expert", 1, 250000, "", false, c.missiles, c.weapons, 2000, false)
 		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
 		b.Step()
 		m := b.craft.model

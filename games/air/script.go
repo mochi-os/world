@@ -11,11 +11,11 @@ import (
 // or heater match instead of choosing among rehearsed plays; server bots, and
 // the bandit in a BVR fight, fly the planner (duel.go). It is plan step 6 of the difficulty
 // target (claude/plans/air-bot-arbiter.md): five changes inside the planner left
-// the ace winning about half its fights against mimic, the scripted pilot of the
+// the expert winning about half its fights against mimic, the scripted pilot of the
 // user's own fights, where the target is nine in ten, and every one of the
-// ace's deaths at stage 0 came while the planner flew `high` away from a
-// heater-armed pilot. mimic itself beats the stage 0 novice and pilot and draws
-// with the ace, so its fight is where this starts.
+// expert's deaths at stage 0 came while the planner flew `high` away from a
+// heater-armed pilot. mimic itself beats the stage 0 novice and intermediate and draws
+// with the expert, so its fight is where this starts.
 //
 // The law is mimic's (pointing_probe_test.go, hornet.fly), copied rather than
 // shared: mimic is the yardstick, and a yardstick that moved whenever the
@@ -139,7 +139,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// The bubble after the merge. Once the closest approach, both jets flown
 	// on as turns at the rates they are flying (nearest), would come inside
 	// 1.6 bubbles within five seconds, the lift vector goes the way escape
-	// chooses and the gun waits, latched until the range opens. The pilot tier
+	// chooses and the gun waits, latched until the range opens. The intermediate tier
 	// and the novice fly it throughout the fight; the instructor tiers only on
 	// the gun from behind him, an overtake, or it takes their turning fight.
 	// Against mimic, 32 fights per tier, still air and wind, the fights with a
@@ -157,7 +157,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// 150 m (94-120 m).
 	//
 	// Declined on the way, against mimic over the same fights: flown by every
-	// tier through the whole fight it took the ace's fast one-circle from 21
+	// tier through the whole fight it took the expert's fast one-circle from 21
 	// won and 2 lost to 2 and 10 (the superhuman 19/3 to 8/9); on every gun pass
 	// for the instructor tiers, the slow one-circle to 9/13 and the fast to 2/8.
 	// Three seconds ahead and unlatched it fluttered, turning away until the
@@ -167,7 +167,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// his turn alone, or only as a pass of 100 m/s or more, it missed the
 	// crossings and slow drifts together that most of them were. The look
 	// stretched by corner speed over speed, up to 1.6 times, read 250 kt at
-	// 14,000 ft as slow and cost the pilot tier 11 of 128 fights (72 won and
+	// 14,000 ft as slow and cost the intermediate tier 11 of 128 fights (72 won and
 	// 54 lost to 61 and 62); the clear held over the regain's floor changed
 	// nothing in 256 fights once the slow clear was pushed.
 	clearing := false
@@ -194,8 +194,8 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// tripped late on a jet climbing nose on at the bandit and left 3; held to
 	// head-on, both noses within 30 degrees of the other jet, it left 9.
 	// Declined: in every match, on every gun pass closing faster than 100 m/s, it left 19
-	// (15 with the five-second look) but took the circles, the ace's fast
-	// one-circle from 21/1 to 7/3, the superhuman's to 7/11, the ace's slow
+	// (15 with the five-second look) but took the circles, the expert's fast
+	// one-circle from 21/1 to 7/3, the superhuman's to 7/11, the expert's slow
 	// one-circle to 15/6; on every fast pass, gun or not, the superhuman's
 	// heater jousts went from 29/2 and 32/0 to 16/12 and 20/11; head-on in a
 	// heater match as well, the superhuman's in wind to 20/11. A floor of 1.5 s
@@ -207,21 +207,21 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// flew their fight weight (bots_fuel, the presets' fuel, 2026-10-12) the
 	// superhuman met mimic nose to nose on the gun at 165-200 kt, 32 degrees
 	// of alpha and under 2 g, and went by inside the bubble in 11 of 64 heater
-	// jousts at about 32 s (closest 55 m). With this it is none, the ace's one
+	// jousts at about 32 s (closest 55 m). With this it is none, the expert's one
 	// pass at 58 m apart, at a price: the superhuman lost 10 of 64 in still air
-	// where it lost 2, and the slow one-circles stayed red (ace 13/6,
+	// where it lost 2, and the slow one-circles stayed red (expert 13/6,
 	// superhuman 15/7). The bubble outranks the record (ruled 2026-10-09, and
 	// for this trade 2026-10-12). Declined, the same 64 fights a tier, still
-	// air and wind, ace then superhuman: fast in every match at 60 m/s, 33/29
+	// air and wind, expert then superhuman: fast in every match at 60 m/s, 33/29
 	// 30/33 and 40/22 37/27; fast in a heater match only above 100 m/s, 34/28
 	// 30/31 and 41/22 37/27; the slow condition left out, the fast one-circle
 	// went from 24/0 to 1/23; a three or two second look never caught the pass.
 	// Declined too, the instructor tiers clearing as a yo-yo, the lift vector
 	// kept on him with the nose 1.5 or 3 parts above or below his height and
-	// no push: it won the slow one-circles back (ace 13/6 to 21/2, superhuman
+	// no push: it won the slow one-circles back (expert 13/6 to 21/2, superhuman
 	// 15/7 to 22/2) and the superhuman's still-air jousts went 53/10 to 54/7,
 	// but 22 of those 64 passed inside the bubble (closest 19 m), the guns
-	// jousts 60-70 of 256 against 21, and the ace's still air 62/1 to 59/5.
+	// jousts 60-70 of 256 against 21, and the expert's still air 62/1 to 59/5.
 	// Flown as a yo-yo until 2.5 or 3.5 s before the pass and as this clear
 	// after it, the superhuman read 45/14 and 42/18 with 22 inside; as a yo-yo
 	// only away from this pass and the guns jousts, 51/12, the circles red.
@@ -251,7 +251,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			// 1,024 and a nine-second one 74. Declined with it, against the
 			// passes this margin opens: choosing a clear again once he begins
 			// to chase it, and never taking a way back across the miss (31 to
-			// 28 on seeds 1-64, the ace's heater pass from 58 m to 37).
+			// 28 on seeds 1-64, the expert's heater pass from 58 m to 37).
 			// Declined too, the clear let go once the miss it makes is past 1.3
 			// times the margin: the superhuman held one for 3.5 s from 600 m
 			// and went by at 364 m, its nose swung 129 degrees off him, and
@@ -292,7 +292,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 
 	// THE CHASE: a jet faster than me, flying straight and opening the range
 	// beyond 600 m cannot be caught by turning, and the fight law's full alpha
-	// behind him bled the ace to the regain's floor and back for minutes (106 s
+	// behind him bled the expert to the regain's floor and back for minutes (106 s
 	// of four below 194 kt), handing a pilot who turns back a slow bandit. Once
 	// he has run for three seconds the bandit pursues: the near-nose blend of
 	// the gun, and a pull only as hard as the speed affords, the fighting
@@ -340,10 +340,10 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// 10.9%, 27.8% and 0.2 s, but in guns jousts against mimic he came down on
 	// its tail and the fights with a pass inside 150 m went from 5 to 18 of
 	// 256 (closest 12 m); flown as a level turn in heater matches at every
-	// range, the ace's heater jousts fell from 32/0 31/1 to 23/7 19/13.
+	// range, the expert's heater jousts fell from 32/0 31/1 to 23/7 19/13.
 	// A nose-low slice, the lift vector 20 or 35 degrees below him while he sat
 	// more than 45 degrees off, read 8/8 and 9/7 over the joust's 16 against
-	// 8/8, and in the replay of 01a10e335a moved the ace's first heater from
+	// 8/8, and in the replay of 01a10e335a moved the expert's first heater from
 	// 19.6 s, a second before the pilot's, to 21.7 s. Declined.
 	// Declined for the novice (2026-10-14), the flat fight real novices fly,
 	// the lift vector's height outside the gun, a clear and a break scaled to
@@ -407,7 +407,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// 300 m off, and the trigger never came; against a target flying straight
 	// away the bandit spent 122 s of four minutes below 194 kt. Sizing it by the
 	// angle on the gun's led solution as well let the slow one-circle fight go:
-	// the ace's alpha fell from 32 to 17 degrees at 430 m with its heater pair a
+	// the expert's alpha fell from 32 to 17 degrees at 430 m with its heater pair a
 	// tick from the rail, and it won 1 and lost 17 of 24 against 19 and 1 (the
 	// superhuman 3 and 17 against 17 and 5).
 	if span < 1500 && bending(b.prey) > 15 || jinking {
@@ -418,7 +418,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// about 250 kt the pull droops and the bandit porpoises, alpha 28 to 2
 	// degrees and back every 1.8 s with the stick at 0.9. Declined, the stick
 	// that holds the present g fed forward, (nz - 1) / (limit - 1): the alpha
-	// held steady and the circles strengthened (slow one-circle, ace 18/2 to
+	// held steady and the circles strengthened (slow one-circle, expert 18/2 to
 	// 23/0, superhuman 18/3 to 24/0), but the tighter fights brought passes
 	// inside the bubble in 4 of 256 heater jousts against none and 12 of 256
 	// guns jousts against 7, and the fast-pass guard in every match that would
@@ -497,7 +497,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 // too late. Cold everywhere inside the span starves the slow fight instead;
 // below 130 m/s the cone narrows to where his seeker can see me now.
 //
-// Measured against mimic over 24 fights each (won/lost, ace), after the zone
+// Measured against mimic over 24 fights each (won/lost, expert), after the zone
 // and the launch were put on the nose (launcher): fast one-circle (450 kt line
 // abreast), slow one-circle and slow two-circle (210 kt), and the joust's
 // 16 (mimic's deaths/the bandit's):
@@ -510,7 +510,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 //   - 40 deg, 60 above 130 m/s (this): 23/1, 22/1, 23/1, 13/2; 60 above
 //     150 m/s 22/2, 22/1, 23/1, 13/2; 90 above 150 m/s 21/2, 22/1, 23/1, 11/4
 //
-// The pilot tier flies three-quarters of that cone (plume): against mimic, 32
+// The intermediate tier flies three-quarters of that cone (plume): against mimic, 32
 // fights in still air and wind, it won 41 and lost 18 where it won 34 and lost
 // 29 without the plume, the two in three the target asks for; with the whole
 // cone 45 and 10, with half 37 and 23. Flown cold through a clear as well, a
@@ -610,10 +610,10 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float
 // 100 m/s, the aim
 // goes the way escape chooses at the full pull and the gun waits, latched
 // until the range opens. The planner's rehearsal scores a line inside 70 m
-// down, but against a constant arc: in TestJink the ace overtook a jinker
+// down, but against a constant arc: in TestJink the expert overtook a jinker
 // reversing every second or two at 170 m/s through high, low, saddle, lag and
 // screw and rammed it. With this nobody rams it and the rounds landed still
-// climb the ladder (pilot 97, ace 184, superhuman 314). At any closure it broke
+// climb the ladder (intermediate 97, expert 184, superhuman 314). At any closure it broke
 // off ordinary gun attacks on a drone flying straight, whose pass projects as
 // a collision course: TestDroneKill's kills fell from 3, 12, 11 and 12 to 1,
 // 9, 12 and 10, and the ladder inverted.
@@ -659,7 +659,7 @@ func (i *instance) overtake(a *craft, b *brain) {
 // pass 5 s out. The water is the deck recovery's.
 //
 // Chased, his nose within 30 degrees of me, his path follows mine, and the way
-// across his height meets him: the ace at 151 kt, 950 ft above mimic climbing
+// across his height meets him: the expert at 151 kt, 950 ft above mimic climbing
 // at it nose on, took under for gravity and passed him at 66 m. So chased, the
 // choice is the vertical away from him or the miss's own way kept level. Held to that
 // against every jet, 28 of the 84 crossings in TestScriptClearsTheCrossing went
@@ -752,7 +752,7 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	// with the line raised, or lowered when he is above, 2 parts to its 2, and
 	// he goes by over or under the canopy instead of across a held line.
 	// Measured with the cold rule (reheat), the joust's 32 against mimic
-	// (mimic's deaths/the bandit's): ace 24/7 -> 30/2, superhuman 28/4 -> 32/0,
+	// (mimic's deaths/the bandit's): expert 24/7 -> 30/2, superhuman 28/4 -> 32/0,
 	// and no pass inside the bubble in TestScriptPass. A gain of 1 read 31/1 and
 	// 32/0 but passed inside the bubble 18 times; before the cold rule, gains of
 	// 1, 2 and 4 read 11/5, 9/5 and 8/8 over 16 against 8/8, with 24, 1 and 1
@@ -760,20 +760,20 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	//
 	// Those passes were measured with stages 6, 11, 14 and 15 of the old planner
 	// beneath the script. Flown as single player flies it, the merge came
-	// inside the bubble in 11 of the ace's 32 fights in still air and 16 in
-	// single player's wind (the superhuman 0 and 16, the pilot tier 6 and 8),
+	// inside the bubble in 11 of the expert's 32 fights in still air and 16 in
+	// single player's wind (the superhuman 0 and 16, the intermediate tier 6 and 8),
 	// closest 93-129 m, and 01a118cd met the pilot at 141 m: the hold judged the
 	// pass on the side distance alone and never counted the climb. So the pass
 	// is judged in three dimensions, and once it would come inside 1.3 bubbles
 	// every tier that lead-turns puts the whole pull into the vertical, four
 	// parts up and none toward him; and a tier that sees his turn late stops its
 	// lead turn earlier, 300 m further out for each second of perception delay
-	// (the pilot tier's 0.5 s; at 100 m it still met him at 104-115 m). No
+	// (the intermediate tier's 0.5 s; at 100 m it still met him at 104-115 m). No
 	// merge comes inside the bubble in either air, and it costs the instructor
 	// tiers about a third of their wins, which they took from the close pass;
 	// the user ruled the bubble wins. Won and lost against mimic over 32,
-	// still air then wind, before and after: pilot 21/11 20/11 -> 17/12 21/11,
-	// ace 30/0 28/3 -> 19/12 19/6, superhuman 31/1 31/1 -> 19/11 21/8. Declined:
+	// still air then wind, before and after: intermediate 21/11 20/11 -> 17/12 21/11,
+	// expert 30/0 28/3 -> 19/12 19/6, superhuman 31/1 31/1 -> 19/11 21/8. Declined:
 	// the escape with the lead turn kept, four parts up (20/10 17/13, two
 	// merges inside in wind), one part toward him and three up (19/11 19/10, one
 	// inside), triggered at 1.1 bubbles (20/9 16/15), at the margin (19/11
@@ -784,24 +784,24 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	// The cost was all in one geometry: a pilot lead-turning toward my side
 	// closed the pass inside 1.3 bubbles every time, the escape fired a second
 	// or two before it, and the instructor tiers came out of the merge pointing
-	// at the sky. Against mimic turning toward it the ace won 3 and lost 12 of
+	// at the sky. Against mimic turning toward it the expert won 3 and lost 12 of
 	// 16 (3/6, 7 undecided, in wind) where it had won 14 and lost 1, and fired
 	// the first heater in none of them. So the instructor tiers fly their line
 	// to a pass `vertical` off his height and the separation is there before he
 	// turns: the lead turn goes on, the escape never fires (TestScriptPass:
 	// every instructor pass at 247 m or more, 189-195 m without it), and no
-	// merge comes inside the bubble. Against mimic over 32: ace 32/0 31/1,
+	// merge comes inside the bubble. Against mimic over 32: expert 32/0 31/1,
 	// superhuman 30/1 32/0, still air then wind, first heater in all 32.
 	//
 	// Every tier flies that line since both jets flew their fight weight
 	// (bots_fuel, the presets' fuel, 2026-10-12). Lighter, mimic's lead turn
-	// closed the pass faster than the pilot tier and the novice, flying their
-	// line level, saw it: the pilot met him at 115-149 m in 9 of 128 heater
+	// closed the pass faster than the intermediate tier and the novice, flying their
+	// line level, saw it: the intermediate met him at 115-149 m in 9 of 128 heater
 	// jousts and 5 of 128 guns jousts, its escape starting 875 m out and
 	// diving from wings level, a half roll before any pull; the novice at
 	// 93-110 m in 2 and 2, moving its line out from 1 km. On the vertical line
 	// no merge came inside the bubble in any of the 512, and won and lost in
-	// the heater jousts, still air then wind, went pilot 41/23 46/18 -> 38/25
+	// the heater jousts, still air then wind, went intermediate 41/23 46/18 -> 38/25
 	// 55/8, novice 2/62 7/57 -> 3/61 6/57.
 	stop := margin + 300*b.skill.delay
 	rise := 1.0

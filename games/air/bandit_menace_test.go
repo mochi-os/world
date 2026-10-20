@@ -24,7 +24,7 @@ func menace(position, velocity flight.Vec3, shooter int, phase float64) []float6
 // heater that has already lost: the client is the only source of
 // `loose`/`blind` there, and `beaten` (bot.go) reads exactly those two.
 func TestMenaceBeaten(t *testing.T) {
-	bandit := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, false)
+	bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
 	position, velocity := flight.Vec3{X: 1000}, flight.Vec3{X: -300}
 
 	for _, c := range []struct {
@@ -110,8 +110,8 @@ func TestMenaceBeatenDefence(t *testing.T) {
 // read it. The closure thresholds are what keep perfect perception from
 // becoming permanent defence.
 func TestSpent(t *testing.T) {
-	ace := &brain{skill: skills["ace"]}
-	pilot := &brain{skill: skills["pilot"]}
+	expert := &brain{skill: skills["expert"]}
+	intermediate := &brain{skill: skills["intermediate"]}
 	coasting := &missile{burn: 0}
 	boosting := &missile{burn: 1.5}
 	for _, c := range []struct {
@@ -121,10 +121,10 @@ func TestSpent(t *testing.T) {
 		closing float64
 		spent   bool
 	}{
-		{name: "a coasting round barely closing, read by the ace", b: ace, m: coasting, closing: 80, spent: true},
-		{name: "a coasting round still closing hard", b: ace, m: coasting, closing: 400, spent: false},
-		{name: "a boosting round barely closing", b: ace, m: boosting, closing: 80, spent: false},
-		{name: "the pilot cannot read a spent round", b: pilot, m: coasting, closing: 80, spent: false},
+		{name: "a coasting round barely closing, read by the expert", b: expert, m: coasting, closing: 80, spent: true},
+		{name: "a coasting round still closing hard", b: expert, m: coasting, closing: 400, spent: false},
+		{name: "a boosting round barely closing", b: expert, m: boosting, closing: 80, spent: false},
+		{name: "the intermediate cannot read a spent round", b: intermediate, m: coasting, closing: 80, spent: false},
 	} {
 		if got := spent(c.b, c.m, c.closing); got != c.spent {
 			t.Errorf("%s: spent = %v, want %v", c.name, got, c.spent)
@@ -141,7 +141,7 @@ func TestSpent(t *testing.T) {
 // 2, 8 and 18 km launches, with the superhuman firing nothing in 40 s.
 func TestMenaceCarriesABattery(t *testing.T) {
 	wrap := 250000.0
-	bandit := NewBandit("ace", 1, wrap, "", false, true, "open", 0, false)
+	bandit := NewBandit("expert", 1, wrap, "", false, true, "open", 0, false)
 	bandit.Spawn(flight.Vec3{X: 12000, Y: 8000}, flight.Vec3{X: -240})
 	bandit.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
 

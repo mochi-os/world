@@ -23,7 +23,7 @@ import (
 // crossing above 80 m/s) and how often the arbiter changes its mind.
 func TestMachineSweep(t *testing.T) {
 	heavy(t)
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		var sweeps, misses []float64
 		crossings, churn, decisions, inrange := 0, 0, 0, 0
 		dry, killed, drowned := 0, 0, 0 // belt empty / killed the drone / hunter died anyway

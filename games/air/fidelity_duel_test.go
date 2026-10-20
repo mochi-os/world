@@ -17,7 +17,7 @@ import (
 )
 
 // TestFidelityDuel measures surrogate agreement per RANGE BAND in the two-bot
-// guns duel, where the ladder is judged - TestFidelity's ace furball averages
+// guns duel, where the ladder is judged - TestFidelity's expert furball averages
 // the merge in with cruising. Diagnostic, not gated: the printout is the
 // product.
 func TestFidelityDuel(t *testing.T) {
@@ -42,7 +42,7 @@ func TestFidelityDuel(t *testing.T) {
 	}
 	// And by SPEED regime, which the range bands cannot see. The surrogate's 66%
 	// agreement was only ever measured across whole bot-against-bot duels, which
-	// are flown fast; a human beat the ace below 0.7 of corner (recording
+	// are flown fast; a human beat the expert below 0.7 of corner (recording
 	// 01a0b090, 87% of the fight sub-corner), exactly where a point-mass with a
 	// hard lift ceiling and parabolic drag is least like the aeroplane.
 	regimes := []string{"slow <0.7 corner", "fast >=0.7 corner"}
@@ -63,7 +63,7 @@ func TestFidelityDuel(t *testing.T) {
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("fidduel%d", seed), Game: "air", Mode: "furball",
 			Capacity: 8, Seed: seed,
 			Parameters: map[string]any{"missiles": false,
-				"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+				"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

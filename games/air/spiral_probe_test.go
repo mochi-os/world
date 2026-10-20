@@ -16,7 +16,7 @@ import (
 )
 
 // spiraler flies the user's standard fox-2 recipe (2026-08-28), the pattern
-// that reliably beats the ace: hold the two-circle descending rate fight as an
+// that reliably beats the expert: hold the two-circle descending rate fight as an
 // equal — co-altitude, corner speed, conceding nothing — and when the bot
 // leaves the stalemate low, keep the height it donated, roll onto its high
 // six, and convert from lag. The deadlock is a Nash equilibrium: the probe
@@ -90,7 +90,7 @@ func (s *spiraler) fly(me, foe *flight.State, tick uint64) map[string]any {
 	return data
 }
 
-// TestSpiralDefection (#42): the ace against the equilibrium-holder. The
+// TestSpiralDefection (#42): the expert against the equilibrium-holder. The
 // deadlocked descending spiral is a Nash equilibrium — leaving it low donates
 // the height differential to the opponent, and the user converts that
 // donation reliably (recording 01a0496dbd0a: lag co-altitude at t=96, low at
@@ -111,7 +111,7 @@ func TestSpiralDefection(t *testing.T) {
 	for seed := uint64(1); seed <= 12; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("spiral%d", seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -279,7 +279,7 @@ type flyer interface {
 }
 
 // hornet flies the slow fight the 2026-09-09 recording shows the HOTAS player
-// beating the ace with, which is what the mush is not: an alpha fight WITH
+// beating the expert with, which is what the mush is not: an alpha fight WITH
 // energy management. Pull for the nose only when a shot is developing, a
 // measured turn otherwise so the speed builds back, and below the floor the
 // stick comes forward whatever the geometry until the band is bought back in
@@ -311,13 +311,13 @@ type hornet struct {
 	zone        round.Zone  // his heater zone as the cue reads it, refreshed a few times a second
 	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
 	wind        flight.Vec3 // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
-	full        bool        // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 ace
+	full        bool        // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 expert
 	late        float64     // seconds the rounds inbound have flown before the pilot sees them (0: at launch)
 	slice       float64     // after the pass, the lift vector this many degrees below him: the user's descending turn (0: on him)
 	sighted     uint64      // one past the tick the rounds inbound were first in the air (0: none inbound)
 }
 
-// mimic flies the fight the user flew against the stage 15 ace in the sorties
+// mimic flies the fight the user flew against the stage 15 expert in the sorties
 // of 2026-09-24, which the difficulty target (#45) is judged against. The
 // run-in is straight and level from the joust's 5.5 km, and the pilot turns
 // first, at 1.6 km, toward the bandit's side of him or away from it (the four
@@ -436,7 +436,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 			// passing close swings its bearing through ninety degrees in under
 			// a second, so a beam recomputed every tick is a target that spins
 			// - the jet chases it, and that chatter departs the airframe
-			// exactly as the lift-vector chatter did before it (the pilot arm
+			// exactly as the lift-vector chatter did before it (the intermediate arm
 			// peaked at 99.7 degrees the first time this was flown uncommitted).
 			// A pilot picks a direction and holds it until the thing is past.
 			if tick >= h.until || h.beam.Length() < 0.5 {
@@ -487,7 +487,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	//   - the model subtracts its gust and is sampled every physics step, while
 	//     this runs at the script's own decision rate, so a peak between
 	//     decisions is never observed here at all.
-	// Traced on the ace arm, this value never exceeded 85 through 1,760 ticks
+	// Traced on the expert arm, this value never exceeded 85 through 1,760 ticks
 	// while the gate recorded a 101.4 peak. So the gate's PEAK is a number the
 	// controller cannot see or respond to, which is why tuning against it moved
 	// the defect between arms five times without closing it. The gate now
@@ -540,11 +540,11 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// fight is flown - a pilot holds the wing loaded to SUSTAIN the turn and
 	// keep the advantage, and only unloads to leave. Measured: raising the
 	// target from 30 to 34 moved the share 29.3% -> 28.9%, essentially not at
-	// all, while the pilot arm went to 46.3 s of tumbling. The share was never
+	// all, while the intermediate arm went to 46.3 s of tumbling. The share was never
 	// limited by where the regulator points; it was limited by how rarely the
 	// geometry asked for anything.
 	//
-	// Thirty, and both directions off it are measured. At 32 the pilot arm
+	// Thirty, and both directions off it are measured. At 32 the intermediate arm
 	// tumbles 55.8 s and the share FALLS to 32.1%; at 34 it tumbles 46.3 s and
 	// the share does not move at all. Raising the target now costs share as
 	// well as margin, because the band below excludes departed time - so a
@@ -612,7 +612,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// for the same pull, and 330 is above the human's own average, so the
 	// script waits to be faster than the human ever was before rejoining.
 	// Measured at 150 (291 kt, the recording's mean exactly): the calibration
-	// check passes and the ace arm tumbles 140.6 s past 45 degrees at a 129.2
+	// check passes and the expert arm tumbles 140.6 s past 45 degrees at a 129.2
 	// peak, an order of magnitude worse than anything else tried. Leaving the
 	// regain early returns the jet to the fight without the energy to fly it,
 	// so it pulls, departs, regains and departs again. The hysteresis IS the
@@ -672,7 +672,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// Once the regain has DECIDED, push properly. This used to be
 		// clamp(-(riding-32)/15, -1, 0): a proportional law whose output is zero
 		// at its own trigger, so the first two seconds of every regain commanded
-		// nothing. Traced on the ace arm (AIR_DEPART=1), the regain fired at
+		// nothing. Traced on the expert arm (AIR_DEPART=1), the regain fired at
 		// alpha 32.2 and 290 kt commanding -0.01, was still only at -0.11 a
 		// second later, and did not reach -0.80 until alpha 44.0 and 257 kt -
 		// by which point TestPitchRecovery says the airframe needs longer to
@@ -694,7 +694,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// note that stood here said so and concluded nothing more was needed -
 		// but this branch then OVERWROTE pitch with the attitude term, so its
 		// output was computed and thrown away for the whole of every regain.
-		// Traced against the ace (AIR_DEPART=1): alpha ran 37.1 -> 45.1 over
+		// Traced against the expert (AIR_DEPART=1): alpha ran 37.1 -> 45.1 over
 		// half a second at 279 -> 266 kt while the stick sat at +0.07 falling
 		// to +0.01 - still PULLING, on a wing already past the limiter, which
 		// is the "stick nearly centred while its own script believed it was
@@ -717,15 +717,15 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 		// Triggering the regain EARLIER on alpha rate (half a second of lead)
 		// was then measured and is REFUSED: the regain overrides the regulator
 		// wholesale, so firing sooner buys regain time out of exactly the
-		// high-alpha fighting this script exists to reproduce. The ace arm got
-		// WORSE (2.22% -> 2.82%), the pilot arm began tumbling at all (1.03%,
+		// high-alpha fighting this script exists to reproduce. The expert arm got
+		// WORSE (2.22% -> 2.82%), the intermediate arm began tumbling at all (1.03%,
 		// peak 178.4), and the calibration collapsed - novice share 24.4% ->
-		// 11.8%, mean speed 353 -> 429 kt, pilot 408 -> 478 kt. That is the
+		// 11.8%, mean speed 353 -> 429 kt, intermediate 408 -> 478 kt. That is the
 		// eighth shape in this family to trade one arm for another.
 		//
 		// WHAT RESTORING IT COSTS, measured alone on cbe8af7 against a clean
 		// baseline: both gates pass either way and TestLadderDuel reads an
-		// identical 31.7 s, but the ARMS move a long way - the ace kills this
+		// identical 31.7 s, but the ARMS move a long way - the expert kills this
 		// script 10/16 where it killed 6/16 and dies 4/16 where it died 7/16,
 		// the fight shortens 83 -> 57 s, and the script's peak alpha drops
 		// 26.6 -> 19.3 with its time above twenty degrees going 0.5% -> 0.0%.
@@ -754,7 +754,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 	// jet through 46, 55, 68 to 86 degrees alpha before the 224 kt floor could
 	// fire (seed 16 of the heater arm, t=49.5-52.0; seed 11 the same at 101
 	// degrees). A departed opponent is not a yardstick - it is killed for
-	// free, and the ace's 15/16 was partly that. The recording's pilot peaked
+	// free, and the expert's 15/16 was partly that. The recording's pilot peaked
 	// at 34.2 degrees and never rode the limiter, so the stick eases toward
 	// it. Positive pull only: the regain's nose-down must not be weakened by
 	// the very alpha it exists to unload.
@@ -850,7 +850,7 @@ type bout struct {
 // the session's: "furball" frees the weapons from the first tick, which is the
 // arm #107 was measured on; "joust" HOLDS them until either jet crosses the
 // other's 3/9 line, exactly as the live single-player joust does - and that
-// hold is why a live ace's first shot comes after the pass, not nose-on at two
+// hold is why a live expert's first shot comes after the pass, not nose-on at two
 // seconds. An instrument standing in for a joust has to be a joust.
 func sweep(t *testing.T, level, mode string, opponent func() flyer, missiles bool, entry float64, seeds, seconds int) bout {
 	t.Helper()
@@ -1158,24 +1158,24 @@ func report(name, level string, b bout) string {
 		"", "", share(b.high[1]), engaged(1), b.peak[1], mean(1), b.slowest[1]*1.944, share(b.guns[1]), share(b.heater[1]), b.flares)
 }
 
-// TestPilotEngagesTheMush: the pilot tier has a way UP. With every vertical
+// TestIntermediateEngagesTheMush: the intermediate tier has a way UP. With every vertical
 // play at tier 3 or 4 its catalogue could go flat or down, and against a
 // sinking slow target its one out-of-plane play - a burner dive to 300 m
 // below him - was a dive that never ended: 528 kt mean and 120 seconds
 // nobody won (#172). With the high yo-yo at tier 2 the same fight is flown
-// at 378 kt under the pilot's cap of 1.0 (357 kt and a third of it above 20
+// at 378 kt under the intermediate's cap of 1.0 (357 kt and a third of it above 20
 // degrees alpha under the 1.5 the battery refused). The gate is the speed:
-// the cap decides the alpha, and at 1.0 a pilot that no longer flees at 500
+// the cap decides the alpha, and at 1.0 an intermediate that no longer flees at 500
 // kt is the whole of what the yo-yo buys.
-func TestPilotEngagesTheMush(t *testing.T) {
+func TestIntermediateEngagesTheMush(t *testing.T) {
 	heavy(t)
-	b := sweep(t, "pilot", "furball", func() flyer { return &mush{armed: true} }, false, 0, 16, 120)
+	b := sweep(t, "intermediate", "furball", func() flyer { return &mush{armed: true} }, false, 0, 16, 120)
 	ticks := math.Max(float64(b.ticks), 1)
 	mean := b.speed[0] / ticks * 1.944
 	engaged := 100 * float64(b.closeHigh[0]) / math.Max(float64(b.close[0]), 1)
-	t.Logf("pilot v mush, guns: mean %.0f kt, %.1f%% of the engaged fight above 20 deg alpha, killed %d died %d of %d", mean, engaged, b.downed, b.lost, b.seeds)
+	t.Logf("intermediate v mush, guns: mean %.0f kt, %.1f%% of the engaged fight above 20 deg alpha, killed %d died %d of %d", mean, engaged, b.downed, b.lost, b.seeds)
 	if mean > 450 {
-		t.Errorf("pilot mean %.0f kt against the mush: the fast match - it has no way up and dives in burner (tier-3 yo-yo: 528 kt)", mean)
+		t.Errorf("intermediate mean %.0f kt against the mush: the fast match - it has no way up and dives in burner (tier-3 yo-yo: 528 kt)", mean)
 	}
 }
 
@@ -1229,7 +1229,7 @@ func jousted(i *instance, bot int) {
 // missiles off, where a fight comes back round to a second merge. Each tier's line says how many merges, and how
 // many later passes, came inside the 150 m bubble the never-list holds the
 // bandit to. The target is the user's: they win most against the novice, lose
-// most against the pilot, and rarely or never beat the ace or the superhuman.
+// most against the intermediate, and rarely or never beat the expert or the superhuman.
 func TestDifficulty(t *testing.T) {
 	if os.Getenv("AIR_POINT") == "" {
 		t.Skip("measurement probe: set AIR_POINT=1")
@@ -1238,7 +1238,7 @@ func TestDifficulty(t *testing.T) {
 	if n, err := strconv.Atoi(os.Getenv("AIR_SEEDS")); err == nil && n > 0 {
 		seeds = n
 	}
-	tiers := []string{"novice", "pilot", "ace", "superhuman"}
+	tiers := []string{"novice", "intermediate", "expert", "superhuman"}
 	if only := os.Getenv("AIR_TIER"); only != "" {
 		tiers = []string{only}
 	}
@@ -1285,7 +1285,7 @@ func TestTierAgainstTheMush(t *testing.T) {
 	}
 	armed := os.Getenv("AIR_PASSIVE") == ""
 	fmt.Printf("scripted human: armed=%v\n", armed)
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		b := sweep(t, level, "furball", func() flyer { return &mush{armed: armed} }, true, 0, 16, 90)
 		top, best := "", 0
 		for name, n := range b.plays {
@@ -1299,7 +1299,7 @@ func TestTierAgainstTheMush(t *testing.T) {
 }
 
 // TestTierAgainstTheHornet is #153's instrument. #107 measured the tiers
-// against the mush and the ace won 13 of 16; the same ace then lost the live
+// against the mush and the expert won 13 of 16; the same expert then lost the live
 // joust of 2026-09-09 to a player flying slow WITH energy management, a fight
 // no probe flew. Both opponents run here side by side so the difference is
 // one table, and the hornet's own line is checked against the recording it
@@ -1355,7 +1355,7 @@ func TestTierAgainstTheHornet(t *testing.T) {
 	}
 	armed := os.Getenv("AIR_PASSIVE") == ""
 	missiles := os.Getenv("AIR_WEAPONS") != "guns"
-	tiers := []string{"novice", "pilot", "ace", "superhuman"}
+	tiers := []string{"novice", "intermediate", "expert", "superhuman"}
 	if only := os.Getenv("AIR_TIER"); only != "" {
 		tiers = []string{only}
 	}
@@ -1393,7 +1393,7 @@ func TestTierAgainstTheHornet(t *testing.T) {
 			// next fix at a defect that was already closed.
 			//
 			// Half a second PER FIGHT is the line, and the arms either side of
-			// it are why: the pilot arm sits at 2.4 s over sixteen fights
+			// it are why: the intermediate arm sits at 2.4 s over sixteen fights
 			// (0.15 s each - a hard pull overshooting and coming back, which is
 			// what the recording's pilot did at 34.2 degrees), a genuinely
 			// tumbling arm reads 29.2 s (1.8 s each), and the unfixed script
@@ -1418,14 +1418,14 @@ func TestTierAgainstTheHornet(t *testing.T) {
 			// departure gate was left absolute. Third time this session that a
 			// probe measured raw ticks over a variable fight length (#212).
 			if opponent.name == "hornet" && float64(b.departed[1]) > 0.01*float64(b.ticks) {
-				// Every tier's arm, not just the ace's (#168). The script is the
+				// Every tier's arm, not just the expert's (#168). The script is the
 				// same script on all four, so a departure anywhere is the
-				// script's defect - and reading only the ace's row let a 99.7
-				// degree pilot-arm departure through.
+				// script's defect - and reading only the expert's row let a 99.7
+				// degree intermediate-arm departure through.
 				t.Errorf("the hornet tumbled against the %s: %.1f s past 45 deg (%.2f%% of %.0f s flown, limit 1.00%%, peak %.1f), and a tumbling opponent is killed for free rather than beaten",
 					level, float64(b.departed[1])/60, 100*float64(b.departed[1])/math.Max(float64(b.ticks), 1), float64(b.ticks)/60, b.peak[1])
 			}
-			if level == "ace" && opponent.name == "hornet" && missiles {
+			if level == "expert" && opponent.name == "hornet" && missiles {
 				// Only the arm the recording was flown on: guns-only fights run
 				// twice as long and the same script rightly regains more.
 				// The instrument's own check, against the recording it stands in for.
@@ -1475,7 +1475,7 @@ func TestHornetProbe(t *testing.T) {
 			seed = uint64(n)
 		}
 	}
-	level := "ace"
+	level := "expert"
 	if only := os.Getenv("AIR_TIER"); only != "" {
 		level = only
 	}

@@ -18,7 +18,7 @@ import (
 // plain invariant, not the recorded incident - with no one to fight the energy
 // floor engages at once, so it passes against the code that produced it too.
 func TestDiveRecovery(t *testing.T) {
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		for _, dive := range []float64{45, 60, 77, 85} {
 			b := NewBandit(level, 5, 250000, "", false, false, "", 0, false)
 			const speed = 260.0

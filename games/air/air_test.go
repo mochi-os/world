@@ -391,13 +391,13 @@ func TestBotsEndure(t *testing.T) {
 	}
 }
 
-// duel runs one seeded ace-vs-novice fight to first kill (or the deadline)
+// duel runs one seeded expert-vs-novice fight to first kill (or the deadline)
 // and reports the winner slot, the loser's sea-death count, and the kill tick.
 func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, when uint64) {
 	t.Helper()
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "duel", Game: "air", Mode: "furball", Capacity: 16, Seed: seed,
-		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 1.0, "novice": 1.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"expert": 1.0, "novice": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,16 +437,16 @@ func duel(t *testing.T, seed uint64, ticks uint64) (winner int, splashes int, wh
 }
 
 // TestBotDuel: identical airframes stalemate guns-only 1v1s legitimately, so
-// the claims are that decided duels go to the ACE (slot 98; levels fill from 99
+// the claims are that decided duels go to the EXPERT (slot 98; levels fill from 99
 // down in map order) and that a reasonable share decide at all.
 func TestBotDuel(t *testing.T) {
 	heavy(t)
-	aces, novices := 0, 0
+	experts, novices := 0, 0
 	for seed := uint64(1); seed <= 12; seed++ {
 		winner, _, when := duel(t, seed, 60*240)
 		t.Logf("seed %d: winner %d at t=%ds", seed, winner, when/60)
-		if winner == 98 { // the fixed level order fills novice at 99, ace at 98
-			aces++
+		if winner == 98 { // the fixed level order fills novice at 99, expert at 98
+			experts++
 		}
 		if winner == 99 {
 			novices++
@@ -455,19 +455,19 @@ func TestBotDuel(t *testing.T) {
 	// Outcome tallies are informational: 1v1 kills ride on missile-decoy
 	// dice, so hard thresholds here were a seed lottery (the skill gate is
 	// TestBotGunnery). The one stable claim: the novice must not DOMINATE.
-	t.Logf("ace %d, novice %d, stalemates %d", aces, novices, 12-aces-novices)
-	if novices > aces+2 {
-		t.Fatalf("the novice won %d duels to the ace's %d", novices, aces)
+	t.Logf("expert %d, novice %d, stalemates %d", experts, novices, 12-experts-novices)
+	if novices > experts+2 {
+		t.Fatalf("the novice won %d duels to the expert's %d", novices, experts)
 	}
 }
 
 // TestBotLadder: the product-truth skill measure — in a mixed brawl with
-// respawns, aces out-kill novices decisively over many engagements.
+// respawns, experts out-kill novices decisively over many engagements.
 func TestBotLadder(t *testing.T) {
 	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "ladder", Game: "air", Mode: "furball", Capacity: 16, Seed: 11,
-		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 3.0, "novice": 3.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"expert": 3.0, "novice": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,20 +475,20 @@ func TestBotLadder(t *testing.T) {
 	for tick := uint64(0); tick < 60*480; tick++ {
 		i.Step(tick, nil)
 	}
-	aces, novices, total := 0, 0, 0
+	experts, novices, total := 0, 0, 0
 	for _, a := range i.aircraft {
 		total += a.kills
 		if len(a.player.Name) > 0 && a.player.Name[0] == 'A' {
-			aces += a.kills
+			experts += a.kills
 		} else {
 			novices += a.kills
 		}
 	}
 	// Informational, same reasoning as TestBotDuel; the hard skill gate is
 	// TestBotGunnery, and the invariants (sea, determinism, blind) gate here.
-	t.Logf("ace kills %d, novice kills %d, total %d", aces, novices, total)
-	if novices > aces+2 {
-		t.Fatalf("novices out-killed aces %d to %d", novices, aces)
+	t.Logf("expert kills %d, novice kills %d, total %d", experts, novices, total)
+	if novices > experts+2 {
+		t.Fatalf("novices out-killed experts %d to %d", novices, experts)
 	}
 }
 
@@ -501,12 +501,12 @@ func TestBotDeterminism(t *testing.T) {
 	}
 }
 
-// TestBotsFight: a six-ace air produces kills and nobody flies into the sea.
+// TestBotsFight: a six-expert air produces kills and nobody flies into the sea.
 func TestBotsFight(t *testing.T) {
 	heavy(t)
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "brawl", Game: "air", Mode: "furball", Capacity: 16, Seed: 5,
-		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 6.0}}})
+		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"expert": 6.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,37 +542,37 @@ func TestBotsFight(t *testing.T) {
 	}
 	// Kill count among EQUALS is dice (see TestBotDuel's reasoning; the skill
 	// gate is TestBotGunnery). The stable invariant here is terrain discipline.
-	t.Logf("six aces, three minutes: %d kills", kills)
+	t.Logf("six experts, three minutes: %d kills", kills)
 	if splashes > 1 {
 		t.Fatalf("%d bots flew into the sea", splashes)
 	}
 }
 
-// TestBotBlind: an attacker parked dead six-low is INVISIBLE — the ace must
+// TestBotBlind: an attacker parked dead six-low is INVISIBLE — the expert must
 // not react until the attacker fires or enters view.
 func TestBotBlind(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "blind", Game: "air", Mode: "furball", Capacity: 16, Seed: 7,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0}}})
+		Parameters: map[string]any{"bots": map[string]any{"expert": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	i := made.(*instance)
-	ace := i.aircraft[99]
-	// A human-slot craft glued to the ace's blind cone: behind and below.
+	expert := i.aircraft[99]
+	// A human-slot craft glued to the expert's blind cone: behind and below.
 	m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: sea})
 	i.spawn(0, m, "", i.tank)
 	shadow := &craft{player: game.Player{Name: "shadow", Slot: 0}, kind: "fa18c", model: m, alive: true, flared: 1e9}
 	shadow.arm()
 	i.aircraft[0] = shadow
 	for tick := uint64(0); tick < 60*10; tick++ {
-		s := &ace.model.State
+		s := &expert.model.State
 		behind := s.Attitude.Rotate(flight.Vec3{X: -1})
 		shadow.model.State.Position = s.Position.Add(behind.Scale(500)).Add(flight.Vec3{Y: -220})
 		shadow.model.State.Velocity = s.Velocity
 		i.Step(tick, nil)
-		if _, tracked := ace.brain.known[0]; tracked {
-			t.Fatalf("tick %d: the ace tracked a contact parked in its blind cone", tick)
+		if _, tracked := expert.brain.known[0]; tracked {
+			t.Fatalf("tick %d: the expert tracked a contact parked in its blind cone", tick)
 		}
 	}
 }
@@ -611,29 +611,29 @@ func gunnery(t *testing.T, level string, seed uint64) (int, int) {
 }
 
 // TestBotGunnery: the STABLE skill gate — behind the same predictable target,
-// the ace lands real gunfire and decisively out-shoots the novice. This is
+// the expert lands real gunfire and decisively out-shoots the novice. This is
 // the measured input to lethality, free of missile-decoy dice.
 func TestBotGunnery(t *testing.T) {
 	heavy(t)
-	aceHits, aceRounds, noviceHits, noviceRounds := 0, 0, 0, 0
+	expertHits, expertRounds, noviceHits, noviceRounds := 0, 0, 0, 0
 	for seed := uint64(1); seed <= 8; seed++ {
-		h, r := gunnery(t, "ace", seed)
-		aceHits, aceRounds = aceHits+h, aceRounds+r
+		h, r := gunnery(t, "expert", seed)
+		expertHits, expertRounds = expertHits+h, expertRounds+r
 		h, r = gunnery(t, "novice", seed)
 		noviceHits, noviceRounds = noviceHits+h, noviceRounds+r
 	}
-	t.Logf("ace %d/%d hits per round, novice %d/%d", aceHits, aceRounds, noviceHits, noviceRounds)
-	if aceHits < 10 {
-		t.Fatalf("the ace landed only %d hits from the saddle across the seeds", aceHits)
+	t.Logf("expert %d/%d hits per round, novice %d/%d", expertHits, expertRounds, noviceHits, noviceRounds)
+	if expertHits < 10 {
+		t.Fatalf("the expert landed only %d hits from the saddle across the seeds", expertHits)
 	}
-	// The skill claim is EFFICIENCY: the ace fires only real solutions, the
+	// The skill claim is EFFICIENCY: the expert fires only real solutions, the
 	// novice sprays — hits per round must separate by at least 3×.
-	if aceHits*noviceRounds < 3*noviceHits*aceRounds {
-		t.Fatalf("ace %d/%d vs novice %d/%d: precision does not express", aceHits, aceRounds, noviceHits, noviceRounds)
+	if expertHits*noviceRounds < 3*noviceHits*expertRounds {
+		t.Fatalf("expert %d/%d vs novice %d/%d: precision does not express", expertHits, expertRounds, noviceHits, noviceRounds)
 	}
 }
 
-// TestBotCircles: the merge game plan — with an energy advantage the ace
+// TestBotCircles: the merge game plan — with an energy advantage the expert
 // commits to the two-circle rate fight; slower and poorer, the one-circle
 // radius fight. Doctrine, pinned directly at the decision.
 func TestBotCircles(t *testing.T) {
@@ -642,12 +642,12 @@ func TestBotCircles(t *testing.T) {
 		// arbiter picks circles by rehearsal, not by a pinned plan string.
 		g := New()
 		made, _ := g.Create(game.Session{Identifier: "circle", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
-			Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
+			Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"expert": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 		i := made.(*instance)
-		var ace, mark *craft
+		var expert, mark *craft
 		for _, slot := range i.slots() {
 			if c := i.aircraft[slot]; c != nil && c.brain != nil {
-				ace = c
+				expert = c
 			} else if c != nil {
 				mark = c
 			}
@@ -657,11 +657,11 @@ func TestBotCircles(t *testing.T) {
 		mark.model.State.Position = flight.Vec3{X: 0, Y: 4500, Z: 0}
 		mark.model.State.Velocity = flight.Vec3{X: 220}
 		mark.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
-		ace.model.State.Position = flight.Vec3{X: 500, Y: height, Z: 30}
-		ace.model.State.Velocity = flight.Vec3{X: -speed}
-		ace.model.State.Attitude = flight.Look(flight.Vec3{X: -1})
+		expert.model.State.Position = flight.Vec3{X: 500, Y: height, Z: 30}
+		expert.model.State.Velocity = flight.Vec3{X: -speed}
+		expert.model.State.Attitude = flight.Look(flight.Vec3{X: -1})
 		i.Step(0, nil)
-		return ace.brain.plan
+		return expert.brain.plan
 	}
 	if plan := stage(310, 4550); plan != "two" {
 		t.Fatalf("fast at the merge: expected the two-circle, got %q", plan)
@@ -679,12 +679,12 @@ func TestBotReversal(t *testing.T) {
 	// the duel arbiter answers overshoots by rehearsal (TestConvert).
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "reverse", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
-		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
+		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"expert": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 	i := made.(*instance)
-	var ace, foe *craft
+	var expert, foe *craft
 	for _, slot := range i.slots() {
 		if c := i.aircraft[slot]; c != nil && c.brain != nil {
-			ace = c
+			expert = c
 		} else if c != nil {
 			foe = c
 		}
@@ -692,11 +692,11 @@ func TestBotReversal(t *testing.T) {
 	// The foe glued 500 m behind, nose on, first on the left — then teleported
 	// across to the right: a flight-path overshoot by construction.
 	place := func(side float64) {
-		s := &ace.model.State
+		s := &expert.model.State
 		behind := s.Attitude.Rotate(flight.Vec3{X: -1})
 		flank := s.Attitude.Rotate(flight.Vec3{Z: 1})
 		lift := s.Attitude.Rotate(flight.Vec3{Y: 1})
-		// Behind but HIGH: out of the blind cone, or the ace never sees him at all.
+		// Behind but HIGH: out of the blind cone, or the expert never sees him at all.
 		foe.model.State.Position = s.Position.Add(behind.Scale(450)).Add(flank.Scale(side * 180)).Add(lift.Scale(260))
 		foe.model.State.Velocity = s.Velocity.Add(s.Attitude.Rotate(flight.Vec3{X: 60}))
 		foe.model.State.Attitude = s.Attitude
@@ -709,12 +709,12 @@ func TestBotReversal(t *testing.T) {
 		}
 		place(side)
 		i.Step(tick, nil)
-		if ace.brain.mode == "reverse" {
+		if expert.brain.mode == "reverse" {
 			reversed = true
 		}
 	}
 	if !reversed {
-		t.Fatal("the attacker crossed the flight path and the ace never reversed")
+		t.Fatal("the attacker crossed the flight path and the expert never reversed")
 	}
 }
 
@@ -762,7 +762,7 @@ func section(t *testing.T, sweep uint64, red, blue map[string]any) (sectionNet, 
 	return
 }
 
-// TestBotSection (#138): two pilots versus four novices. Asserts the DEFENSIVE
+// TestBotSection (#138): two intermediates versus four novices. Asserts the DEFENSIVE
 // claim only - mutual support keeps the pair alive. Net is not asserted here: a
 // lone wolf farms weak opposition faster, which is the doctrine's trade.
 func TestBotSection(t *testing.T) {
@@ -771,7 +771,7 @@ func TestBotSection(t *testing.T) {
 	// 40 seeds: the survival margin is 2-5 deaths, and at 14 seeds the run-to-run
 	// spread is the size of the effect.
 	_, sectionDeaths, _, soloDeaths, _ := section(t, 40,
-		map[string]any{"pilot": 2.0}, map[string]any{"novice": 4.0})
+		map[string]any{"intermediate": 2.0}, map[string]any{"novice": 4.0})
 	// The band accepts one-eighth of the solo arm's deaths (#50): a pair fighting
 	// together draws converging enemies that scattered solos do not. The failure
 	// class - pairs dying 8-30 km apart - still trips it.
@@ -780,14 +780,14 @@ func TestBotSection(t *testing.T) {
 	}
 }
 
-// TestBotSectionEqual (#144): the same A/B against EQUAL opposition, two pilots
+// TestBotSectionEqual (#144): the same A/B against EQUAL opposition, two intermediates
 // versus four. Survival is asserted strictly; the offensive claim is a BAND,
 // since the doctrine trades kill rate for section integrity.
 func TestBotSectionEqual(t *testing.T) {
 	heavy(t)
 	t.Parallel()
 	sectionNet, sectionDeaths, soloNet, soloDeaths, sweep := section(t, 40,
-		map[string]any{"pilot": 2.0}, map[string]any{"pilot": 4.0})
+		map[string]any{"intermediate": 2.0}, map[string]any{"intermediate": 4.0})
 	if sectionDeaths > soloDeaths+soloDeaths/8 {
 		// A tie passes: the equal-opposition survival edge is 1-3 deaths per sweep,
 		// so a strict inequality is a coin flip. The failure class - pairs dying 8-30
@@ -864,23 +864,23 @@ func TestTeamsFriendlyFire(t *testing.T) {
 	}
 }
 
-// teams builds a red ace with a red drone teammate and two blue novices for
+// teams builds a red expert with a red drone teammate and two blue novices for
 // the section-tactics tests, all teleported by the caller.
 func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
 	t.Helper()
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "section", Game: "air", Mode: "teams", Capacity: 16, Seed: 2,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
+			"red":  map[string]any{"expert": 1.0, "drone": 1.0},
 			"blue": map[string]any{"novice": 2.0},
 		}}})
 	i := made.(*instance)
-	var ace, mate, blue1, blue2 *craft
+	var expert, mate, blue1, blue2 *craft
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
 		switch {
 		case a.team == "red" && a.brain != nil:
-			ace = a
+			expert = a
 		case a.team == "red":
 			mate = a
 		case blue1 == nil:
@@ -889,7 +889,7 @@ func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
 			blue2 = a
 		}
 	}
-	return i, ace, mate, blue1, blue2
+	return i, expert, mate, blue1, blue2
 }
 
 // aloft parks a craft at a position with a velocity, well above the floor.
@@ -902,62 +902,62 @@ func aloft(c *craft, position, velocity flight.Vec3) {
 // TestTeamsSandwich: the enemy running an attack on a teammate outranks a
 // nearer, harmless one.
 func TestTeamsSandwich(t *testing.T) {
-	i, ace, mate, blue1, blue2 := teams(t)
+	i, expert, mate, blue1, blue2 := teams(t)
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	for tick := uint64(0); tick < 90; tick++ {
-		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(expert, base, flight.Vec3{X: 220})
 		aloft(mate, base.Add(flight.Vec3{X: 3800, Z: 600}), flight.Vec3{X: 220})
 		aloft(blue1, base.Add(flight.Vec3{X: 1800, Z: -400}), flight.Vec3{X: 220})                // nearer, minding its own business
 		aloft(blue2, base.Add(flight.Vec3{X: 2400, Z: 600, Y: 200}), flight.Vec3{X: 240, Y: -10}) // running in on the mate from its six
 		i.Step(tick, nil)
 	}
-	if ace.brain.target != blue2.player.Slot {
-		t.Fatalf("ace targets slot %d, want the teammate's attacker %d", ace.brain.target, blue2.player.Slot)
+	if expert.brain.target != blue2.player.Slot {
+		t.Fatalf("expert targets slot %d, want the teammate's attacker %d", expert.brain.target, blue2.player.Slot)
 	}
 }
 
 // TestTeamsSupport: a closer teammate already engaged with the target puts
 // the section mate on the energy perch, not into the pile.
 func TestTeamsSupport(t *testing.T) {
-	i, ace, mate, blue1, blue2 := teams(t)
+	i, expert, mate, blue1, blue2 := teams(t)
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	supported := false
 	for tick := uint64(0); tick < 240; tick++ {
-		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(expert, base, flight.Vec3{X: 220})
 		aloft(mate, base.Add(flight.Vec3{X: 3300, Z: 150}), flight.Vec3{X: 220})
-		aloft(blue1, base.Add(flight.Vec3{X: 3600, Z: 300}), flight.Vec3{Z: 230}) // engaged with the mate, beam-on to the ace
+		aloft(blue1, base.Add(flight.Vec3{X: 3600, Z: 300}), flight.Vec3{Z: 230}) // engaged with the mate, beam-on to the expert
 		aloft(blue2, base.Add(flight.Vec3{X: 3600, Z: -9000}), flight.Vec3{Z: -230})
 		i.Step(tick, nil)
-		if ace.brain.mode == "support" {
+		if expert.brain.mode == "support" {
 			supported = true
 			break
 		}
 	}
 	if !supported {
-		t.Fatal("teammate engaged, but the ace piled in instead of flying support")
+		t.Fatal("teammate engaged, but the expert piled in instead of flying support")
 	}
 }
 
 // TestTeamsHoldFire: a friendly inside the stream's corridor, nearer than
 // the target, holds the trigger; clearing the line releases it.
 func TestTeamsHoldFire(t *testing.T) {
-	i, ace, mate, blue1, _ := teams(t)
+	i, expert, mate, blue1, _ := teams(t)
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	forward := flight.Vec3{X: 220}
 	rig := func(lateral float64) bool {
-		aloft(ace, base, forward)
+		aloft(expert, base, forward)
 		aloft(mate, base.Add(flight.Vec3{X: 300, Z: lateral}), forward)
 		aloft(blue1, base.Add(flight.Vec3{X: 500}), forward)
-		b := ace.brain
-		slot := ace.player.Slot
+		b := expert.brain
+		slot := expert.player.Slot
 		b.decided = 1000 // skip decide: the rigged fire state must survive
 		b.prey = &track{when: 1000, position: blue1.model.State.Position, velocity: blue1.model.State.Velocity}
 		b.distance = 500
 		b.shoot = true
 		b.mode = "offense"
 		b.aim, _ = i.bearing(base, blue1.model.State.Position)
-		i.think(slot, ace, 1000)
-		return ace.latest.Fire
+		i.think(slot, expert, 1000)
+		return expert.latest.Fire
 	}
 	if rig(0) {
 		t.Fatal("fired straight through the teammate")
@@ -974,7 +974,7 @@ func TestTeamsFormation(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "form", Game: "air", Mode: "teams", Capacity: 16, Seed: 3,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red": map[string]any{"pilot": 2.0},
+			"red": map[string]any{"intermediate": 2.0},
 		}}})
 	i := made.(*instance)
 	lead, wing := i.aircraft[98], i.aircraft[99] // created 99 first: the later, lower slot leads
@@ -1002,7 +1002,7 @@ func TestTeamsHumanLead(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "wing", Game: "air", Mode: "teams", Capacity: 16, Seed: 3,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red": map[string]any{"pilot": 1.0},
+			"red": map[string]any{"intermediate": 1.0},
 		}}})
 	i := made.(*instance)
 	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
@@ -1025,7 +1025,7 @@ func TestTeamsRadio(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "radio", Game: "air", Mode: "teams", Capacity: 16, Seed: 4,
 		Parameters: map[string]any{"tod": "night", "bots": map[string]any{
-			"red":  map[string]any{"pilot": 2.0},
+			"red":  map[string]any{"intermediate": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1052,7 +1052,7 @@ func TestBotRejoin(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "rejoin", Game: "air", Mode: "teams", Capacity: 16, Seed: 8,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 2.0},
+			"red":  map[string]any{"expert": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1085,30 +1085,30 @@ func TestBotPadlock(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "padlock", Game: "air", Mode: "teams", Capacity: 16, Seed: 8,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 1.0},
+			"red":  map[string]any{"expert": 1.0},
 			"blue": map[string]any{"drone": 2.0},
 		}}})
 	i := made.(*instance)
-	var ace *craft
+	var expert *craft
 	drones := []*craft{}
 	for _, slot := range i.slots() {
 		if a := i.aircraft[slot]; a.brain != nil {
-			ace = a
+			expert = a
 		} else if a.team == "blue" {
 			drones = append(drones, a)
 		}
 	}
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	run := func(load float64) int {
-		ace.brain.reborn()
+		expert.brain.reborn()
 		for tick := uint64(0); tick < 90; tick++ {
-			aloft(ace, base, flight.Vec3{X: 220})
+			aloft(expert, base, flight.Vec3{X: 220})
 			aloft(drones[0], base.Add(flight.Vec3{X: 1200}), flight.Vec3{X: 220})          // dead ahead: the padlocked target
 			aloft(drones[1], base.Add(flight.Vec3{X: -600, Z: 2000}), flight.Vec3{X: 240}) // aft of the beam, outside the canopy blind wedge: visible relaxed, unseen under g
-			ace.model.State.Fcs.Normal = load
+			expert.model.State.Fcs.Normal = load
 			i.Step(tick, nil)
 		}
-		return len(ace.brain.known)
+		return len(expert.brain.known)
 	}
 	if known := run(1); known != 2 {
 		t.Fatalf("relaxed scan tracks %d contacts, want both", known)
@@ -1125,7 +1125,7 @@ func TestTeamsMissileCall(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "plume", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
 		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
-			"red":  map[string]any{"ace": 2.0},
+			"red":  map[string]any{"expert": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1177,23 +1177,23 @@ func TestTeamsMissileCall(t *testing.T) {
 // defender with the energy bank — the defender climbs at a rate the attacker
 // cannot sustain instead of burning the edge in a level break.
 func TestBotRope(t *testing.T) {
-	i, ace, _, blue1, _ := teams(t)
+	i, expert, _, blue1, _ := teams(t)
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	roped := false
 	for tick := uint64(0); tick < 120; tick++ {
-		aloft(ace, base, flight.Vec3{X: 320})                                               // the bank: fast
+		aloft(expert, base, flight.Vec3{X: 320})                                            // the bank: fast
 		aloft(blue1, base.Add(flight.Vec3{X: -500, Z: 1500}), flight.Vec3{X: 200, Z: -100}) // rear quarter outside the blind wedge, slow, nose loosely on
 		i.Step(tick, nil)
-		if ace.brain.mode == "rope" {
+		if expert.brain.mode == "rope" {
 			roped = true
 			break
 		}
 	}
 	if !roped {
-		t.Fatal("energy edge over a loose attacker, but the ace never roped him")
+		t.Fatal("energy edge over a loose attacker, but the expert never roped him")
 	}
-	if ace.brain.aim.Y < 0.6 {
-		t.Fatalf("rope aim Y %.2f, want the climb he cannot follow", ace.brain.aim.Y)
+	if expert.brain.aim.Y < 0.6 {
+		t.Fatalf("rope aim Y %.2f, want the climb he cannot follow", expert.brain.aim.Y)
 	}
 }
 
@@ -1204,7 +1204,7 @@ func TestBotBracket(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "bracket", Game: "air", Mode: "teams", Capacity: 16, Seed: 9,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 4.0},
+			"red":  map[string]any{"expert": 4.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1239,47 +1239,47 @@ func TestBotPress(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "press", Game: "air", Mode: "teams", Capacity: 16, Seed: 7,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 1.0},
+			"red":  map[string]any{"expert": 1.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
-	ace, prey := i.aircraft[99], i.aircraft[98]
-	ace.ammunition = 0 // the gun opens out to the control zone's rim now (#49), and a drone parked dead ahead at 700 m is dead in a second; this is a test of the advantage clock, not the kill
+	expert, prey := i.aircraft[99], i.aircraft[98]
+	expert.ammunition = 0 // the gun opens out to the control zone's rim now (#49), and a drone parked dead ahead at 700 m is dead in a second; this is a test of the advantage clock, not the kill
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	forward := flight.Vec3{X: 220}
 	for tick := uint64(0); tick < 450; tick++ {
-		aloft(ace, base, forward)
+		aloft(expert, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 700}), forward) // parked in the control zone, dead ahead
 		i.Step(tick, nil)
 	}
-	if !ace.brain.pressing(449) || ace.brain.mode != "press" {
-		t.Fatalf("advantage held 7.5 s: press %d mode %q, want pressing in press mode", ace.brain.press, ace.brain.mode)
+	if !expert.brain.pressing(449) || expert.brain.mode != "press" {
+		t.Fatalf("advantage held 7.5 s: press %d mode %q, want pressing in press mode", expert.brain.press, expert.brain.mode)
 	}
 	for tick := uint64(450); tick < 560; tick++ { // long enough for the press-mode maneuver hold to expire and a real decision to see the new picture
-		aloft(ace, base, forward)
+		aloft(expert, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 3000}), forward) // he opened past the press span: the advantage is gone
 		i.Step(tick, nil)
 	}
-	if ace.brain.press != 0 {
-		t.Fatalf("advantage lost but press still %d", ace.brain.press)
+	if expert.brain.press != 0 {
+		t.Fatalf("advantage lost but press still %d", expert.brain.press)
 	}
 
 	// The trigger is a wager on the stream crossing him (#235): a known 35 m
 	// offset at 400 m is a certain miss whatever the posture, but a bore sweeping
 	// fast through the solution is a legitimate snapshot.
-	ace.ammunition = rounds // the trigger wager below needs a loaded gun
+	expert.ammunition = rounds // the trigger wager below needs a loaded gun
 	rig := func(walked float64, at uint64) bool {
-		aloft(ace, base, forward)
+		aloft(expert, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 400, Z: 35}), forward)
-		b := ace.brain
+		b := expert.brain
 		b.decided = 1000 // skip decide: the rigged state must survive
 		b.shoot = true
 		b.prey = &track{when: 1000, position: prey.model.State.Position, velocity: prey.model.State.Velocity}
 		b.distance = 400
 		b.aim = flight.Vec3{X: 1}
 		b.walked, b.walkedAt = walked, at
-		i.think(ace.player.Slot, ace, 1000)
-		return ace.latest.Fire
+		i.think(expert.player.Slot, expert, 1000)
+		return expert.latest.Fire
 	}
 	if rig(0, 0) {
 		t.Fatal("took a static 35 m deflection shot — that is a spray, not a snapshot")
@@ -1296,16 +1296,16 @@ func TestTeamsMissileHold(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "hold", Game: "air", Mode: "teams", Capacity: 16, Seed: 6,
 		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
-			"red":  map[string]any{"ace": 1.0, "drone": 1.0},
+			"red":  map[string]any{"expert": 1.0, "drone": 1.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
-	var ace, mate, enemy *craft
+	var expert, mate, enemy *craft
 	for _, slot := range i.slots() { // levels are created drone-first: find by brain and side, not slot
 		a := i.aircraft[slot]
 		switch {
 		case a.team == "red" && a.brain != nil:
-			ace = a
+			expert = a
 		case a.team == "red":
 			mate = a
 		default:
@@ -1315,14 +1315,14 @@ func TestTeamsMissileHold(t *testing.T) {
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	forward := flight.Vec3{X: 220}
 	rig := func(lateral float64) int {
-		aloft(ace, base, forward)
+		aloft(expert, base, forward)
 		aloft(mate, base.Add(flight.Vec3{X: 800, Z: lateral}), forward)
 		aloft(enemy, base.Add(flight.Vec3{X: 1500}), forward) // tailpipe square at the shooter
-		b := ace.brain
+		b := expert.brain
 		b.decided = 1000 // skip decide: the rigged request must survive
 		b.loose = true
 		before := len(i.flying)
-		i.think(ace.player.Slot, ace, 1000)
+		i.think(expert.player.Slot, expert, 1000)
 		if len(i.flying) > before {
 			return i.flying[len(i.flying)-1].target
 		}
@@ -1331,8 +1331,8 @@ func TestTeamsMissileHold(t *testing.T) {
 	if target := rig(0); target >= 0 {
 		t.Fatalf("launched at slot %d through the teammate on the seeker line", target)
 	}
-	if ace.brain.missiles != 6 { // the full magazine (#253): the assertion is that DECLINING costs nothing
-		t.Fatalf("declined launch spent a missile (%d left)", ace.brain.missiles)
+	if expert.brain.missiles != 6 { // the full magazine (#253): the assertion is that DECLINING costs nothing
+		t.Fatalf("declined launch spent a missile (%d left)", expert.brain.missiles)
 	}
 	if target := rig(2000); target != enemy.player.Slot {
 		t.Fatalf("line clear: locked slot %d, want the enemy %d", target, enemy.player.Slot)
@@ -1347,7 +1347,7 @@ func TestTeamsMissileShare(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "share", Game: "air", Mode: "teams", Capacity: 16, Seed: 10,
 		Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{
-			"red":  map[string]any{"ace": 2.0},
+			"red":  map[string]any{"expert": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1393,10 +1393,10 @@ func TestTeamsMissileShare(t *testing.T) {
 // TestBotWounded: a visibly hurt contact — fire, fuel, missing structure —
 // pulls target priority over a nearer, healthy one.
 func TestBotWounded(t *testing.T) {
-	i, ace, mate, blue1, blue2 := teams(t)
+	i, expert, mate, blue1, blue2 := teams(t)
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	for tick := uint64(0); tick < 90; tick++ {
-		aloft(ace, base, flight.Vec3{X: 220})
+		aloft(expert, base, flight.Vec3{X: 220})
 		aloft(mate, base.Add(flight.Vec3{Z: -9000}), flight.Vec3{X: 220})         // far out of the sandwich geometry
 		aloft(blue1, base.Add(flight.Vec3{X: 2000}), flight.Vec3{X: 220})         // nearer, healthy
 		aloft(blue2, base.Add(flight.Vec3{X: 2600, Z: 400}), flight.Vec3{X: 220}) // farther, burning
@@ -1404,8 +1404,8 @@ func TestBotWounded(t *testing.T) {
 		blue2.condition.Fuse = 30
 		i.Step(tick, nil)
 	}
-	if ace.brain.target != blue2.player.Slot {
-		t.Fatalf("ace targets %d, want the burning bird %d", ace.brain.target, blue2.player.Slot)
+	if expert.brain.target != blue2.player.Slot {
+		t.Fatalf("expert targets %d, want the burning bird %d", expert.brain.target, blue2.player.Slot)
 	}
 }
 
@@ -1416,17 +1416,17 @@ func TestTeamsCalls(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "calls", Game: "air", Mode: "teams", Capacity: 16, Seed: 5,
 		Parameters: map[string]any{"bots": map[string]any{
-			"red":  map[string]any{"ace": 1.0},
+			"red":  map[string]any{"expert": 1.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
 	i.Join(game.Player{Name: "human", Slot: 0, Team: "red"})
-	human, ace, drone := i.aircraft[0], i.aircraft[99], i.aircraft[98]
+	human, expert, drone := i.aircraft[0], i.aircraft[99], i.aircraft[98]
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	for tick := uint64(0); tick < 600; tick++ {
 		aloft(human, base, flight.Vec3{X: 220})
-		aloft(ace, base.Add(flight.Vec3{X: -3000, Z: 1500}), flight.Vec3{X: 220})  // trailing the fight: the attacker sits ahead of his nose, not in the blind wedge
-		aloft(drone, base.Add(flight.Vec3{X: -1200, Z: 300}), flight.Vec3{X: 240}) // saddled behind the human's right rear quarter, nose on
+		aloft(expert, base.Add(flight.Vec3{X: -3000, Z: 1500}), flight.Vec3{X: 220}) // trailing the fight: the attacker sits ahead of his nose, not in the blind wedge
+		aloft(drone, base.Add(flight.Vec3{X: -1200, Z: 300}), flight.Vec3{X: 240})   // saddled behind the human's right rear quarter, nose on
 		i.Step(tick, nil)
 	}
 	breaks, engaged := 0, 0
@@ -1474,7 +1474,7 @@ func TestTeamsFlavour(t *testing.T) {
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "flavour", Game: "air", Mode: "teams", Capacity: 16, Seed: 11,
 		Parameters: map[string]any{"tod": "night", "bots": map[string]any{
-			"red":  map[string]any{"pilot": 2.0},
+			"red":  map[string]any{"intermediate": 2.0},
 			"blue": map[string]any{"drone": 1.0},
 		}}})
 	i := made.(*instance)
@@ -1526,47 +1526,47 @@ func TestTeamsFlavour(t *testing.T) {
 	}
 }
 
-// wounded builds the ace-vs-drone pair used by the wounded-flying tests.
+// wounded builds the expert-vs-drone pair used by the wounded-flying tests.
 func wounded(t *testing.T, seed uint64) (*instance, *craft, *craft) {
 	t.Helper()
 	// A TEAMS session: the mode ladder these probes pin is the section doctrine;
 	// teamless fights belong to the duel arbiter (duel.go).
 	g := New()
 	made, _ := g.Create(game.Session{Identifier: "wounded", Game: "air", Mode: "teams", Capacity: 16, Seed: seed,
-		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"ace": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
+		Parameters: map[string]any{"bots": map[string]any{"red": map[string]any{"expert": 1.0}, "blue": map[string]any{"drone": 1.0}}}})
 	i := made.(*instance)
-	var ace, foe *craft
+	var expert, foe *craft
 	for _, slot := range i.slots() {
 		if c := i.aircraft[slot]; c != nil && c.brain != nil {
-			ace = c
+			expert = c
 		} else if c != nil {
 			foe = c
 		}
 	}
-	if ace == nil || foe == nil {
+	if expert == nil || foe == nil {
 		t.Fatal("the teams roster is missing a side")
 	}
-	return i, ace, foe
+	return i, expert, foe
 }
 
 // TestBotFireDrill: an engine fire pulls the lever to idle (battle.Advance
 // starves fires below 0.1 throttle), and once it burns out the power returns.
 func TestBotFireDrill(t *testing.T) {
-	i, ace, _ := wounded(t, 5)
-	ace.condition.Fire[0] = 0.5
+	i, expert, _ := wounded(t, 5)
+	expert.condition.Fire[0] = 0.5
 	drilled, recovered := false, false
 	for tick := uint64(0); tick < 60*20; tick++ {
 		i.Step(tick, nil)
-		if ace.condition.Fire[0] > 0 && ace.latest.Throttle == 0 && ace.latest.Reheat == 0 {
+		if expert.condition.Fire[0] > 0 && expert.latest.Throttle == 0 && expert.latest.Reheat == 0 {
 			drilled = true
 		}
-		if drilled && ace.condition.Fire[0] <= 0 && ace.latest.Throttle > 0 {
+		if drilled && expert.condition.Fire[0] <= 0 && expert.latest.Throttle > 0 {
 			recovered = true
 			break
 		}
 	}
 	if !drilled {
-		t.Fatal("the burning ace never chopped the throttle")
+		t.Fatal("the burning expert never chopped the throttle")
 	}
 	if !recovered {
 		t.Fatal("the fire never starved out (or the power never came back)")
@@ -1576,48 +1576,48 @@ func TestBotFireDrill(t *testing.T) {
 // TestBotLimp: with the thrust gone the fight is over — the bot goes to
 // "limp" and opens the range instead of continuing the engagement.
 func TestBotLimp(t *testing.T) {
-	i, ace, foe := wounded(t, 6)
+	i, expert, foe := wounded(t, 6)
 	// The foe crossing 1.5 km ahead, well inside visual range.
-	s := &ace.model.State
+	s := &expert.model.State
 	ahead := s.Attitude.Rotate(flight.Vec3{X: 1})
 	foe.model.State.Position = s.Position.Add(ahead.Scale(1500))
 	foe.model.State.Velocity = s.Attitude.Rotate(flight.Vec3{X: 30, Z: 200})
-	ace.model.State.Damage.Engine[0] = 1
-	ace.model.State.Damage.Engine[1] = 1
+	expert.model.State.Damage.Engine[0] = 1
+	expert.model.State.Damage.Engine[1] = 1
 	limped := false
 	for tick := uint64(0); tick < 60*6; tick++ {
 		i.Step(tick, nil)
-		if ace.brain.mode == "limp" {
+		if expert.brain.mode == "limp" {
 			limped = true
 		}
 	}
 	if !limped {
-		t.Fatal("thrust gone and the ace never went to limp")
+		t.Fatal("thrust gone and the expert never went to limp")
 	}
 }
 
 // TestBotWingCap: shed structure caps the commanded g at 4.5 — the wounded
 // wing no longer carries the limiter's margin.
 func TestBotWingCap(t *testing.T) {
-	i, ace, foe := wounded(t, 7)
-	s := &ace.model.State
+	i, expert, foe := wounded(t, 7)
+	s := &expert.model.State
 	ahead := s.Attitude.Rotate(flight.Vec3{X: 1})
 	foe.model.State.Position = s.Position.Add(ahead.Scale(1200))
-	ace.model.State.Damage.Loss = 200
+	expert.model.State.Damage.Loss = 200
 	for tick := uint64(0); tick < 60; tick++ {
 		i.Step(tick, nil)
 	}
-	if ace.brain.g > 4.5 {
-		t.Fatalf("shed structure but the brain still commands %.1f g", ace.brain.g)
+	if expert.brain.g > 4.5 {
+		t.Fatalf("shed structure but the brain still commands %.1f g", expert.brain.g)
 	}
 }
 
 // TestBotDrag: defensive at mush speed, the tiered brain unloads AWAY (drag)
 // instead of offering a hopeless slow break.
 func TestBotDrag(t *testing.T) {
-	i, ace, foe := wounded(t, 8)
+	i, expert, foe := wounded(t, 8)
 	place := func() {
-		s := &ace.model.State
+		s := &expert.model.State
 		behind := s.Attitude.Rotate(flight.Vec3{X: -1})
 		lift := s.Attitude.Rotate(flight.Vec3{Y: 1})
 		foe.model.State.Position = s.Position.Add(behind.Scale(1100)).Add(lift.Scale(420)) // high enough to clear the blind wedge at this range
@@ -1628,27 +1628,27 @@ func TestBotDrag(t *testing.T) {
 	dragged := false
 	for tick := uint64(0); tick < 60*8; tick++ {
 		place()
-		s := &ace.model.State
-		if speed := s.Velocity.Length(); speed > 0.66*corner(ace.model) {
-			s.Velocity = s.Velocity.Scale(0.6 * corner(ace.model) / speed) // hold him spent: the burner would rebuild through the gate mid-test
+		s := &expert.model.State
+		if speed := s.Velocity.Length(); speed > 0.66*corner(expert.model) {
+			s.Velocity = s.Velocity.Scale(0.6 * corner(expert.model) / speed) // hold him spent: the burner would rebuild through the gate mid-test
 		}
 		i.Step(tick, nil)
-		if ace.brain.mode == "drag" {
+		if expert.brain.mode == "drag" {
 			dragged = true
 			break
 		}
 	}
 	if !dragged {
-		t.Fatal("spent and saddled, but the ace never dragged")
+		t.Fatal("spent and saddled, but the expert never dragged")
 	}
 }
 
 // TestBotSpiral: saddled from behind but not yet shot at, with altitude in
 // the bank — the brain flies the defensive spiral.
 func TestBotSpiral(t *testing.T) {
-	i, ace, foe := wounded(t, 9)
+	i, expert, foe := wounded(t, 9)
 	place := func() {
-		s := &ace.model.State
+		s := &expert.model.State
 		if s.Position.Y < 3000 {
 			s.Position.Y = 3500
 		}
@@ -1665,20 +1665,20 @@ func TestBotSpiral(t *testing.T) {
 	for tick := uint64(0); tick < 60*8; tick++ {
 		place()
 		i.Step(tick, nil)
-		if ace.brain.mode == "spiral" {
+		if expert.brain.mode == "spiral" {
 			spiralled = true
 			break
 		}
 	}
 	if !spiralled {
-		t.Fatal("saddled with altitude in the bank, but the ace never spiralled")
+		t.Fatal("saddled with altitude in the bank, but the expert never spiralled")
 	}
 }
 
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
-	b := NewBandit("ace", 9, 250000, "", false, false, "", 0, false) // guns-only, like the client joust
+	b := NewBandit("expert", 9, 250000, "", false, false, "", 0, false) // guns-only, like the client joust
 	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}
@@ -2297,7 +2297,7 @@ func TestSpawnTrimmedLoaded(t *testing.T) {
 	}
 	spawned(t, "a respawn", i, a)
 
-	bots := build(t, "furball", map[string]any{"weapons": "fox2", "bots": map[string]any{"ace": 1.0}}, 0)
+	bots := build(t, "furball", map[string]any{"weapons": "fox2", "bots": map[string]any{"expert": 1.0}}, 0)
 	for _, slot := range bots.slots() {
 		if b := bots.aircraft[slot]; b.bot {
 			spawned(t, "a bot joining", bots, b)
@@ -2538,7 +2538,7 @@ func TestJettisonStrike(t *testing.T) {
 // DamageState carries slices - a copy sharing the backing arrays would let a
 // rehearsal step corrupt the flying aircraft. The safety must be in the copy.
 func TestRehearsalOwnsItsDamage(t *testing.T) {
-	i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}, 1)
+	i := build(t, "furball", map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}, 1)
 	bot := -1
 	for _, slot := range i.slots() {
 		if i.aircraft[slot].brain != nil {
@@ -2616,7 +2616,7 @@ func TestBotSlotsStayInSevenBits(t *testing.T) {
 func TestSnapshotSkipsBotCores(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "cores", Game: "air", Mode: "furball", Capacity: 4, Seed: 3,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 3.0}}})
+		Parameters: map[string]any{"bots": map[string]any{"expert": 3.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2681,7 +2681,7 @@ func TestSpentCountsWithoutTheCheat(t *testing.T) {
 func TestBreakup(t *testing.T) {
 	joust := func() (*instance, int, int) {
 		made, err := (&Air{}).Create(game.Session{Identifier: "breakup", Game: "air", Mode: "joust", Seed: 4,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 2.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 2.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

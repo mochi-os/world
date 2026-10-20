@@ -1,7 +1,7 @@
 // The #103 measurement: what a fusing warhead does as a function of miss
 // distance, and whether the damage it deals is felt in the air.
 //
-// The 2026-09-06 joust (recording 01a078652d8b) put three AIM-9Ms on an ace at
+// The 2026-09-06 joust (recording 01a078652d8b) put three AIM-9Ms on an expert at
 // 7.9, 10.6 and 11.8 m. It logged 8.71 of structural damage, zero engine loss
 // and zero fire, and the jet then flew 639 kt, climbed to 20,497 ft and pulled
 // 6.8 g — indistinguishable from clean. This probe measures both halves of

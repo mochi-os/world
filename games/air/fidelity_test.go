@@ -33,7 +33,7 @@ func TestFidelity(t *testing.T) {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("fid%d", seed), Game: "air", Mode: "furball",
 			Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 2.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 2.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

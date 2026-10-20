@@ -51,7 +51,7 @@ func (m *Model) droopRun(target float64, c *Control) float64 {
 // One function, because whatever turns a wanted load into a stick has to
 // invert exactly this. The bot's compose() inverts a simpler law - level as
 // cos γ, ceiling as the bare placard - so every partial g command it makes
-// arrives short: measured on the ace below corner speed, a 2.62 g command
+// arrives short: measured on the expert below corner speed, a 2.62 g command
 // becomes a 2.11 g turn, 71% of the wing where its own aero cap asks for 85%
 // (TestDeliveryProbe, which reads the law through Envelope). The human it lost
 // to used 89%. Inverting this instead was built and declined by the doctrine

@@ -22,7 +22,7 @@ import (
 // ACCURACY (how close the fired rounds pass). A kill count hides all three.
 func TestGunnery(t *testing.T) {
 	heavy(t)
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		var opportunity, solved, fired, total int
 		var closest, aimSum float64 = 1e9, 0
 		var aimed int
@@ -122,9 +122,9 @@ func TestGunnery(t *testing.T) {
 		if opportunity == 0 {
 			t.Errorf("%s never got inside 900 m of a scripted turner in 90 s — the harness or the pursuit is broken", level)
 		}
-		if level != "pilot" {
+		if level != "intermediate" {
 			// The floor catches the catastrophe this instrument exists for - a bot that
-			// points and never aims (0.4%) - not tier tuning; the ace sits at 3.46%.
+			// points and never aims (0.4%) - not tier tuning; the expert sits at 3.46%.
 			if share := 100 * float64(solved) / math.Max(float64(opportunity), 1); share < 3 {
 				t.Errorf("%s is on a firing solution for %.2f%% of its in-range time — it points at him without ever aiming (floor 3%%)", level, share)
 			}
@@ -145,7 +145,7 @@ func TestLadderDuel(t *testing.T) {
 		if missiles {
 			arm = "missiles" // the armed arm (#253): six AIM-9Ms each and ~900 kg of carriage — the regime no guns-only instrument sees
 		}
-		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+		for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
 			strong, weak := pair[0], pair[1]
 			wins, losses, trades, draws := 0, 0, 0, 0
 			var times []float64
@@ -236,8 +236,8 @@ func TestLadderDuel(t *testing.T) {
 			// legitimate tuning drift rather than noise.
 			//
 			// Measured on the tree one commit before #207, which is the last
-			// point every arm was known good: guns 187.1 s (ace v pilot) and
-			// 150.3 s (superhuman v ace); missiles 25.3 s and 76.8 s. Those were
+			// point every arm was known good: guns 187.1 s (expert v intermediate) and
+			// 150.3 s (superhuman v expert); missiles 25.3 s and 76.8 s. Those were
 			// wins-only means, and the floors halve them.
 			//
 			// RE-JUSTIFIED on the repaired basis (#216, 2026-09-16), and the
@@ -249,32 +249,32 @@ func TestLadderDuel(t *testing.T) {
 			// right direction for a collapse detector, so they stay. Do not
 			// "correct" them downward to match the arithmetic.
 			//
-			// The missiles superhuman-v-ace arm read 34.1 s and FAILED under the
+			// The missiles superhuman-v-expert arm read 34.1 s and FAILED under the
 			// old wins-only mean over nine fights; over all fifteen it is 47.1.
 			// The shortfall was the sample, not a collapse.
 			floor := 75.0 // guns: half of the slower of the two arms
 			if missiles {
 				floor = 35.0 // missiles: half of 76.8, and 62.7 s clears it today
 			}
-			if missiles && strong == "ace" {
+			if missiles && strong == "expert" {
 				// THE ONE EXCEPTION, and it is now a CONFIRMED property of the
 				// matchup rather than an open defect (#215). This arm fell
 				// 25.3 -> 10.1 s across #207 and #213's flare pricing does not
-				// reach it, because the ace's shots at the pilot go out head-on
+				// reach it, because the expert's shots at the intermediate go out head-on
 				// at a mean 1,591 m, far outside any launch floor. Instrumented
-				// at the release itself over 88 launches: the ace shoots a LIT
-				// pilot on 50% of its releases against 18% the other way, and
-				// on the long head-on shots the pilot is at full reheat - which
+				// at the release itself over 88 launches: the expert shoots a LIT
+				// intermediate on 50% of its releases against 18% the other way, and
+				// on the long head-on shots the intermediate is at full reheat - which
 				// is what makes it acquirable at that range at all
 				// (missile_range*(0.15+0.35*lit) needs lit >= 0.48 for 1,591 m).
-				// The pilot tier flies 78-88% in burner and a working missile
+				// The intermediate tier flies 78-88% in burner and a working missile
 				// punishes that. So a fast kill here is the weak tier being
 				// weak, not the weapon or the doctrine being wrong.
 				// The floor still holds the line where the arm actually stands,
 				// so a FURTHER collapse is caught. Do NOT widen the flare
 				// pricing to reach 1.6 km to "fix" this: it would suppress
 				// legitimate long shots at genuinely lit targets, which is what
-				// the weapon is for. Whether the pilot tier should have
+				// the weapon is for. Whether the intermediate tier should have
 				// self-plume discipline at all was a catalogue question (#42),
 				// and it is RULED 2026-09-16: it should NOT, and the tier keeps
 				// flying lit. Three reasons, none of which a measurement would
@@ -282,13 +282,13 @@ func TestLadderDuel(t *testing.T) {
 				// tiers keep advertising, which is authentic and is how they die -
 				// so the behaviour is deliberate rather than an oversight. #215
 				// separately ruled the fast kill it produces not a defect, having
-				// instrumented 88 launches: the ace shoots a LIT pilot on 50% of
+				// instrumented 88 launches: the expert shoots a LIT intermediate on 50% of
 				// its releases against 18% the other way. And there is no per-tier
 				// burner knob to turn - discipline is gated on library >= 3 and
-				// eleven plays hardcode reheat: 1, so giving the pilot a plume
+				// eleven plays hardcode reheat: 1, so giving the intermediate a plume
 				// policy means either a fourth skill axis or rewriting those plays,
 				// a large change to remove a weakness the tier is SUPPOSED to have.
-				// Do not reopen without a NEW reason; the pilot dying to its own
+				// Do not reopen without a NEW reason; the intermediate dying to its own
 				// plume is the design working.
 				floor = 8.0
 			}
@@ -318,16 +318,16 @@ func TestLadderDuel(t *testing.T) {
 			// and 111.9 s clears the floor. Nothing read the third number.
 			//
 			// The allowances are each arm's measured baseline plus room, not an
-			// ideal: guns ace-v-pilot sits at 12 of 16 and that IS this pairing
-			// (the ace converts four; #42 item 1 carries why, and it is a
+			// ideal: guns expert-v-intermediate sits at 12 of 16 and that IS this pairing
+			// (the expert converts four; #42 item 1 carries why, and it is a
 			// precision problem rather than an arbitration one). The superhuman
 			// arm sits at 4, so its line is where the refuted shape's 13 is
 			// caught with margin either side.
 			stale := 6 // missiles: both arms measured 1 of 16
 			if !missiles {
-				stale = 9 // guns superhuman v ace: measured 4
-				if strong == "ace" {
-					stale = 14 // guns ace v pilot: measured 12
+				stale = 9 // guns superhuman v expert: measured 4
+				if strong == "expert" {
+					stale = 14 // guns expert v intermediate: measured 12
 				}
 			}
 			if draws > stale {
@@ -466,7 +466,7 @@ func jinker(me, foe *flight.State, tick uint64) map[string]any {
 func TestJink(t *testing.T) {
 	heavy(t)
 	floor := map[string]int{}
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		var times []float64
 		struck, unresolved, landed, engaged := 0, 0, 0, 0
 		for seed := uint64(1); seed <= 12; seed++ {
@@ -543,23 +543,23 @@ func TestJink(t *testing.T) {
 			level, len(times), mean, landed, 100*float64(engaged)/float64(12*60*180), struck)
 		floor[level] = landed
 	}
-	for _, level := range []string{"ace", "superhuman"} {
-		if floor[level] < floor["pilot"] {
-			t.Errorf("gunnery against evasion inverts: %s landed %d rounds on the jinker, the pilot %d", level, floor[level], floor["pilot"])
+	for _, level := range []string{"expert", "superhuman"} {
+		if floor[level] < floor["intermediate"] {
+			t.Errorf("gunnery against evasion inverts: %s landed %d rounds on the jinker, the intermediate %d", level, floor[level], floor["intermediate"])
 		}
 	}
 }
 
 // TestFlounder is the referendum the tier names answer to (#249): kill the
 // user's measured profile fast and clean. Gates: the superhuman inside 60
-// seconds WITHOUT taking a hit; the ace inside 120. The pilot is reported
+// seconds WITHOUT taking a hit; the expert inside 120. The intermediate is reported
 // (its target is parity with the user, judged elsewhere).
 func TestFlounder(t *testing.T) {
 	heavy(t)
 	// Twelve seeds: kill counts sit near zero, so per-seed noise dominates a
 	// six-seed read.
 	const flounderSeeds = 12
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		var times []float64
 		struck, unresolved, landed, engaged := 0, 0, 0, 0
 		// The conversion diagnosis columns (#215 item 8): firing rate, time holding
@@ -686,7 +686,7 @@ func TestFlounder(t *testing.T) {
 		// No tier kills the honest flounder in three minutes, which is what the real
 		// 174-second fight showed, so the kill rate is reported rather than gated
 		// until the conversion work lands.
-		if level != "pilot" && engaged == 0 {
+		if level != "intermediate" && engaged == 0 {
 			t.Errorf("%s never closed inside 900 m of the flounder in three minutes — it is not even engaging", level)
 		}
 		if level == "superhuman" && landed == 0 {

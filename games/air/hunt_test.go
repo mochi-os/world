@@ -27,7 +27,7 @@ func TestHuntSilence(t *testing.T) {
 	made, err := (&Air{}).Create(game.Session{Identifier: "huntsilence", Game: "air", Mode: "furball",
 		Capacity: 8, Seed: 3,
 		Parameters: map[string]any{"missiles": true, "weapons": "fox2",
-			"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+			"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestHuntDefence(t *testing.T) {
 	const limit = 300.0
 	score := map[string]*outcome{}
 	survived := map[string]int{}
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		score[level] = &outcome{}
 		for seed := uint64(1); seed <= 6; seed++ {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("defence%s%d", level, seed),
@@ -262,7 +262,7 @@ func TestHuntDefence(t *testing.T) {
 			i.Close()
 		}
 	}
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		o := score[level]
 		mean := 0.0
 		if o.settled > 0 {
@@ -299,7 +299,7 @@ func TestHuntSeam(t *testing.T) {
 	for _, seed := range seeds {
 		made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("seam%d", seed), Game: "air", Mode: "joust", Seed: seed,
 			Parameters: map[string]any{"missiles": true, "start": "bvr",
-				"bots": map[string]any{"ace": 2.0}}})
+				"bots": map[string]any{"expert": 2.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -346,7 +346,7 @@ func TestHuntSeam(t *testing.T) {
 	}
 }
 
-// TestNoBotJams: the superhuman flies the ace's doctrine, and no tier arms
+// TestNoBotJams: the superhuman flies the expert's doctrine, and no tier arms
 // the jammer - not under an inbound whose seeker is up, beyond or inside 6 km,
 // and not under a hostile STT with no round in the air. hunt.go's defend()
 // records why, with the measurements.
@@ -375,7 +375,7 @@ func TestNoBotJams(t *testing.T) {
 		}
 		return false
 	}
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		if armed(level, 12000, true) {
 			t.Errorf("%s armed its jammer under a seeker 12 km out: home-on-jam overrides its beam and chaff", level)
 		}

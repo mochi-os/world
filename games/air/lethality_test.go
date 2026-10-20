@@ -46,7 +46,7 @@ func TestLethalityAspects(t *testing.T) {
 		for seed := uint64(1); seed <= 6; seed++ {
 			g := New()
 			made, _ := g.Create(game.Session{Identifier: "lethal", Game: "air", Mode: "furball", Capacity: 16, Seed: seed,
-				Parameters: map[string]any{"bots": map[string]any{"drone": 1.0, "ace": 1.0}}})
+				Parameters: map[string]any{"bots": map[string]any{"drone": 1.0, "expert": 1.0}}})
 			i := made.(*instance)
 			hunter, prey := i.aircraft[98], i.aircraft[99]
 			for tick := uint64(0); tick < 60*300; tick++ {

@@ -78,7 +78,7 @@ func (s *saddler) track(me, foe *flight.State) map[string]any {
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "fire": true}
 }
 
-// TestSaddlePressure (#73): the ace against the saddler — the close gun
+// TestSaddlePressure (#73): the expert against the saddler — the close gun
 // tracker whose hard pulls open the sight window the scripted stand-off
 // chaser never does (the chaser's closest approach in all history is 563 m,
 // where its cone never shrinks). Log-only baseline for the counter-offence
@@ -101,7 +101,7 @@ func TestSaddlePressure(t *testing.T) {
 	for seed := uint64(1); seed <= 12; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "counter", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -154,6 +154,6 @@ func TestSaddlePressure(t *testing.T) {
 	t.Logf("saddle: converted %.1f%% of %d ticks | attacker downed %d, bandit lost %d of 12 | attacker blinded %d times | audit %v | modes %v",
 		share, total, downed, lost, blinded, audit, modes)
 	if lost > 2 {
-		t.Errorf("the ace was gunned down %d of 12 by the fair-start saddler: the close defence regressed (it held 12/12 at this probe's birth)", lost)
+		t.Errorf("the expert was gunned down %d of 12 by the fair-start saddler: the close defence regressed (it held 12/12 at this probe's birth)", lost)
 	}
 }

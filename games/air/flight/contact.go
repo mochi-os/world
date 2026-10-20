@@ -156,7 +156,7 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 		// Far above anything in this world. Once every server model flew the
 		// match's map, a jet at altitude asked this about 160 times a tick
 		// between its gear, skids and crash probes, and every answer walked
-		// every island's coastline: two thirds of a 16-ace furball's tick.
+		// every island's coastline: two thirds of a 16-expert furball's tick.
 		return 0, 0, Vec3{}, false
 	}
 	if w.Carrier != nil {

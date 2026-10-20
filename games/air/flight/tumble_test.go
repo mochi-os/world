@@ -14,10 +14,10 @@ import (
 	"world/games/air/flight"
 )
 
-// tumble is a damaged ace one tick before the model threw it from 1.9 rad/s
+// tumble is a damaged expert one tick before the model threw it from 1.9 rad/s
 // into a 20 rad/s tumble, and a few seconds later to not-a-number: one engine
 // dead and the other down 36%, 300 kg of structure gone, 93 m/s at 3,821 m.
-// Captured with State.Encode from the guns fight of two aces with identifier
+// Captured with State.Encode from the guns fight of two experts with identifier
 // "revisedguns35" at seed 35, tick 8,843.
 var tumble = []float64{
 	10499.618788692182, 3820.6176530970824, 7946.907382401872, -78.01836059270448, -19.29907459409454, -48.355060759437094,

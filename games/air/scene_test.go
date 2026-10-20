@@ -9,7 +9,7 @@
 // the brain got wrong when it was flown. A scene that judges where the fight
 // ends up flies the scripted doctrine single player gives the bandit; one that
 // pins the arbiter's own choices flies the arbiter, which a teamless bot still
-// flies in a furball. The four scenes from recording 01a0b090 (joust, ace,
+// flies in a furball. The four scenes from recording 01a0b090 (joust, expert,
 // 2026-09-17) went when the store pruned it: they judged the arbiter's rebuild
 // and high in front of a gun, which single player's bandit no longer flies.
 
@@ -35,9 +35,9 @@ func majority(t *testing.T, what string, passed int, detail []string) {
 	}
 }
 
-// The first turn the user won against the scripted ace (recording 01a10e335a,
+// The first turn the user won against the scripted expert (recording 01a10e335a,
 // t=12.5-20.7): both jets came out of the merge at 460 kt and the pilot, at 33
-// degrees of alpha, fired a heater on tone at 20.7 s that killed it. The ace
+// degrees of alpha, fired a heater on tone at 20.7 s that killed it. The expert
 // had its nose 2.5-27 degrees off him at 1.0-1.3 km for the last 2.7 s and
 // fired nothing, because its zone flew a round off its flight path, 30 degrees
 // below the nose, and came out empty (launcher). With the zone drawn along the
@@ -48,7 +48,7 @@ func TestSceneFirstTurnTone(t *testing.T) {
 	var detail []string
 	for seed := uint64(1); seed <= seeds; seed++ {
 		first, rack := -1.0, -1
-		replay(t, reel, "ace", seed, 12.5, 8.2, true, func(g glimpse) {
+		replay(t, reel, "expert", seed, 12.5, 8.2, true, func(g glimpse) {
 			if rack < 0 {
 				rack = g.missiles
 			}
@@ -62,5 +62,5 @@ func TestSceneFirstTurnTone(t *testing.T) {
 		}
 		detail = append(detail, fmt.Sprintf("seed %d: first heater at %5.1f s (the pilot's at 20.7)  %v", seed, first, ok))
 	}
-	majority(t, "the ace must fire its heater before the pilot's tone shot in the first turn", passed, detail)
+	majority(t, "the expert must fire its heater before the pilot's tone shot in the first turn", passed, detail)
 }

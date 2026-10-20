@@ -6,7 +6,7 @@
 
 // Measurement only, no assertions: set AIR_POINT=1.
 //
-// A recorded human fight (01a0b090, 2026-09-17) showed the ace using a flat
+// A recorded human fight (01a0b090, 2026-09-17) showed the expert using a flat
 // 70-71% of the wing available to it in EVERY play, press included, with the
 // 90th percentile at 71-73%. Flat across plays means a ceiling downstream of
 // the laws, and the 0.85 aero cap alone would read 85%. This walks the chain
@@ -14,7 +14,7 @@
 // compose() sends, what that stick means to the pitch law, and the load that
 // arrives.
 //
-// What it found (2026-09-18, ace, sub-corner): cap 2.62 g = 85% of the wing;
+// What it found (2026-09-18, expert, sub-corner): cap 2.62 g = 85% of the wing;
 // the stick asked the law for 2.08 g; 2.11 g arrived = 71%. compose() was
 // inverting a simpler law than the one flying - level as cos γ and the bare
 // 7.5 g placard, where the law's centre is backed off above 0.15 rad of alpha
@@ -42,7 +42,7 @@ func TestDeliveryProbe(t *testing.T) {
 		t.Skip("measurement probe: set AIR_POINT=1")
 	}
 	type sample struct{ pace, law, corner, capped, stick, ceiling, asked, delivered, alpha, wing float64 }
-	for _, level := range []string{"pilot", "ace"} {
+	for _, level := range []string{"intermediate", "expert"} {
 		b := NewBandit(level, 7, 250000, "", false, true, "fox2", 0, false)
 		b.Spawn(flight.Vec3{X: 1500, Y: 3000}, flight.Vec3{X: -150})
 		environment := flight.Environment{Seed: 7, Wrap: 250000}

@@ -30,11 +30,11 @@ type skill struct {
 	discipline float64 // missile-launch patience, 0..1
 	react      float64 // reaction delay to an inbound missile, s
 	open       float64 // gun opening range, m
-	trigger    float64 // the shot's PRICE (#235): the minimum walk-through chance this pilot fires a burst at. Low is loose — the novice hoses at 2%, which is authentic; the pilot is disciplined but under-confident at 12%; the top tiers deliberately take the calculated snapshot (6% / 3%) because against a manoeuvring target the converged solution never comes and expected damage beats expected nothing. (Kept from #215: this axis is DECOUPLED from wander — precision and willingness were once one number and lethality ran backwards up the ladder.)
+	trigger    float64 // the shot's PRICE (#235): the minimum walk-through chance this pilot fires a burst at. Low is loose — the novice hoses at 2%, which is authentic; the intermediate is disciplined but under-confident at 12%; the top tiers deliberately take the calculated snapshot (6% / 3%) because against a manoeuvring target the converged solution never comes and expected damage beats expected nothing. (Kept from #215: this axis is DECOUPLED from wander — precision and willingness were once one number and lethality ran backwards up the ladder.)
 	commit     float64 // MINIMUM seconds a defensive or energy manoeuvre runs before another may replace it (#206)
 	floor      float64 // speed below which energy recovery outranks the fight, m/s; 0 = never worries about it (#206)
 	cap        float64 // how much of the wing this tier will command: g <= cap * (speed/stall)^2. Below 1 the tier never reaches the alpha limiter and has no slow fight; at or above 1 it does, and the doctrine battery's energy gates fail (see capped). 0 = no cap, it pulls what it asks for and gets slow without noticing - the rookie's flaw, kept authentic like its missing floor
-	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the pilot half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
+	energy     float64 // how fully this pilot prices energy RELATIVE to the opponent, 0..1 (#248): the novice chases the nose and ignores it (authentic), the intermediate half-understands, the instructor tiers fight the differential — which is what makes zooming off a floater score as winning
 	geometry   float64 // how fully this pilot reads the opponent's turn circle, 0..1 (#248): being 30 degrees off-nose from INSIDE his circle is winning, the same angles outside are losing; angles-and-range scoring cannot tell the two apart
 	machine    bool    // no human factors at all (the superhuman tier): every flight-model limit stays, every perception/reaction/discipline limit goes
 	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go): how hard this pilot will hold the wing loaded in a turning fight
@@ -46,8 +46,8 @@ type skill struct {
 // 5-6° off the optimal line and cannot hold smooth g (see the wobble in
 // decide) — that, not the maneuver library, is most of what a ladder feels like.
 // commit and floor invert what cadence accidentally encoded (#206). A human
-// beat the ace from a couple of turns in, and the recording showed why: under
-// pressure the ace re-decided every 1.6 s, alternating break-turn with
+// beat the expert from a couple of turns in, and the recording showed why: under
+// pressure the expert re-decided every 1.6 s, alternating break-turn with
 // energy-rebuild — two goals that each need seconds to pay off — so it
 // achieved neither and never generated separation. Deciding FAST is a skill
 // (noticing, tracking, shooting: that is cadence, unchanged). Abandoning a
@@ -58,12 +58,12 @@ type skill struct {
 // Retuned 2026-07-30 (#215), measured against TestDroneKill (12 seeds, can the
 // tier finish a compliant target) with the firing gate decoupled from aim:
 //   - trigger is the new axis; wander no longer forbids the shot it aims.
-//   - ace cadence 8 -> 12: re-deciding every 0.13 s suppressed conversion (4/12
+//   - expert cadence 8 -> 12: re-deciding every 0.13 s suppressed conversion (4/12
 //     kills; at 12 it matches the veteran's 7 with a faster kill). Deliberate
 //     decisions beat twitchy ones — the same lesson as the commitment floor.
-//   - ace open 550 -> 600: the shortest engagement range on the ladder belonged
+//   - expert open 550 -> 600: the shortest engagement range on the ladder belonged
 //     to the tier meant to convert most.
-//   - pilot wander 0.045 -> 0.035, open 700 -> 600: the old pilot killed NOTHING
+//   - intermediate wander 0.045 -> 0.035, open 700 -> 600: the old intermediate killed NOTHING
 //     (0/12) — it fired from ranges its own aim noise could not serve. 4/12 now.
 //   - pull UN-inverted: the rookie now commands the limiter (5.5 -> 7.5) like a
 //     real novice — the joystick baseline showed a self-described novice at
@@ -71,17 +71,17 @@ type skill struct {
 //     always did: the low tiers' pull WOBBLES and never eases when slow, so
 //     the rookie yanks itself into the mush (the aero cap bounds it) while the
 //     high tiers hold corner. Skill is energy discipline, not stick authority.
-//   - library 4 KEPT for the ace although dropping it measured 8/12: tier 4 is
+//   - library 4 KEPT for the expert although dropping it measured 8/12: tier 4 is
 //     the rolling scissors, the sun, the bag and the rope — anti-fighter tools a
 //     drone cannot exercise — and deleting doctrine to win one seed of a drone
 //     metric is tuning the instrument. The ladder reads 1/4/7/7 by kills, the
-//     ace faster by time-to-kill.
+//     expert faster by time-to-kill.
 //
-// The ladder (2026-08-04 restructure): novice / pilot / ace / superhuman.
-// Novice carries the old rookie tuning verbatim; pilot moved about a third of
+// The ladder (2026-08-04 restructure): novice / intermediate / expert / superhuman.
+// Novice carries the old rookie tuning verbatim; intermediate moved about a third of
 // the way toward the removed veteran (sharper eyes, quicker decisions, a
 // tighter trigger, better energy sense) while keeping the tier-2 repertoire —
-// a good line pilot, not an instructor; ace is unchanged; superhuman is the
+// a good line pilot, not an instructor; expert is unchanged; superhuman is the
 // machine: every flight-model limit, zero human factors — its row's delay,
 // wander, and react are genuinely zero, and the machine flag switches off the
 // perception, discipline, and trigger-cadence humanities the code applies
@@ -89,34 +89,34 @@ type skill struct {
 var skills = map[string]skill{
 	// The scripted novice wins about one fight in eleven against mimic, short
 	// of the one in four the target sets. Declined, flying the script on its
-	// own row: the pilot's library (the led aim and the run-in's lead turn), a
-	// 0.75 s look and the pilot's 16-tick cadence won 15 and lost 48 of 64, but
+	// own row: the intermediate's library (the led aim and the run-in's lead turn), a
+	// 0.75 s look and the intermediate's 16-tick cadence won 15 and lost 48 of 64, but
 	// met him at 139 m in TestScriptPass's pursuit; with half the wander as
 	// well, 11 and 53 with passes inside the bubble down to 16 m. Its own
 	// run-in with the led aim won 4 of 63, and no single dial moved it.
-	"novice": {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34, glare: 20},
-	"pilot":  {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75, glare: 5.1264},
-	"ace":    {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1, glare: 5.1264},
-	// The superhuman IS the ace with the human dials at zero — delay, cadence,
+	"novice":       {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34, glare: 20},
+	"intermediate": {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75, glare: 5.1264},
+	"expert":       {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1, glare: 5.1264},
+	// The superhuman IS the expert with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
-	// against the ace's 600 and 0.06; neither is a human limit (one is gun
+	// against the expert's 600 and 0.06; neither is a human limit (one is gun
 	// opening range, the other the willingness to take a low-percentage shot),
 	// and #106 had already shown what a machine-only doctrine number costs:
-	// its own BVR depth lost 18-29 until it was aligned with the ace's. Every
+	// its own BVR depth lost 18-29 until it was aligned with the expert's. Every
 	// remaining divergence is a perception or reflex limit switched off by the
-	// machine flag. commit stays ace-grade too: strategy re-judged at 1.6 s
-	// like the ace, because a half-second commit just flipped between
+	// machine flag. commit stays expert-grade too: strategy re-judged at 1.6 s
+	// like the expert, because a half-second commit just flipped between
 	// near-tied lines and finished none of them.
 	//
 	// CADENCE 12 WAS TRIED AND REFUSED (#216, 2026-09-14). On the corrected
 	// rollout (evolve() flying an arc rather than a parabola) the superhuman's
-	// 60 Hz re-planning reads as a liability: measured against the ace, duel
+	// 60 Hz re-planning reads as a liability: measured against the expert, duel
 	// guns went 3-5 -> 4-2 and duel missiles 3-13 -> 8-8 with cadence at the
-	// ace's 12, and the wide missile ladder passed at 21-26. The reasoning was
-	// #215's ("ace cadence 8 -> 12 took kills 4/12 -> 7/12, deliberate
+	// expert's 12, and the wide missile ladder passed at 21-26. The reasoning was
+	// #215's ("expert cadence 8 -> 12 took kills 4/12 -> 7/12, deliberate
 	// decisions beat twitchy ones") applied one tier up.
 	//
-	// It is still REFUSED, because TestSuperhumanIsTheAceWithoutHumanLimits
+	// It is still REFUSED, because TestSuperhumanIsTheExpertWithoutHumanLimits
 	// names cadence a human limit - thinking rate - and a machine that thinks
 	// at a human's rate is not a machine. The gate is the design, and a
 	// measurement that improves a ladder is not a licence to redefine what the
@@ -133,11 +133,11 @@ var skills = map[string]skill{
 // 1 the demand never reaches the limiter: the wing's g at 240 kt is 3.7, 85%
 // of it is the 25-degree regime, thrust beats drag there in burner, and the
 // jet accelerates back to 350 kt every time it relaxes - measured as 0.1% of
-// a fight above 20 degrees alpha against a slow opponent. At 1.5 the ace
+// a fight above 20 degrees alpha against a slow opponent. At 1.5 the expert
 // fought at 280 kt and 45% alpha and the doctrine battery lost seven gates:
-// the perch donated, the jet lingered beneath it, the ace was tracked under
-// pressure, the superhuman fell below the ace on guns and BVR, and the pilot
-// out-gunned the ace against a jinker; 1.2 and a cap lifted only inside the
+// the perch donated, the jet lingered beneath it, the expert was tracked under
+// pressure, the superhuman fell below the expert on guns and BVR, and the intermediate
+// out-gunned the expert against a jinker; 1.2 and a cap lifted only inside the
 // close fight failed the same gates. The energy doctrine those gates guard
 // and the slow fight are in tension at this one number, and the number stays
 // where the gates are green. The novice has no cap at all and pulls what it
@@ -147,15 +147,15 @@ var skills = map[string]skill{
 // more.
 //
 // WHAT 0.85 ITSELF COSTS, measured 2026-09-17 (#42) - the alternatives above
-// are priced and this was not: below corner the ace commands 86% of the
-// pilot's g, so the tier ladder INVERTS wherever a fight is held slow. In the
-// twelve undecided guns fights the ace averages 388 kt and holds its nose
-// inside 20 degrees for 1% of its time in the gun window, against the pilot's
+// are priced and this was not: below corner the expert commands 86% of the
+// intermediate's g, so the tier ladder INVERTS wherever a fight is held slow. In the
+// twelve undecided guns fights the expert averages 388 kt and holds its nose
+// inside 20 degrees for 1% of its time in the gun window, against the intermediate's
 // 43%; in the four it wins it averages 462 kt, where the cap is inert and it
-// out-pulls the pilot, and holds 49%. TestTheAceOutTurnsThePilotOnlyAboveCorner
+// out-pulls the intermediate, and holds 49%. TestTheExpertOutTurnsTheIntermediateOnlyAboveCorner
 // pins the crossover. No arbitration remedy can reach past this: a scorer
 // cannot outvote a g limit, which is why the range-gated horizon lifted the
-// ace's stalemate solution share only 0.02% -> 0.83%.
+// expert's stalemate solution share only 0.02% -> 0.83%.
 func (s skill) capped(g, speed, stall float64) float64 {
 	if s.cap <= 0 {
 		return g
@@ -174,7 +174,7 @@ func (b *brain) capped(g, speed, stall float64) float64 {
 // wander is the aim wander: where this pilot's nose actually points. Re-rolled
 // on a slow clock, NOT per decision — sloppiness is a consistent bias, which is
 // exactly why sloppy pilots are easy to track and gun, while per-decision noise
-// had made even the rookie untrackable to an ace.
+// had made even the rookie untrackable to an expert.
 func (i *instance) wander(slot int, b *brain, tick uint64) {
 	b.offset[0] = (battle.Roll(i.environment.Seed, uint64(slot)+13, tick/150) - 0.5) * 2 * b.skill.wander
 	b.offset[1] = (battle.Roll(i.environment.Seed, uint64(slot)+29, tick/150) - 0.5) * 2 * b.skill.wander
@@ -350,7 +350,7 @@ type tactics struct {
 	// for under stage 6, where a rehearsal that flies the real jet may no longer
 	// need twelve seconds to see a yo-yo pay.
 	//
-	// SWEPT 2026-09-18 on stage 6 (quick gates; v current ace, guns / heaters):
+	// SWEPT 2026-09-18 on stage 6 (quick gates; v current expert, guns / heaters):
 	//
 	//   high 12 (the table)       pounce red: bailout never entered      18-4 / 23-23
 	//   high 8                    all five green                          12-12 / 25-21
@@ -361,7 +361,7 @@ type tactics struct {
 	//
 	// high 8 is the only green point; it also cuts the spiral gate's donated
 	// perch from 143,883 m.s to 59,657 and reverses the recorded under-guns
-	// scene. It does not beat the current ace, which twelve seconds does.
+	// scene. It does not beat the current expert, which twelve seconds does.
 	//
 	// beam spans the two breaks, left and right, which turn to put him on the
 	// beam: rehearsed over the tier's four seconds, a break shows its cost and
@@ -370,7 +370,7 @@ type tactics struct {
 	// MEASURED 2026-09-24 and DECLINED. At twelve seconds a break wins 4 of 27
 	// recorded re-plans with a heater-armed pilot astern, and the bot then
 	// breaks where it should not. Scripted humans with heaters, 64 seeds,
-	// kills-deaths (mush v ace, hornet v ace, mush v superhuman, hornet v
+	// kills-deaths (mush v expert, hornet v expert, mush v superhuman, hornet v
 	// superhuman):
 	//
 	//   stage 11 alone               4 s  19-20  45-6   34-18  59-3
@@ -393,8 +393,8 @@ type tactics struct {
 	// behind this knob until the gates have been read.
 	//
 	// READ 2026-09-18, and left off. At stage 0 it reddens the guns ladder
-	// (superhuman v ace 12 of 16 undecided, allowance 9) and loses to the
-	// current ace 10-19 with guns, 25-20 with heaters. On top of stage 6 all
+	// (superhuman v expert 12 of 16 undecided, allowance 9) and loses to the
+	// current expert 10-19 with guns, 25-20 with heaters. On top of stage 6 all
 	// five quick gates are green, and it still loses 7-14 with guns (25-19
 	// heaters) where stage 6 without it wins 18-4. A rehearsal that no longer
 	// awards every turn free height stops choosing the turning plays, and the
@@ -419,8 +419,8 @@ func standard() tactics {
 	// the tighter clamp is taken. Confirmed on the full gate suite and on the
 	// 24-seed battery, where seven of nine metrics improve monotonically with
 	// walk; the exception is defense up_survival, which FALLS 8.9 -> 6.6 -> 4.9,
-	// because that scenario measures a lone pilot's survival against two aces
-	// and better-aiming aces kill it sooner. That is a gunnery improvement
+	// because that scenario measures a lone intermediate's survival against two experts
+	// and better-aiming experts kill it sooner. That is a gunnery improvement
 	// reading as a defensive regression, and the metric's direction deserves a
 	// ruling rather than an assumption - it is reported, not gated.
 	t.aim.walk, t.aim.settle, t.aim.reach = 0.016, 0.20, 1.5
@@ -444,7 +444,7 @@ func standard() tactics {
 	// one-circle fight (TestScriptCircles) did that in 9 of 12 seeds. Measured
 	// with the vertical pass (approach), won/lost against mimic over 24 for
 	// the fast one-circle, slow one-circle and slow two-circle fights, then the
-	// joust's 32 (mimic's deaths/the bandit's), ace then superhuman:
+	// joust's 32 (mimic's deaths/the bandit's), expert then superhuman:
 	//   - step 0 (30 deg): 23/1 17/7, 22/1 19/3, 23/1 22/1, 30/2 32/0
 	//   - 0.04 (24.5 deg): 21/1 22/2, 22/1 20/3, 24/0 23/1, 25/5 29/3
 	//   - 0.07 (20 deg, this): 22/1 19/3, 19/1 18/3, 23/0 22/1, 30/1 31/1
@@ -454,7 +454,7 @@ func standard() tactics {
 	// 21.6 degrees where the seeker's own acquisition cone is 30
 	// (missile_cone). So the better the pilot, the more shots it refused
 	// INSIDE the cone its weapon can actually take, and the machine starved:
-	// 0.86 s per fight in a legal launch envelope against the ace's 2.83, with
+	// 0.86 s per fight in a legal launch envelope against the expert's 2.83, with
 	// the nose gate the lone blocker for 17 s of every fight and range never
 	// binding once. Discipline still earns its keep on the clause above it —
 	// rear aspect, closer range — which is where shot quality lives, because
@@ -476,7 +476,7 @@ func standard() tactics {
 	// events), and in that world a pair doubling up on one contact leaves free
 	// bandits shooting at twice the old rate. Doubling the dogpile penalty
 	// spreads the section across a target-rich picture instead. Measured:
-	// veterans-v-pilots at 40 seeds goes 16 deaths/net +3 (weight 1) to 13/+6,
+	// veterans-v-intermediates at 40 seeds goes 16 deaths/net +3 (weight 1) to 13/+6,
 	// and the equal-tier A/B recovers its survival edge at every sweep tried
 	// (11v15 / 27v28 / 52v55 red deaths at 12/24/48 seeds). Weight 3
 	// over-rotates - the pair scatters and both edges invert (24 seeds:
@@ -488,7 +488,7 @@ func standard() tactics {
 	// A/B itself was red before the law change (13 v 12 after it, one death
 	// from passing at 12 seeds) - that residual lives with the #206 doctrine
 	// pass, not this constant.
-	t.crowd.weight = 2.75 // 2.5 -> 2.75 (2026-08-04, the tier restructure): the mid-tier sweeps now fly the NUDGED pilot, whose tighter wander sharpened everyone's gunnery again — the same direction as both earlier steps; at 2.5 the equal-tier section lost its edge (deaths 50 v 47)
+	t.crowd.weight = 2.75 // 2.5 -> 2.75 (2026-08-04, the tier restructure): the mid-tier sweeps now fly the NUDGED intermediate, whose tighter wander sharpened everyone's gunnery again — the same direction as both earlier steps; at 2.5 the equal-tier section lost its edge (deaths 50 v 47)
 	t.rejoin.span, t.rejoin.fight = 4000, 10000
 	t.zoom.edge, t.zoom.roof, t.zoom.hold = 500, 7000, 120
 	t.rope.edge, t.rope.near, t.rope.far, t.rope.nose, t.rope.hold = 600, 700, 2000, 0.9, 180
@@ -814,7 +814,7 @@ func corner(m *flight.Model) float64 {
 // trigger is the shot decision, and unlike the rest of decide() it runs EVERY
 // tick. Manoeuvre is a plan, and re-deciding a plan at the skill's cadence is
 // what makes a tier feel human. A trigger is a reflex, and gating it on the
-// same clock meant the ace sampled its own launch window five times a second
+// same clock meant the expert sampled its own launch window five times a second
 // where the superhuman sampled it sixty. Against an opponent whose aspect
 // swings fast -- the slow high-alpha fight -- the legal windows are brief, and
 // that sampling gap alone was worth 4 launches against 22 over sixteen fights
@@ -863,7 +863,7 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 		// i.missiles), yet every brain is built holding six. The heater zone was
 		// built here anyway, and its cache never held: guns-only bots ride the
 		// burner, the target's plume moves every tick, and the zone was rebuilt
-		// on 99% of ticks - a sixth of a 16-ace furball's tick, for no shot.
+		// on 99% of ticks - a sixth of a 16-expert furball's tick, for no shot.
 		return
 	}
 	b.gate = gate{when: tick}
@@ -967,13 +967,13 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 		// six-round magazine made this load-bearing: without it the
 		// free-aspect tiers rippled the whole rack in the opening merge,
 		// and six missiles in one stream saturate any flare defence — the
-		// ace lost the missiles ladder 0-6 to the pilot, dead at t=10 with
+		// expert lost the missiles ladder 0-6 to the intermediate, dead at t=10 with
 		// four still flying.
 		// A PAIR is two rounds, and the count is what makes it so. This read
 		// `tick-b.launched < 60` alone, and every launch reset b.launched —
 		// so one second after the second round the gate re-armed, and again
 		// after the third, for as long as the brain kept asking. Measured
-		// 2026-08-15, the moment single-player heaters became visible: an ace
+		// 2026-08-15, the moment single-player heaters became visible: an expert
 		// put its whole rack of six into one second at 2.5 km and missed with
 		// all of them. The look below is what resets the count, which is the
 		// doctrine this comment always described.
@@ -1046,8 +1046,8 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 // costs more than it saves.
 //
 // Measured 2026-08-16 (#37). The machine treats every round inside 4,500 m as
-// a reason to break, and the ace throws forty of them a fight at a 10 percent
-// arrival rate. That bought the ace something better than kills: the machine
+// a reason to break, and the expert throws forty of them a fight at a 10 percent
+// arrival rate. That bought the expert something better than kills: the machine
 // spent 5.0 s of every fight defending against rounds that were never going to
 // reach it, and 0.86 s in a launch envelope of its own — then lost the gun
 // fight it had been kept out of position for, 6-1. Volume was suppressing
@@ -1063,7 +1063,7 @@ func beaten(b *brain, m *missile) bool {
 // spent is the kinematic half of the same judgement (#101): a coasting round
 // that can no longer close will never arrive, and breaking for it anyway is
 // how the #95 energy model turned perfect perception into permanent defence —
-// the machine died mid-evade at 2 km, rounds still aboard, against an ace
+// the machine died mid-evade at 2 km, rounds still aboard, against an expert
 // whose blind wedge let it keep fighting. `closing` is the round's closure
 // toward me, m/s, computed by the caller against the wrap-corrected bearing.
 func spent(b *brain, m *missile, closing float64) bool {
@@ -1447,7 +1447,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// meets a fresh flare. The cadence is the flare's own coverage window (a
 	// lapse is exactly the gap an unseen round flies through); whether the
 	// pilot actually flies the doctrine at each lapse is his lookout
-	// discipline, so an ace keeps near-continuous coverage and a rookie
+	// discipline, so an expert keeps near-continuous coverage and a rookie
 	// almost never thinks of it.
 	if !threatened && a.flared > flare_window {
 		blind := uint64(b.skill.delay*60) * 2
@@ -1464,7 +1464,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			if tick-t.when < blind {
 				continue // still fresh eyes on him (a high six is visible over the shoulder)
 			}
-			// With missiles up, coverage is a DISCIPLINE: the ace keeps a fresh
+			// With missiles up, coverage is a DISCIPLINE: the expert keeps a fresh
 			// flare out against the shot he cannot see, the rookie rarely thinks
 			// of it. In a guns-only fight the same insurance buys nothing — and
 			// knowing that is itself a skill, so the ladder inverts. The rookie
@@ -1472,12 +1472,12 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// homes on heat; everyone better saves the stores and their position
 			// (#211).
 			// A DUTY CYCLE, not permanent cover. The roll fires once per 0.8 s
-			// coverage window, so an ace at discipline 1.0 kept a fresh flare
+			// coverage window, so an expert at discipline 1.0 kept a fresh flare
 			// up continuously and was effectively missile-proof — a human
 			// emptied a magazine of 9Ms into one and it soaked every shot.
 			// Real coverage is periodic: this leaves roughly two thirds of the
 			// windows uncovered for the best pilot, and the ladder still
-			// orders (ace 0.35 .. rookie 0.07). Stores are finite too, so
+			// orders (expert 0.35 .. rookie 0.07). Stores are finite too, so
 			// permanent cover was never affordable in the first place.
 			chance := b.skill.discipline * 0.35
 			if b.skill.machine {
@@ -1820,7 +1820,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	}
 
 	// Commitment gate (#206). A manoeuvre that keeps being replaced accomplishes
-	// nothing: the recorded human fight showed the ace alternating defense and
+	// nothing: the recorded human fight showed the expert alternating defense and
 	// rebuild every ~1.6 s in the endgame, generating no separation while a
 	// keyboard pilot sat on its six for two minutes. Once a manoeuvre from the
 	// committed set is running it owns the next skill.commit seconds — returning
@@ -1861,7 +1861,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	// Measured in the bot seat, one named play held for a whole run against a
 	// level turner: press converts 35.6% of the time at 400-900 m and points
 	// within 20 degrees for 92% of samples; saddle 36.1%, high 33.0%. The live
-	// ace in a real fight points within 20 degrees for 0-3% of samples at
+	// expert in a real fight points within 20 degrees for 0-3% of samples at
 	// EVERY range. Same laws, same airframe, same tracking loop - so the
 	// catalogue can point and the defect is that nothing protects a conversion
 	// once it has started. Every play in `commitment` above is defensive or
@@ -2288,7 +2288,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		switch {
 		// The ZOOM MERGE (#144 vertical literacy) was REMOVED here, 2026-07-29,
 		// on measurement. It selected on an energy edge and then spent that edge
-		// climbing, so it cancelled itself halfway: the ace rode a zoom to within
+		// climbing, so it cancelled itself halfway: the expert rode a zoom to within
 		// 1.7 s of the merge, lost the condition, dropped to an ordinary lead turn
 		// and rolled again for offense — three roll events in three seconds, and a
 		// player could not tell which way it was turning. Neither latching on the
@@ -2298,7 +2298,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// Removing it measured better on BOTH axes at once: merge reversals 2.0 ->
 		// 0.0, drone kills 2/6 -> 4/6, time-to-kill 173 s -> 134 s. That agrees
 		// with #219, which found the whole tier-4 library to be a net negative
-		// (library 3 gives the ace the best positional advantage of the sweep).
+		// (library 3 gives the expert the best positional advantage of the sweep).
 		// TestBotZoom went with it. The zoom tactics constants stay for now; #215
 		// owns whether vertical literacy returns in a form that does not cancel
 		// itself.
@@ -2398,7 +2398,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	if (b.mode == "neutral" || b.mode == "offense") && distance > 800 && distance < 3000 && math.Abs(closure) < 60 && tail < 0.85 {
 		// (crossing targets only: a dead-astern runner is a CHASE — the lag
 		// cut that breaks a mutual circle just trails a runner at constant
-		// range forever, which is how the battery caught an ace parked 1.5 km
+		// range forever, which is how the battery caught an expert parked 1.5 km
 		// behind a drone for five straight minutes)
 		b.stuck++
 	} else {
@@ -2495,8 +2495,8 @@ func (i *instance) pursuer(b *brain, me *flight.State, known []int) (int, float6
 }
 
 // flinch is the shot-cue jink's detection (#251): is the attacker LINING UP?
-// The tier ladder is the design: a novice never sees it coming; a pilot reacts
-// only to tracers already past; an ace reads the planform cue — the bore
+// The tier ladder is the design: a novice never sees it coming; an intermediate reacts
+// only to tracers already past; an expert reads the planform cue — the bore
 // swinging into lead inside gun range, which is exactly what "his underside
 // is appearing" means geometrically; the machine mirrors the attacker's whole
 // firing solution and also reacts to the muzzle flash itself, dodging during
@@ -2540,11 +2540,11 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 		// The planform cue, at gun range — plus the tracers, which this tier
 		// was alone in not having (#38, measured 2026-08-16). The rule below
 		// gives a PILOT a dodge whenever he is fired on from inside 160, and
-		// the machine one from inside 220, but the ace's cue read the aim
+		// the machine one from inside 220, but the expert's cue read the aim
 		// solution only: it waited for 45 m, about four degrees at gun range,
 		// and ignored `Fire` entirely. So the best human tier was the least
 		// responsive to being shot at, which is backwards. Pinned at its own
-		// six by a scripted attacker the ace died in all six seeds — three of
+		// six by a scripted attacker the expert died in all six seeds — three of
 		// them inside 2.2 s, on fire by 1.9 — where the machine survived half
 		// of them and never let the attacker inside 380 m.
 		cued = (span < 900 && forming < 45) || (c.latest.Fire && forming < 160)
@@ -2581,7 +2581,7 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 // slow just bleeds the jet, so the commanded g is scaled by the speed margin.
 // At corner you pull the LIMIT — that's what corner speed is for. The
 // discipline only eases the stick once genuinely slow; the first cut made the
-// ace out-turned by the rookie's artless yank. One function because the
+// expert out-turned by the rookie's artless yank. One function because the
 // REHEARSAL must ease the same stick the live jet does (duel.go rehearse).
 func disciplined(g, speed, pace float64) float64 {
 	return 1 + (g-1)*clamp((speed/pace-0.35)/0.4, 0.6, 1)
@@ -2605,7 +2605,7 @@ func disciplined(g, speed, pace float64) float64 {
 //     keeps fighting - unloading in front of a gun is how you die tidily.
 //   - the SADDLE, not any nearby enemy. The floor only checked the range to
 //     whoever was attacking ME, so against a target that was not shooting back
-//     there was no menace, and the ace starved out of a press 380 m behind a
+//     there was no menace, and the expert starved out of a press 380 m behind a
 //     compliant target (2026-07-30 recording). Rebuilding is FOR the fight;
 //     abandoning gun parameters to rebuild throws away the fight it was for.
 //     Gated on being BEHIND him (tail geometry), because "someone is close"
@@ -2615,10 +2615,10 @@ func disciplined(g, speed, pace float64) float64 {
 //
 // TRIED AND WITHDRAWN (2026-09-18): a third yield, "he is poorer than I am", on
 // the specific-energy difference appraise() prices as `edge`. It was written
-// for recording 01a0b090 at t=124-132, read as the ace unloading away from a
+// for recording 01a0b090 at t=124-132, read as the expert unloading away from a
 // jet at 117 kt that it sat 1,869 ft above. Replayed as a scene, the geometry
-// said otherwise: the human was in the ace's REAR quarter at 440-650 m with his
-// nose 16-25 degrees off it, the ace's own nose 130 degrees away, at 190 kt. It
+// said otherwise: the human was in the expert's REAR quarter at 440-650 m with his
+// nose 16-25 degrees off it, the expert's own nose 130 degrees away, at 190 kt. It
 // could not have reversed onto him, and extending from a slower jet behind it
 // was sound. An energy edge over someone pointing at your tail is not a fight
 // being won, and no test or scene ever needed the yield. Do not rebuild it on
@@ -2628,12 +2628,12 @@ func disciplined(g, speed, pace float64) float64 {
 // richer than he is, he does not sit aft of my 3/9 line, and his nose is more
 // than 30 degrees off me. It is bleed's stage because bleed is what leaves a jet
 // slow beside a slower one, and the reflex then flew away from fights the
-// arbiter had chosen to turn into. Recording 01a0cf7e at 33.8 s: the ace 1,342
+// arbiter had chosen to turn into. Recording 01a0cf7e at 33.8 s: the expert 1,342
 // ft of energy up on the pilot, the pilot 48 degrees off its nose at 1,238 m
 // with his own nose 56 degrees off it; the arbiter chose press, the reflex
 // dived it away, and the pilot had tone 3 s later. The recorded cases split
 // cleanly on the geometry: 01a0b090 at 124-132 s, where extending was right,
-// had the human in the ace's rear quarter (aspect 22-51 degrees) with his nose
+// had the human in the expert's rear quarter (aspect 22-51 degrees) with his nose
 // 3-22 degrees off it.
 func (i *instance) starved(b *brain, flag *bool, me *flight.State, speed, floor float64, menace int) bool {
 	threat := 1e9
@@ -2687,7 +2687,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 	// afterburner is a beacon at EVERY aspect — the plume-conditioned floor
 	// lifts a lit jet's lockability by 1,750*(1-tailview) metres, which is
 	// 1.7 km head-on and still a kilometre at the quartering aspect the
-	// 2026-08-20 ace fed the player from, 66% lit, arming all six of the
+	// 2026-08-20 expert fed the player from, 66% lit, arming all six of the
 	// shots it then survived by metres. The old rule ran cold only when
 	// POINTED IN; the instructor tiers now run cold anywhere inside reach
 	// when fast enough to afford it. The low tiers keep advertising, which
@@ -2714,7 +2714,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 		// and a cold MIL pursuit no longer holds closure on its own — the
 		// instructor tiers starved a few hundred metres short of every
 		// conversion (closure +3.9 m/s, saddle gate open unfired 1,237 ticks)
-		// while the lit pilot tier kept its energy and won the ladder. The
+		// while the lit intermediate tier kept its energy and won the ladder. The
 		// legal currency inside the span is the height these tiers already
 		// husband: when a cold pursuit is not gaining and he is not above me,
 		// shallow the line below his plane and spend altitude as closure. The
@@ -2883,7 +2883,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	// re-cues every tick and so dodged continuously, jittered at 2-4 g along
 	// a dead-straight line with no aim wander to break it, and a scripted
 	// novice's held trigger killed it from 1,200 m dead astern in 2.2 s on
-	// eight of twenty-four harness seeds (the ace's 0.4 s delay and its
+	// eight of twenty-four harness seeds (the expert's 0.4 s delay and its
 	// wander made the same weave survivable). A jink that beats a stream is a
 	// committed pull for the rounds' time of flight; the window's own stamp
 	// picks the quadrant, so successive dodges go different ways and a
@@ -2891,19 +2891,19 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	//
 	// HOLDING IT FOR THE ROUNDS' TIME OF FLIGHT WAS MEASURED AND REFUSED (#216,
 	// 2026-09-16). The gap it was built on is REAL: the machine's cue is wider
-	// (it mirrors the whole firing solution out to 1,200 m where the ace waits
+	// (it mirrors the whole firing solution out to 1,200 m where the expert waits
 	// for 45 m inside 900), so under the human-pressure scenario it jinks from a
-	// mean 996 m against the ace's 622 m, where the rounds take 1.08 s and this
+	// mean 996 m against the expert's 622 m, where the rounds take 1.08 s and this
 	// window gives 0.98 - 61% of the machine's jinks expire before the burst
-	// arrives against the ace's 11%, and it is shot down twice in 24 from the
-	// opening pass at 1.4 and 1.8 s while the ace is never hit. Extending the
+	// arrives against the expert's 11%, and it is shot down twice in 24 from the
+	// opening pass at 1.4 and 1.8 s while the expert is never hit. Extending the
 	// window to `transit` (already computed in flinch for the cue) makes it
 	// WORSE: shot down 2 -> 3. A longer pull in ONE direction is easier to
 	// track, not harder - the shooter re-aims onto the new line inside the
 	// window, which is the same reasoning that made the held quadrant beat the
 	// old two-sinusoid weave. Everything else was inert (machine-defence gate,
-	// both missile rungs and guns ace-v-pilot bit-identical; guns superhuman
-	// v ace 9-3-4 at 129.3 s -> 10-4-2 at 140.4, TestJink green either way).
+	// both missile rungs and guns expert-v-intermediate bit-identical; guns superhuman
+	// v expert 9-3-4 at 129.3 s -> 10-4-2 at 140.4, TestJink green either way).
 	// The machine's two deaths remain UNEXPLAINED: a fix wants a mechanism that
 	// changes WHERE the jink goes, not how long it lasts.
 	//
@@ -2941,7 +2941,7 @@ func (b *brain) steer(m *flight.Model, tick uint64) flight.Inputs {
 	}
 	if b.shoot && b.prey != nil && tick >= b.quiet && b.magazine > 0 && tick >= b.dodge {
 		// The refinement reaches the whole gun envelope, not its inner half
-		// (#42). At open*1.15 - 690 m for the ace - it switched OFF across
+		// (#42). At open*1.15 - 690 m for the expert - it switched OFF across
 		// most of 600-900 m, which is exactly where scripted lead pursuit does
 		// its best work (42% on solution against this bot's 2.7%), and every
 		// play that is trying to point lost 5-9x across that boundary while
@@ -3124,7 +3124,7 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	// press already track) the price climbs, threefold at the rim, so only a
 	// converged tracking solution is worth a burst from there. A hard cut at
 	// the number refused a 4-7 degree track held for four seconds at 620-640
-	// m — twenty to forty metres outside the ace's 600 — while its throttle
+	// m — twenty to forty metres outside the expert's 600 — while its throttle
 	// law could not close the gap, and the only rounds it fired all fight
 	// went out as the target broke at 6 g.
 	if b.distance > b.skill.open*1.4 {
@@ -3172,7 +3172,7 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	// bottom over the next four tenths — rounds fired now arrive as the
 	// bore crosses. Measured before this: the machine's best aim across
 	// whole four-minute fights was 26 m, one never-fired standoff, while
-	// the ace's aim WANDER accidentally produced the crossings that won it
+	// the expert's aim WANDER accidentally produced the crossings that won it
 	// fights up the ladder.
 	sweep := 0.0
 	if tick == b.walkedAt+1 && b.walked > miss {
@@ -3221,7 +3221,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// error direction alone made bank bang-bang — on a level run-in the
 	// correction is purely horizontal, so a 1° heading error demanded a lift
 	// vector 90° from vertical, hence full roll stick, and nothing in the law
-	// said stop at any particular bank. Measured: the ace rolled through
+	// said stop at any particular bank. Measured: the expert rolled through
 	// ±180° with a ~3.5 s period for the whole run-in to the merge.
 	vhat := s.Velocity.Normalize()
 	skyward := flight.Vec3{Y: 1}.Subtract(vhat.Scale(vhat.Y))
@@ -3234,7 +3234,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// the pointing error, and reaches the ceiling only once the error is big
 	// enough to need all of it — a dozen-odd degrees. Pinning the pull at the
 	// skill's structural g regardless of whether any turn was needed made the
-	// ace haul 7 g down a straight-line intercept, which threw its own nose
+	// expert haul 7 g down a straight-line intercept, which threw its own nose
 	// off the line — and the roll law then answered that self-inflicted error
 	// with full bank. Both halves of the limit cycle came from this one line.
 	// Size it the way the geometry does: the turn rate that nulls the error in
@@ -3297,7 +3297,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// not where it is. The old proportional cone (soften inside 1.7°) was
 	// tuned when the sluggish C* law was itself the rate filter; against the
 	// fixed law the same shaping oscillated the nose ±3° through the pipper
-	// and the ace's gunnery collapsed (193 -> 57 hits across the gate's
+	// and the expert's gunnery collapsed (193 -> 57 hits across the gate's
 	// seeds). Never fade to zero — a dead damper parked the nose in a 3-6°
 	// standoff orbit around the aim, permanently outside the gun gate.
 	if future := ahead - closure*0.25; future < 0.05 {
@@ -3324,8 +3324,8 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// corner the limiter is ALPHA, and pressing into the tax just camps the
 	// alpha limiter: the roll rate dies with the wing and tracking collapses.
 	// Measured both ways on the first cut, which compensated everywhere: the
-	// fast fights improved sharply (guns superhuman-v-ace 3-3 to 7-4, drone
-	// pilot/ace +2 kills each) while every slow fight collapsed (the flounder
+	// fast fights improved sharply (guns superhuman-v-expert 3-3 to 7-4, drone
+	// intermediate/expert +2 kills each) while every slow fight collapsed (the flounder
 	// went from hunted to UNTOUCHED — zero rounds — and the jinker shed 90%
 	// of the rounds previously landed on it). Slow fights keep the original
 	// normalisation and the plane gate's roll-first sequencing instead.
@@ -3335,7 +3335,7 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// bare placard. The law's range is neither: its ceiling schedules down with
 	// gross weight (6.7 g on a combat-loaded jet) and its centre is backed off
 	// above 0.15 rad of alpha, to 0.55 g at the 14 degrees a slow fight is flown
-	// at. So every partial g command arrives short - on the ace below corner a
+	// at. So every partial g command arrives short - on the expert below corner a
 	// 2.62 g command becomes a 2.11 g turn, 71% of the wing where its aero cap
 	// asks for 85%, flat across every play (TestDeliveryProbe; the human who beat
 	// it in recording 01a0b090 used 89%). Inverting the real law fixed exactly
@@ -3344,9 +3344,9 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// And three of the five quick gates went red, against a baseline and an
 	// override-repair run that were both five for five on the same day:
 	//
-	//   ace tracked in the attacker's rear quarter   19% -> 32%   (bar 20%)
-	//   missiles, superhuman v ace                   inverted, lost 10-6
-	//   pilot kills on the jinker                    11/12 -> 4/12, and a jinker
+	//   expert tracked in the attacker's rear quarter   19% -> 32%   (bar 20%)
+	//   missiles, superhuman v expert                   inverted, lost 10-6
+	//   intermediate kills on the jinker                    11/12 -> 4/12, and a jinker
 	//                                                flew into the sea unhit
 	//
 	// The doctrine is tuned around the shortfall. The 0.85 cap, corner discipline
@@ -3371,11 +3371,11 @@ func (b *brain) compose(m *flight.Model, aim flight.Vec3, want, throttle, reheat
 	// roll rate every time and flew straight past, and past 140° the sense
 	// lock above then committed it to carrying on round.
 	// TRIED AND REJECTED (#215): damping the roll while the pipper tracks, to
-	// spare the g the rolling reduction taxes. It bought the ace's firing
+	// spare the g the rolling reduction taxes. It bought the expert's firing
 	// solutions back (3.46% -> 4.81% of in-range time) and cost far more
 	// elsewhere — the machine tracks almost continuously, so damping its
 	// roll took its manoeuvring with it: the guns ladder inverted 5-1 to 2-9
-	// against the ace, and TestConvert fell from 12/12 to 9/12. A bot that
+	// against the expert, and TestConvert fell from 12/12 to 9/12. A bot that
 	// aims better and loses is not better.
 	b.rolled = rolled // slewed above: full deflection over ~8 ticks, never a flap
 	b.demand.Stick = pitch

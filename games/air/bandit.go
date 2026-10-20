@@ -27,7 +27,7 @@ type Bandit struct {
 	tank  float64 // spawn fuel, kg: the player's own load, so the single-player joust is fought on equal tanks
 }
 
-// NewBandit builds the harness. Unknown levels fly as ace. `missiles` says
+// NewBandit builds the harness. Unknown levels fly as expert. `missiles` says
 // whether the PLAYER can shoot, which the bandit's defensive doctrine reacts to
 // (#211); `weapons` is the match's class, and "open" wakes the BVR brain.
 // `hold` is the joust's weapons hold: true holds the brain's gun and missiles
@@ -47,7 +47,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 	mirror.arm()
 	thought := mind(level)
 	if thought == nil {
-		thought = mind("ace")
+		thought = mind("expert")
 	}
 	thought.journal = &journal{} // one bot, and the only place a journal is ever allocated: the server's rosters fly without one
 	thought.scripted = true      // single player's bandit flies the scripted doctrine; the server's rosters fly the planner

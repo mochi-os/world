@@ -813,7 +813,7 @@ func TestOpeningSpawn(t *testing.T) {
 		seed++
 	}
 	joust := func(extra map[string]any) (*instance, [2]*flight.State) {
-		parameters := map[string]any{"missiles": true, "start": "bvr", "bots": map[string]any{"novice": 1.0, "ace": 1.0}}
+		parameters := map[string]any{"missiles": true, "start": "bvr", "bots": map[string]any{"novice": 1.0, "expert": 1.0}}
 		for k, v := range extra {
 			parameters[k] = v
 		}

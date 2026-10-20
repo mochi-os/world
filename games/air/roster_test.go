@@ -19,7 +19,7 @@ import (
 func TestRosterSurvivesJoins(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "roster", Game: "air", Mode: "furball", Capacity: 8, Seed: 1,
-		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 6.0}}})
+		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 6.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +89,7 @@ func TestRosterSitsAboveThePlayers(t *testing.T) {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "above", Game: "air", Mode: "furball",
 			Capacity: c.capacity, Seed: 1,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": c.asked}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": c.asked}}})
 		if err != nil {
 			t.Fatal(err)
 		}

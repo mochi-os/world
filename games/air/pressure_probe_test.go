@@ -37,7 +37,7 @@ func wide(t *testing.T) {
 	heavy(t)
 }
 
-// TestPressureProbe traces ONE seed of the human-pressure harness: what the ace
+// TestPressureProbe traces ONE seed of the human-pressure harness: what the expert
 // chose at every re-plan, how the candidates ranked, and the geometry each
 // second. AIR_PROBE_SEED, AIR_PROBE_START (m) and AIR_PROBE_LENGTH (s) select
 // it.
@@ -51,7 +51,7 @@ func TestPressureProbe(t *testing.T) {
 	}
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "probe", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +136,7 @@ func ringText(o orbit) string {
 
 // TestPressureOracle asks whether the harness's starting position can be won at
 // all: the bandit's seat is flown by the same crude pursue() script. If it
-// converts where the ace does not, the doctrine is worse than the crude script.
+// converts where the expert does not, the doctrine is worse than the crude script.
 func TestPressureOracle(t *testing.T) {
 	probe(t)
 	converted, tracked, total, killed, died := 0, 0, 0, 0, 0
@@ -181,7 +181,7 @@ func TestPressureOracle(t *testing.T) {
 }
 
 // TestPromiseProbe reports the distribution of the winning rehearsal's mean
-// offence (brain.promise) across ace-v-pilot gun duels, so the FINISH-on-
+// offence (brain.promise) across expert-v-intermediate gun duels, so the FINISH-on-
 // opportunity threshold is chosen from data rather than taste.
 func TestPromiseProbe(t *testing.T) {
 	probe(t)
@@ -189,7 +189,7 @@ func TestPromiseProbe(t *testing.T) {
 	for seed := uint64(1); seed <= 4; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("promise%d", seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "weapons": "guns", "bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "weapons": "guns", "bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -197,7 +197,7 @@ func TestPromiseProbe(t *testing.T) {
 		var top *craft
 		for _, slot := range i.slots() {
 			c := i.aircraft[slot]
-			if c != nil && c.brain != nil && c.brain.skill.library == skills["ace"].library && c.brain.skill.wander == skills["ace"].wander {
+			if c != nil && c.brain != nil && c.brain.skill.library == skills["expert"].library && c.brain.skill.wander == skills["expert"].wander {
 				top = c
 			}
 		}
@@ -232,7 +232,7 @@ func TestPromiseProbe(t *testing.T) {
 // judge a doctrine change by. This is the wider sample for that judgement.
 func TestGunLadderWide(t *testing.T) {
 	wide(t)
-	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+	for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
 		strong, weak := pair[0], pair[1]
 		wins, losses, trades, draws := 0, 0, 0, 0
 		for seed := uint64(1); seed <= 48; seed++ {
@@ -284,7 +284,7 @@ func TestGunLadderWide(t *testing.T) {
 	}
 }
 
-// TestFlounderWide is TestFlounder's ace row over 36 seeds instead of 12, for
+// TestFlounderWide is TestFlounder's expert row over 36 seeds instead of 12, for
 // the same reason as the wide gun ladder: a kill count near five in twelve
 // moves by three on seed luck.
 func TestFlounderWide(t *testing.T) {
@@ -294,7 +294,7 @@ func TestFlounderWide(t *testing.T) {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("flounderwide%d", seed),
 			Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -331,8 +331,8 @@ func TestFlounderWide(t *testing.T) {
 			}
 		}
 	}
-	fmt.Printf("wide flounder: ace killed it %d/36 | rounds landed %d\n", kills, landed)
-	// THE GATE (#46): the ace must finish the floundering profile in a fair
+	fmt.Printf("wide flounder: expert killed it %d/36 | rounds landed %d\n", kills, landed)
+	// THE GATE (#46): the expert must finish the floundering profile in a fair
 	// share of fights. Re-centred for #69: the instrument has drifted down
 	// through legitimate changes (it read 14-17 at birth, 11/36 at HEAD
 	// 2026-08-22) while its own comment grants a three-fight luck band, so a
@@ -340,7 +340,7 @@ func TestFlounderWide(t *testing.T) {
 	// pure re-roll. Eight still catches the play-goes-inert collapse this
 	// gate exists for.
 	if kills < 8 {
-		t.Errorf("wide flounder: the ace killed the floundering profile in only %d of 36 fights", kills)
+		t.Errorf("wide flounder: the expert killed the floundering profile in only %d of 36 fights", kills)
 	}
 }
 
@@ -353,7 +353,7 @@ func TestDispenseProbe(t *testing.T) {
 		flares, chaff, left, kept, decoyed, seduced, hit int
 	}
 	for _, arm := range []string{"missiles", "bvr"} {
-		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+		for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
 			strong, weak := pair[0], pair[1]
 			tally := map[string]*book{strong: {}, weak: {}}
 			for seed := uint64(1); seed <= 6; seed++ {
@@ -433,7 +433,7 @@ func TestDispenseProbe(t *testing.T) {
 	}
 }
 
-// TestSeamProbe: does an ace-v-ace BVR joust merge, across seeds and loads —
+// TestSeamProbe: does an expert-v-expert BVR joust merge, across seeds and loads —
 // the seam test's seed 11 stopped merging on the full-internal load.
 func TestSeamProbe(t *testing.T) {
 	probe(t)
@@ -441,7 +441,7 @@ func TestSeamProbe(t *testing.T) {
 		merged, resolved, never := 0, 0, 0
 		for seed := uint64(1); seed <= 12; seed++ {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("seamprobe%d", seed), Game: "air", Mode: "joust", Seed: seed,
-				Parameters: map[string]any{"missiles": true, "start": "bvr", "fuel": pounds, "bots": map[string]any{"ace": 2.0}}})
+				Parameters: map[string]any{"missiles": true, "start": "bvr", "fuel": pounds, "bots": map[string]any{"expert": 2.0}}})
 			if err != nil {
 				t.Fatal(err)
 			}

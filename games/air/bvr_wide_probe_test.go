@@ -53,17 +53,17 @@ func TestBvrWide(t *testing.T) {
 	if v := os.Getenv("AIR_BVR_SEEDS"); v != "" {
 		fmt.Sscanf(v, "%d", &seeds)
 	}
-	// ace v ace is here for its MAGAZINE, not its order (#225): the six-seed
+	// expert v expert is here for its MAGAZINE, not its order (#225): the six-seed
 	// gate in battery_bvr_test.go fires above 44 of 48 and this pairing sits at
 	// exactly 44, so a threshold nobody derived is one round from red on a
-	// rung whose spend had never been sampled deep. Two aces are the same
+	// rung whose spend had never been sampled deep. Two experts are the same
 	// jet, so no ordering is asserted of it below.
-	pairs := [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}, {"ace", "ace"}}
+	pairs := [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}, {"expert", "expert"}}
 	if os.Getenv("AIR_BVR_END") != "" {
 		pairs = [][2]string{{"superhuman", "novice"}} // the end rung alone, on request
 	}
 	if os.Getenv("AIR_BVR_MIRROR") != "" {
-		pairs = [][2]string{{"ace", "ace"}} // the magazine rung alone, on request
+		pairs = [][2]string{{"expert", "expert"}} // the magazine rung alone, on request
 	}
 	for _, pair := range pairs {
 		strong, weak := pair[0], pair[1]
@@ -84,8 +84,8 @@ func TestBvrWide(t *testing.T) {
 			if mirror {
 				bots = map[string]any{strong: 2.0} // one tier twice, not a 1.0 that overwrites itself
 			}
-			// The identifier carries BOTH tiers: on the strong name alone, ace v ace
-			// and ace v pilot would name the same sessions.
+			// The identifier carries BOTH tiers: on the strong name alone, expert v expert
+			// and expert v intermediate would name the same sessions.
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("bvrwide%s%s%d", strong, weak, seed),
 				Game: "air", Mode: "joust", Seed: seed,
 				Parameters: map[string]any{"missiles": true, "start": "bvr", "bots": bots}})
@@ -148,15 +148,15 @@ func TestBvrWide(t *testing.T) {
 		//
 		// The band SCALES with the sample (#106), and it is two deviations of
 		// the draw (2026-10-16). The margin between evenly matched jets wanders
-		// by about the square root of the fights: two aces read 28-18 over 48
-		// seeds, and the superhuman flying the ace's doctrine 19-27 on seeds
+		// by about the square root of the fights: two experts read 28-18 over 48
+		// seeds, and the superhuman flying the expert's doctrine 19-27 on seeds
 		// 1-48 and 22-21 on 49-96. The old band, 3*sqrt(n/24) or 4.2 at 48
 		// seeds, was under one deviation, so an even pair failed it about one
 		// run in four. Two deviations still catch the inversion this gate
 		// exists for: 11-35 when the superhuman jammed under every seeker.
 		//
 		// THE MAGAZINE GATE (#225), which lived at six seeds and could not.
-		// Measured over 48 seeds on the Fox 3 fit, six rounds a jet: two aces
+		// Measured over 48 seeds on the Fox 3 fit, six rounds a jet: two experts
 		// spend 8.08 AMRAAMs a fight with a deviation of 2.04, so n fights
 		// centre on 8.1n and wander by 2.04*sqrt(n). The allowance is three of
 		// those deviations.
@@ -167,10 +167,10 @@ func TestBvrWide(t *testing.T) {
 		// meaningful and quiet at that sample; the ladder now prints the number
 		// and this judges it, at 24 seeds, with the cap far above the line.
 		//
-		// The novice ripples by design and the pilot's long fights legitimately
-		// empty the rack (measured 8.90 a fight against the ace's 8.08), so only
+		// The novice ripples by design and the intermediate's long fights legitimately
+		// empty the rack (measured 8.90 a fight against the expert's 8.08), so only
 		// pairings where BOTH sides hold rounds are judged.
-		if weak != "novice" && weak != "pilot" {
+		if weak != "novice" && weak != "intermediate" {
 			if allowed := 8.1*float64(count) + 6.1*math.Sqrt(float64(count)); float64(spent) > allowed {
 				t.Errorf("bvr wide: %s v %s dumped magazines: %d of %d AMRAAMs spent over %d seeds, past an allowance of %.0f",
 					strong, weak, spent, carried, count, allowed)
@@ -189,7 +189,7 @@ func TestBvrWide(t *testing.T) {
 // TestMissileLadderWide is TestLadderDuel's missiles arm over 48 seeds.
 func TestMissileLadderWide(t *testing.T) {
 	wide(t)
-	for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+	for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
 		strong, weak := pair[0], pair[1]
 		wins, losses, trades, draws := 0, 0, 0, 0
 		for seed := uint64(1); seed <= 48; seed++ {

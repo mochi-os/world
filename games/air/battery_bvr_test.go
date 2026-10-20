@@ -27,9 +27,9 @@ func TestBvrLadder(t *testing.T) {
 	}
 	pairs := [][2]string{
 		{"superhuman", "novice"},
-		{"ace", "pilot"},
-		{"superhuman", "ace"},
-		{"ace", "ace"},
+		{"expert", "intermediate"},
+		{"superhuman", "expert"},
+		{"expert", "expert"},
 	}
 	results := map[string]*tally{}
 	for _, pair := range pairs {
@@ -115,9 +115,9 @@ func TestBvrLadder(t *testing.T) {
 	// The top rung: symmetric competent BVR neutralizes, so ordering is not
 	// demanded, only a sweep. Slack of two - six seeds cannot carry a strict gate
 	// (#46); TestBvrWide is the armed detector for a real inversion.
-	top := results["superhuman v ace"]
+	top := results["superhuman v expert"]
 	if top.weak > top.strong+2 {
-		t.Fatalf("the top rung inverted: ace beat superhuman %d-%d", top.weak, top.strong)
+		t.Fatalf("the top rung inverted: expert beat superhuman %d-%d", top.weak, top.strong)
 	}
 	for _, pair := range pairs {
 		r := results[pair[0]+" v "+pair[1]]
@@ -125,7 +125,7 @@ func TestBvrLadder(t *testing.T) {
 			t.Fatalf("%s v %s never closed inside 20 km: degenerate never-closing play (closest %.0f m)", pair[0], pair[1], r.closest)
 		}
 		// MAGAZINE DISCIPLINE IS NOT GATED HERE, and six seeds is why (#225).
-		// On the four-round fit spend was capped at 48, two aces averaged 6.69 a
+		// On the four-round fit spend was capped at 48, two experts averaged 6.69 a
 		// fight with a deviation of 1.43, so six fights centred on 40 and the cap
 		// itself stood only 2.2 deviations up. The gate that used to sit here,
 		// at 44, was 1.25 deviations above the mean - about one run in nine red

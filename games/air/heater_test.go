@@ -22,7 +22,7 @@ type shot struct {
 	fired              float64
 }
 
-// The two geometries the ace actually shot from in the 2026-09-06 joust, at
+// The two geometries the expert actually shot from in the 2026-09-06 joust, at
 // the real altitude: Heat abandons a round the instant its path reaches Y<=0,
 // so a probe run at sea level reports "no shot at any aspect" and means
 // nothing. swing is the target's MEASURED turn (the player was pulling 6.5 g
@@ -42,7 +42,7 @@ func recorded() []shot {
 // is drawn for that round. A jet at 30 degrees of alpha with the pilot it is
 // pulling onto 15 degrees above its nose has him 45 degrees off its flight
 // path, outside the seeker's 40 degree gimbal from there: a zone drawn off the
-// flight path came out empty for exactly this shot, which the stage 16 ace
+// flight path came out empty for exactly this shot, which the stage 16 expert
 // therefore never took (01a10e335a), and the server's round, launched along
 // the flight path plus 30 m/s along the nose, broke lock leaving the rail.
 func TestHeatAlongTheNose(t *testing.T) {
@@ -62,7 +62,7 @@ func TestHeatAlongTheNose(t *testing.T) {
 	}
 
 	// The server's launch, which every Go fight and multiplayer fly.
-	session := game.Session{Identifier: "nose", Game: "air", Mode: "furball", Capacity: 8, Seed: 1, Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"ace": 1.0}}}
+	session := game.Session{Identifier: "nose", Game: "air", Mode: "furball", Capacity: 8, Seed: 1, Parameters: map[string]any{"missiles": true, "weapons": "fox2", "bots": map[string]any{"expert": 1.0}}}
 	bots_live.Store(0)
 	made, err := New().Create(session)
 	if err != nil {
@@ -246,7 +246,7 @@ func TestHeatRecordedShots(t *testing.T) {
 }
 
 // TestHeaterRefusesTheSaturatingBeamShot is #104's gate. In the 2026-09-06
-// joust the ace threw four heaters at a beaming target in four seconds and
+// joust the expert threw four heaters at a beaming target in four seconds and
 // every seeker saturated within two. The launch gate was reading the ladder
 // as designed; the ladder was the thing that lied, because rung() reported
 // only the OUTERMOST arriving range and zoned() then accepted everything
@@ -312,7 +312,7 @@ func TestHeatFloorFlown(t *testing.T) {
 // 340 m out 10 degrees off the nose and heading 45 degrees across it at 210 kt, the
 // round arrives from the 300 m floor against the target flying on, and against one
 // breaking into the beam at launch only from about 398 m. Floored there as well, the
-// no-escape rung's edge refused this shot, and the scripted ace held the pair that
+// no-escape rung's edge refused this shot, and the scripted expert held the pair that
 // downed mimic in 10 of 24 slow one-circle fights.
 func TestHeatNoEscapeEdgeUnfloored(t *testing.T) {
 	shooter := round.Target{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 108}}
@@ -386,7 +386,7 @@ func TestHeatZoneCached(t *testing.T) {
 	// refuses exactly the shot the #60/#61 plume doctrine exists to take.
 	//
 	// The small step matters as much as the large one. A 0.25 tolerance band
-	// was tried here first and measured off the tier baseline (ace 13->12
+	// was tried here first and measured off the tier baseline (expert 13->12
 	// kills, superhuman 14->13, mean fight 15->30 s); exact equality
 	// reproduces the pre-cache numbers byte for byte for 1.1 ms a tick. This
 	// assertion is what stops the band coming back.
@@ -406,7 +406,7 @@ func zoning(t *testing.T) (*instance, *craft, *brain) {
 	t.Helper()
 	bots_live.Store(0)
 	made, err := (&Air{}).Create(game.Session{Identifier: "zoning", Game: "air", Mode: "joust", Seed: 3,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+		Parameters: map[string]any{"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -13,7 +13,7 @@ import (
 // merge. A fast coherent roll is readable; the sign changing is not, so this
 // counts roll REVERSALS in the four seconds around the pass, not roll rate.
 func TestMergeRoll(t *testing.T) {
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		total, worst := 0.0, 0.0
 		for seed := 1; seed <= 5; seed++ {
 			b := NewBandit(level, uint64(seed), 250000, "", false, false, "", 0, false)
@@ -82,10 +82,10 @@ func TestMergeRoll(t *testing.T) {
 		}
 		mean := total / 5
 		fmt.Printf("%-8s merge reversals: mean %.1f  worst %.0f\n", level, mean, worst)
-		// Gated for the top tiers only: novice and pilot dither at the merge and that
+		// Gated for the top tiers only: novice and intermediate dither at the merge and that
 		// is authentic. The lower tiers are printed so a regression in either
 		// direction stays visible.
-		if mean > 1 && (level == "ace" || level == "superhuman") {
+		if mean > 1 && (level == "expert" || level == "superhuman") {
 			t.Errorf("%s reverses its roll %.1f times per merge on average: a player cannot read which way it is turning", level, mean)
 		}
 	}

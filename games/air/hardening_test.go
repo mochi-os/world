@@ -167,7 +167,7 @@ func TestJettisonCooldown(t *testing.T) {
 func TestRoundsCeiling(t *testing.T) {
 	bots_live.Store(0)
 	made, err := (&Air{}).Create(game.Session{Identifier: "ceiling", Game: "air", Mode: "furball",
-		Capacity: 8, Seed: 4, Parameters: map[string]any{"bots": map[string]any{"pilot": 2.0}}})
+		Capacity: 8, Seed: 4, Parameters: map[string]any{"bots": map[string]any{"intermediate": 2.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}

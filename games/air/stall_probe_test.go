@@ -40,7 +40,7 @@ func TestStallProbe(t *testing.T) {
 	for _, reheat := range []float64{0, 1} {
 		bins := map[int]*bin{}
 		for _, entry := range []float64{230, 190, 160, 130} {
-			b := NewBandit("ace", 7, 250000, "", false, true, "fox2", 0, false)
+			b := NewBandit("expert", 7, 250000, "", false, true, "fox2", 0, false)
 			b.Spawn(flight.Vec3{Y: 4000}, flight.Vec3{X: entry})
 			m := b.craft.model
 			area := m.Airframe.Reference.Area

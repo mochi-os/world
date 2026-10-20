@@ -25,7 +25,7 @@ import (
 func TestSpawnClearsTheFight(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "clearance", Game: "air", Mode: "furball", Capacity: 8, Seed: 1,
-		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 4.0}}})
+		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 4.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +98,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 func TestSpawnSpreadsUnderCrowding(t *testing.T) {
 	g := New()
 	made, err := g.Create(game.Session{Identifier: "crowding", Game: "air", Mode: "furball", Capacity: 32, Seed: 2,
-		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 24.0}}})
+		Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 24.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -12,10 +12,10 @@ import (
 // TestScriptLadder: the scripted doctrine against mimic, the scripted
 // pilot of the user's own fights, from the joust's real start - the difficulty
 // target in numbers. The user should win most fights against the novice, lose
-// most against the pilot, and rarely or never beat the ace or the superhuman;
-// mimic is a little weaker than the user, so the ace and the superhuman lose at
-// most one in sixteen to it (without the vertical pass the ace lost two), the
-// pilot wins more than it loses and less than the ace, and the novice loses
+// most against the intermediate, and rarely or never beat the expert or the superhuman;
+// mimic is a little weaker than the user, so the expert and the superhuman lose at
+// most one in sixteen to it (without the vertical pass the expert lost two), the
+// intermediate wins more than it loses and less than the expert, and the novice loses
 // more than it wins. Measured over 32 fights each
 // when this was written, won and lost: 8/21, 23/9, 30/1, 29/1; stage 0 read
 // 4/23, 7/21, 14/13, 12/14. That ladder was flattered: mimic's heater zone was
@@ -27,9 +27,9 @@ import (
 // height off his: 6/26, 18/12, 32/0, 30/1, and in wind 4/27, 21/11, 31/1,
 // 32/0.
 //
-// Flown on 64 fights a tier. On 16 the pilot's row read 9/7, and the slow
+// Flown on 64 fights a tier. On 16 the intermediate's row read 9/7, and the slow
 // clear turned it red at 7/8 by flipping two fights, while over 128 in both
-// airs the pilot read 71/54 against 72/54 before it: sixteen measured two
+// airs the intermediate read 71/54 against 72/54 before it: sixteen measured two
 // coin flips, not the tier.
 //
 // The novice's row flies unwarned, which sees a heater only 1.8 s after it
@@ -44,14 +44,14 @@ import (
 // The superhuman may lose 1 in 6 (ruled 2026-10-13). With both jets on their
 // fight weight and mimic carrying the Fox 2 preset's six heaters, the slow
 // nose-to-nose gun pass left two outcomes: cleared, it keeps the bubble and
-// loses 10 of 64 to his close heaters, where the ace is held to 1 in 16;
+// loses 10 of 64 to his close heaters, where the expert is held to 1 in 16;
 // turned through, it loses 7 and passes inside the bubble in 22 of 64. The
 // bubble wins.
 func TestScriptLadder(t *testing.T) {
 	heavy(t)
 	const fights = 64
 	net := map[string]int{}
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		n, name := 0, "mimic"
 		if level == "novice" {
 			name = "unwarned"
@@ -73,11 +73,11 @@ func TestScriptLadder(t *testing.T) {
 			if b.downed >= b.lost {
 				t.Errorf("the novice won %d and lost %d: the user should win most fights against it", b.downed, b.lost)
 			}
-		case "pilot":
+		case "intermediate":
 			if b.downed <= b.lost {
-				t.Errorf("the pilot won %d and lost %d: the user should lose most fights against it", b.downed, b.lost)
+				t.Errorf("the intermediate won %d and lost %d: the user should lose most fights against it", b.downed, b.lost)
 			}
-		case "ace":
+		case "expert":
 			if b.lost > fights/16 {
 				t.Errorf("the %s lost %d of %d: the user should rarely or never beat it", level, b.lost, fights)
 			}
@@ -87,8 +87,8 @@ func TestScriptLadder(t *testing.T) {
 			}
 		}
 	}
-	if net["pilot"] >= net["ace"] {
-		t.Errorf("the pilot's wins less its losses are %d and the ace's %d: the ladder does not climb", net["pilot"], net["ace"])
+	if net["intermediate"] >= net["expert"] {
+		t.Errorf("the intermediate's wins less its losses are %d and the expert's %d: the ladder does not climb", net["intermediate"], net["expert"])
 	}
 }
 
@@ -115,10 +115,10 @@ func circled(i *instance, bot, n int, one bool, speed float64) {
 	i.aircraft[bot].brain.routine.passed = true
 }
 
-// TestScriptCircles: the fights the user beat the scripted ace in, joined
+// TestScriptCircles: the fights the user beat the scripted expert in, joined
 // already, against mimic. 01a10e5e was a one-circle fight the pilot won slow
 // while the bandit held full burner at 460 kt, and 01a10e335a a first turn won
-// on a tone shot at 33 degrees of alpha. The ace and the superhuman must win at
+// on a tone shot at 33 degrees of alpha. The expert and the superhuman must win at
 // least three times as many as they lose in each, and twice as many in the slow
 // one-circle (ruled 2026-10-13): there the two jets meet nose to nose on the
 // gun at 165-200 kt, and against mimic on the Fox 2 preset's six heaters and
@@ -137,7 +137,7 @@ func TestScriptCircles(t *testing.T) {
 		margin int
 		slack  int
 	}{{"slow two-circle", false, 108, 3, 0}, {"slow one-circle", true, 108, 2, 1}, {"fast one-circle", true, 230, 3, 0}} {
-		for _, level := range []string{"ace", "superhuman"} {
+		for _, level := range []string{"expert", "superhuman"} {
 			n := 0
 			b := sweepFrom(t, level, "furball", func() flyer {
 				n++
@@ -157,10 +157,10 @@ func TestScriptCircles(t *testing.T) {
 // or away from it, or points at it and turns toward its side inside 600 m (a
 // pilot who turns away that hard at 1.6 km opens the range and never goes by
 // at all); and a second and a half after the pass it is fighting, not still
-// flying the run-in. The ace and the superhuman run in at a height off his and
+// flying the run-in. The expert and the superhuman run in at a height off his and
 // pass at 1.3 bubbles or more, so the bubble never costs them the lead turn.
 func TestScriptPass(t *testing.T) {
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		for seed := uint64(1); seed <= 8; seed++ {
 			for _, offset := range []float64{0, 300, -300} {
 				for _, pilot := range []string{"straight", "pursuit", "late", "toward"} {
@@ -172,7 +172,7 @@ func TestScriptPass(t *testing.T) {
 					fmt.Printf("%-44s closest %4.0f m  roll %4.0f  reversed %-5v plays %v after %s\n", name, got.closest, got.roll, got.reversed, got.plays, got.after)
 					if got.closest < bubble {
 						t.Errorf("%s: passed %.0f m from him, inside the bubble", name, got.closest)
-					} else if (level == "ace" || level == "superhuman") && got.closest < 1.3*bubble {
+					} else if (level == "expert" || level == "superhuman") && got.closest < 1.3*bubble {
 						t.Errorf("%s: passed %.0f m from him: the instructor tiers build the separation into the run-in, so the last-second climb never has to fire", name, got.closest)
 					}
 					if got.after == "line" || got.after == "lead" || got.after == "hold" {
@@ -189,7 +189,7 @@ func TestScriptPass(t *testing.T) {
 // fight, the gun, the break, the regain), not the one word "script" for the
 // whole fight, which would tell a debrief nothing.
 func TestScriptRecordsItsBranch(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, true)
+	b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, true)
 	b.Spawn(flight.Vec3{X: -2750, Y: 4572}, flight.Vec3{X: 220})
 	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
 	pm.State = flight.Level(pm, flight.Vec3{X: 2750, Y: 4572}, flight.Vec3{X: -1}, 220, fuel)
@@ -232,7 +232,7 @@ func TestScriptFliesTheAir(t *testing.T) {
 		{"with a tailwind, under the floor", 15, 66, false, true},
 	}
 	for _, c := range cases {
-		b := NewBandit("ace", 1, 250000, "", false, true, "fox2", 0, true)
+		b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, true)
 		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: c.wind}, Wrap: 250000}
 		b.Air(air)
 		b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: c.airspeed})
@@ -382,7 +382,7 @@ func approached(t *testing.T, level string, seed uint64, entry, offset float64, 
 	return out
 }
 
-// TestScriptClearsTheCrossing: after the merge the pilot tier and the novice
+// TestScriptClearsTheCrossing: after the merge the intermediate tier and the novice
 // keep a crossing jet outside the bubble. He crosses the bandit's path at 60,
 // 90 or 120 degrees on a course that would meet it four or five seconds on;
 // the fight law alone points the lift vector at him and passes at 93-149 m.
@@ -417,7 +417,7 @@ func TestScriptClearsTheCrossing(t *testing.T) {
 		}
 		return least
 	}
-	for _, level := range []string{"novice", "pilot"} {
+	for _, level := range []string{"novice", "intermediate"} {
 		for _, angle := range []float64{60, 90, 120} {
 			for _, out := range []float64{4, 5} {
 				if least := cross(level, 180, 180, out, angle, 0, 4500); least < bubble {
@@ -440,12 +440,12 @@ func TestScriptClearsTheCrossing(t *testing.T) {
 
 // TestScriptClearsTheHeadOn: in a guns match the fight comes back round to a
 // second merge, and the instructor tiers, whose guard flies only on a gun
-// attack from astern, met it on the gun. A jet meets the ace or the superhuman
+// attack from astern, met it on the gun. A jet meets the expert or the superhuman
 // head-on after the merge as it did there, the bandit at 301 kt and he at 282,
 // dead ahead or 10 or 20 degrees off its nose, level, climbing or diving 10
 // degrees, 5.5 or 7 s out: it goes by at 150 m or more.
 func TestScriptClearsTheHeadOn(t *testing.T) {
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		for _, out := range []float64{5.5, 7} {
 			for _, angle := range []float64{180, 170, 160} {
 				for _, dive := range []float64{-10, 0, 10} {
@@ -492,7 +492,7 @@ func TestScriptClearsTheSlowGunPass(t *testing.T) {
 	}
 }
 
-// TestScriptMergesClear: on their fight weight the pilot tier and the novice,
+// TestScriptMergesClear: on their fight weight the intermediate tier and the novice,
 // flying their run-in level, met mimic at the merge at 93-149 m, mimic's lead
 // turn closing the pass faster than they saw it. Those fights flown again to
 // the merge: every one goes by at 150 m or more.
@@ -503,10 +503,10 @@ func TestScriptMergesClear(t *testing.T) {
 		guns, wind bool
 		seeds      []uint64
 	}{
-		{"pilot", false, false, []uint64{40, 64}},
-		{"pilot", false, true, []uint64{4, 8, 12, 40, 56, 58, 64}},
-		{"pilot", true, false, []uint64{40, 64}},
-		{"pilot", true, true, []uint64{4, 56, 64}},
+		{"intermediate", false, false, []uint64{40, 64}},
+		{"intermediate", false, true, []uint64{4, 8, 12, 40, 56, 58, 64}},
+		{"intermediate", true, false, []uint64{40, 64}},
+		{"intermediate", true, true, []uint64{4, 56, 64}},
 		{"novice", false, false, []uint64{56}},
 		{"novice", false, true, []uint64{56}},
 		{"novice", true, false, []uint64{56}},
@@ -534,7 +534,7 @@ func TestScriptMergesClear(t *testing.T) {
 // downward across his height, and one above it never upward; against a jet
 // that is not pointing at it, under is still taken for the gravity it adds
 // (the crossings in TestScriptClearsTheCrossing). The case is mimic climbing
-// nose on at the ace at 151 kt, 950 ft below it, 4.6 s from a collision.
+// nose on at the expert at 151 kt, 950 ft below it, 4.6 s from a collision.
 func TestEscapeKeepsHisHeight(t *testing.T) {
 	me := &flight.State{Position: flight.Vec3{Y: 1700}, Velocity: flight.Vec3{X: 78}}
 	miss := flight.Vec3{Y: 20}
@@ -551,13 +551,13 @@ func TestEscapeKeepsHisHeight(t *testing.T) {
 
 // TestScriptClearsAPursuerAway: a jet 300 m below the slow bandit climbing at
 // it nose on and turning after it at up to 3 g follows wherever it goes, so the
-// clear goes up, away from his height, never down into him (the ace in a guns
+// clear goes up, away from his height, never down into him (the expert in a guns
 // joust took under for gravity and passed mimic at 66 m). Judged while he is
 // below and his nose is on the bandit: once he has climbed past it a clear
 // takes the way his climb leaves open, and with a 2-bubble margin a second
 // one does, down while his climb carries him up through its height.
 func TestScriptClearsAPursuerAway(t *testing.T) {
-	for _, level := range []string{"pilot", "ace"} {
+	for _, level := range []string{"intermediate", "expert"} {
 		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 80})
 		b.craft.brain.routine.passed = true
@@ -597,11 +597,11 @@ func TestScriptClearsAPursuerAway(t *testing.T) {
 	}
 }
 
-// TestOvertakeClears: the planner's ace, 1,200 m behind a jet flying straight
+// TestOvertakeClears: the planner's expert, 1,200 m behind a jet flying straight
 // and slow, overtaking at 130 m/s, does not fly into it: it goes by at 150 m
 // or more. Without the overtake reflex it passed through.
 func TestOvertakeClears(t *testing.T) {
-	for _, level := range []string{"pilot", "ace", "superhuman"} {
+	for _, level := range []string{"intermediate", "expert", "superhuman"} {
 		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
 		b.craft.brain.scripted = false // the planner, as every server bot flies it
 		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 240})
@@ -630,7 +630,7 @@ func TestOvertakeClears(t *testing.T) {
 // height under 2,500 m, pinned the nose up and the gun off him. The water
 // belongs to the deck recovery, which takes the stick in a dive near it.
 func TestScriptLowFight(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	b.craft.brain.routine.passed = true
 	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
@@ -648,7 +648,7 @@ func TestScriptLowFight(t *testing.T) {
 		t.Errorf("at 6,560 ft behind a jet dead ahead the stick never came below %.2f: something other than the fight law holds it", least)
 	}
 
-	low := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	low := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	dive := flight.Vec3{X: math.Cos(0.5), Y: -math.Sin(0.5)}
 	low.Spawn(flight.Vec3{Y: 700}, dive.Scale(200))
 	low.craft.brain.routine.passed = true
@@ -669,7 +669,7 @@ func TestScriptLowFight(t *testing.T) {
 }
 
 // TestScriptStraight: against a jet that is not turning. On the gun behind one
-// 300 m dead ahead the scripted ace presses on a good part of four seconds with
+// 300 m dead ahead the scripted expert presses on a good part of four seconds with
 // its nose within 1.5 degrees of him. It rolled through 360 degrees, 33 degrees
 // off him, and never fired when the lift vector chased the direction of a
 // 3-degree offset; 116 frames at 1.9 degrees with the in-plane correction at
@@ -677,7 +677,7 @@ func TestScriptLowFight(t *testing.T) {
 // pursues him inside 4 km and spends under 70 s of four minutes below 194 kt;
 // at full fighting alpha it cycled to the regain's floor and back for 93.
 func TestScriptStraight(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: 200})
 	player := flight.Level(b.craft.model, flight.Vec3{X: 300, Y: 4572}, flight.Vec3{X: 1}, 200, 2500)
 	words := make([]float64, flight.Size)
@@ -698,7 +698,7 @@ func TestScriptStraight(t *testing.T) {
 		t.Errorf("a jet 300 m dead ahead: the trigger held %d frames of 240, the nose up to %.1f degrees off him after the first second", firing, worst)
 	}
 
-	c := NewBandit("ace", 9, 250000, "", false, false, "", 0, false)
+	c := NewBandit("expert", 9, 250000, "", false, false, "", 0, false)
 	c.Spawn(flight.Vec3{X: 2778, Y: altitude}, flight.Vec3{X: -220})
 	target := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
 	target.State.Position, target.State.Velocity, target.State.Attitude = flight.Vec3{X: -2778, Y: altitude}, flight.Vec3{X: 170}, flight.Look(flight.Vec3{X: 1})
@@ -751,7 +751,7 @@ func astern(level string, gap float64, firing bool) (plays []string, lit []bool)
 	return plays, lit
 }
 
-// TestScriptPlumeFloor: with the pilot astern and his nose on it, the ace and
+// TestScriptPlumeFloor: with the pilot astern and his nose on it, the expert and
 // the superhuman fly cold to hide the plume from his heater, but not inside his
 // heater's fuse floor, where no round he fires arrives and the gun is the
 // threat: there the burner buys the turn.
@@ -765,7 +765,7 @@ func TestScriptPlumeFloor(t *testing.T) {
 		}
 		return float64(n) / float64(len(lit))
 	}
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		if _, lit := astern(level, 200, false); share(lit, true) < 0.9 {
 			t.Errorf("%s with him 200 m astern, inside his heater's floor: lit %.0f%% of the time, want the burner", level, 100*share(lit, true))
 		}
@@ -775,11 +775,11 @@ func TestScriptPlumeFloor(t *testing.T) {
 	}
 }
 
-// TestScriptJinks: his gun firing and tracking from 300 m astern, the ace and
+// TestScriptJinks: his gun firing and tracking from 300 m astern, the expert and
 // the superhuman jink out of it, the planner's guns defence read at their own
 // cue and cadence; the novice never sees it coming.
 func TestScriptJinks(t *testing.T) {
-	for _, level := range []string{"novice", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "expert", "superhuman"} {
 		plays, _ := astern(level, 300, true)
 		first := -1
 		for tick, play := range plays {

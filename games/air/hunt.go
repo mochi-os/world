@@ -36,16 +36,16 @@ func pressing(library int) press {
 	case library == 2:
 		return press{depth: 0.7, look: 180, withhold: false}
 	default:
-		// The ace and the machine share this rung, and the sharing is the
+		// The expert and the machine share this rung, and the sharing is the
 		// point. The machine used to withhold to 0.15 on its own branch, on
 		// the reasoning that a perfect pilot can afford to hold for the
 		// no-escape shot. Against a SYMMETRIC opponent that is a losing trade:
 		// depth positions the shot between Escape and Max, so a lower one
-		// fires LATER, and at a 30,000 ft head-on the ace's 0.35 puts its
+		// fires LATER, and at a 30,000 ft head-on the expert's 0.35 puts its
 		// missile away about 10 km of closure earlier -- every time. The
 		// superhuman was therefore always the one defending first, and a jet
 		// cranking off a launch warning is not pointing at anything it can
-		// shoot. Measured at 48 seeds, superhuman v ace: 0.15 lost 18-29, 0.25
+		// shoot. Measured at 48 seeds, superhuman v expert: 0.15 lost 18-29, 0.25
 		// still lost 15-25, 0.35 neutralises at 21-21 (#106). BVR shot depth
 		// cannot be a tier axis, so the machine's branch was left returning
 		// exactly this struct and has now been deleted along with the flag it
@@ -391,9 +391,9 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		// pure range, and fox3() checks the magazine, the emitter, the lock and
 		// the team - nothing anywhere in the AMRAAM path asked where the target
 		// sat relative to the nose. Measured over 12 BVR seeds, superhuman v
-		// ace: both released at the same distance (13,282 m against 13,735 m)
+		// expert: both released at the same distance (13,282 m against 13,735 m)
 		// and the same depth in the window (51% against 40%), but the machine
-		// fired with the target 40.9 degrees off the nose against the ace's
+		// fired with the target 40.9 degrees off the nose against the expert's
 		// 22.9, and converted 0.057 kills per round against 0.209. A round
 		// inherits the shooter's velocity (round.New), so one released well off
 		// boresight turns hard off the rail and spends the energy it needed for
@@ -411,8 +411,8 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		if span > 1 {
 			if line.Dot(nose) > 0 {
 				// Half the cosine's bite, not all of it. The full cos(off) fixed
-				// the top rung (superhuman v ace 1-5 -> 5-1) but cost the ace
-				// six wins against the pilot at 48 seeds (33-13 -> 27-21): an
+				// the top rung (superhuman v expert 1-5 -> 5-1) but cost the expert
+				// six wins against the intermediate at 48 seeds (33-13 -> 27-21): an
 				// off-angle shot is worse, not worthless, and the AMRAAM has a
 				// datalink and its own radar to recover what the turn costs.
 				want *= 0.5 + 0.5*line.Dot(nose)
@@ -473,7 +473,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 }
 
 // poise is the per-level defensive execution character. The syllabus is
-// knowledge-uniform from the pilot up - beam, dispense, re-square - and only
+// knowledge-uniform from the intermediate up - beam, dispense, re-square - and only
 // execution separates the levels. The novice never beams.
 type poise struct {
 	tolerance float64 // beam error bound, radians: sampled once per engagement
@@ -537,7 +537,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	// cold, predictable stern — under the #95 energy model eleven of fifteen
 	// wide-BVR losses died mid-notch at ~2 km with rounds still aboard,
 	// perfect perception keeping the machine on permanent defence while the
-	// half-blind ace fought on. From the pilot up, once any hostile is inside
+	// half-blind expert fought on. From the intermediate up, once any hostile is inside
 	// the seam the WVR arbiter owns the flight path: fight the shooter, and
 	// let the terminal evade break the round.
 	if b.skill.library >= 2 {
@@ -606,8 +606,8 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
-	// No bot arms its jammer: the superhuman flies the ace's doctrine, and the
-	// ace never carried one. Measured at 48 seeds, superhuman v ace
+	// No bot arms its jammer: the superhuman flies the expert's doctrine, and the
+	// expert never carried one. Measured at 48 seeds, superhuman v expert
 	// (2026-10-15): arming it while a seeker was up and beyond 6 km, as the
 	// superhuman did, lost 11-35, and 19-27 with it off. Home-on-jam overrides
 	// the beam and the chaff, and the datalink jamming denies no longer
@@ -615,7 +615,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	// held the jet and no seeker was up measured 19-26, no better than never:
 	// the shooter's lock starves and drops, the jammer falls quiet with
 	// nothing painting it, and a bot locks again on the next tick. Given to the
-	// ace (2026-09-08), it took the symmetric BVR seam from 3 of 4 seeds
+	// expert (2026-09-08), it took the symmetric BVR seam from 3 of 4 seeds
 	// merging or resolving to 1 of 4, while a bot's radar ignored jamming.
 	return true
 }

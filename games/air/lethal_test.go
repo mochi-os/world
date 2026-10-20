@@ -19,7 +19,7 @@ func TestDroneKill(t *testing.T) {
 	heavy(t)
 	const seconds = 180
 	ladder := map[string]int{}
-	for _, level := range []string{"novice", "pilot", "ace", "superhuman"} {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		kills, tries := 0, 0
 		var times []float64
 		advantage, firing, shots := 0, 0, 0
@@ -109,7 +109,7 @@ func TestDroneKill(t *testing.T) {
 	}
 	// One kill of slack per pair: deterministic single measurements put one-seed
 	// margins below resolution. The inversion this guards was 1/3/7/2-class.
-	for _, pair := range [][2]string{{"novice", "pilot"}, {"pilot", "ace"}, {"ace", "superhuman"}} {
+	for _, pair := range [][2]string{{"novice", "intermediate"}, {"intermediate", "expert"}, {"expert", "superhuman"}} {
 		if ladder[pair[1]] < ladder[pair[0]]-1 {
 			t.Errorf("lethality inverts: %s kills %d, %s kills %d — the better pilot converts less", pair[0], ladder[pair[0]], pair[1], ladder[pair[1]])
 		}

@@ -16,7 +16,7 @@ import (
 )
 
 // TestMidladderMeasure re-runs the ladder's middle pairings at twenty seeds
-// to separate ordering from sample noise (ace v pilot came out 2-3 at six).
+// to separate ordering from sample noise (expert v intermediate came out 2-3 at six).
 // A measurement, not a gate: it runs only with BVR_MIDLADDER=1 set, prints
 // per-seed outcomes, and asserts nothing.
 func TestMidladderMeasure(t *testing.T) {
@@ -26,9 +26,9 @@ func TestMidladderMeasure(t *testing.T) {
 	heavy(t)
 	pairs := [][2]string{
 		{"superhuman", "novice"},
-		{"pilot", "novice"},
-		{"ace", "pilot"},
-		{"superhuman", "ace"},
+		{"intermediate", "novice"},
+		{"expert", "intermediate"},
+		{"superhuman", "expert"},
 	}
 	for _, pair := range pairs {
 		strong, weak := pair[0], pair[1]

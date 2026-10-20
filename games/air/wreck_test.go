@@ -23,7 +23,7 @@ func bank(s *flight.State) float64 {
 // coast flies a dead bandit for the given seconds and reports where it got to.
 func coast(t *testing.T, throttle, reheat, lean float64, seconds int) (speed, rolled, fell float64) {
 	t.Helper()
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 	b.craft.latest = flight.Inputs{Throttle: throttle, Reheat: reheat}
 	high := b.State().Position.Y
@@ -75,7 +75,7 @@ func TestCoastSpirals(t *testing.T) {
 // ONE descent angle for as long as it took to reach the water. Whatever the
 // model does, it must not do that.
 func TestCoastVaries(t *testing.T) {
-	b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 	b.craft.latest = flight.Inputs{Throttle: 0.7}
 	var speeds []float64
@@ -99,7 +99,7 @@ func TestCoastVaries(t *testing.T) {
 // than spooling to idle the instant he dies.
 func TestDriftHoldsTheLevers(t *testing.T) {
 	made, err := (&Air{}).Create(game.Session{Identifier: "wreck", Game: "air", Mode: "furball", Capacity: 8, Seed: 1,
-		Parameters: map[string]any{"bots": map[string]any{"ace": 1.0}}})
+		Parameters: map[string]any{"bots": map[string]any{"expert": 1.0}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestDriftHoldsTheLevers(t *testing.T) {
 	// wreck left hot and one left cold, and the hot one must end faster.
 	fly := func(throttle, reheat float64) float64 {
 		made, err := (&Air{}).Create(game.Session{Identifier: "drift", Game: "air", Mode: "furball", Capacity: 8, Seed: 2,
-			Parameters: map[string]any{"bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

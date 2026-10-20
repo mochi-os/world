@@ -115,7 +115,7 @@ func TestYouModel(t *testing.T) {
 
 func TestFloaterWager(t *testing.T) {
 	heavy(t)
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		var misses, wobbles, drifts, chances, speeds, tracked []float64
 		cleared, sampled, shooting, tracking, near := 0, 0, 0, 0, 0
 		for seed := uint64(1); seed <= 3; seed++ {

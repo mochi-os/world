@@ -48,7 +48,7 @@ type pick struct {
 }
 
 // TestStalemateAttribution asks what separates the guns fights that end from
-// the ones that do not. TestLadderDuel's ace-v-pilot guns arm reads 4-0 with
+// the ones that do not. TestLadderDuel's expert-v-intermediate guns arm reads 4-0 with
 // TWELVE of sixteen no result at 135 s: not a collapse, two jets that cannot
 // finish each other. The aero cap is already excluded (the energy floor never
 // arms, and the cap is flat across outcomes), so this compares the decided
@@ -71,7 +71,7 @@ func TestStalemateAttribution(t *testing.T) {
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("stale%d", seed),
 			Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 			Parameters: map[string]any{"missiles": false, "weapons": "guns",
-				"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+				"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -82,7 +82,7 @@ func TestStalemateAttribution(t *testing.T) {
 			if c == nil || c.brain == nil {
 				continue
 			}
-			if c.brain.skill.library == skills["ace"].library && c.brain.skill.wander == skills["ace"].wander {
+			if c.brain.skill.library == skills["expert"].library && c.brain.skill.wander == skills["expert"].wander {
 				side[0] = c
 			} else {
 				side[1] = c
@@ -246,7 +246,7 @@ func TestStalemateAttribution(t *testing.T) {
 		}
 		d := float64(n)
 		fmt.Printf("\n=== %s (%d fights) === ended %.0f s, closest %.0f m\n", label, n, ended/d, closest/d)
-		for a, who := range []string{"ace  ", "pilot"} {
+		for a, who := range []string{"expert", "intermediate"} {
 			fmt.Printf("  %s inside 900 m %5.1f%% | on solution %5.2f%% | rounds %5.0f | speed mean %3.0f slowest %3.0f fastest %3.0f kt\n",
 				who, near[a]/d, solution[a]/d, rounds[a]/d, mean[a]/d, slow[a]/d, fast[a]/d)
 			// What the rounds DO (#42). The 5 deg solution share is a 52 m cone

@@ -553,7 +553,7 @@ func TestListingRulesCopied(t *testing.T) {
 	parameters := map[string]any{
 		"missiles": true,
 		"cheats":   map[string]any{"fuel": true},
-		"bots":     map[string]any{"ace": 1.0}, // creator-internal: must never be listed
+		"bots":     map[string]any{"expert": 1.0}, // creator-internal: must never be listed
 	}
 	s, err := sessions_create("echo", "test", "rules copy", 2, parameters)
 	if err != nil {

@@ -131,12 +131,12 @@ func geometry(attacker, bandit *flight.State) (rangeM, angleOff, myEnergy, hisEn
 }
 
 // TestDoctrineUnderHumanPressure is diagnostic, not a gate: it prints what the
-// ace CHOOSES while a crude attacker sits on its tail. It fails only on the
+// expert CHOOSES while a crude attacker sits on its tail. It fails only on the
 // claim the report makes concrete — that the top skill offers no threat and no
 // escape.
 func TestDoctrineUnderHumanPressure(t *testing.T) {
 	heavy(t)
-	levels := []string{"ace", "superhuman"}
+	levels := []string{"expert", "superhuman"}
 	for _, level := range levels {
 		modes := map[string]int{}
 		audit := map[string]int{}
@@ -258,22 +258,22 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		fmt.Println()
 		fmt.Printf("  override audit: %v\n", audit)
 		// BOTH tiers are watched now (#223). This clause was scoped `level ==
-		// "ace"`, so the superhuman arm ran, printed, and was never checked -
-		// and it is shot down TWICE where the ace it is defined as a superset
+		// "expert"`, so the superhuman arm ran, printed, and was never checked -
+		// and it is shot down TWICE where the expert it is defined as a superset
 		// of is shot down not at all. Measured rather than assumed: neither
 		// tier can flinch here at all (the first guard refuses beyond 1,200 m
 		// and the scripted attacker kills from 1,201, so every evaluation of
 		// both fatal fights ended there), the two traces are identical to a
-		// tenth of a g until the burst lands, and giving the machine the ace's
+		// tenth of a g until the burst lands, and giving the machine the expert's
 		// wander of 0.007 takes it from 2 of 24 to 0 of 24. So the machine dies
 		// because it flies a PERFECTLY CLEAN LINE that a held trigger converges
 		// on, which is the residue of the phenomenon bot.go's jink comment
 		// already records - that same scenario killed it 8 of 24 before #46's
 		// held quadrant, and this is what is left. The one thing that removes
-		// it is wander, and TestSuperhumanIsTheAceWithoutHumanLimits names
+		// it is wander, and TestSuperhumanIsTheExpertWithoutHumanLimits names
 		// wander a human limit, so it is not available. The allowance is
 		// therefore the measured honest value per tier, not an ideal.
-		allowed := 1 // the ace: measured 0, with a fight of slack
+		allowed := 1 // the expert: measured 0, with a fight of slack
 		if level == "superhuman" {
 			// Zero slack is deliberate here and is safe BECAUSE these sims are
 			// seeded and deterministic: 2 is what the tier reads today, and a
@@ -286,30 +286,30 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			t.Errorf("%s was shot down in %d of 24 by the crude script against an allowance of %d: the defence regressed",
 				level, lost, allowed)
 		}
-		if level == "ace" {
+		if level == "expert" {
 			// The gate carries only the DEFENCE claims it can honestly make (#65):
 			// the old outcome clause counted being shot down as an outcome, so the
-			// #41-#61 defence arc — by removing the ace's last death — flipped it
+			// #41-#61 defence arc — by removing the expert's last death — flipped it
 			// red as a side effect of a pure improvement (at the clause's birth
-			// the ace was tracked 83% and shot down 5 of 6). The offence numbers
+			// the expert was tracked 83% and shot down 5 of 6). The offence numbers
 			// stay printed above as the record: the counter-offensive has never
 			// existed (converted 0.0% at every point in history). The promised
 			// re-arm of `downed > 0` on the pursuit family's landing was measured
-			// and DECLINED (2026-08-23): with the whole family in, the ace reads
+			// and DECLINED (2026-08-23): with the whole family in, the expert reads
 			// downed 0/24 and converted 0.0% here while never being shot down —
 			// each landed fix addresses a losing pattern this near-perfect
 			// pursuer never exhibits, and REVERSING it is an unbuilt capability
 			// (its one flaw is sight loss under g), tracked as its own task. A
 			// gate red at birth is a demand, not a regression guard.
 			if 100*float64(tracked)/math.Max(1, float64(total)) > 20 {
-				t.Errorf("ace tracked in the attacker's rear quarter %.0f%% of the fight: the prey era is returning", 100*float64(tracked)/math.Max(1, float64(total)))
+				t.Errorf("expert tracked in the attacker's rear quarter %.0f%% of the fight: the prey era is returning", 100*float64(tracked)/math.Max(1, float64(total)))
 			}
 		}
 	}
 }
 
-// TestSuperhumanIsTheAceWithoutHumanLimits pins the tier design settled
-// 2026-09-08: the machine is not a different pilot, it is the ace with the
+// TestSuperhumanIsTheExpertWithoutHumanLimits pins the tier design settled
+// 2026-09-08: the machine is not a different pilot, it is the expert with the
 // human dials at zero. Every other dial must match.
 //
 // It covers the skill TABLE. Beyond the table the machine flag switches off
@@ -318,11 +318,11 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 //
 // This exists because divergence is expensive and quiet. #106 spent a full
 // 48-seed sweep discovering that the machine's own BVR shot depth lost 18-29
-// to the ace and only drew once aligned; open (700 v 600) and trigger
+// to the expert and only drew once aligned; open (700 v 600) and trigger
 // (0.03 v 0.06) were two more machine-only doctrine numbers that nothing was
 // watching. A new field added to the table that differs between these two
 // rows fails here rather than in a ladder inversion three months later.
-func TestSuperhumanIsTheAceWithoutHumanLimits(t *testing.T) {
+func TestSuperhumanIsTheExpertWithoutHumanLimits(t *testing.T) {
 	// The dials that MAY differ, because each is a human limit switched off.
 	human := map[string]bool{
 		"delay":   true, // perception latency
@@ -332,33 +332,33 @@ func TestSuperhumanIsTheAceWithoutHumanLimits(t *testing.T) {
 		"glare":   true, // the eye's own glare up-sun
 		"machine": true, // the flag that switches off the rest
 	}
-	ace, machine := reflect.ValueOf(mind("ace").skill), reflect.ValueOf(mind("superhuman").skill)
-	fields := ace.Type()
+	expert, machine := reflect.ValueOf(mind("expert").skill), reflect.ValueOf(mind("superhuman").skill)
+	fields := expert.Type()
 	for at := 0; at < fields.NumField(); at++ {
 		name := fields.Field(at).Name
 		if human[name] {
-			if ace.Field(at).Equal(machine.Field(at)) {
-				t.Errorf("%s is listed as a human limit but the machine carries the ace's value (%v): "+
+			if expert.Field(at).Equal(machine.Field(at)) {
+				t.Errorf("%s is listed as a human limit but the machine carries the expert's value (%v): "+
 					"either the machine is not free of it, or it is not a human limit",
-					name, ace.Field(at))
+					name, expert.Field(at))
 			}
 			continue
 		}
-		if !ace.Field(at).Equal(machine.Field(at)) {
-			t.Errorf("%s diverges: ace %v, superhuman %v. If this is a human limit, add it to the list above "+
+		if !expert.Field(at).Equal(machine.Field(at)) {
+			t.Errorf("%s diverges: expert %v, superhuman %v. If this is a human limit, add it to the list above "+
 				"with the reason; otherwise the tiers have re-acquired a doctrine axis (#106).",
-				name, ace.Field(at), machine.Field(at))
+				name, expert.Field(at), machine.Field(at))
 		}
 	}
 }
 
 // TestFlinchHoldsAWalkedBurst: with his gun lining up from 400 m astern, the
-// ace and the superhuman both jink - unless their own burst is walking onto
+// expert and the superhuman both jink - unless their own burst is walking onto
 // him, when both hold the track and take the exchange. The superhuman reads
 // the cue sooner, which is perception; whether to hold is doctrine, and it is
-// the ace's.
+// the expert's.
 func TestFlinchHoldsAWalkedBurst(t *testing.T) {
-	for _, level := range []string{"ace", "superhuman"} {
+	for _, level := range []string{"expert", "superhuman"} {
 		made, err := (&Air{}).Create(game.Session{Identifier: "flinch" + level, Game: "air", Mode: "furball", Capacity: 8, Seed: 3,
 			Parameters: map[string]any{"bots": map[string]any{level: 1.0, "drone": 1.0}}})
 		if err != nil {
@@ -384,7 +384,7 @@ func TestFlinchHoldsAWalkedBurst(t *testing.T) {
 			aloft(him, base.Add(flight.Vec3{X: -400}), forward) // dead astern, bore on me
 			b := me.brain
 			b.walked, b.intent, b.glimpsed, b.dodge = walked, "", 0, 0
-			for _, tick := range []uint64{100, 140} { // the second look comes after the ace's 0.4 s reaction
+			for _, tick := range []uint64{100, 140} { // the second look comes after the expert's 0.4 s reaction
 				i.flinch(me.player.Slot, me, tick, him.player.Slot, 400)
 			}
 			return b.dodge > 140
@@ -393,10 +393,10 @@ func TestFlinchHoldsAWalkedBurst(t *testing.T) {
 			t.Errorf("%s did not jink with his gun lining up from 400 m astern", level)
 		}
 		if dodged(10) {
-			t.Errorf("%s jinked with its own burst 10 m off him: the exchange favours it, and the ace holds", level)
+			t.Errorf("%s jinked with its own burst 10 m off him: the exchange favours it, and the expert holds", level)
 		}
 		if !dodged(40) {
-			t.Errorf("%s held the track with its burst 40 m off him, where the ace jinks", level)
+			t.Errorf("%s held the track with its burst 40 m off him, where the expert jinks", level)
 		}
 		i.Close()
 	}

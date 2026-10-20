@@ -99,7 +99,7 @@ func TestPounceExposure(t *testing.T) {
 	for seed := uint64(1); seed <= 24; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: fmt.Sprintf("pounce%d", seed), Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -17,7 +17,7 @@ import (
 // tick it is shut the bot does not.
 func TestGateRecord(t *testing.T) {
 	i := build(t, "furball", map[string]any{"missiles": true, "weapons": "fox2",
-		"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}, 0)
+		"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}, 0)
 	defer i.Close()
 	checked := 0
 	for tick := uint64(0); tick < 60*90; tick++ {
@@ -102,7 +102,7 @@ func TestEvolveAgainstArc(t *testing.T) {
 // control: the same fight does reach the zone when a launch is possible.
 func TestNoHeaterZoneWithoutMissiles(t *testing.T) {
 	for _, missiles := range []bool{true, false} {
-		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{"ace": 4.0}}
+		parameters := map[string]any{"missiles": missiles, "bots": map[string]any{"expert": 4.0}}
 		if missiles {
 			parameters["weapons"] = "fox2"
 		}

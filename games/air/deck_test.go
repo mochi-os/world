@@ -37,7 +37,7 @@ func TestRecoveryOutranksTheJink(t *testing.T) {
 		m.State.Velocity = flight.Vec3{X: 200, Y: climb}
 		m.State.Attitude = flight.Look(m.State.Velocity.Normalize())
 		m.State.Fuel = 2450
-		b := &brain{skill: skills["ace"], aim: flight.Vec3{X: 1}, g: 4, throttle: 1}
+		b := &brain{skill: skills["expert"], aim: flight.Vec3{X: 1}, g: 4, throttle: 1}
 		if dodging {
 			// The window stands well past the tick we steer at, and the
 			// quadrant matters: (dodge/15)%4 picks it, and 0 and 2 push along
@@ -106,7 +106,7 @@ func TestDeckBudgetsTheRecovery(t *testing.T) {
 					}
 				}
 				m := diving(low, knots, dive, bank)
-				b := &brain{skill: skills["ace"], aim: flight.Vec3{X: 1}, g: 4, throttle: 1}
+				b := &brain{skill: skills["expert"], aim: flight.Vec3{X: 1}, g: 4, throttle: 1}
 				bottom := low
 				for tick := uint64(0); tick < 60*30; tick++ {
 					in := b.steer(m, tick)
@@ -153,7 +153,7 @@ func TestRecoveryHoldsUntilClimbing(t *testing.T) {
 	}
 }
 
-// TestScriptDiveHoldsTheFight: the scripted ace in a dive, rolled toward a
+// TestScriptDiveHoldsTheFight: the scripted expert in a dive, rolled toward a
 // pilot below. At 10,000 ft in a 75 degree dive at 500 kt that is a fight, and
 // the doctrine flies it without the deck recovery. At 6,200 ft in a 60 degree
 // dive at 450 kt the recovery takes the stick once and keeps it: judged afresh
@@ -161,7 +161,7 @@ func TestRecoveryHoldsUntilClimbing(t *testing.T) {
 // toward him called it and each roll upright cleared it.
 func TestScriptDiveHoldsTheFight(t *testing.T) {
 	fly := func(height, knots, dive float64) (deck, entries int) {
-		b := NewBandit("ace", 1, 250000, "", false, false, "guns", 0, false)
+		b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: height}, flight.Vec3{X: 257})
 		b.craft.brain.routine.passed = true
 		dove := diving(height, knots, dive, 150)

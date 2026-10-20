@@ -251,7 +251,7 @@ var batteries = []battery{
 	{"section", func(seed uint64, doc tactics) map[string]float64 {
 		// The #138 shape: a mixed-skill 2v4 with missiles. Teamwork's yield.
 		i := arena("section", seed, doc, true,
-			map[string]any{"ace": 2.0}, map[string]any{"pilot": 4.0})
+			map[string]any{"expert": 2.0}, map[string]any{"intermediate": 4.0})
 		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		for tick := uint64(0); tick < 60*300; tick++ {
 			i.Step(tick, nil)
@@ -262,7 +262,7 @@ var batteries = []battery{
 	{"skirmish", func(seed uint64, doc tactics) map[string]float64 {
 		// The same 2v4 guns-only: the missile envelope out of the picture.
 		i := arena("skirmish", seed, doc, false,
-			map[string]any{"ace": 2.0}, map[string]any{"pilot": 4.0})
+			map[string]any{"expert": 2.0}, map[string]any{"intermediate": 4.0})
 		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		for tick := uint64(0); tick < 60*300; tick++ {
 			i.Step(tick, nil)
@@ -271,11 +271,11 @@ var batteries = []battery{
 		return map[string]float64{"down_deaths": float64(deaths), "up_net": float64(i.score["red"] - deaths)}
 	}},
 	{"defense", func(seed uint64, doc tactics) map[string]float64 {
-		// Defensive entry: a lone pilot with two missile-armed aces saddled 1.4 km
+		// Defensive entry: a lone intermediate with two missile-armed experts saddled 1.4 km
 		// behind; the metric is survival time. Missiles ON deliberately - guns-only
 		// kills between maneuvering bots essentially never land.
 		i := arena("defense", seed, doc, true,
-			map[string]any{"pilot": 1.0}, map[string]any{"ace": 2.0})
+			map[string]any{"intermediate": 1.0}, map[string]any{"expert": 2.0})
 		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		var lone *craft
 		hunters := []*craft{}
@@ -303,7 +303,7 @@ var batteries = []battery{
 		// Same-skill 2v2 merge, guns only: does the fight RESOLVE? The lead
 		// turn, circle plan, and stalemate displacement own this one.
 		i := arena("merge", seed, doc, false,
-			map[string]any{"ace": 2.0}, map[string]any{"ace": 2.0})
+			map[string]any{"expert": 2.0}, map[string]any{"expert": 2.0})
 		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		limit := uint64(60 * 300)
 		for tick := uint64(0); tick < limit; tick++ {
@@ -315,10 +315,10 @@ var batteries = []battery{
 		return map[string]float64{"down_first": float64(limit) / 60, "down_stalemate": 1}
 	}},
 	{"gunnery", func(seed uint64, doc tactics) map[string]float64 {
-		// Conversion efficiency: one ace, one weaving drone. Seconds and
+		// Conversion efficiency: one expert, one weaving drone. Seconds and
 		// rounds to the kill measure the saddle and closure discipline.
 		i := arena("gunnery", seed, doc, false,
-			map[string]any{"ace": 1.0}, map[string]any{"drone": 1.0})
+			map[string]any{"expert": 1.0}, map[string]any{"drone": 1.0})
 		defer i.Close() // return this scenario's share of the server-wide bot budget (#208)
 		var shooter, drone *craft
 		for _, slot := range i.slots() {

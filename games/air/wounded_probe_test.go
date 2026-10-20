@@ -31,7 +31,7 @@ func TestWoundedBand(t *testing.T) {
 	var longest float64
 	for _, missiles := range []bool{false, true} {
 		arm := map[bool]string{false: "guns", true: "fox2"}[missiles]
-		for _, pair := range [][2]string{{"ace", "pilot"}, {"superhuman", "ace"}} {
+		for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
 			for seed := uint64(1); seed <= 8; seed++ {
 				made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("wound%s%s%d", arm, pair[0], seed),
 					Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
@@ -130,7 +130,7 @@ func TestWoundedBehaviour(t *testing.T) {
 			made, err := (&Air{}).Create(game.Session{Identifier: fmt.Sprintf("hurt%.0f%d", loss*10, seed),
 				Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 				Parameters: map[string]any{"missiles": false, "weapons": "guns",
-					"bots": map[string]any{"ace": 1.0, "pilot": 1.0}}})
+					"bots": map[string]any{"expert": 1.0, "intermediate": 1.0}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -143,7 +143,7 @@ func TestWoundedBehaviour(t *testing.T) {
 				}
 			}
 			if hurt == nil {
-				t.Fatal("no ace in the roster")
+				t.Fatal("no expert in the roster")
 			}
 			for tick := uint64(0); tick < 60*90; tick++ {
 				i.Step(tick, nil)

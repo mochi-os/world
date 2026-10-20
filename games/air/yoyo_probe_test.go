@@ -19,13 +19,13 @@ import (
 
 // TestHighYoyoCompletes: a chosen high yo-yo tops out within twelve hundred
 // metres above the target - the old law zoomed 1,400-2,100 m and came back
-// thirty seconds later; under the ace's cap the apex-staged law tops out at
+// thirty seconds later; under the expert's cap the apex-staged law tops out at
 // 100-900 m, the wing at 200 kt being slow to pitch over - and is back down within twenty seconds.
 // The one-phase law flew the climb alone, re-aimed above the lag line every
-// re-plan, and a yo-yo the ace chose straight out of the merge became a
+// re-plan, and a yo-yo the expert chose straight out of the merge became a
 // 7,000-ft zoom to 174 kt and thirty seconds of recovery. The opponent is the
 // hornet, the scripted slow fighter built from the 2026-09-09 recording,
-// because that is the fight the ace reaches for `high` in.
+// because that is the fight the expert reaches for `high` in.
 func TestHighYoyoCompletes(t *testing.T) {
 	heavy(t)
 	chosen, completed, zooms, stranded, climbs := 0, 0, 0, 0, 0
@@ -33,7 +33,7 @@ func TestHighYoyoCompletes(t *testing.T) {
 	for seed := uint64(1); seed <= 12; seed++ {
 		g := New()
 		made, err := g.Create(game.Session{Identifier: "yoyo", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
-			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"ace": 1.0}}})
+			Parameters: map[string]any{"missiles": false, "bots": map[string]any{"expert": 1.0}}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,7 +135,7 @@ func TestHighYoyoCompletes(t *testing.T) {
 		t.Errorf("%.1f climbs a minute: the yo-yo is a loop, not a manoeuvre", float64(climbs)/minutes)
 	}
 	if chosen == 0 {
-		t.Errorf("the ace never chose high against the hornet: the gate measures nothing")
+		t.Errorf("the expert never chose high against the hornet: the gate measures nothing")
 	}
 	// A rate, not a ban: under the cap the wing at 200 kt is slow to pitch
 	// over and the apex-staged law floats past 1,200 m about once in five

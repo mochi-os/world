@@ -23,7 +23,7 @@ import (
 // flew a round nobody fires: at 30 degrees of alpha a target the nose was
 // pulling onto sat outside the trial seeker's gimbal from the first step, and
 // the zone came out empty for exactly the shot a pilot takes on tone. Measured
-// in the slow fight (both jets at 210 kt, 800 m abeam), the scripted ace beat
+// in the slow fight (both jets at 210 kt, 800 m abeam), the scripted expert beat
 // mimic 3 times and lost 11 of 24 that way, and 17 and 7 with both zones
 // drawn here.
 func launcher(s *flight.State) round.Target {
@@ -110,7 +110,7 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// the floor as well, and the edge bisected between them when the floor's shot
 	// fails. Only the rung against the target flying on: the no-escape rung's beam
 	// break saturates any close shot, and floored there it raised the inner edge
-	// past shots that kill a target that does not break - the scripted ace held
+	// past shots that kill a target that does not break - the scripted expert held
 	// the 337 m pair that downed mimic in 10 of 24 slow one-circle fights, and
 	// won 1 and lost 22 of them where it had won 13 and lost 6.
 	rung := func(good func(float64) bool, floored bool) (float64, float64) {
