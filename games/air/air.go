@@ -425,6 +425,7 @@ type craft struct {
 	charge     float64     // fractional rounds accumulated at the fire rate
 	missiles   int         // heat-seekers left this life (the human magazine; fighting bots run their own b.missiles discipline)
 	amraams    int         // AIM-120s left this life (#27): its own magazine, in the amraams() firing order
+	order      *firing     // the launch order this life, seeded from the loadout by sequence(): a round burning on the rail goes first
 	loadout    loadout     // the granted per-station loadout (#17): humans from the clamped join request, bots their standard
 	tank       float64     // this craft's own spawn fuel, kg: the player's own request at Join, the match default for bots. Remembered because a respawn runs through enter(), not Join, and would otherwise revert to the match's load
 	release    float64     // sim seconds since this craft's last missile left the rail (large when none)
@@ -531,6 +532,7 @@ func (i *instance) leader(slot int, a *craft) *craft {
 // arm rebinds the craft's battle body to its current model's damage state.
 func (a *craft) arm() {
 	a.condition = battle.Condition{Damager: -1}
+	a.order = nil // a fresh life fires its loadout in the SMS order again
 	a.body = battle.Body{
 		Airframe:  a.model.Airframe,
 		Parts:     battle.Parts(a.model.Airframe),
@@ -541,14 +543,18 @@ func (a *craft) arm() {
 	a.spent = 0 // a fresh life, a fresh expenditure record
 	a.charge = 0
 	// The magazine is the granted loadout's round count in the SMS firing
-	// order (#17). Fighting bots keep their own two-round b.missiles
-	// discipline regardless: the doctrine battery is calibrated against it.
+	// order (#17). A fighting bot's brain counts its own heaters, b.missiles,
+	// from the rounds its rails carry: the Fox 3 fit's two, not the Fox 2
+	// fit's six, so its rack and its launch order agree.
 	if a.loadout != nil {
 		a.missiles = len(stores_rounds(a.loadout))
 		a.amraams = len(stores_amraams(a.loadout))
 	} else {
 		a.missiles = 4
 		a.amraams = 0
+	}
+	if a.brain != nil {
+		a.brain.missiles = len(stores_rounds(a.lineup()))
 	}
 	a.release = 1e9
 	a.ejected = false
@@ -1215,7 +1221,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			// separate magazine, a separate edge, and a shot that needs the
 			// shooter's own radar rather than the 9M's rear-aspect cone.
 			if in.Radar && !previous.Radar && a.alive && i.missiles && i.free() && a.amraams > 0 && a.release > 1.0 {
-				if i.fox3(slot, a, in.Visual) {
+				if i.fox3(slot, a, in.Visual || a.cooking(next(a.sequence().amraams, a.amraams))) { // a burning round goes off as a visual shot, lock or none
 					if !i.cheat.ammunition {
 						a.amraams--
 						a.model.Stores(a.attach())
@@ -1405,19 +1411,6 @@ func (i *instance) scatter(dt float64, tick uint64) {
 	}
 }
 
-// armed maps the bot brain's REMAINING discipline count to the attach mask
-// over the armed standard loadout: the brain fires `shots` rounds in the SMS
-// order and the other rounds stay carried (bot.go calls this on every
-// launch; the discipline itself is #25's re-sweep). Loadout-less crafts'
-// attach() shares it as the legacy fallback.
-func armed(count int) uint64 {
-	fired := shots - count
-	if fired < 0 {
-		fired = 0
-	}
-	return stores_mask(bots_loadout("fox2"), fired, 0)
-}
-
 // credit names the killer: the last player to damage this aircraft within
 // the last minute, else the environment.
 func credit(a *craft) int {
@@ -1438,6 +1431,15 @@ func (i *instance) raise(slot int, event battle.Event) {
 		}
 	case "hit":
 		// Raised with shooter context in guns(); ignored here.
+	case "store":
+		// A round's motor caught fire on the rail: it goes first in the
+		// launch order, and every client is told which so it draws the fire
+		// and moves the round up its own copy of the order.
+		if a != nil {
+			if name := a.ignited(event.Store); name != "" {
+				i.events = append(i.events, map[string]any{"kind": "store", "slot": slot, "name": name})
+			}
+		}
 	default:
 		i.events = append(i.events, map[string]any{"kind": event.Kind, "slot": slot, "engine": event.Engine, "surface": event.Surface})
 	}
@@ -1826,15 +1828,16 @@ func fired(a *craft) round.Target {
 
 // launch fires a missile at the best target in the seeker cone. The seeker
 // is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
-// than a cold nose head-on.
+// than a cold nose head-on. A pilot's press with nothing in the seeker sends
+// the round unguided, as the client's trigger does and spends it.
 func (i *instance) launch(slot int, a *craft) bool {
 	if len(i.flying) >= 256 {
 		return false // belt and braces above the per-life magazines: no session needs more missiles airborne than a full teams match volleying everything at once
 	}
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best := i.acquire(slot, a)
-	if best < 0 {
-		return false
+	if best < 0 && a.bot && !a.cooking(next(a.sequence().heaters, a.heaters())) {
+		return false // nothing in a bot's seeker: no shot, unless the round is burning on the rail and is fired off unguided
 	}
 	i.launched++
 	// Along the NOSE, at the jet's speed and the launcher's 30 m/s: the round
@@ -1850,7 +1853,10 @@ func (i *instance) launch(slot int, a *craft) bool {
 	// from the first frame (#207) a sight referenced 3 m astern reads as a
 	// one-frame slew the seeker never made.
 	place := a.model.State.Position.Add(forward.Scale(3))
-	sight, _ := i.bearing(place, i.aircraft[best].model.State.Position)
+	sight := forward
+	if best >= 0 {
+		sight, _ = i.bearing(place, i.aircraft[best].model.State.Position)
+	}
 	i.flying = append(i.flying, &missile{
 		shooter:  slot,
 		target:   best,

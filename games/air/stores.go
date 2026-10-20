@@ -184,11 +184,6 @@ func stores_heaters(lo loadout) loadout {
 	return out
 }
 
-// shots is the brain's magazine, mirrored from bot.go (mind()/reborn() set
-// b.missiles = 6) - keep in sync or the rack-mask arithmetic in armed() goes
-// negative.
-const shots = 6
-
 // tips_loadout is the bare armed wingtips — what a stale pre-loadout client's
 // own model carries, and the grant for a join with no stores request.
 func tips_loadout() loadout {
@@ -374,23 +369,62 @@ func stores_eject(lo loadout, name string) bool {
 	return key == "3" || key == "4" || key == "6" || key == "7"
 }
 
+// firing is a jet's launch order: its heaters and its AMRAAMs, each in
+// the SMS priority order its loadout gives (stores_rounds, stores_amraams),
+// with a round burning on the rail moved to the head of the rounds still
+// carried so that the next press of the trigger fires it off. The rounds
+// already fired are the first ones of each list, as many as the magazine has
+// spent.
+type firing struct {
+	heaters []string
+	amraams []string
+}
+
+// stores_order is a loadout's launch order before anything has burned.
+func stores_order(lo loadout) firing {
+	return firing{heaters: stores_rounds(lo), amraams: stores_amraams(lo)}
+}
+
+// promote moves name to index fired in list - the head of the rounds still to
+// fire - when it is still carried, and returns the list unchanged otherwise.
+func promote(list []string, fired int, name string) []string {
+	at := -1
+	for k, n := range list {
+		if n == name {
+			at = k
+		}
+	}
+	if at < 0 || at < fired {
+		return list
+	}
+	out := append([]string{}, list[:fired]...)
+	out = append(out, name)
+	out = append(out, list[fired:at]...)
+	return append(out, list[at+1:]...)
+}
+
 // stores_mask is the flight-core attach bitmask for a loadout with `fired`
 // heaters (stores_rounds order) and `expended` AMRAAMs (stores_amraams
 // order) already away: each departure sheds its round's mass and drag.
 func stores_mask(lo loadout, fired int, expended int) uint64 {
+	return stores_rack(lo, stores_order(lo), fired, expended)
+}
+
+// stores_rack is stores_mask for a jet's own launch order.
+func stores_rack(lo loadout, order firing, fired int, expended int) uint64 {
 	index := map[string]int{}
 	catalog := aircraft.Get("fa18c").Stores
 	for i := range catalog {
 		index[catalog[i].Name] = i
 	}
 	spent := map[string]bool{}
-	for k, name := range stores_rounds(lo) {
+	for k, name := range order.heaters {
 		if k >= fired {
 			break
 		}
 		spent[name] = true
 	}
-	for k, name := range stores_amraams(lo) {
+	for k, name := range order.amraams {
 		if k >= expended {
 			break
 		}
@@ -459,7 +493,7 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	if a == nil || a.loadout == nil || !a.alive {
 		return
 	}
-	before := stores_rounds(a.loadout)
+	before := a.sequence().heaters
 	fired := len(before) - a.missiles
 	if fired < 0 {
 		fired = 0
@@ -472,7 +506,7 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 	// from an aircraft carrying none, off a client-sent frame, against a
 	// module whose whole design is server-authoritative weapons. attach()
 	// hid it by clamping the resulting negative `expended` to zero.
-	radar := stores_amraams(a.loadout)
+	radar := a.sequence().amraams
 	expended := len(radar) - a.amraams
 	if expended < 0 {
 		expended = 0
@@ -527,6 +561,18 @@ func (i *instance) Jettison(slot int, departures []game.Departure) {
 		}
 	}
 	a.loadout = next
+	// The launch order keeps its own sequence, a burning round's promotion
+	// included, less the rounds that went with their stations.
+	keep := func(list []string, carried map[string]bool) []string {
+		var out []string
+		for _, name := range list {
+			if carried[name] {
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	a.order = &firing{heaters: keep(before, live), amraams: keep(radar, carried)}
 	a.missiles -= gone
 	if a.missiles < 0 {
 		a.missiles = 0
@@ -563,19 +609,129 @@ func release_severity(m *flight.Model) float64 {
 // already fired. Crafts without a loadout (never granted) keep the legacy
 // wingtip count mapping.
 func (a *craft) attach() uint64 {
-	if a.loadout == nil {
-		return armed(a.missiles)
+	return a.rack(a.missiles)
+}
+
+// lineup is the loadout the craft's rails carry: its grant, or, for a craft
+// never granted one, the bots' Fox 2 fit the legacy wingtip mapping counts
+// against.
+func (a *craft) lineup() loadout {
+	if a.loadout != nil {
+		return a.loadout
 	}
-	order := stores_rounds(a.loadout)
-	fired := len(order) - a.missiles
-	if fired < 0 {
-		fired = 0
+	return bots_loadout("fox2")
+}
+
+// sequence is the craft's launch order, seeded from its lineup the
+// first time it is asked for in a life.
+func (a *craft) sequence() *firing {
+	if a.order == nil {
+		order := stores_order(a.lineup())
+		a.order = &order
 	}
-	expended := len(stores_amraams(a.loadout)) - a.amraams
-	if expended < 0 {
-		expended = 0
+	return a.order
+}
+
+// rack is the attach mask with `heaters` heat-seekers still carried and the
+// AMRAAMs a.amraams counts, the rounds gone in the craft's launch order.
+func (a *craft) rack(heaters int) uint64 {
+	order := a.sequence()
+	return stores_rack(a.lineup(), *order, max(0, len(order.heaters)-heaters), max(0, len(order.amraams)-a.amraams))
+}
+
+// heaters is the heat-seekers still on the craft's rails: a fighting bot
+// counts its own (the brain's discipline), everyone else the magazine.
+func (a *craft) heaters() int {
+	if a.bot && a.brain != nil {
+		return a.brain.missiles
 	}
-	return stores_mask(a.loadout, fired, expended)
+	return a.missiles
+}
+
+// next is the round of a launch order list that leaves on the next press, with
+// `left` still carried, or "" with none left.
+func next(list []string, left int) string {
+	if left <= 0 || left > len(list) {
+		return ""
+	}
+	return list[len(list)-left]
+}
+
+// cooking reports whether the named store is burning on the craft's rail.
+func (a *craft) cooking(name string) bool {
+	if name == "" {
+		return false
+	}
+	for k := range a.model.Airframe.Stores {
+		if a.model.Airframe.Stores[k].Name == name {
+			return k < len(a.condition.Cook) && a.condition.Cook[k] > 0
+		}
+	}
+	return false
+}
+
+// alight is the first round still on the craft's rails whose motor is
+// burning, heaters before AMRAAMs, or "" with none.
+func (a *craft) alight() string {
+	order := a.sequence()
+	for _, name := range order.heaters[max(0, len(order.heaters)-a.heaters()):] {
+		if a.cooking(name) {
+			return name
+		}
+	}
+	for _, name := range order.amraams[max(0, len(order.amraams)-a.amraams):] {
+		if a.cooking(name) {
+			return name
+		}
+	}
+	return ""
+}
+
+// douse fires a bot's burning round off its rail: a heater through the
+// launcher, at whatever its seeker has or at nothing, an AMRAAM as a visual
+// shot. It goes to the head of the launch order first: the server's battle
+// already put it there (ignited), but the single-player bandit's battle runs
+// in the client's hulk, not in this arena.
+func (i *instance) douse(slot int, a *craft, name string, tick uint64) {
+	b := a.brain
+	a.lead(name)
+	order := a.sequence()
+	if next(order.heaters, a.heaters()) == name {
+		if i.launch(slot, a) && !i.cheat.ammunition {
+			b.missiles--
+			b.launched = tick
+			a.release = 0
+			a.model.Stores(a.rack(b.missiles))
+		}
+		return
+	}
+	if next(order.amraams, a.amraams) == name {
+		if i.fox3(slot, a, true) && !i.cheat.ammunition {
+			a.amraams--
+			a.release = 0
+			a.model.Stores(a.rack(a.heaters()))
+		}
+	}
+}
+
+// ignited moves a store that has caught fire on the rail to the head of the
+// craft's launch order, so the trigger fires it off next, and reports
+// its name.
+func (a *craft) ignited(store int) string {
+	if store < 0 || store >= len(a.model.Airframe.Stores) {
+		return ""
+	}
+	name := a.model.Airframe.Stores[store].Name
+	a.lead(name)
+	return name
+}
+
+// lead moves a round still on the rails to the head of the craft's launch
+// order.
+func (a *craft) lead(name string) {
+	order := a.sequence()
+	order.heaters = promote(order.heaters, max(0, len(order.heaters)-a.heaters()), name)
+	order.amraams = promote(order.amraams, max(0, len(order.amraams)-a.amraams), name)
 }
 
 // rearm re-asserts the full loadout on the model, cycling through zero so

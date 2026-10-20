@@ -13,6 +13,7 @@ import (
 
 	"world/game"
 	"world/games/air/aircraft"
+	"world/games/air/battle"
 	"world/games/air/flight"
 	"world/games/air/round"
 )
@@ -71,6 +72,16 @@ func TestRounds(t *testing.T) {
 			t.Fatalf("rounds %v, want %v", got, want)
 		}
 	}
+}
+
+// shots is the brain's magazine, mirrored from bot.go (mind()/reborn() set
+// b.missiles = 6).
+const shots = 6
+
+// armed is the attach mask over the bots' armed standard with `count` of its
+// `shots` rounds still carried, fired in the SMS order.
+func armed(count int) uint64 {
+	return stores_mask(bots_loadout("fox2"), max(0, shots-count), 0)
 }
 
 // TestMask: the grant's mask matches the catalog bits, clears rounds in
@@ -994,5 +1005,271 @@ func TestSpaced(t *testing.T) {
 	}
 	if d := ti.span(red.model, blue.model); math.Abs(d-separation()) > 5000 {
 		t.Fatalf("anchored walls %.0f m apart, want ~%.0f", d, separation())
+	}
+}
+
+// TestPromote: a round moves to the head of the rounds still carried, the
+// rounds already fired keep their places, and a round already away or never
+// carried leaves the order alone.
+func TestPromote(t *testing.T) {
+	order := []string{"tip9", "tip1", "9m8", "9m2"}
+	cases := []struct {
+		fired int
+		name  string
+		want  []string
+	}{
+		{0, "9m2", []string{"9m2", "tip9", "tip1", "9m8"}},
+		{1, "9m8", []string{"tip9", "9m8", "tip1", "9m2"}},
+		{1, "tip1", []string{"tip9", "tip1", "9m8", "9m2"}},
+		{2, "tip9", []string{"tip9", "tip1", "9m8", "9m2"}}, // already fired
+		{0, "120c4", []string{"tip9", "tip1", "9m8", "9m2"}},
+	}
+	for _, c := range cases {
+		got := promote(order, c.fired, c.name)
+		if len(got) != len(c.want) {
+			t.Fatalf("promote(%d, %s) = %v, want %v", c.fired, c.name, got, c.want)
+		}
+		for k := range got {
+			if got[k] != c.want[k] {
+				t.Fatalf("promote(%d, %s) = %v, want %v", c.fired, c.name, got, c.want)
+			}
+		}
+	}
+	if order[0] != "tip9" || order[3] != "9m2" {
+		t.Fatalf("promote rewrote its argument: %v", order)
+	}
+}
+
+// burning is a two-jet arena for the store-fire tests: slot 0 carries the
+// given stations, slot 1 flies 20 km ahead of it, outside every seeker.
+func burning(stations map[string]any) (*instance, *craft) {
+	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+	for _, slot := range []int{0, 1} {
+		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+		m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
+		a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(stations, "open")}
+		a.arm()
+		a.model.Stores(a.attach())
+		a.release = 1e9
+		i.aircraft[slot] = a
+	}
+	i.aircraft[1].model.State.Position = flight.Vec3{X: -20000, Y: 8000}
+	return i, i.aircraft[0]
+}
+
+// catalog is the fa18c catalog index of a store.
+func catalog(t *testing.T, name string) int {
+	t.Helper()
+	for k, s := range aircraft.Get("fa18c").Stores {
+		if s.Name == name {
+			return k
+		}
+	}
+	t.Fatalf("no store %q in the catalog", name)
+	return -1
+}
+
+// TestStoreIgnited: a round whose motor catches fire on the rail goes to the
+// head of the launch order and every client is told which; the trigger then
+// fires it off with nothing in the seeker, its bit clears in the attach mask
+// so the fire goes out, and the rounds behind it stay on their rails. A round
+// that is not burning still needs a target.
+func TestStoreIgnited(t *testing.T) {
+	press := func(i *instance, tick uint64) {
+		i.Step(tick, map[int][]game.Input{0: {{Sequence: uint32(tick), Data: map[string]any{"missile": true}}}})
+	}
+	i, a := burning(fox2())
+	store := catalog(t, "9m2")
+	i.raise(0, battle.Event{Kind: "store", Engine: -1, Surface: -1, Store: store})
+	if got := a.sequence().heaters; got[0] != "9m2" {
+		t.Fatalf("the burning round did not go first: %v", got)
+	}
+	told := false
+	for _, event := range i.Events() {
+		if event["kind"] == "store" && event["slot"] == 0 && event["name"] == "9m2" {
+			told = true
+		}
+	}
+	if !told {
+		t.Fatalf("the clients were not told which round is burning")
+	}
+	a.condition.Cook[store] = 15
+	press(i, 2)
+	if len(i.flying) != 1 || i.flying[0].target != -1 || a.missiles != 3 {
+		t.Fatalf("the burning round: %d away, %d left; want it fired off unguided", len(i.flying), a.missiles)
+	}
+	attached := a.model.Attached()
+	if attached&(1<<uint(store)) != 0 {
+		t.Fatalf("the burning round left but its bit is still attached")
+	}
+	if attached&(1<<uint(catalog(t, "tip9"))) == 0 {
+		t.Fatalf("the round the burning one jumped left with it")
+	}
+	i.Step(3, nil)
+	if a.condition.Cook[store] != 0 {
+		t.Fatalf("the fire stayed lit on an empty rail: %.1f s", a.condition.Cook[store])
+	}
+}
+
+// TestHeaterUnguided: a pilot's press with nothing in the seeker sends the
+// round unguided, as the client's trigger does and spends it from the rail; a
+// bot with nothing in its seeker and nothing burning holds it.
+func TestHeaterUnguided(t *testing.T) {
+	i, a := burning(fox2())
+	i.Step(1, map[int][]game.Input{0: {{Sequence: 1, Data: map[string]any{"missile": true}}}})
+	if len(i.flying) != 1 || i.flying[0].target != -1 || a.missiles != 3 {
+		t.Fatalf("a press with nothing in the seeker: %d away, %d left; want one round away unguided", len(i.flying), a.missiles)
+	}
+	if a.model.Attached()&(1<<uint(catalog(t, "tip9"))) != 0 {
+		t.Fatalf("the round left but its rail still carries it")
+	}
+	i, a = burning(fox2())
+	a.bot, a.brain = true, mind("expert")
+	a.arm()
+	if i.launch(0, a) {
+		t.Fatalf("a bot launched with nothing in its seeker and nothing burning")
+	}
+}
+
+// TestStoreAmraam: a burning AIM-120 goes off as a visual shot, with no lock
+// and no visual flag, and its own bit clears.
+func TestStoreAmraam(t *testing.T) {
+	i, a := burning(map[string]any{
+		"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+		"6": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+	})
+	last := a.sequence().amraams[1]
+	store := catalog(t, last)
+	i.raise(0, battle.Event{Kind: "store", Engine: -1, Surface: -1, Store: store})
+	a.condition.Cook[store] = 15
+	i.Step(1, map[int][]game.Input{0: {{Sequence: 1, Data: map[string]any{"radar": true}}}})
+	if len(i.flying) != 1 || a.amraams != 1 {
+		t.Fatalf("the burning AMRAAM: %d away, %d left; want it fired off", len(i.flying), a.amraams)
+	}
+	if a.model.Attached()&(1<<uint(store)) != 0 {
+		t.Fatalf("the burning AMRAAM %s left but its bit is still attached", last)
+	}
+}
+
+// TestStoreOrder: the attach mask follows the craft's own launch order once a
+// round has jumped the queue, and a jettison keeps that order less the rounds
+// that went with their stations.
+func TestStoreOrder(t *testing.T) {
+	i, a := burning(fox2())
+	bit := func(name string) uint64 { return 1 << uint(catalog(t, name)) }
+	a.missiles = 3 // tip9 away
+	a.lead("9m2")
+	if got := a.sequence().heaters; got[0] != "tip9" || got[1] != "9m2" {
+		t.Fatalf("the burning round took the place of one already fired: %v", got)
+	}
+	mask := a.attach()
+	if mask&bit("tip9") != 0 || mask&bit("9m2") == 0 || mask&bit("tip1") == 0 {
+		t.Fatalf("the mask %b does not follow the launch order", mask)
+	}
+	a.missiles = 2
+	if mask := a.attach(); mask&bit("9m2") != 0 || mask&bit("tip1") == 0 {
+		t.Fatalf("the second round away was not the burning one: %b", mask)
+	}
+	a.missiles = 3
+	a.order = nil
+	a.lead("9m8")
+	i.Jettison(0, []game.Departure{{Station: 2, What: "stores"}})
+	got := a.sequence().heaters
+	if a.missiles != 2 || len(got) != 3 || got[1] != "9m8" || next(got, a.missiles) != "9m8" {
+		t.Fatalf("after the jettison: %d left, order %v; want 2 left with 9m8 next", a.missiles, got)
+	}
+}
+
+// TestStoreVigil: a fighting bot fires a burning round off its rail once it
+// sees the fire. The machine sees it at once, the expert inside a couple of
+// seconds, and the novice may not see it before the warhead cooks off.
+func TestStoreVigil(t *testing.T) {
+	const fuse = 12.0
+	for _, tier := range []string{"superhuman", "expert", "intermediate", "novice"} {
+		missed, seen, total := 0, 0, 0.0
+		for seed := uint64(1); seed <= 40; seed++ {
+			bots_live.Store(0)
+			made, err := New().Create(game.Session{Identifier: "vigil", Game: "air", Mode: "furball", Capacity: 4, Seed: seed,
+				Parameters: map[string]any{"weapons": "fox2", "bots": map[string]any{tier: 1.0}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			i := made.(*instance)
+			var slot int
+			var a *craft
+			for _, s := range i.slots() {
+				slot, a = s, i.aircraft[s]
+			}
+			name := a.sequence().heaters[3]
+			store := catalog(t, name)
+			a.condition.Cook[store] = fuse
+			fired := -1
+			for tick := uint64(1); tick < uint64(fuse*60); tick++ {
+				i.Step(tick, nil)
+				if a.model.Attached()&(1<<uint(store)) == 0 {
+					fired = int(tick)
+					break
+				}
+			}
+			if fired < 0 {
+				missed++
+				continue
+			}
+			if a.brain.missiles != 5 || len(i.flying) != 1 || i.flying[0].shooter != slot {
+				t.Fatalf("%s seed %d: the round went off with %d left and %d in the air, want 5 and its own one", tier, seed, a.brain.missiles, len(i.flying))
+			}
+			seen++
+			total += float64(fired) / 60
+		}
+		mean := total / math.Max(1, float64(seen))
+		t.Logf("%s: %d missed of 40, fired off after %.2f s on average", tier, missed, mean)
+		switch tier {
+		case "superhuman":
+			if missed > 0 || mean > 0.05 {
+				t.Errorf("the machine missed %d and took %.2f s, want none and at once", missed, mean)
+			}
+		case "expert":
+			if missed > 0 || mean > 1.5 {
+				t.Errorf("the expert missed %d and took %.2f s, want none and inside 1.5 s", missed, mean)
+			}
+		case "intermediate":
+			if missed > 0 || mean < 0.8 || mean > 3 {
+				t.Errorf("the intermediate missed %d and took %.2f s, want none and 0.8-3 s", missed, mean)
+			}
+		case "novice":
+			if missed < 2 || missed > 16 || mean < 3 {
+				t.Errorf("the novice missed %d of 40 and took %.2f s, want some misses and a slow eye", missed, mean)
+			}
+		}
+	}
+}
+
+// TestStoreFox3Bot: a bot on the Fox 3 fit counts the two heaters its rails
+// carry, so a burning one is the next round away and goes off its rail.
+func TestStoreFox3Bot(t *testing.T) {
+	bots_live.Store(0)
+	made, err := New().Create(game.Session{Identifier: "vigil", Game: "air", Mode: "furball", Capacity: 4, Seed: 3,
+		Parameters: map[string]any{"weapons": "open", "bots": map[string]any{"superhuman": 1.0}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	i := made.(*instance)
+	var a *craft
+	for _, s := range i.slots() {
+		a = i.aircraft[s]
+	}
+	if a.brain.missiles != 2 {
+		t.Fatalf("the Fox 3 bot counts %d heaters, want the 2 its rails carry", a.brain.missiles)
+	}
+	store := catalog(t, "tip1")
+	a.condition.Cook[store] = 12
+	for tick := uint64(1); tick < 60; tick++ {
+		i.Step(tick, nil)
+	}
+	if a.model.Attached()&(1<<uint(store)) != 0 || a.brain.missiles != 1 {
+		t.Fatalf("the burning tip1 is still on its rail: %d heaters left", a.brain.missiles)
+	}
+	if a.model.Attached()&(1<<uint(catalog(t, "tip9"))) == 0 {
+		t.Fatalf("tip9 went with the burning tip1")
 	}
 }

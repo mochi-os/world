@@ -21,12 +21,16 @@
 // attitude, 11 shooter identity, 12 tick. Output: 0 kill, 1 mask.
 //
 // progress input words: 0 ownship throttle, 1 tick, 2 reset (1 clears all
-// battle state on mission start). Output: 0-5 ownship (fire left, fire right,
-// burning, killed, event mask, leak), then 8 words per hulk: fire left, fire
-// right, burning, killed, event mask, thrust loss, wing loss, element total.
+// battle state on mission start), 3 the fire drill (1 port engine secured, 2
+// starboard, 4 the extinguisher discharged this frame). Output: 0-5 ownship
+// (fire left, fire right, burning, killed, event mask, leak), then 9 words per
+// hulk from 6: fire left, fire right, burning, killed, event mask, thrust loss,
+// wing loss, element total, leak; 62 and 63 the stores burning on the
+// ownship's and hulk 0's rails, as attach masks.
 package main
 
 import (
+	"math"
 	"syscall/js"
 
 	"world/games/air/aircraft"
@@ -344,7 +348,11 @@ func blast(this js.Value, arguments []js.Value) any {
 }
 
 func progress(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], arsenal[:3])
+	receive(arguments[0], arsenal[:4])
+	// Read before the output is cleared: it is written into the same buffer,
+	// which zeroed the throttle and the drill before the cascade read them, so
+	// every ownship engine fire starved and the bottle never fired.
+	throttle, tick, drill := arsenal[0], uint64(arsenal[1]), int(arsenal[3])
 	if arsenal[2] != 0 { // mission reset: everything pristine
 		airborne = airborne[:0]
 		condition = battle.Condition{Damager: -1}
@@ -358,7 +366,6 @@ func progress(this js.Value, arguments []js.Value) any {
 			}
 		}
 	}
-	tick := uint64(arsenal[1])
 	// Same reason as blast: the hulk loop below advances bodies out of `fleet`
 	// and needs the seed whether or not a model was ever built.
 	seed := uint64(0)
@@ -371,11 +378,11 @@ func progress(this js.Value, arguments []js.Value) any {
 	}
 	if model != nil {
 		body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
-		secure := [2]bool{int(arsenal[3])&1 != 0, int(arsenal[3])&2 != 0}
-		if int(arsenal[3])&4 != 0 {
+		secure := [2]bool{drill&1 != 0, drill&2 != 0}
+		if drill&4 != 0 {
 			battle.Extinguish(&body, secure) // the FIRE EXTGH pushbutton this frame (NATOPS 2.14.2): the host holds the bottle and raises the bit once
 		}
-		raised := battle.Advance(&body, model, arsenal[0], secure, 60, model.Environment.Seed, 0, tick)
+		raised := battle.Advance(&body, model, throttle, secure, 60, model.Environment.Seed, 0, tick)
 		out[0], out[1] = condition.Fire[0], condition.Fire[1]
 		out[2], out[3] = bit(condition.Burning), bit(condition.Killed)
 		out[4] = events(raised)
@@ -400,8 +407,30 @@ func progress(this js.Value, arguments []js.Value) any {
 		out[base+7] = sum(h.damage.Element)
 		out[base+8] = h.damage.Leak // the visible wound the client streams as fuel mist (#244)
 	}
+	// The stores burning on the rails, as attach masks: the ownship's and
+	// the bandit's. The last two words, which only a seventh hulk's block would
+	// reach, and that block already overruns the buffer.
+	if model != nil {
+		out[62] = cooking(&condition)
+	}
+	if fleet[0].used {
+		out[63] = cooking(&fleet[0].condition)
+	}
 	send(out, arguments[1])
 	return nil
+}
+
+// cooking is the mask of the stores burning on a jet's rails, bit i the
+// catalog's store i, as a float64 the way the store masks cross: exact well
+// past the catalog's bit count.
+func cooking(c *battle.Condition) float64 {
+	mask := 0.0
+	for i, fuse := range c.Cook {
+		if fuse > 0 && i < 53 {
+			mask += math.Pow(2, float64(i))
+		}
+	}
+	return mask
 }
 
 // wings reports the worst per-wing outboard loss for the AI's spiral logic.

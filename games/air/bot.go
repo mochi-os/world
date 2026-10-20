@@ -40,6 +40,7 @@ type skill struct {
 	alpha      float64 // the alpha the scripted doctrine fights at, deg (script.go): how hard this pilot will hold the wing loaded in a turning fight
 	plume      float64 // how much of the cold cone the scripted doctrine flies in military power while his nose bears (script.go reheat): 0 never, 1 the whole of it
 	glare      float64 // half-angle of the cone about the sun this pilot cannot see into by day, deg: the eye's own glare washes a jet out within about 5 degrees (the client draws the same veil), and a novice will not look near the sun at all
+	vigil      float64 // how soon this pilot sees a store burning on its own rail, a chance per second: the novice may not see it before the warhead cooks off; the machine sees it at once
 }
 
 // wander is the whole-flying imprecision, not just gunnery: a novice flies
@@ -94,9 +95,9 @@ var skills = map[string]skill{
 	// met him at 139 m in TestScriptPass's pursuit; with half the wander as
 	// well, 11 and 53 with passes inside the bubble down to 16 m. Its own
 	// run-in with the led aim won 4 of 63, and no single dial moved it.
-	"novice":       {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34, glare: 20},
-	"intermediate": {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75, glare: 5.1264},
-	"expert":       {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1, glare: 5.1264},
+	"novice":       {delay: 1.0, cadence: 30, wander: 0.10, pull: 7.5, library: 1, discipline: 0.2, react: 2.0, open: 900, trigger: 0.02, commit: 1.0, floor: 0, cap: 0, alpha: 34, glare: 20, vigil: 0.15},
+	"intermediate": {delay: 0.5, cadence: 16, wander: 0.030, pull: 7.2, library: 2, discipline: 0.6, react: 1.0, open: 600, trigger: 0.12, commit: 2.3, floor: 105, cap: 1.0, energy: 0.5, alpha: 30, plume: 0.75, glare: 5.1264, vigil: 0.6},
+	"expert":       {delay: 0.15, cadence: 12, wander: 0.007, pull: 7.5, library: 4, discipline: 1.0, react: 0.4, open: 600, trigger: 0.06, commit: 4.0, floor: 154, cap: 0.85, energy: 1, geometry: 1, alpha: 34, plume: 1, glare: 5.1264, vigil: 1.5},
 	// The superhuman IS the expert with the human dials at zero — delay, cadence,
 	// wander and react — and nothing else. open and trigger were 700 and 0.03
 	// against the expert's 600 and 0.06; neither is a human limit (one is gun
@@ -637,6 +638,7 @@ type brain struct {
 	menace    int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
 	glimpsed  uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
 	flanked   float64    // his bearing against my flight path last tick (#251): the sign flip through my 3/9 line IS the overshoot
+	alarmed   bool       // it has seen a store burning on its own rail and is firing it off
 	launched  uint64     // tick of the last missile away (#253): shoot-shoot-look — the quick pair is doctrine, the volley is not
 	paired    int        // rounds already away in the CURRENT pair; the look resets it. Without a count, `paired` below re-armed off every launch and the pair became the whole rack
 	dodge     uint64     // tick the commanded evasion ends; steer overrides the aim out-of-plane until then
@@ -730,7 +732,7 @@ func mind(level string) *brain {
 
 // reborn resets the per-life state after a respawn.
 func (b *brain) reborn() {
-	b.mode, b.target, b.missiles, b.alert = "cruise", -1, 6, 0
+	b.mode, b.target, b.alert = "cruise", -1, 0 // b.missiles is the rails' count, which arm() sets before every reborn
 	b.saddle, b.press = 0, 0
 	b.aimed, b.closing = 0, 0
 	b.turning, b.turned = 0, 0
@@ -938,6 +940,20 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	if (a.condition.Fire[0] > 0 || a.condition.Fire[1] > 0) && b.mode != "evade" {
 		a.latest.Throttle, a.latest.Reheat = 0, 0
 	}
+	// A round burning on its own rail: once the pilot sees the fire he
+	// fires the round off - guided if its seeker has something, unguided if
+	// not - before it cooks the jet off. Seeing it takes the tier's vigil; the
+	// machine sees it at once.
+	if name := a.alight(); name != "" {
+		if !b.alarmed {
+			b.alarmed = b.skill.machine || battle.Roll(i.environment.Seed, uint64(slot)+71, tick) < b.skill.vigil/60
+		}
+		if b.alarmed && a.release > 1.0 {
+			i.douse(slot, a, name, tick)
+		}
+	} else {
+		b.alarmed = false
+	}
 	// Shot discipline (teams, #130): never fire through a teammate's line —
 	// hold whenever a friendly sits inside the stream's corridor, nearer than
 	// the target. The trigger comes back by itself as the geometry clears.
@@ -1012,7 +1028,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 					b.missiles--
 					b.paired++
 					b.launched = tick
-					a.model.Stores(armed(b.missiles))
+					a.model.Stores(a.rack(b.missiles))
 				}
 			}
 		}

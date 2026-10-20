@@ -330,6 +330,7 @@ func TestSuperhumanIsTheExpertWithoutHumanLimits(t *testing.T) {
 		"wander":  true, // aim noise
 		"react":   true, // reaction to an inbound
 		"glare":   true, // the eye's own glare up-sun
+		"vigil":   true, // how soon a store burning on its own rail is seen
 		"machine": true, // the flag that switches off the rest
 	}
 	expert, machine := reflect.ValueOf(mind("expert").skill), reflect.ValueOf(mind("superhuman").skill)

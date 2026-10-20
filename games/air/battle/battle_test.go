@@ -427,9 +427,12 @@ func TestVolleyImpactsLandOnTheAirframe(t *testing.T) {
 
 // TestFringeRate: a probabilistic model cannot promise a seed, so this measures
 // the SHARE of fringe bursts that end in a catastrophic kill and bands it. Too
-// low and a near miss never reads; too high and the certainty radius is a lie.
+// high and the certainty radius is a lie. Since a fragment through a missile on
+// the rail usually lights its motor rather than its warhead, a near miss reads
+// mostly as a store fire the pilot must fire off or jettison, and the instant
+// kill is rare but never gone: either path dead and a near miss never reads.
 func TestFringeRate(t *testing.T) {
-	blown, total := 0, 0
+	blown, lit, total := 0, 0, 0
 	for seed := uint64(1); seed <= 240; seed++ {
 		body, m := target()
 		body.Stores = ^uint64(0) // a full rack: the most explosive case the model allows
@@ -452,18 +455,28 @@ func TestFringeRate(t *testing.T) {
 		total++
 		if body.Condition.Burning && body.Condition.Fuse <= 0.5 {
 			blown++ // a catastrophic path took: the jet is coming apart now, not burning down over half a minute
+			continue
+		}
+		for _, fuse := range body.Condition.Cook {
+			if fuse > 0 {
+				lit++ // a round's motor alight on the rail: the pilot's to fire off or jettison
+				break
+			}
 		}
 	}
 	if total < 100 {
 		t.Fatalf("only %d fringe bursts landed: the geometry walk is not exercising the envelope", total)
 	}
 	share := 100 * float64(blown) / float64(total)
-	fmt.Printf("fringe bursts on a fully loaded jet: %d of %d ended catastrophically (%.0f%%)\n", blown, total, share)
-	if share < 4 {
-		t.Errorf("a fringe burst never blows a jet up (%.0f%% of %d): the stochastic paths are dead and only the certainty radius kills", share, total)
+	fmt.Printf("fringe bursts on a fully loaded jet: %d of %d ended catastrophically (%.0f%%), %d lit a store's motor\n", blown, total, share, lit)
+	if blown == 0 {
+		t.Errorf("a fringe burst never blows a jet up (0 of %d): the stochastic paths are dead and only the certainty radius kills", total)
 	}
 	if share > 35 {
 		t.Errorf("a fringe burst blows a jet up %.0f%% of the time (%d bursts): the fragment band has become a second certainty radius", share, total)
+	}
+	if 100*float64(blown+lit)/float64(total) < 4 {
+		t.Errorf("a fringe burst on a full rack lit %d stores and blew up %d jets of %d: a near miss never reads", lit, blown, total)
 	}
 }
 
@@ -616,5 +629,113 @@ func TestAmmunitionCookoff(t *testing.T) {
 	// And it must be a chance, not a certainty — a hit on the nose is not a kill.
 	if full > 200 {
 		t.Errorf("a full drum cooked off %d times in 400: that is a death sentence, not a hazard", full)
+	}
+}
+
+// store is a catalog entry's index: its Stores bit and its Ordnance part's Index.
+func store(t *testing.T, name string) int {
+	for i, s := range fa18c.Airframe.Stores {
+		if s.Name == name {
+			return i
+		}
+	}
+	t.Fatalf("no %s in the catalog", name)
+	return -1
+}
+
+// TestStoreHit: a round through a missile on the rail usually breaches its
+// motor and sets it burning there, and only rarely sets the warhead off at
+// once; an empty rail presents nothing to hit.
+func TestStoreHit(t *testing.T) {
+	tip := store(t, "tip9")
+	parts := Parts(fa18c.Airframe)
+	part := -1
+	for i, p := range parts {
+		if p.Kind == Ordnance && p.Index == tip {
+			part = i
+		}
+	}
+	if part < 0 {
+		t.Fatal("the wingtip heater has no hit capsule")
+	}
+	lit, blown := 0, 0
+	for seed := uint64(0); seed < 1000; seed++ {
+		damage := flight.DamageState{}
+		condition := Condition{Damager: -1}
+		body := &Body{Airframe: fa18c.Airframe, Parts: parts, Damage: &damage, Condition: &condition, Stores: 1 << uint(tip)}
+		events := strike(body, &body.Parts[part], 1.0, true, seed, 1, 0, 0)
+		switch {
+		case condition.Burning:
+			blown++
+		case condition.Cook[tip] > 0:
+			lit++
+			if condition.Cook[tip] < 8 || condition.Cook[tip] > 20 {
+				t.Fatalf("seed %d: a fuse of %.1f s, outside the 8-20 s window", seed, condition.Cook[tip])
+			}
+			reported := false
+			for _, e := range events {
+				reported = reported || (e.Kind == "store" && e.Store == tip)
+			}
+			if !reported {
+				t.Fatalf("seed %d: the store caught fire with no store event to say which", seed)
+			}
+		}
+	}
+	t.Logf("1000 hits on a heater on the rail: %d burning, %d detonated", lit, blown)
+	if blown < 10 || blown > 60 {
+		t.Errorf("%d of 1000 hits set the warhead off: a detonation should be rare, about 3%%", blown)
+	}
+	if lit < 500 || lit > 660 {
+		t.Errorf("%d of 1000 hits set the motor burning: about 58%% should", lit)
+	}
+	for seed := uint64(0); seed < 400; seed++ {
+		damage := flight.DamageState{}
+		condition := Condition{Damager: -1}
+		body := &Body{Airframe: fa18c.Airframe, Parts: parts, Damage: &damage, Condition: &condition}
+		strike(body, &body.Parts[part], 1.0, true, seed, 1, 0, 0)
+		if condition.Burning || condition.Cook[tip] > 0 {
+			t.Fatalf("seed %d: a hit on an empty rail set something burning", seed)
+		}
+	}
+}
+
+// TestStoreFire: a store left burning on the rail cooks its warhead off when
+// its fuse runs out; one fired off or jettisoned takes its fire with it.
+func TestStoreFire(t *testing.T) {
+	tip := store(t, "tip9")
+	run := func(gone bool) (float64, bool) {
+		body, m := target()
+		m.Stores(m.Attached() | 1<<uint(tip))
+		light(body, tip, 7, 3, 50)
+		fuse := body.Condition.Cook[tip]
+		if gone {
+			m.Stores(m.Attached() &^ (1 << uint(tip)))
+		}
+		for tick := uint64(0); tick < 60*25; tick++ {
+			for _, e := range Advance(body, m, 0.5, [2]bool{}, 60, 7, 3, tick) {
+				if e.Kind == "explode" {
+					return float64(tick) / 60, true
+				}
+			}
+		}
+		if body.Condition.Burning || body.Condition.Cook[tip] != 0 {
+			t.Errorf("the store left the rail and the jet is still burning (fuel fire %v, store fuse %.1f s)", body.Condition.Burning, body.Condition.Cook[tip])
+		}
+		return fuse, false
+	}
+	fuse, _ := func() (float64, bool) {
+		body, _ := target()
+		light(body, tip, 7, 3, 50)
+		return body.Condition.Cook[tip], false
+	}()
+	at, exploded := run(false)
+	if !exploded {
+		t.Fatal("a store left burning on the rail never cooked off")
+	}
+	if at < fuse || at > fuse+0.5 {
+		t.Errorf("the store cooked off at %.2f s against a fuse of %.2f s: the warhead goes when the fuse runs out", at, fuse)
+	}
+	if _, exploded := run(true); exploded {
+		t.Error("a store fired off the rail still cooked the jet off")
 	}
 }

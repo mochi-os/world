@@ -19,12 +19,13 @@ import (
 // Condition is the host-side damage state that the flight core never needs:
 // fires, the pilot, and kill-credit bookkeeping. The zero value is healthy.
 type Condition struct {
-	Fire    [2]float64 // per-engine fire intensity 0..1 (0 = not burning)
-	Burning bool       // fuel fire: unsuppressable, ends in an explosion
-	Fuse    float64    // seconds of fuel fire remaining until the explosion
-	Killed  bool       // the pilot is dead
-	Damager int        // slot of the last player to damage this aircraft, -1 none
-	Damaged float64    // seconds since that damage
+	Fire    [2]float64  // per-engine fire intensity 0..1 (0 = not burning)
+	Burning bool        // fuel fire: unsuppressable, ends in an explosion
+	Fuse    float64     // seconds of fuel fire remaining until the explosion
+	Killed  bool        // the pilot is dead
+	Cook    [64]float64 // seconds until each burning store's warhead cooks off, by its Stores bit (Airframe.Stores index); 0 is a store not burning
+	Damager int         // slot of the last player to damage this aircraft, -1 none
+	Damaged float64     // seconds since that damage
 }
 
 // Body binds an airframe's part geometry to the damage stores it strikes
@@ -40,12 +41,13 @@ type Body struct {
 }
 
 // Event reports a notable outcome for presentation and scoring. Kind is one
-// of: hit, fire, leak, pilot, explode, shed, jam.
+// of: hit, fire, leak, pilot, explode, shed, jam, store.
 type Event struct {
 	Kind    string
 	Engine  int // burning/damaged engine, -1 when not engine-related
 	Surface int // shed/hit surface index, -1 when not surface-related
 	Count   int // hits in this burst (hit events)
+	Store   int // the store whose motor caught fire on the rail, by its Stores bit (store events)
 }
 
 // Advance runs one tick of the damage cascade at rate ticks per second:
@@ -101,6 +103,25 @@ func Advance(body *Body, model *flight.Model, throttle float64, secure [2]bool, 
 		}
 	}
 
+	// Store fires: a round burning on the rail cooks its warhead off when its
+	// fuse runs out. One that has left the rail, fired off or jettisoned, took
+	// its fire with it.
+	for i := range condition.Cook {
+		if condition.Cook[i] <= 0 {
+			continue
+		}
+		if body.Stores&(1<<uint(i)) == 0 {
+			condition.Cook[i] = 0
+			continue
+		}
+		condition.Cook[i] -= step
+		if condition.Cook[i] <= 0 {
+			condition.Cook[i] = 0
+			blow(body, seed, slot, tick)
+			events = append(events, Event{Kind: "fire", Engine: -1, Surface: -1})
+		}
+	}
+
 	// Structural failure: ultimate load carries the classic 1.5 safety
 	// factor over the limiter, weakened by accumulated overstress exposure
 	// and by root damage. Exceeding it sheds the weaker wing's outboard
@@ -138,6 +159,16 @@ func blow(body *Body, seed uint64, slot uint64, tick uint64) {
 	ignite(body, seed, slot, tick)
 	body.Condition.Burning = true
 	body.Condition.Fuse = math.Min(body.Condition.Fuse, 0.3)
+}
+
+// light sets a store's motor burning on the rail with a deterministic fuse
+// of 8-20 s before the warhead cooks off: time to see the fire and fire the
+// round off or jettison it, and not long enough to fly home with it.
+func light(body *Body, store int, seed uint64, slot uint64, tick uint64) {
+	if store < 0 || store >= len(body.Condition.Cook) || body.Condition.Cook[store] > 0 {
+		return
+	}
+	body.Condition.Cook[store] = 8 + 12*roll(seed, slot, tick, 16, uint64(store))
 }
 
 // ignite starts the unsuppressable fuel fire with a deterministic fuse.
