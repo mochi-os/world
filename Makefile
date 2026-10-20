@@ -1,4 +1,4 @@
-version = 2.1
+version = 2.2
 
 # Generation time stamped into the published manifest.
 generated := $(shell date +%s)
