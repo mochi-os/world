@@ -500,10 +500,10 @@ func TestRadarDetection(t *testing.T) {
 		t.Errorf("level at 60 nm paid %.3f of its range: the earth's curve is still above the horizon's dip", 1-d/clear)
 	}
 	low := flight.Vec3{Y: 300} // at 1,000 ft the horizon is 62 km off
-	if k := i.clutter(low, flight.Vec3{X: 130000, Y: 300}); k <= 0.5 {
+	if k := round.Clutter(low, flight.Vec3{X: 130000, Y: 300}, i.environment.Wrap); k <= 0.5 {
 		t.Errorf("a jet level with us at 130 km from 300 m: clutter %.2f, want the sea behind it", k)
 	}
-	if k := i.clutter(low, flight.Vec3{X: 20000, Y: 300}); k != 0 {
+	if k := round.Clutter(low, flight.Vec3{X: 20000, Y: 300}, i.environment.Wrap); k != 0 {
 		t.Errorf("a jet level with us at 20 km from 300 m: clutter %.2f, want the sky", k)
 	}
 	last := clear
@@ -525,8 +525,9 @@ func TestRadarDetection(t *testing.T) {
 	}
 }
 
-// TestRadarNotch: the notch is the target's own speed along the line of sight,
-// as the pilot's radar and the seeker have it - not the two jets' closure.
+// TestRadarNotch: the notch is the target's own speed along the line of sight
+// with the sea behind it, as the pilot's radar and the seeker have it - not the
+// two jets' closure, and not a beam with the sky behind it.
 func TestRadarNotch(t *testing.T) {
 	i, a, c, _ := radar_pair(t)
 	look := func() bool { // any look in ten frames
@@ -537,9 +538,13 @@ func TestRadarNotch(t *testing.T) {
 		}
 		return false
 	}
-	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{Z: 250}) // beaming a radar that flies straight at it
+	park(c, flight.Vec3{X: 30000, Y: 300}, flight.Vec3{Z: 250}) // beaming low, the sea behind it, a radar that flies straight at it
 	if look() {
-		t.Error("a beaming target painted: its own speed along the line of sight is nil, the notch")
+		t.Error("a beaming target against the sea painted: its own speed along the line of sight is nil, the notch")
+	}
+	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{Z: 250}) // the same beam level with the radar: the sky behind it
+	if !look() {
+		t.Error("a beaming target with the sky behind it never painted: nothing shares its doppler")
 	}
 	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{X: 250}) // running away at the radar's own speed
 	if !look() {
@@ -567,7 +572,7 @@ func TestRadarMemory(t *testing.T) {
 	if a.emitter != 2 || a.lock != slot {
 		t.Fatalf("no STT on a hot target at 30 km (emitter %d, lock %d)", a.emitter, a.lock)
 	}
-	park(c, flight.Vec3{X: 30000, Y: 3000}, flight.Vec3{Z: 250}) // into the notch
+	park(c, flight.Vec3{X: 30000, Y: 300}, flight.Vec3{Z: 250}) // into the notch, beaming low against the sea
 	for tick := uint64(2); tick <= 2+radar_memory; tick++ {
 		i.hunt(0, a, tick)
 		if a.emitter != 2 || a.lock != slot {
@@ -636,9 +641,13 @@ func TestRadarHold(t *testing.T) {
 	if i.trackable(a, c, false, 1) {
 		t.Error("a lock acquired on a target behind the gimbal")
 	}
-	park(c, flight.Vec3{X: 20000, Y: 3000}, flight.Vec3{Z: 250})
+	park(c, flight.Vec3{X: 20000, Y: 300}, flight.Vec3{Z: 250})
 	if i.trackable(a, c, false, 1) {
 		t.Error("a fresh lock acquired on a target in the notch")
+	}
+	park(c, flight.Vec3{X: 20000, Y: 3000}, flight.Vec3{Z: 250})
+	if !i.trackable(a, c, false, 1) {
+		t.Error("no lock on a beaming target with the sky behind it")
 	}
 }
 
@@ -646,7 +655,7 @@ func TestRadarHold(t *testing.T) {
 // inbound round needs a lock the same radar can hold - none on a target in the
 // notch, which a beam puts it in, and one on a target running straight away.
 func TestRadarCounterfire(t *testing.T) {
-	shot := func(velocity flight.Vec3, x float64) bool {
+	shot := func(velocity flight.Vec3, x float64, height float64) bool {
 		i, c, a, self := radar_pair(t) // the machine withholds: it is the one that counterfires, at the novice
 		slot := -1
 		for _, s := range i.slots() {
@@ -656,7 +665,7 @@ func TestRadarCounterfire(t *testing.T) {
 		}
 		i.merged = true
 		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, flight.Quat{W: 1}
-		park(c, flight.Vec3{X: x, Y: 3000}, velocity)
+		park(c, flight.Vec3{X: x, Y: height}, velocity)
 		a.brain.target, a.brain.alerted = slot, 1
 		inbound := round.New(flight.Vec3{X: -4000, Y: 3000}, flight.Vec3{X: 900}, nil, 0) // an active round closing from behind
 		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: inbound.Position, velocity: inbound.Velocity, life: 60})
@@ -664,11 +673,69 @@ func TestRadarCounterfire(t *testing.T) {
 		i.counterfire(self, a, 100)
 		return a.brain.countered == 100 && (a.amraams < before || i.cheat.ammunition)
 	}
-	if shot(flight.Vec3{Z: 250}, 10000) {
-		t.Error("counterfired on a beaming target: it sits in the notch")
+	if shot(flight.Vec3{Z: 250}, 10000, 300) {
+		t.Error("counterfired on a beaming target against the sea: it sits in the notch")
 	}
-	if !shot(flight.Vec3{X: 250}, 6000) {
+	if !shot(flight.Vec3{X: 250}, 6000, 3000) {
 		t.Error("no counter-shot at a target running straight away at 6 km: out of the notch, inside the zone")
+	}
+}
+
+// TestDefendChaff: a bot beaming an inbound radar round blooms its chaff only
+// where the round's seeker has it in the notch - below the round, the sea
+// behind it. Level with the round the sky is behind it, nothing shares its
+// doppler, and a bloom would be wasted.
+func TestDefendChaff(t *testing.T) {
+	bloom := func(height float64) (bool, string) {
+		i, c, a, self := radar_pair(t) // the machine defends; the novice is far off
+		slot := -1
+		for _, s := range i.slots() {
+			if i.aircraft[s] == c {
+				slot = s
+			}
+		}
+		park(c, flight.Vec3{X: 60000, Y: 3000}, flight.Vec3{X: 250})
+		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: height}, flight.Vec3{Z: 250}, flight.Quat{W: 1}
+		a.clouded, a.chaff = 10, 20
+		a.brain.alerted = 1
+		inbound := round.New(flight.Vec3{X: -8000, Y: 3000}, flight.Vec3{X: 900}, nil, 0) // an active round closing on the beam
+		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: inbound.Position, velocity: inbound.Velocity, life: 60, number: 1})
+		a.brain.bloom = false
+		i.defend(self, a, 600)
+		return a.brain.bloom, a.brain.mode
+	}
+	if dispensed, mode := bloom(300); !dispensed || mode != "notch" {
+		t.Errorf("beaming below the round, the sea behind it: bloom %v in %q, want a bloom on the beam", dispensed, mode)
+	}
+	if dispensed, mode := bloom(3000); dispensed || mode != "notch" {
+		t.Errorf("beaming level with the round, the sky behind it: bloom %v in %q, want the beam flown and the chaff kept", dispensed, mode)
+	}
+}
+
+// TestDefendPassed: the bot defends against a radar round coming at it, and not
+// against one that has gone by and flies on away from it.
+func TestDefendPassed(t *testing.T) {
+	defends := func(position, velocity flight.Vec3) bool {
+		i, c, a, self := radar_pair(t) // the machine defends; the novice is far off
+		slot := -1
+		for _, s := range i.slots() {
+			if i.aircraft[s] == c {
+				slot = s
+			}
+		}
+		park(c, flight.Vec3{X: 60000, Y: 3000}, flight.Vec3{X: 250})
+		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{Z: 250}, flight.Quat{W: 1}
+		a.brain.alerted = 1
+		inbound := round.New(position, velocity, nil, 0)
+		inbound.Phase = round.Active
+		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: position, velocity: velocity, life: 60, number: 1})
+		return i.defend(self, a, 600)
+	}
+	if !defends(flight.Vec3{X: -8000, Y: 3000}, flight.Vec3{X: 900}) {
+		t.Error("no defence against an active round 8 km out and coming at it")
+	}
+	if defends(flight.Vec3{X: 3000, Y: 3000}, flight.Vec3{X: 900}) {
+		t.Error("defending against an active round that has gone by and is flying away")
 	}
 }
 
@@ -712,7 +779,7 @@ func TestCrankSeam(t *testing.T) {
 		b := a.brain
 		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, flight.Quat{W: 1}
 		a.emitter, a.lock = 1, -1
-		park(c, flight.Vec3{X: truth, Y: 3000}, flight.Vec3{Z: 250}) // on the beam: in the notch, no fresh lock
+		park(c, flight.Vec3{X: truth, Y: 300}, flight.Vec3{Z: 250}) // on the beam against the sea: in the notch, no fresh lock
 		b.target = slot
 		b.known[slot] = &track{when: 0, position: flight.Vec3{X: picture, Y: 3000}, velocity: flight.Vec3{}}
 		own := round.New(flight.Vec3{X: 500, Y: 3000}, flight.Vec3{X: 900}, &round.Target{Position: flight.Vec3{X: picture, Y: 3000}}, 0) // a radar shot: midcourse on the datalinked estimate
@@ -761,8 +828,8 @@ func TestRadarParity(t *testing.T) {
 	}{
 		{"BASE", read(`const BASE = ([0-9.]+) \* NM`) * 1852, radar_base},
 		{"CLUTTER", read(`const CLUTTER = ([0-9.]+)`), radar_clutter},
-		{"EDGE", read(`const EDGE = ([0-9.]+)`), radar_edge},
-		{"EARTH", read(`const EARTH = ([0-9.]+)`), earth},
+		{"EDGE", read(`const EDGE = ([0-9.]+)`), round.Edge},
+		{"EARTH", read(`const EARTH = ([0-9.]+)`), round.Earth},
 		{"HOLD", read(`const HOLD = ([0-9.]+)`), radar_hold},
 		{"MEMORY", read(`const MEMORY = ([0-9.]+)`), radar_memory / 60},
 		{"NOTCH", read(`const NOTCH = ([0-9.]+)`), round.Notch},

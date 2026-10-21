@@ -1971,14 +1971,14 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.alive && shooter.emitter == 2 && shooter.lock == m.target && truth != nil {
 		// The datalink is only as good as the shooter's radar, and that
 		// radar has the same clutter notch the seeker does (#29): a beamed
-		// target's return sits in the rejection gate with the ground, so a
-		// defender squared to the SHOOTER starves the round of updates too.
-		// This is what makes beam-and-chaff the complete defence rather
-		// than a two-second inconvenience — and the shooter's own display
-		// catching up with that truth (track memory, broken lock) is the EW
-		// task's, not this line's.
-		direction, _ := i.bearing(shooter.model.State.Position, target.model.State.Position)
-		if math.Abs(target.model.State.Velocity.Dot(direction)) > round.Notch {
+		// target seen against the sea has its return in the rejection gate
+		// with the sea's, so a defender squared to the SHOOTER starves the
+		// round of updates too. This is what makes beam-and-chaff below the
+		// shooter the complete defence rather than a two-second
+		// inconvenience — and the shooter's own display catching up with
+		// that truth (track memory, broken lock) is the EW task's, not this
+		// line's.
+		if !round.Notched(shooter.model.State.Position, target.model.State.Position, target.model.State.Velocity, i.environment.Wrap) {
 			support = truth
 		}
 	}

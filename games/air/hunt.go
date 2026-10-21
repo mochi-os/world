@@ -57,7 +57,8 @@ func pressing(library int) press {
 
 // The bot's radar is the pilot's (apps/air/web/src/game/radar.ts): the same
 // detection range by aspect and against the sea, the same doppler notch on the
-// target's own speed along the line of sight, one look per antenna frame at
+// target's own speed along the line of sight with the sea behind it
+// (round.Notched), one look per antenna frame at
 // the same odds, a jammer outside burnthrough starving the lock as the notch
 // does, and the same memory before a starved lock drops. The scan
 // cone matches the seeker's gimbal constant, and in elevation it covers the
@@ -66,7 +67,6 @@ func pressing(library int) press {
 const (
 	radar_base    = 55 * 1852.0 // m: beam-aspect detection range against a fighter, 44 nm nose-on
 	radar_clutter = 0.35        // how much of its range a target seen against the sea loses
-	radar_edge    = 0.005       // rad: the band either side of the horizon over which the sea comes in behind a target
 	radar_hold    = 1.15        // an STT holds its lock out to this multiple of the detection range
 	radar_memory  = 4 * 60      // ticks a starved STT coasts on memory before the lock drops
 	radar_beam    = 0.0576      // rad: one bar's height, the beam's (3.3°)
@@ -75,7 +75,6 @@ const (
 	radar_tilt    = 1.047       // rad: the antenna's elevation gimbal
 	radar_commit  = 1.25        // the withholding tiers light the STT inside this multiple of the maximum rung
 	radar_seam    = 10000.0     // m: inside this the tuned WVR arbiter owns the flight path and the crank yields
-	earth         = 6371000.0   // m, the earth's radius
 )
 
 // radar_frame is the ticks per antenna frame, every bar swept once: one look at
@@ -93,28 +92,10 @@ func aspect(line flight.Vec3, velocity flight.Vec3) float64 {
 	return 1 - 0.2*math.Abs(velocity.Dot(line))/speed
 }
 
-// clutter is how far a target is seen against the sea, 0 to 1: its line of
-// sight runs below the horizon, which dips further the higher the radar flies,
-// and a distant target sits lower for the earth's curve. A jet at the same
-// height, or a little below at long range, has the sky behind it.
-func (i *instance) clutter(own flight.Vec3, target flight.Vec3) float64 {
-	across := math.Hypot(flight.Shortest(own.X, target.X, i.environment.Wrap), flight.Shortest(own.Z, target.Z, i.environment.Wrap))
-	below := math.Atan2(own.Y-target.Y, across) + across/(2*earth)
-	horizon := math.Acos(earth / (earth + math.Max(0, own.Y)))
-	t := clamp((below-horizon+radar_edge)/(2*radar_edge), 0, 1)
-	return t * t * (3 - 2*t)
-}
-
 // detection is how far this target paints, this look.
 func (i *instance) detection(a, c *craft) float64 {
 	line, _ := i.bearing(a.model.State.Position, c.model.State.Position)
-	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*i.clutter(a.model.State.Position, c.model.State.Position))
-}
-
-// notched reports a target in the clutter notch: its own speed along the line
-// of sight, whatever the radar's, is too slow for the doppler gate - a beam.
-func notched(line flight.Vec3, velocity flight.Vec3) bool {
-	return math.Abs(velocity.Dot(line)) <= round.Notch
+	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*round.Clutter(a.model.State.Position, c.model.State.Position, i.environment.Wrap))
 }
 
 // probability is the chance one frame's look paints a target at this span
@@ -151,7 +132,7 @@ func (i *instance) painted(a, c *craft, tick uint64) bool {
 		return false
 	}
 	line, span := i.bearing(a.model.State.Position, c.model.State.Position)
-	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || notched(line, c.model.State.Velocity) {
+	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || round.Notched(a.model.State.Position, c.model.State.Position, c.model.State.Velocity, i.environment.Wrap) {
 		return false
 	}
 	if math.Abs(math.Asin(clamp(line.Y, -1, 1))-i.antenna(a, tick)) > radar_bars*radar_beam/2 {
@@ -190,7 +171,7 @@ func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
 	if locked {
 		reach *= radar_hold
 	}
-	starved := notched(line, prey.model.State.Velocity) || (prey.loud && span > round.Burnthrough)
+	starved := round.Notched(a.model.State.Position, prey.model.State.Position, prey.model.State.Velocity, i.environment.Wrap) || (prey.loud && span > round.Burnthrough)
 	if !locked || !starved {
 		b.notching = 0
 	} else if b.notching == 0 {
@@ -198,6 +179,19 @@ func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
 	}
 	return a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) >= round.Gimbal && span <= reach &&
 		(!starved || (b.notching > 0 && tick-b.notching <= radar_memory)) // a fresh lock never starts starved
+}
+
+// incoming reports whether a radar round is a threat to a jet: its seeker
+// awake, as the RWR hears it, and the round still closing. One that has gone by
+// flies on until its battery dies, and defending against that held an expert in
+// the notch for 50 s, five rounds aboard, while the pilot who fired it closed
+// and shot again.
+func (i *instance) incoming(m *missile, position, velocity flight.Vec3) bool {
+	if m.radar == nil || m.radar.Phase < round.Active {
+		return false
+	}
+	line, _ := i.bearing(m.position, position)
+	return m.velocity.Subtract(velocity).Dot(line) > 0
 }
 
 // counterfire: a withholding tier forced defensive takes the one shot it has
@@ -222,7 +216,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	// supersonic, or a max-range spray buys the one licensed round for free.
 	credible := false
 	for _, m := range i.flying {
-		if m.radar == nil || m.target != slot || m.radar.Phase < round.Active {
+		if m.target != slot || !i.incoming(m, a.model.State.Position, a.model.State.Velocity) {
 			continue
 		}
 		if round.Lethal(*m.radar, round.Target{Position: a.model.State.Position,
@@ -484,7 +478,11 @@ type poise struct {
 func poising(library int) poise {
 	switch {
 	case library == 2:
-		return poise{tolerance: 0.5, cadence: 300, lapse: 0.25}
+		// Measured against the BVR stand-in over 72 jousts (2026-10-21): at a
+		// 0.5 rad tolerance and a lapse one engagement in four the pilot beat the
+		// intermediate 34-38, where the target is that the intermediate wins most.
+		// Here it wins 52-20; the shot depth instead, 0.7 to 0.5, gave 44-28.
+		return poise{tolerance: 0.3, cadence: 300, lapse: 0.12}
 	case library >= 3:
 		return poise{tolerance: 0.17, cadence: 150, lapse: 0.08}
 	default:
@@ -514,7 +512,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	span := math.MaxFloat64
 	inbound := 0 // radar rounds active against me: the ones behind the nearest each want their share of the chaff (#43)
 	for _, m := range i.flying {
-		if m.radar == nil || m.target != slot || m.radar.Phase < round.Active {
+		if m.target != slot || !i.incoming(m, a.model.State.Position, a.model.State.Velocity) {
 			continue
 		}
 		inbound++
@@ -599,11 +597,10 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b.throttle, b.reheat = 1, 0
 	b.mode = "notch"
 	// A bloom is worth dispensing only outside the seeker's Resolve range, while
-	// the jet is in the notch, and never into the five cartridges each other
-	// inbound round will want. The 1.4 s cadence is measured: waiting for the
-	// seeker's Hold to expire leaves half-second gaps with no fresh cloud.
-	radial := math.Abs(a.model.State.Velocity.Dot(line))
-	if a.clouded > 1.4 && span > round.Resolve && radial < round.Notch && a.chaff > 5*(inbound-1) {
+	// the jet is in the seeker's notch, and never into the five cartridges each
+	// other inbound round will want. The 1.4 s cadence is measured: waiting for
+	// the seeker's Hold to expire leaves half-second gaps with no fresh cloud.
+	if a.clouded > 1.4 && span > round.Resolve && round.Notched(threat.position, a.model.State.Position, a.model.State.Velocity, i.environment.Wrap) && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
 	// No bot arms its jammer: the superhuman flies the expert's doctrine, and the

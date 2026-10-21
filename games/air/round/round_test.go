@@ -228,6 +228,40 @@ func TestVisual(t *testing.T) {
 	}
 }
 
+// TestNotched: the clutter notch needs the sea behind the target. A beaming
+// jet level with the radar has the sky behind it and paints; the same jet well
+// below it has the sea behind it and sits in the notch; a jet below flying at
+// the radar paints against the sea; a slow jet above, the pilot's #97 lock,
+// paints. The seeker acquires by the same rule.
+func TestNotched(t *testing.T) {
+	own := flight.Vec3{Y: 3000}
+	beam := flight.Vec3{Z: 250}
+	if Notched(own, flight.Vec3{X: 8000, Y: 3000}, beam, 0) {
+		t.Error("a beaming jet level with the radar sits in the notch with the sky behind it")
+	}
+	if !Notched(own, flight.Vec3{X: 8000, Y: 500}, beam, 0) {
+		t.Error("a beaming jet below the radar, the sea behind it, is out of the notch")
+	}
+	if Notched(own, flight.Vec3{X: 8000, Y: 500}, flight.Vec3{X: -250}, 0) {
+		t.Error("a jet below flying at the radar sits in the notch")
+	}
+	if Notched(own, flight.Vec3{X: 300, Y: 3500}, flight.Vec3{X: 30, Z: 50}, 0) {
+		t.Error("a slow jet above the radar sits in the notch")
+	}
+	acquired := func(height float64) bool {
+		m := New(flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, nil, 0)
+		target := Target{Position: flight.Vec3{X: 8000, Y: height}, Velocity: beam}
+		m.Step(dt, nil, &target)
+		return m.Phase == Pitbull
+	}
+	if !acquired(3000) {
+		t.Error("the seeker could not acquire a beaming jet with the sky behind it")
+	}
+	if acquired(500) {
+		t.Error("the seeker acquired a beaming jet in the notch against the sea")
+	}
+}
+
 // TestDeterminism: the same launch and the same world produce the same
 // flight — the server's requirement.
 func TestDeterminism(t *testing.T) {
@@ -363,6 +397,38 @@ func TestTerminalMiss(t *testing.T) {
 	}
 }
 
+// TestFuseClosest: the fuse fires at the closest approach, not where the round
+// enters its radius, so a round passing 3 m from the target bursts 3 m from it.
+// Firing on entry burst every round 15-20 m out, beyond the 16.8 m its
+// fragments reach.
+func TestFuseClosest(t *testing.T) {
+	for _, miss := range []float64{0.5, 3, 12} {
+		m := &Model{Position: flight.Vec3{X: -300}, Velocity: flight.Vec3{X: 1100}, Time: 10}
+		truth := Target{Position: flight.Vec3{Y: miss}}
+		fired := false
+		for step := 0; step < 240 && !fired; step++ {
+			m.Position = m.Position.Add(m.Velocity.Scale(dt))
+			var burst flight.Vec3
+			if fired, burst = m.Fused(dt, truth); fired {
+				if off := burst.Subtract(truth.Position).Length(); math.Abs(off-miss) > 0.5 {
+					t.Errorf("a pass %.1f m from the target burst %.1f m from it", miss, off)
+				}
+			}
+		}
+		if !fired {
+			t.Errorf("a pass %.1f m from the target never fused", miss)
+		}
+	}
+	// Outside the radius it stays quiet however close the pass is to it.
+	m := &Model{Position: flight.Vec3{X: -300}, Velocity: flight.Vec3{X: 1100}, Time: 10}
+	for step := 0; step < 240; step++ {
+		m.Position = m.Position.Add(m.Velocity.Scale(dt))
+		if fired, _ := m.Fused(dt, Target{Position: flight.Vec3{Y: Fuse + 1}}); fired {
+			t.Fatalf("a pass %.0f m out fused", Fuse+1)
+		}
+	}
+}
+
 // TestFrameRate: the flight is the same whatever the caller's stride —
 // Advance dices dt into fixed slices, so a 30 Hz client and a 240 Hz server
 // fly the same missile to the same terminal accuracy.
@@ -399,15 +465,16 @@ func TestFrameRate(t *testing.T) {
 	}
 }
 
-// TestChaff (#29): a beaming defender's chaff takes the seeker, a hot or cold
-// defender's is rejected, and a seduced seeker that reaches its cloud
+// TestChaff (#29): a beaming defender's chaff takes the seeker when the sea is
+// behind him, a hot or cold defender's is rejected, and so is a beaming
+// defender's with the sky behind him; a seduced seeker that reaches its cloud
 // reacquires.
 func TestChaff(t *testing.T) {
 	_, sound := atmosphere(6000)
-	launch := func(beaming bool) (*Model, Target) {
+	launch := func(beaming bool, height float64) (*Model, Target) {
 		// Approach HOT to Pitbull: a beaming target cannot be freshly acquired. The
 		// established track holds through the notch; only chaff steals it.
-		target := Target{Position: flight.Vec3{X: 14000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
+		target := Target{Position: flight.Vec3{X: 14000, Y: height}, Velocity: flight.Vec3{X: -0.9 * sound}}
 		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
 		for m.Time < 60 && m.Phase != Pitbull {
 			if !m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target) {
@@ -425,7 +492,7 @@ func TestChaff(t *testing.T) {
 	}
 
 	// Out of the notch: rejected, and the intercept continues to a fuse.
-	m, target := launch(false)
+	m, target := launch(false, 2000)
 	if m.Distract(target.Position, target) {
 		t.Fatalf("a hot target's chaff seduced the seeker — the velocity gate must reject it")
 	}
@@ -433,9 +500,16 @@ func TestChaff(t *testing.T) {
 		t.Fatalf("a rejected bloom disturbed the track (phase %d)", m.Phase)
 	}
 
-	// In the notch: seduced — the track becomes the cloud, immune to truth
-	// capture and datalink while held.
-	m, target = launch(true)
+	// Beaming with the sky behind him: nothing shares his doppler cell, so the
+	// cloud is rejected as a hot defender's is.
+	m, target = launch(true, 6000)
+	if m.Distract(target.Position, target) {
+		t.Fatalf("a beaming target's chaff seduced the seeker with the sky behind him")
+	}
+
+	// In the notch, the sea behind him: seduced — the track becomes the
+	// cloud, immune to truth capture and datalink while held.
+	m, target = launch(true, 2000)
 	bloom := target.Position
 	if !m.Distract(bloom, target) {
 		t.Fatalf("a beaming target's chaff failed to seduce")
@@ -477,15 +551,17 @@ func TestChaff(t *testing.T) {
 	}
 }
 
-// TestChaffDefeat (#29): flown end to end, the notch-and-chaff defence
-// turns a killing shot into a miss. The same geometry without chaff fuses.
+// TestChaffDefeat (#29): flown end to end, the notch-and-chaff defence below
+// the round turns a killing shot into a miss. The same geometry without chaff
+// fuses, and so does the same defence flown level with the round, the sky
+// behind the defender.
 func TestChaffDefeat(t *testing.T) {
 	_, sound := atmosphere(6000)
-	fly := func(dispensing bool) (bool, float64) {
+	fly := func(dispensing bool, height float64) (bool, float64) {
 		// The defender starts HOT (so the seeker can build its track), then
 		// breaks into the beam and dispenses as the seeker goes terminal —
 		// the notch-and-chaff defence flown as briefed.
-		target := Target{Position: flight.Vec3{X: 16000, Y: 6000}, Velocity: flight.Vec3{X: -0.85 * sound}}
+		target := Target{Position: flight.Vec3{X: 16000, Y: height}, Velocity: flight.Vec3{X: -0.85 * sound}}
 		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
 		offered, broke := false, false
 		for m.Time < Battery {
@@ -519,16 +595,19 @@ func TestChaffDefeat(t *testing.T) {
 		}
 		return false, m.Least
 	}
-	fused, _ := fly(false)
+	fused, _ := fly(false, 2000)
 	if !fused {
 		t.Fatalf("the control shot (no chaff) never fused — the test geometry is broken")
 	}
-	fused, closest := fly(true)
+	fused, closest := fly(true, 2000)
 	if fused {
 		t.Fatalf("the chaff-in-the-notch shot still fused (closest %.0f m)", closest)
 	}
 	if closest < 100 {
 		t.Fatalf("the deceived round still passed within %.0f m", closest)
+	}
+	if fused, closest := fly(true, 6000); !fused {
+		t.Fatalf("beam and chaff level with the round, the sky behind the defender, still defeated it (closest %.0f m)", closest)
 	}
 }
 
@@ -538,9 +617,10 @@ func TestChaffDefeat(t *testing.T) {
 func TestBeacon(t *testing.T) {
 	_, sound := atmosphere(6000)
 
-	// The chaff defence, radiating: the round eats the beam and the bloom.
+	// The chaff defence below the round, radiating: the round eats the beam
+	// and the bloom.
 	fly := func(radiating func(m *Model) bool) (bool, float64) {
-		target := Target{Position: flight.Vec3{X: 16000, Y: 6000}, Velocity: flight.Vec3{X: -0.85 * sound}}
+		target := Target{Position: flight.Vec3{X: 16000, Y: 2000}, Velocity: flight.Vec3{X: -0.85 * sound}}
 		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
 		offered, broke := false, false
 		for m.Time < Battery {

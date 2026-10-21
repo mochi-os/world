@@ -361,6 +361,77 @@ func TestFox3Server(t *testing.T) {
 	}
 }
 
+// TestFox3Kill: a supported AIM-120 kills a target that does nothing to defend
+// itself, from ahead, the beam and astern. Before the fuse waited for the
+// closest approach, sixty such shots fused fifty-six times and killed nothing.
+func TestFox3Kill(t *testing.T) {
+	for _, aspect := range []float64{0, 90, 180} { // degrees: coming at the shooter, crossing, going away
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+		for _, slot := range []int{0, 1} {
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+			m.State = flight.Level(m, flight.Vec3{Y: 7000}, flight.Vec3{X: 1}, 260, 2500)
+			a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
+				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			}, "open")}
+			a.arm()
+			i.aircraft[slot] = a
+		}
+		shooter, target := i.aircraft[0], i.aircraft[1]
+		heading := aspect * math.Pi / 180
+		target.model.State = flight.Level(target.model, flight.Vec3{X: 12000, Y: 7000}, flight.Vec3{X: -math.Cos(heading), Z: math.Sin(heading)}, 260, 2500)
+		shooter.emitter, shooter.lock = 2, 1
+		if !i.fox3(0, shooter, false) {
+			t.Fatalf("a locked shooter could not launch")
+		}
+		for step := 0; step < 60*60 && len(i.flying) > 0 && target.alive; step++ {
+			i.pursue(1.0/60, uint64(step))
+			target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(1.0 / 60))
+		}
+		if target.alive {
+			t.Errorf("aspect %.0f: an undefended target survived the shot", aspect)
+		}
+	}
+}
+
+// TestFox3Notch: the datalink is only as good as the shooter's radar, so a
+// target beaming it with the sea behind starves the round of updates, and the
+// same beam with the sky behind it does not.
+func TestFox3Notch(t *testing.T) {
+	stale := func(height float64) float64 {
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+		for _, slot := range []int{0, 1} {
+			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
+			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
+			a := &craft{model: m, alive: true, lock: -1, loadout: stores_grant(map[string]any{
+				"4": map[string]any{"fixture": "rail", "stores": []any{"120c"}},
+			}, "open")}
+			a.arm()
+			i.aircraft[slot] = a
+		}
+		shooter, target := i.aircraft[0], i.aircraft[1]
+		target.model.State.Position = flight.Vec3{X: 25000, Y: height}
+		target.model.State.Velocity = flight.Vec3{X: -260}
+		shooter.emitter, shooter.lock = 2, 1
+		if !i.fox3(0, shooter, false) {
+			t.Fatalf("a locked shooter could not launch")
+		}
+		target.model.State.Velocity = flight.Vec3{Z: 260} // beaming the shooter
+		for step := 0; step < 120; step++ {
+			i.pursue(1.0/60, uint64(step))
+		}
+		if len(i.flying) != 1 {
+			t.Fatalf("the round died in flight")
+		}
+		return i.flying[0].radar.Stale
+	}
+	if s := stale(8000); s > 0.2 {
+		t.Errorf("a beam level with the shooter, the sky behind it, left the datalink %.1f s stale", s)
+	}
+	if s := stale(1000); s < 1.5 {
+		t.Errorf("a beam below the shooter, the sea behind it, still fed the datalink (%.1f s stale)", s)
+	}
+}
+
 // TestFox3Trigger (#27 phase 2c): the AIM-120's trigger is its own EDGE on
 // the wire — a separate flag and a separate magazine from the heater's, so
 // one press is one round and a held button is not a stream. This is the
@@ -476,11 +547,13 @@ func TestFox3Visual(t *testing.T) {
 	}
 }
 
-// TestChaffServer (#29): a defender who beams and dispenses defeats a server
-// round that fuses without the dispense. The bloom is offered through the same
-// fields the flare edge sets, so this pins that wiring too.
+// TestChaffServer (#29): a defender below the shooter who beams and dispenses
+// defeats a server round that fuses without the dispense; the same defence
+// flown level with the round, the sky behind him, does not. The bloom is
+// offered through the same fields the flare edge sets, so this pins that
+// wiring too.
 func TestChaffServer(t *testing.T) {
-	fly := func(dispensing bool) float64 {
+	fly := func(dispensing bool, height float64) float64 {
 		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
@@ -492,7 +565,7 @@ func TestChaffServer(t *testing.T) {
 			i.aircraft[slot] = a
 		}
 		shooter, target := i.aircraft[0], i.aircraft[1]
-		target.model.State.Position = flight.Vec3{X: 15000, Y: 8000}
+		target.model.State.Position = flight.Vec3{X: 15000, Y: height}
 		target.model.State.Velocity = flight.Vec3{X: -280}
 		shooter.emitter, shooter.lock = 2, 1
 		if !i.fox3(0, shooter, false) {
@@ -533,11 +606,18 @@ func TestChaffServer(t *testing.T) {
 		// the warhead's fragment luck killed is battle's stochastic business.
 		return m.radar.Least
 	}
-	if closest := fly(false); closest > 20 {
+	// The miss the seduction buys depends on the geometry, not on the defence:
+	// measured 64 m with the defender 6 km below the shooter, 81 m 4 km below
+	// and 105 m level, under the old rule and the new alike. The warhead's
+	// fragments reach about 24 m, so 50 m is a clean defeat.
+	if closest := fly(false, 4000); closest > 20 {
 		t.Fatalf("the control shot (beam, no chaff) passed at %.0f m — an established track must hold through the notch", closest)
 	}
-	if closest := fly(true); closest < 100 {
-		t.Fatalf("the beamed-and-chaffed defender was still passed at %.0f m", closest)
+	if closest := fly(true, 4000); closest < 50 {
+		t.Fatalf("the beamed-and-chaffed defender below the round was still passed at %.0f m", closest)
+	}
+	if closest := fly(true, 8000); closest > 20 {
+		t.Fatalf("the beamed-and-chaffed defender level with the round, the sky behind him, defeated it at %.0f m", closest)
 	}
 }
 
@@ -558,7 +638,7 @@ func TestJammerServer(t *testing.T) {
 			i.aircraft[slot] = a
 		}
 		shooter, target := i.aircraft[0], i.aircraft[1]
-		target.model.State.Position = flight.Vec3{X: 16000, Y: 8000}
+		target.model.State.Position = flight.Vec3{X: 16000, Y: 4000} // below the shooter: the sea behind him, where beam and chaff work
 		target.model.State.Velocity = flight.Vec3{X: -280}
 		shooter.emitter, shooter.lock = 2, 1
 		return i, shooter, target

@@ -35,9 +35,9 @@ const (
 )
 
 // Chaff (#29). A bloomed cloud stops within seconds, so a pulse-doppler seeker
-// rejects it on velocity unless the defender is beaming: inside the clutter
-// notch, jet and cloud share a range-doppler cell and the gate cannot
-// discriminate.
+// rejects it on velocity unless the defender is beaming against the sea:
+// inside the clutter notch, jet, cloud and sea share a range-doppler cell and
+// the gate cannot discriminate.
 const (
 	Notch   = 60.0   // m/s — the defender's radial speed in the seeker's frame must sit inside this
 	Hold    = 2.5    // s — how long the seeker stares at the cloud before the velocity gate shakes it off
@@ -107,7 +107,7 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	if reach < Resolve || reach > Activation {
 		return false // too close: the seeker resolves the jet from the cloud — burn-through, chaff's version
 	}
-	if math.Abs(truth.Velocity.Dot(sight.Scale(1/reach))) > Notch {
+	if !Notched(m.Position, truth.Position, truth.Velocity, m.Wrap) {
 		return false // out of the notch: the velocity gate rejects the cloud outright
 	}
 	m.Phase = Active
@@ -132,6 +132,41 @@ func New(position flight.Vec3, velocity flight.Vec3, estimate *Target, wrap floa
 		m.Loft = false
 	}
 	return m
+}
+
+// The sea behind a target. A pulse-doppler radar or seeker rejects the sea's
+// return by its doppler, and a target whose own speed along the line of sight
+// is as slow as the sea's goes with it: the clutter notch. With the sky behind
+// the target nothing competes with its return, so it paints however it flies.
+const (
+	Earth = 6371000.0 // m, the earth's radius
+	Edge  = 0.005     // rad: the band either side of the horizon over which the sea comes in behind a target
+)
+
+// Clutter is how far a target is seen against the sea from a radar at own, 0
+// to 1: its line of sight runs below the horizon, which dips further the
+// higher the radar flies, and a distant target sits lower for the earth's
+// curve. A jet at the same height, or a little below at long range, has the
+// sky behind it. The pilot's radar has the same (radar.ts clutter).
+func Clutter(own flight.Vec3, target flight.Vec3, wrap float64) float64 {
+	sight := relative(own, target, wrap)
+	across := math.Hypot(sight.X, sight.Z)
+	below := math.Atan2(-sight.Y, across) + across/(2*Earth)
+	horizon := math.Acos(Earth / (Earth + math.Max(0, own.Y)))
+	t := math.Max(0, math.Min(1, (below-horizon+Edge)/(2*Edge)))
+	return t * t * (3 - 2*t)
+}
+
+// Notched reports a target in the clutter notch of a radar or seeker at own:
+// seen against the sea, with its own speed along the line of sight inside
+// Notch. The pilot's radar has the same (radar.ts notched).
+func Notched(own flight.Vec3, target flight.Vec3, velocity flight.Vec3, wrap float64) bool {
+	if Clutter(own, target, wrap) <= 0.5 {
+		return false
+	}
+	sight := relative(own, target, wrap)
+	reach := sight.Length()
+	return reach < 1 || math.Abs(velocity.Dot(sight.Scale(1/reach))) <= Notch
 }
 
 // relative is to - from across the wrap (0 = infinite world).
@@ -235,9 +270,9 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		reach := sight.Length()
 		unit := sight.Scale(1 / math.Max(reach, 1))
 		// Acquisition respects the clutter notch: a searching seeker cannot pick up a
-		// near-zero radial velocity return. An established Pitbull track holds
-		// through the notch, so beaming alone never breaks a lock.
-		if reach <= Activation && unit.Dot(forward) >= Gimbal && math.Abs(truth.Velocity.Dot(unit)) > Notch {
+		// near-zero radial velocity return against the sea. An established Pitbull
+		// track holds through the notch, so beaming alone never breaks a lock.
+		if reach <= Activation && unit.Dot(forward) >= Gimbal && !Notched(m.Position, truth.Position, truth.Velocity, m.Wrap) {
 			// HUSKY: the seeker sees the target and becomes the estimate's
 			// source — datalink no longer matters. PITBULL at terminal range.
 			m.Estimate = truth.Position
@@ -414,6 +449,11 @@ func (m *Model) Advance(dt float64, support *Target, truth *Target) (bool, bool,
 // Fused reports whether the proximity fuse fires over the step just taken, and
 // where. It solves the CLOSEST APPROACH within the step: at Mach 2.5 the round
 // crosses 40 m per frame and a sampled range walks through the envelope.
+//
+// Inside Fuse it is armed, and it fires at the closest approach: in the step
+// where the range stops closing. Firing on entry burst every round at the
+// trigger radius, 15-20 m out, beyond the 16.8 m the warhead's fragments reach:
+// sixty undefended targets took fifty-six fusings and not one kill.
 func (m *Model) Fused(dt float64, truth Target) (bool, flight.Vec3) {
 	if m.Time < Arming {
 		return false, flight.Vec3{}
@@ -432,8 +472,8 @@ func (m *Model) Fused(dt float64, truth Target) (bool, flight.Vec3) {
 	if miss := nearest.Length(); miss < m.Least || m.Least == 0 {
 		m.Least = miss // the flight's closest approach: the endgame's own report card
 	}
-	if nearest.Length() > Fuse {
-		return false, flight.Vec3{}
+	if nearest.Length() > Fuse || at >= dt {
+		return false, flight.Vec3{} // outside, or still closing at the step's end
 	}
 	// The burst: the round's own position at that instant.
 	return true, m.Position.Subtract(m.Velocity.Scale(dt - at))
