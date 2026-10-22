@@ -327,6 +327,9 @@ docker: docker-stage
 	    --tag $(docker_image):production \
 	    --push \
 	    . && echo ">>> docker build+push: $$(($$(date +%s)-t))s" | tee -a $(timing)
+	@# The containerd image store keeps a local copy of every pushed image, one
+	@# per release, and nothing here runs it: GHCR holds the release.
+	@-docker image rm $(sort $(addprefix $(docker_image):,$(version) $(major) latest production)) > /dev/null
 
 # --------------------------------------------------------------------------
 # Release
