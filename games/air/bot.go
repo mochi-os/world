@@ -634,6 +634,7 @@ type brain struct {
 	bursting  uint64     // consecutive ticks of trigger: the burst governor (#206)
 	walked    float64    // aim error at the last trigger judgement, m: a burst keeps firing while this is SHRINKING — the stream is being walked on (#235)
 	walkedAt  uint64     // tick of that judgement: consecutive judgements give the sweep rate the crossing shot is priced on
+	pictured  *track     // the picture of him that judgement was made against: a sweep is measured against one picture, never across a new look
 	tracking  bool       // the pipper owns the stick this tick
 	menace    int        // the attacker slot decide() last judged the problem, -1 none (#251): steer's evasion reads its track
 	glimpsed  uint64     // tick a forming shot was first seen (#251): the tier's reaction time runs from here
@@ -3103,15 +3104,20 @@ func (b *brain) recovers(s *flight.State) bool {
 // the nose sits from it in metres at the target, the live range, and the
 // total prediction horizon (track age + bullet transit).
 func (b *brain) pipper(m *flight.Model, tick uint64) (direction flight.Vec3, miss, span, horizon float64) {
+	return b.solve(m, tick, b.prey)
+}
+
+// solve is the pipper against a given picture of him.
+func (b *brain) solve(m *flight.Model, tick uint64, prey *track) (direction flight.Vec3, miss, span, horizon float64) {
 	s := &m.State
-	age := float64(tick-b.prey.when) / 60
+	age := float64(tick-prey.when) / 60
 	curved := b.skill.library >= 3
-	current := predict(b.prey, age, curved)
+	current := predict(prey, age, curved)
 	line := current.Subtract(s.Position)
 	span = math.Max(line.Length(), 1)
-	closure := s.Velocity.Subtract(b.prey.velocity).Dot(line.Scale(1 / span))
+	closure := s.Velocity.Subtract(prey.velocity).Dot(line.Scale(1 / span))
 	transit := span / math.Max(battle.Average(span, s.Position.Y)+closure, 200)
-	spot := predict(b.prey, age+transit, curved).
+	spot := predict(prey, age+transit, curved).
 		Subtract(s.Velocity.Scale(transit)).
 		Add(flight.Vec3{Y: 4.9 * transit * transit})
 	direction = spot.Subtract(s.Position).Normalize()
@@ -3170,12 +3176,21 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	drift := b.prey.wobble * horizon * horizon * horizon / 6
 	waver := b.skill.wander * span
 	sigma := math.Sqrt(scatter*scatter + drift*drift + waver*waver)
+	// The miss this tick against the picture the last judgement was made on. A
+	// new look moves the solution, not the bore: a slow look at a jet pulling
+	// hard jumps the solution hundreds of metres in a tick, and measured across
+	// the look that priced as a crossing sweep. A novice fired 53 rounds that
+	// way with its nose held steady 20 degrees off him, 490 m wide of him.
+	then := miss
+	if b.pictured != nil && b.pictured != b.prey && tick == b.walkedAt+1 {
+		_, then, _, _ = b.solve(m, tick, b.pictured)
+	}
 	// A burst being WALKED is finished, not re-judged: while the error is
 	// shrinking the stream is converging on him and the next rounds are the
 	// best-priced of the fight. This is the correction loop of real gunnery
 	// — the first rounds find the line, the walk kills.
-	if b.bursting > 0 && miss < b.walked-0.3 {
-		b.walked, b.walkedAt = miss, tick
+	if b.bursting > 0 && then < b.walked-0.3 {
+		b.walked, b.walkedAt, b.pictured = miss, tick, b.prey
 		b.chanced = tick
 		return true
 	}
@@ -3191,10 +3206,10 @@ func (b *brain) solution(m *flight.Model, tick uint64) bool {
 	// the expert's aim WANDER accidentally produced the crossings that won it
 	// fights up the ladder.
 	sweep := 0.0
-	if tick == b.walkedAt+1 && b.walked > miss {
-		sweep = (b.walked - miss) * 60
+	if tick == b.walkedAt+1 && b.walked > then {
+		sweep = (b.walked - then) * 60
 	}
-	b.walked, b.walkedAt = miss, tick
+	b.walked, b.walkedAt, b.pictured = miss, tick, b.prey
 	// Only a FAST sweep is a crossing: eighty metres a second separates a
 	// bore slicing through the solution (hundreds) from a pursuit steadily
 	// converging on it (tens). Discounting the slow kind re-opened the

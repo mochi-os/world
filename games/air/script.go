@@ -225,13 +225,19 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// Flown as a yo-yo until 2.5 or 3.5 s before the pass and as this clear
 	// after it, the superhuman read 45/14 and 42/18 with 22 inside; as a yo-yo
 	// only away from this pass and the guns jousts, 51/12, the circles red.
+	// Not with him behind me, whatever the tier: there the way out of his miss
+	// is straight ahead of his nose. The novice and the intermediate cleared
+	// whenever he closed, and extended 7 s at 186-351 m in front of a
+	// heater-armed pilot; the fight law's turn opens that miss instead, as it
+	// does for the instructor tiers.
+	pursued := now.Subtract(me.Position).Dot(me.Velocity) < 0
 	fast, slow := false, false
 	if gap := now.Subtract(me.Position); gap.Length() > 1 {
 		closure := me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize())
 		fast = !i.missiles && closure > 60
 		slow = i.missiles && gunning && !astern && closure > 100 && m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2) < 3
 	}
-	if !breaking && (b.skill.library < 3 || astern || fast || slow || s.away.Length() > 0.5) {
+	if !breaking && (b.skill.library < 3 && !pursued || astern || fast || slow || s.away.Length() > 0.5) {
 		if now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) >= 0 {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
@@ -457,15 +463,22 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	// The regain: below the floor, or past the ceiling, the stick comes forward
 	// whatever the geometry and the band is bought back in burner, with the
-	// nose to the horizon or below and the more forward of that and the alpha
-	// regulator's own command.
+	// nose 30 degrees below the horizon and the more forward of that and the
+	// alpha regulator's own command. Nose-low, gravity adds half a g to the
+	// burner. Flown to the horizon on four tenths of the stick, buying back 134
+	// to 214 kt took 5.9 s level at 15,000 ft and 9.0 s from a 30 degree climb
+	// (12.5 s recorded, 01a15b43), straight and unloaded in front of a
+	// heater-armed pilot; pushed over on the whole stick, 4.7 and 7.0 s. A slice,
+	// the lift vector rolled below the horizon away from his nose, turned the
+	// path 5 degrees and took 7.4 s: at 134 kt there is no turn to be had, and
+	// the regain is as short as gravity makes it.
 	if speed < n.floor || riding > n.ceiling {
 		s.regaining = true
 	} else if speed > n.band && riding < 20 {
 		s.regaining = false
 	}
 	if s.regaining {
-		pitch, roll = math.Min(clamp(-axis.Y*1.5, -0.4, 0.1), clamp((goal-riding)/8, -1, limit)), roll*0.3
+		pitch, roll = math.Min(clamp((-0.5-axis.Y)*1.5, -1, 0.1), clamp((goal-riding)/8, -1, limit)), roll*0.3
 		s.branch = "regain"
 	}
 	// Roll with the speed there is, and a nudge only at high alpha: a lift

@@ -724,10 +724,10 @@ func TestScriptStraight(t *testing.T) {
 }
 
 // astern flies a scripted bandit at 215 kt and 10,000 ft for four seconds with
-// the pilot held gap metres behind it and a little high, over its shoulder
-// where it can see him, his nose on it, firing or not: what it flew, tick by
-// tick, and in what power.
-func astern(level string, gap float64, firing bool) (plays []string, lit []bool) {
+// the pilot gap metres behind it and a little high, over its shoulder where it
+// can see him, his nose on it, closing at closure m/s, firing or not: what it
+// flew, tick by tick, and in what power.
+func astern(level string, gap, closure float64, firing bool) (plays []string, lit []bool) {
 	b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
 	b.Spawn(flight.Vec3{Y: 3050}, flight.Vec3{X: 110})
 	b.craft.brain.routine.passed = true
@@ -736,9 +736,10 @@ func astern(level string, gap float64, firing bool) (plays []string, lit []bool)
 	for tick := 0; tick < 60*4; tick++ {
 		me := b.craft.model.State
 		ahead := me.Velocity.Normalize()
-		his := me.Position.Subtract(ahead.Scale(gap)).Add(flight.Vec3{Y: 0.3 * gap})
+		behind := gap - closure*float64(tick)/60
+		his := me.Position.Subtract(ahead.Scale(behind)).Add(flight.Vec3{Y: 0.3 * behind})
 		pm.State = flight.Level(pm, his, flight.Vec3{X: ahead.X, Z: ahead.Z}, me.Velocity.Length(), fuel)
-		pm.State.Velocity = me.Velocity
+		pm.State.Velocity = me.Velocity.Add(ahead.Scale(closure))
 		if line := me.Position.Subtract(his).Normalize(); (flight.Vec3{X: 1}).Cross(line).Length() > 1e-9 {
 			pm.State.Attitude = flight.Axis((flight.Vec3{X: 1}).Cross(line).Normalize(), math.Acos(clamp(line.X, -1, 1)))
 		}
@@ -749,6 +750,68 @@ func astern(level string, gap float64, firing bool) (plays []string, lit []bool)
 		lit = append(lit, b.craft.latest.Reheat > 0.5)
 	}
 	return plays, lit
+}
+
+// TestScriptHoldsThePursuer: the novice and the intermediate never clear from a
+// heater-armed pilot running in from astern. Their bubble guard flew the clear
+// whenever he closed, and extended 7 s at 186-351 m straight ahead of his nose;
+// the fight law's turn takes over, as it does for the instructor tiers.
+func TestScriptHoldsThePursuer(t *testing.T) {
+	for _, level := range []string{"novice", "intermediate"} {
+		plays, _ := astern(level, 500, 60, false)
+		for tick, play := range plays {
+			if play == "clear" {
+				t.Errorf("%s cleared %.2f s in, %.0f m ahead of a pilot closing from astern", level, float64(tick)/60, 500-60*float64(tick)/60)
+				break
+			}
+		}
+	}
+}
+
+// TestScriptRegainsNoseLow: below the floor the regain pushes over to buy the
+// band back nose-low, gravity adding to the burner. From 134 kt with a
+// heater-armed pilot 1,000 m astern, every tier dives 20 degrees or more and is
+// back above 214 kt inside 5 s from level flight and 7.5 s from a 30 degree
+// climb; flown to the horizon on four tenths of the stick it took 5.2-5.9 s
+// and 9.0 s.
+func TestScriptRegainsNoseLow(t *testing.T) {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
+		for _, start := range []struct{ height, climb, within float64 }{{3050, 0, 5}, {4570, 0, 5}, {4570, 30, 7.5}} {
+			b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
+			b.Spawn(flight.Vec3{Y: start.height}, flight.Vec3{X: 69})
+			c := start.climb * math.Pi / 180
+			b.craft.model.State.Velocity = flight.Vec3{X: 69 * math.Cos(c), Y: 69 * math.Sin(c)}
+			b.craft.model.State.Attitude = flight.Look(b.craft.model.State.Velocity.Normalize())
+			b.craft.brain.routine.passed = true
+			pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+			words := make([]float64, flight.Size)
+			steepest, ended := 0.0, -1
+			for tick := 0; tick < 60*15 && ended < 0; tick++ {
+				me := b.craft.model.State
+				ahead := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
+				his := me.Position.Subtract(ahead.Scale(1000)).Add(flight.Vec3{Y: 300})
+				pm.State = flight.Level(pm, his, ahead, me.Velocity.Length(), fuel)
+				pm.State.Velocity = ahead.Scale(me.Velocity.Length())
+				pm.State.Encode(words)
+				b.Mirror(words, false, true)
+				b.Step()
+				if b.Mode() != "regain" {
+					ended = tick
+					break
+				}
+				steepest = math.Min(steepest, math.Asin(clamp(b.State().Velocity.Normalize().Y, -1, 1))*180/math.Pi)
+			}
+			took := float64(ended) / 60
+			switch {
+			case ended <= 0:
+				t.Errorf("%s from %.0f ft climbing %.0f degrees: regain %d ticks, want one that starts and ends", level, start.height*3.281, start.climb, ended)
+			case took > start.within:
+				t.Errorf("%s from %.0f ft climbing %.0f degrees: regained in %.2f s, want %.1f s or less", level, start.height*3.281, start.climb, took, start.within)
+			case steepest > -20:
+				t.Errorf("%s from %.0f ft climbing %.0f degrees: the path went %.1f degrees at its lowest, want 20 or more below the horizon", level, start.height*3.281, start.climb, steepest)
+			}
+		}
+	}
 }
 
 // TestScriptPlumeFloor: with the pilot astern and his nose on it, the expert and
@@ -766,10 +829,10 @@ func TestScriptPlumeFloor(t *testing.T) {
 		return float64(n) / float64(len(lit))
 	}
 	for _, level := range []string{"expert", "superhuman"} {
-		if _, lit := astern(level, 200, false); share(lit, true) < 0.9 {
+		if _, lit := astern(level, 200, 0, false); share(lit, true) < 0.9 {
 			t.Errorf("%s with him 200 m astern, inside his heater's floor: lit %.0f%% of the time, want the burner", level, 100*share(lit, true))
 		}
-		if _, lit := astern(level, 1200, false); share(lit, false) < 0.5 {
+		if _, lit := astern(level, 1200, 0, false); share(lit, false) < 0.5 {
 			t.Errorf("%s with him 1,200 m astern, inside his heater's reach: cold %.0f%% of the time, want the plume hidden", level, 100*share(lit, false))
 		}
 	}
@@ -780,7 +843,7 @@ func TestScriptPlumeFloor(t *testing.T) {
 // cue and cadence; the novice never sees it coming.
 func TestScriptJinks(t *testing.T) {
 	for _, level := range []string{"novice", "expert", "superhuman"} {
-		plays, _ := astern(level, 300, true)
+		plays, _ := astern(level, 300, 0, true)
 		first := -1
 		for tick, play := range plays {
 			if play == "jink" {

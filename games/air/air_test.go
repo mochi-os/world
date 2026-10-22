@@ -1277,7 +1277,7 @@ func TestBotPress(t *testing.T) {
 		b.prey = &track{when: 1000, position: prey.model.State.Position, velocity: prey.model.State.Velocity}
 		b.distance = 400
 		b.aim = flight.Vec3{X: 1}
-		b.walked, b.walkedAt = walked, at
+		b.walked, b.walkedAt, b.pictured = walked, at, b.prey // the last judgement read walked against this same picture
 		i.think(expert.player.Slot, expert, 1000)
 		return expert.latest.Fire
 	}
@@ -1286,6 +1286,48 @@ func TestBotPress(t *testing.T) {
 	}
 	if !rig(80, 999) {
 		t.Fatal("the bore is sweeping through the solution at forty-five metres a tick and the trigger still held")
+	}
+}
+
+// TestTriggerAcrossALook: a new look at him moves the solution, not the bore,
+// so the jump between two pictures is never priced as a crossing sweep, nor
+// read as a burst walking onto him. The bore holds steady 30 degrees off the
+// new picture, 260 m wide of him at 500 m, after a look that moved the
+// solution 200 m nearer it; a novice fired 53 rounds that way.
+func TestTriggerAcrossALook(t *testing.T) {
+	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
+		for _, bursting := range []uint64{0, 3} {
+			g := New()
+			made, _ := g.Create(game.Session{Identifier: "look", Game: "air", Mode: "teams", Capacity: 16, Seed: 7,
+				Parameters: map[string]any{"bots": map[string]any{
+					"red":  map[string]any{level: 1.0},
+					"blue": map[string]any{"drone": 1.0},
+				}}})
+			shooter := made.(*instance).aircraft[99]
+			b := shooter.brain
+			if b.skill != skills[level] {
+				t.Fatalf("%s: slot 99 is not the %s", level, level)
+			}
+			base, forward := flight.Vec3{Y: 4000}, flight.Vec3{X: 220}
+			old := &track{when: 999, position: base.Add(flight.Vec3{X: 430, Z: 430}), velocity: forward}
+			fresh := &track{when: 1000, position: base.Add(flight.Vec3{X: 430 + 220.0/60, Z: 250}), velocity: forward}
+			b.magazine, b.distance, b.bursting = rounds, 500, bursting
+
+			aloft(shooter, base, forward)
+			b.prey = old
+			b.solution(shooter.model, 999)
+			was := b.walked
+			aloft(shooter, base.Add(forward.Scale(1.0/60)), forward)
+			b.prey = fresh
+			_, miss, _, _ := b.solve(shooter.model, 1000, fresh)
+			if was-miss < 150 || miss < 200 {
+				t.Fatalf("%s: the look moved the solution from %.0f to %.0f m, want a jump of 150 m or more to a certain miss", level, was, miss)
+			}
+			b.bursting = bursting
+			if b.solution(shooter.model, 1000) {
+				t.Errorf("%s, burst %d ticks old: fired with the bore steady %.0f m wide of him, because a new look moved the solution %.0f m", level, bursting, miss, was-miss)
+			}
+		}
 	}
 }
 
