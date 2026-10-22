@@ -431,11 +431,7 @@ func joust(t *testing.T, level string, seed uint64, pilot *lancer, seconds int, 
 	hit := map[*craft]struck{} // the last weapon to hit each jet
 	for tick := uint64(0); tick < uint64(seconds*60); tick++ {
 		data, mode, lock := pilot.fly(i, 0, bandit, tick)
-		// The report a client sends, set on the craft where i.Radar would set it:
-		// Radar refuses a lock on any slot above 62, the pose record's six bits,
-		// and the bandit sits at 99, so through it no pilot's STT on a server bot
-		// is a lock at all.
-		me.emitter, me.lock = mode, lock
+		i.Radar(0, mode, lock) // the report a client sends
 		before := append([]*missile{}, i.flying...)
 		i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 		f.seconds = float64(tick+1) / 60

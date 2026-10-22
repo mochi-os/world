@@ -74,13 +74,13 @@ func TestStatusRelay(t *testing.T) {
 }
 
 // TestStatusTracks: a status is one packed array - its flags, then the tracks.
-// The tracks a client names are whole slots inside the wire's six bits, each
-// once, and no more than a radar holds.
+// The tracks a client names are whole slots no higher than slot_most, a server
+// bot's included, each once, and no more than a radar holds.
 func TestStatusTracks(t *testing.T) {
-	list := []any{uint64(1), uint64(3), float64(3), float64(2.5), int64(-1), uint64(63), "4", uint64(5)}
+	list := []any{uint64(1), uint64(3), float64(3), float64(2.5), int64(-1), uint64(slot_most + 1), "4", uint64(99), uint64(5)}
 	got, ok := reported(map[string]any{"status": list})
-	if !ok || !reflect.DeepEqual(got.tracks, []int{3, 5}) {
-		t.Fatalf("status %v read with tracks %v (reported %v); want [3 5]", list, got.tracks, ok)
+	if !ok || !reflect.DeepEqual(got.tracks, []int{3, 99, 5}) {
+		t.Fatalf("status %v read with tracks %v (reported %v); want [3 99 5]", list, got.tracks, ok)
 	}
 	many := []any{uint64(7)}
 	for k := 0; k < 40; k++ {

@@ -2400,11 +2400,14 @@ func pose(slot int, a *craft) []byte {
 	b[30] = byte(int8(math.Round(clamp(a.model.Beta()*180/math.Pi, -127, 127))))
 	b[31] = byte(clamp(a.model.State.Damage.Leak*10, 0, 255))
 	binary.LittleEndian.PutUint16(b[32:], uint16(mask(a.model.Airframe, a.model.State.Damage.Element)))
-	target := 63 // #30: byte 34 — high two bits the emitter mode, low six the locked slot (63 = none)
-	if a.emitter == 2 && a.lock >= 0 && a.lock < 63 {
-		target = a.lock
+	// Byte 34 is the radar. With the high bit set it is STT locked on the
+	// slot in the low seven, which slot_most keeps every slot inside; clear, it
+	// is the mode alone: 0 silent, 1 search, 2 STT holding nothing. Two bits
+	// of mode and six of slot capped the lock at 62, below every server bot.
+	b[34] = byte(a.emitter)
+	if a.emitter == 2 && a.lock >= 0 && a.lock <= slot_most {
+		b[34] = 0x80 | byte(a.lock)
 	}
-	b[34] = byte(a.emitter<<6) | byte(target)
 	// Cumulative rounds fired this life (#163). Cumulative rather than the
 	// belt remaining because the steps ARE the bursts and they survive
 	// sampling losslessly, and because the ammunition cheat refills the
@@ -2434,8 +2437,8 @@ func (i *instance) Radar(slot int, mode int, target int) {
 	if mode != 2 {
 		target = -1
 	}
-	if target >= 63 || (target >= 0 && i.aircraft[target] == nil) {
-		target = -1 // the six wire bits cap the slot space at 62; an absent aircraft is no lock
+	if target >= 0 && i.aircraft[target] == nil {
+		target = -1 // an absent aircraft is no lock; every present one sits inside the pose record's seven bits
 	}
 	a.emitter = mode
 	a.lock = target
@@ -2498,8 +2501,8 @@ func whole(entry any) (int, bool) {
 // array, packed small because the datagram has no room for named fields - its
 // first number the flags (reply 1, challenge 2, link 4, the upper antenna 8,
 // the lower 16) and the rest the tracks. The wire promises nothing: the tracks
-// are whole slot numbers inside the pose record's six bits, each once, and no
-// more of them than tracked.
+// are whole slot numbers no higher than slot_most, each once, and no more of
+// them than tracked.
 func reported(data map[string]any) (status, bool) {
 	list, _ := data["status"].([]any)
 	if len(list) == 0 {
@@ -2518,7 +2521,7 @@ func reported(data map[string]any) (status, bool) {
 	seen := map[int]bool{}
 	for _, entry := range list[1:] {
 		slot, ok := whole(entry)
-		if !ok || slot < 0 || slot >= 63 || seen[slot] {
+		if !ok || slot < 0 || slot > slot_most || seen[slot] {
 			continue
 		}
 		if len(next.tracks) == tracked {
