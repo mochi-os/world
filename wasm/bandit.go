@@ -62,6 +62,7 @@ func bandit_initialize(this js.Value, arguments []js.Value) any {
 	if payload.Air != nil {
 		bandit.Air(*payload.Air)
 	}
+	bandit.Pace(pace)
 	return ""
 }
 

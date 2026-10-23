@@ -57,9 +57,9 @@ func (m *Model) spool(in Inputs) {
 	// cores roll back to idle until positive g re-covers them. The rollback
 	// and the slow relight are the teeth — no permanent damage is invented.
 	if m.State.Fcs.Normal < 0.15 {
-		m.starved += Dt
+		m.starved += m.Stride()
 	} else if m.State.Fcs.Normal > 0.5 {
-		m.starved = math.Max(0, m.starved-2*Dt)
+		m.starved = math.Max(0, m.starved-2*m.Stride())
 	}
 	if m.starved > 10 {
 		throttle = math.Min(throttle, idle+0.05)
@@ -78,14 +78,14 @@ func (m *Model) spool(in Inputs) {
 		if target < e.Spool {
 			constant = spool_down
 		}
-		e.Spool += (target - e.Spool) * Dt / constant
+		e.Spool += (target - e.Spool) * m.Stride() / constant
 		lit := 0.0
 		if in.Reheat > 0 && e.Spool > 0.85 && target > idle { // dry tanks zeroed the throttle, and with it the target
 			// The F404 stages reheat in five discrete zones: the fuel control
 			// lights whole segments, so the commanded fraction quantizes up.
 			lit = math.Ceil(clamp(in.Reheat, 0, 1)*5) / 5
 		}
-		e.Reheat += (lit - e.Reheat) * Dt / stage_lag
+		e.Reheat += (lit - e.Reheat) * m.Stride() / stage_lag
 	}
 }
 
@@ -161,7 +161,7 @@ func (m *Model) burn(in Inputs) {
 		return // infinite-fuel cheat: the tank (and with it the leak drain) stays frozen at the spawn load
 	}
 	if in.Dump && m.State.Fuel > dumpfloor {
-		m.State.Fuel = math.Max(dumpfloor, m.State.Fuel-dumping*Dt)
+		m.State.Fuel = math.Max(dumpfloor, m.State.Fuel-dumping*m.Stride())
 	}
 	local := air(m.State.Position.Y, m.Environment)
 	v := m.State.Attitude.Unrotate(m.State.Velocity.Subtract(m.gust))
@@ -176,9 +176,9 @@ func (m *Model) burn(in Inputs) {
 		// one scenario where fuel is the drama (#41).
 		flow += (dry*engine.Flow.Dry + boost*engine.Flow.Reheat) * m.State.Damage.engine(i)
 	}
-	m.State.Fuel = math.Max(m.State.Fuel-m.usable(in), m.State.Fuel-flow*Dt) // the engines burn down to what the wings hold, and no further
+	m.State.Fuel = math.Max(m.State.Fuel-m.usable(in), m.State.Fuel-flow*m.Stride()) // the engines burn down to what the wings hold, and no further
 	m.transfer(in, flow)
-	m.State.Fuel = math.Max(0, m.State.Fuel-m.State.Damage.Leak*Dt)
+	m.State.Fuel = math.Max(0, m.State.Fuel-m.State.Damage.Leak*m.Stride())
 }
 
 // transfer moves external fuel into the internal tanks (NATOPS 2.2.4). Bleed
@@ -203,7 +203,7 @@ func (m *Model) transfer(in Inputs, flow float64) {
 	low := m.usable(in) <= caution && !in.Probe // the feed tank is short by what the wings hold
 	wing := t.Wing > 0 && (in.Transfer[0] >= 0 || low)
 	centre := t.Centre > 0 && (in.Transfer[1] >= 0 || low)
-	amount := math.Min(room, (flow+refill)*Dt)
+	amount := math.Min(room, (flow+refill)*m.Stride())
 	var w, c float64
 	switch {
 	case wing && centre:

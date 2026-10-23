@@ -25,6 +25,7 @@ type Model struct {
 	State       State
 	Direct      bool    // no augmentation: stick drives surfaces (validation)
 	Gravity     float64 // m/s²; New sets standard, tests may zero it
+	Interval    float64 // seconds each Step advances; zero is Dt. Single player's time compression alone lengthens it, to as much as 1/60 s, and every rate in the model follows it
 
 	// FCS law memory - unencoded, NOT part of the snapshot: a restore re-derives
 	// it on the next step, and the client core is a corrected predictor, so one
@@ -199,18 +200,26 @@ func (m *Model) share(store *Store, held Tanks) float64 {
 // pre-flight fall back to the empty-plus-fuel approximation.
 func (m *Model) Mass() float64 { return m.mass }
 
+// Stride is the seconds each Step advances: the Interval a host set, or Dt.
+func (m *Model) Stride() float64 {
+	if m.Interval > 0 {
+		return m.Interval
+	}
+	return Dt
+}
+
 func (m *Model) Step(in Inputs) {
 	// Deployable slews: the probe's ~5 s hydraulic stroke and the hook's ~2 s
 	// swing, feeding the flat-plate drag in aero.
 	if in.Probe {
-		m.probe = math.Min(1, m.probe+Dt/5)
+		m.probe = math.Min(1, m.probe+m.Stride()/5)
 	} else {
-		m.probe = math.Max(0, m.probe-Dt/5)
+		m.probe = math.Max(0, m.probe-m.Stride()/5)
 	}
 	if in.Hook {
-		m.arrestor = math.Min(1, m.arrestor+Dt/2)
+		m.arrestor = math.Min(1, m.arrestor+m.Stride()/2)
 	} else {
-		m.arrestor = math.Max(0, m.arrestor-Dt/2)
+		m.arrestor = math.Max(0, m.arrestor-m.Stride()/2)
 	}
 	m.weigh()
 	local := air(m.State.Position.Y, m.Environment)
@@ -223,7 +232,7 @@ func (m *Model) Step(in Inputs) {
 	m.wrap()
 	m.burn(in)
 	m.shake(local)
-	m.State.Time += Dt
+	m.State.Time += m.Stride()
 }
 
 // stir adds the wake the host handed the model to this step's air: the swirl
@@ -368,24 +377,25 @@ func (m *Model) derivative(at motion, in Inputs, local Air) (rate motion) {
 	return rate
 }
 
-// integrate advances the 13 dynamic variables one Dt by classic RK4, then
+// integrate advances the 13 dynamic variables one stride by classic RK4, then
 // renormalises the attitude once.
 func (m *Model) integrate(in Inputs, local Air) {
 	s := &m.State
 	a := motion{s.Position, s.Velocity, s.Attitude, s.Omega}
 	m.first = true
+	h := m.Stride()
 	k1 := m.derivative(a, in, local)
-	k2 := m.derivative(advance(a, k1, Dt/2), in, local)
-	k3 := m.derivative(advance(a, k2, Dt/2), in, local)
-	k4 := m.derivative(advance(a, k3, Dt), in, local)
-	s.Position = a.position.Add(combine(k1.position, k2.position, k3.position, k4.position))
-	s.Velocity = a.velocity.Add(combine(k1.velocity, k2.velocity, k3.velocity, k4.velocity))
-	s.Omega = a.omega.Add(combine(k1.omega, k2.omega, k3.omega, k4.omega))
+	k2 := m.derivative(advance(a, k1, h/2), in, local)
+	k3 := m.derivative(advance(a, k2, h/2), in, local)
+	k4 := m.derivative(advance(a, k3, h), in, local)
+	s.Position = a.position.Add(combine(k1.position, k2.position, k3.position, k4.position, h))
+	s.Velocity = a.velocity.Add(combine(k1.velocity, k2.velocity, k3.velocity, k4.velocity, h))
+	s.Omega = a.omega.Add(combine(k1.omega, k2.omega, k3.omega, k4.omega, h))
 	s.Attitude = Quat{
-		W: a.attitude.W + blend(k1.attitude.W, k2.attitude.W, k3.attitude.W, k4.attitude.W),
-		X: a.attitude.X + blend(k1.attitude.X, k2.attitude.X, k3.attitude.X, k4.attitude.X),
-		Y: a.attitude.Y + blend(k1.attitude.Y, k2.attitude.Y, k3.attitude.Y, k4.attitude.Y),
-		Z: a.attitude.Z + blend(k1.attitude.Z, k2.attitude.Z, k3.attitude.Z, k4.attitude.Z),
+		W: a.attitude.W + blend(k1.attitude.W, k2.attitude.W, k3.attitude.W, k4.attitude.W, h),
+		X: a.attitude.X + blend(k1.attitude.X, k2.attitude.X, k3.attitude.X, k4.attitude.X, h),
+		Y: a.attitude.Y + blend(k1.attitude.Y, k2.attitude.Y, k3.attitude.Y, k4.attitude.Y, h),
+		Z: a.attitude.Z + blend(k1.attitude.Z, k2.attitude.Z, k3.attitude.Z, k4.attitude.Z, h),
 	}.Normalize()
 }
 
@@ -398,12 +408,12 @@ func advance(a motion, k motion, dt float64) motion {
 	}
 }
 
-func combine(k1, k2, k3, k4 Vec3) Vec3 {
-	return k1.Add(k2.Scale(2)).Add(k3.Scale(2)).Add(k4).Scale(Dt / 6)
+func combine(k1, k2, k3, k4 Vec3, h float64) Vec3 {
+	return k1.Add(k2.Scale(2)).Add(k3.Scale(2)).Add(k4).Scale(h / 6)
 }
 
-func blend(k1, k2, k3, k4 float64) float64 {
-	return (k1 + 2*k2 + 2*k3 + k4) * Dt / 6
+func blend(k1, k2, k3, k4 float64, h float64) float64 {
+	return (k1 + 2*k2 + 2*k3 + k4) * h / 6
 }
 
 // wrap applies the toroidal world after integration, centred on the origin.

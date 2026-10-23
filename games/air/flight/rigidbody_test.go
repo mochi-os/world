@@ -189,3 +189,118 @@ func TestStoreMaskRoundTrips(t *testing.T) {
 		t.Fatalf("bit %d survives a float64, so the ceiling is too low", past)
 	}
 }
+
+// TestIntervalCompression: single player's time compression steps the model at
+// up to 1/60 s, four times Dt, and the jet must still fly the same flight. Over
+// 32 s of each case the longer step stays within 3 degrees of attitude and 1%
+// of the distance of the Dt reference (measured worst: 1.6 degrees and 0.4% in
+// a 60 degree turn), and on the deck it launches and traps as the reference
+// does. At 1/30 s the turn drifts 30 degrees and level cruise breaks at 1/15 s.
+func TestIntervalCompression(t *testing.T) {
+	type sample struct{ position, nose, up Vec3 }
+	fly := func(h float64, speed, height float64, inputs func(float64) Inputs) []sample {
+		m := New(Fighter, Environment{}, World{})
+		m.Interval = h
+		m.State = Level(m, Vec3{Y: height}, Vec3{X: 1}, speed, 3000)
+		out := []sample{}
+		every := int(math.Round(0.5 / h))
+		for i := 0; i <= int(math.Round(32/h)); i++ {
+			if i%every == 0 {
+				out = append(out, sample{m.State.Position, m.State.Attitude.Rotate(Vec3{X: 1}), m.State.Attitude.Rotate(Vec3{Y: 1})})
+			}
+			m.Step(inputs(float64(i) * h))
+		}
+		return out
+	}
+	angle := func(a, b Vec3) float64 {
+		return math.Acos(math.Max(-1, math.Min(1, a.Normalize().Dot(b.Normalize())))) * 180 / math.Pi
+	}
+	for _, c := range []struct {
+		name          string
+		speed, height float64
+		inputs        func(float64) Inputs
+	}{
+		{"cruise", 230, 6000, func(float64) Inputs { return Inputs{Throttle: 0.85} }},
+		{"turn", 200, 5000, func(s float64) Inputs {
+			if s < 1.2 {
+				return Inputs{Throttle: 1, Roll: 0.8}
+			}
+			return Inputs{Throttle: 1, Pitch: 0.45}
+		}},
+		{"pull", 230, 5000, func(float64) Inputs { return Inputs{Throttle: 1, Reheat: 1, Pitch: 1} }},
+		{"roll", 200, 5000, func(s float64) Inputs {
+			if s < 4 {
+				return Inputs{Throttle: 0.9, Roll: 1}
+			}
+			return Inputs{Throttle: 0.9}
+		}},
+		{"climb", 220, 3000, func(s float64) Inputs {
+			if s < 3 {
+				return Inputs{Throttle: 1, Reheat: 1, Pitch: 0.4}
+			}
+			return Inputs{Throttle: 1, Reheat: 1}
+		}},
+	} {
+		reference, compressed := fly(Dt, c.speed, c.height, c.inputs), fly(1.0/60, c.speed, c.height, c.inputs)
+		flown, position, attitude := 0.0, 0.0, 0.0
+		for i := range reference {
+			if i > 0 {
+				flown += reference[i].position.Subtract(reference[i-1].position).Length()
+			}
+			position = math.Max(position, compressed[i].position.Subtract(reference[i].position).Length())
+			attitude = math.Max(attitude, math.Max(angle(compressed[i].nose, reference[i].nose), angle(compressed[i].up, reference[i].up)))
+		}
+		if attitude > 3 || position > 0.01*flown {
+			t.Errorf("%s at 1/60 s: %.0f m (%.2f%% of %.0f m) and %.2f degrees from the Dt reference", c.name, position, 100*position/flown, flown, attitude)
+		}
+	}
+
+	// The deck: the catapult shot and the trap, at Dt and at 1/60 s.
+	shot := func(h float64) (release, speed float64) {
+		m := aboard()
+		m.Interval = h
+		park(m, 42.7, -0.6)
+		for i := 0; i < int(math.Round(2/h)); i++ {
+			m.Step(Inputs{Gear: true})
+		}
+		m.State.Engine[0] = EngineState{Spool: 1}
+		m.State.Engine[1] = EngineState{Spool: 1}
+		release = -1
+		for i := 0; i < int(math.Round(6/h)); i++ {
+			m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: float64(i)*h > 1})
+			if m.State.Gear.Catapult < 0 && release < 0 && float64(i)*h > 1 {
+				release, speed = float64(i)*h, m.State.Velocity.Length()
+			}
+		}
+		return release, speed
+	}
+	trap := func(h float64) (wire int, speed, x float64) {
+		m := aboard()
+		m.Interval = h
+		approach(m, 0)
+		wire = -1
+		for i := 0; i < int(math.Round(10/h)); i++ {
+			throttle := 0.5
+			if wire >= 0 {
+				throttle = 0
+			}
+			m.Step(Inputs{Gear: true, Hook: true, Flap: 2, Throttle: throttle})
+			if m.State.Gear.Contact >= 0 {
+				t.Fatalf("trap at %.4f s steps: probe %d fired", h, m.State.Gear.Contact)
+			}
+			if m.State.Gear.Wire >= 0 {
+				wire = m.State.Gear.Wire
+			}
+		}
+		return wire, m.State.Velocity.Length(), m.State.Position.X
+	}
+	at, speed := shot(Dt)
+	stretched, fast := shot(1.0 / 60)
+	if stretched < 0 || math.Abs(stretched-at) > 0.05 || math.Abs(fast-speed) > 1 {
+		t.Errorf("catapult at 1/60 s released at %.2f s and %.1f m/s, the Dt reference at %.2f s and %.1f m/s", stretched, fast, at, speed)
+	}
+	wire, _, _ := trap(Dt)
+	if caught, stopped, x := trap(1.0 / 60); caught != wire || stopped > 3 || x > 60 {
+		t.Errorf("trap at 1/60 s: wire %d (reference %d), %.1f m/s at x=%.0f", caught, wire, stopped, x)
+	}
+}

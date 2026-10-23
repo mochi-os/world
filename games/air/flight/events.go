@@ -25,9 +25,9 @@ func (m *Model) events(in Inputs) {
 		target = 1
 	}
 	if in.Emergency {
-		s.Gear.Extension = math.Min(1, s.Gear.Extension+Dt/freefall)
+		s.Gear.Extension = math.Min(1, s.Gear.Extension+m.Stride()/freefall)
 	} else if m.pumped() {
-		s.Gear.Extension += clamp(target-s.Gear.Extension, -Dt/5, Dt/5)
+		s.Gear.Extension += clamp(target-s.Gear.Extension, -m.Stride()/5, m.Stride()/5)
 	}
 	// Gear speed limit, 250 KCAS (NATOPS figure 4-2). Over-speed extension wounds
 	// the legs rather than refusing the handle: the thresholds blow a tyre at 0.3
@@ -35,7 +35,7 @@ func (m *Model) events(in Inputs) {
 	if s.Gear.Extension > 0.02 && !s.Gear.Wow {
 		if over := m.Cas()*1.9438 - 250; over > 0 {
 			for leg := range s.Damage.Gear {
-				s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+over*gearoverspeed*Dt)
+				s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+over*gearoverspeed*m.Stride())
 			}
 		}
 	}
@@ -63,7 +63,7 @@ func (m *Model) skidding(s *State, in Inputs) {
 	}
 	for _, leg := range []int{1, 2} { // the mains: the nose wheel has no brake
 		if s.Damage.Gear[leg] < blown {
-			s.Damage.Gear[leg] += blowout * Dt
+			s.Damage.Gear[leg] += blowout * m.Stride()
 		}
 	}
 }
@@ -114,7 +114,7 @@ func (m *Model) touch(s *State) {
 		// exposure the airframe measures itself, like Stress. The 7 m/s
 		// tolerance is the type's carrier-rated sink.
 		if gear && -velocity.Y > tolerable {
-			s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+(-velocity.Y-tolerable)*overload*Dt)
+			s.Damage.Gear[leg] = math.Min(1, s.Damage.Gear[leg]+(-velocity.Y-tolerable)*overload*m.Stride())
 		}
 	}
 	if wow && !s.Gear.Wow {
@@ -229,7 +229,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 			return
 		}
 		straight := math.Abs(swing) < 0.026 || (math.Abs(swing) < 0.09 && math.Abs(s.Omega.Y) < 0.004)
-		s.Gear.Stroke -= Dt // the tension clock: Stroke decays from -3 while holding
+		s.Gear.Stroke -= m.Stride() // the tension clock: Stroke decays from -3 while holding
 		// Fire on straightness alone: the nose-offset gate blocked
 		// convergence-firing, and firing crabbed is the real danger - tire slip at
 		// deck level ROLLS the jet. The timeout refuses beyond ~3.4°.
@@ -252,7 +252,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 	heading := c.Heading + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 	relative := s.Velocity.Subtract(c.direction().Scale(c.Speed))
-	s.Gear.Stroke += math.Max(relative.Dot(track), 0) * Dt
+	s.Gear.Stroke += math.Max(relative.Dot(track), 0) * m.Stride()
 	if s.Gear.Stroke >= cat.Stroke {
 		s.Gear.Catapult = -1
 		s.Gear.Stroke = -1
@@ -281,7 +281,7 @@ func (m *Model) wire(s *State, in Inputs) {
 		return
 	}
 	now := m.hook(s)
-	before := now.Subtract(s.Velocity.Scale(Dt)) // the swept path, derived — nothing stored
+	before := now.Subtract(s.Velocity.Scale(m.Stride())) // the swept path, derived — nothing stored
 	local := c.local(now, s.Time, m.Environment.Wrap)
 	touching := local.Y >= -1 && local.Y <= 0.15
 	// Hook skip: a FLAT arrival bounces the point over the wires instead of
@@ -291,7 +291,7 @@ func (m *Model) wire(s *State, in Inputs) {
 		m.skip = 0.8
 	}
 	if m.skip > 0 {
-		m.skip -= Dt
+		m.skip -= m.Stride()
 		m.scrape = false // the point is airborne between bounces
 		return
 	}

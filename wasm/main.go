@@ -54,6 +54,7 @@ type slot struct {
 
 var (
 	model  *flight.Model
+	pace   = flight.Dt // the seconds a model step covers: Dt, or longer under single player's time compression
 	rings  [ring]slot
 	input  [16]float64
 	output [flight.Size + extra]float64
@@ -67,6 +68,7 @@ func main() {
 		"set":      guard(set),
 		"get":      guard(get),
 		"frame":    guard(frame),
+		"interval": guard(interval),
 		"mark":     guard(mark),
 		"ack":      guard(ack),
 		"level":    guard(level),
@@ -141,6 +143,7 @@ func initialize(this js.Value, arguments []js.Value) any {
 		return "unknown aircraft"
 	}
 	model = flight.New(airframe, payload.Environment, payload.World)
+	model.Interval = pace
 	rings = [ring]slot{}
 	wake_reset(payload.Environment)
 	debris_reset()
@@ -277,6 +280,20 @@ func position(word float64) int {
 	return 0
 }
 
+// interval sets the seconds each model step covers, for the pilot's model and
+// the bandit's alike: Dt, or as much as 1/60 s while single player's time
+// compression runs. The host counts its steps in the same seconds.
+func interval(this js.Value, arguments []js.Value) any {
+	pace = arguments[0].Float()
+	if model != nil {
+		model.Interval = pace
+	}
+	if bandit != nil {
+		bandit.Pace(pace)
+	}
+	return ""
+}
+
 // frame steps the model with one input sample and fills the output buffer.
 func frame(this js.Value, arguments []js.Value) any {
 	if model == nil {
@@ -289,7 +306,7 @@ func frame(this js.Value, arguments []js.Value) any {
 		model.Step(in)
 	}
 	heard(model) // after the steps: the pieces and the air they made, from the same frame
-	clock += float64(steps) * flight.Dt
+	clock += float64(steps) * model.Stride()
 	lay(pilot, model)
 	emit(arguments[1])
 	return ""

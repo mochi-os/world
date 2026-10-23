@@ -23,8 +23,11 @@ import (
 // rather than mispredict. Bump on ANY behavioural change.
 const Version = 4
 
-// Dt is the fixed simulation timestep. Hosts never choose a timestep; they
-// choose how many steps to run.
+// Dt is the simulation timestep. Hosts choose how many steps to run, not how
+// long a step is, with one exception: single player's time compression sets
+// Model.Interval to as much as 1/60 s, which costs about 1.6 degrees of
+// attitude over half a minute of hard turning where Dt costs nothing. The
+// server and multiplayer prediction always step at Dt.
 const Dt = 1.0 / 240
 
 // Environment is the per-match world configuration outside the aircraft.

@@ -92,6 +92,13 @@ func (b *Bandit) Air(air flight.Environment) {
 	}
 }
 
+// Pace sets the seconds each of the bandit's model steps covers: Dt, or as much
+// as 1/60 s under single player's time compression, as the pilot's own model.
+// A brain tick stays 1/60 s and takes as many steps as fill it.
+func (b *Bandit) Pace(seconds float64) {
+	b.craft.model.Interval = seconds
+}
+
 // Spawn places the bandit fresh: trimmed on the velocity, engines spooled,
 // clean airframe — the client's joust merge entry and every respawn.
 func (b *Bandit) Spawn(position, velocity flight.Vec3) {
@@ -201,7 +208,9 @@ func (b *Bandit) Step() (fire bool, flare bool, launch bool, heater bool, chaff 
 	}
 	b.arena.events = b.arena.events[:0]
 	fed := b.craft.trigger(b.arena.free()) // the brain reads its belt (Load) and never presses dry; the hold is what can still mask the button, as on the server
-	for substep := 0; substep < 4; substep++ {
+	// A brain tick is 1/60 s however long the model's step: four at Dt, and one
+	// when single player's time compression stretches the step to 1/60 s.
+	for substeps := max(1, int(math.Round(1.0/60/b.craft.model.Stride()))); substeps > 0; substeps-- {
 		b.craft.model.Step(fed)
 	}
 	b.craft.flared += 1.0 / 60

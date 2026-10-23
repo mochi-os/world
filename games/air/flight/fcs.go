@@ -30,7 +30,7 @@ func (m *Model) droopRun(target float64, c *Control) float64 {
 	if target < m.droop {
 		rate = c.Rate.Droop.Retract
 	}
-	m.droop += clamp(target-m.droop, -rate*Dt, rate*Dt)
+	m.droop += clamp(target-m.droop, -rate*m.Stride(), rate*m.Stride())
 	return m.droop
 }
 
@@ -149,7 +149,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	if m.State.Gear.Wow {
 		m.rolling = 3 // long enough to bridge a floated rollout: a light jet with full droop lifts off at rollout speed, and the UA attitude-hold flew it away where the ground mode's idle derotation resettles it
 	} else {
-		m.rolling = math.Max(0, m.rolling-Dt)
+		m.rolling = math.Max(0, m.rolling-m.Stride())
 	}
 	// NATOPS 11.1.1: above approximately 240 KCAS the flight controls switch
 	// to the AUTO mode regardless of the FLAP switch position. The band either
@@ -172,11 +172,11 @@ func (m *Model) fcs(in Inputs, local Air) {
 		m.flyaway = false
 	}
 	if extension := m.State.Gear.Extension; extension > 0.02 && extension < 0.98 {
-		m.launder = math.Max(m.launder, Dt) // gear in transit keeps the laundering alive step by step — expiring WITH the transit, exactly like the old transit-gated decay, and without stacking a second rate on top of a law-flip launder
+		m.launder = math.Max(m.launder, m.Stride()) // gear in transit keeps the laundering alive step by step — expiring WITH the transit, exactly like the old transit-gated decay, and without stacking a second rate on top of a law-flip launder
 	}
 	if m.launder > 0 {
-		m.launder -= Dt
-		f.Integral *= 1 - 1.2*Dt // gentle: fully laundered over a couple of seconds (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
+		m.launder -= m.Stride()
+		f.Integral *= 1 - 1.2*m.Stride() // gentle: fully laundered over a couple of seconds (the units change between laws), but slow enough that the attitude hold keeps most of its trim — 3/s sagged the nose ~2 deg at gear-up
 	}
 
 	// The trim hat's roll half: a standing differential-flaperon bias walked
@@ -184,7 +184,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	// fight forever. The reset is the whole hat: both datums to zero and the
 	// attitude hold re-datumed to here (idempotent, so a held key is safe).
 	if in.Lean != 0 {
-		f.Bank = clamp(f.Bank+clamp(in.Lean, -1, 1)*0.02*Dt, -0.06, 0.06)
+		f.Bank = clamp(f.Bank+clamp(in.Lean, -1, 1)*0.02*m.Stride(), -0.06, 0.06)
 	}
 	if in.Reset {
 		f.Datum, f.Bank = 0, 0
@@ -215,7 +215,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// law trims an on-speed AoA reference), so "trim to on-speed, fly the
 		// ball with power" is a real technique here rather than an automatic.
 		if in.Trim != 0 {
-			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*Dt, -4*math.Pi/180, 4*math.Pi/180)
+			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*m.Stride(), -4*math.Pi/180, 4*math.Pi/180)
 		}
 		droopTarget, slatFloor = m.Approaching(pressure)
 		if in.Flap >= 2 {
@@ -245,7 +245,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			m.fitAlpha = clamp(clean/4.5, 0, c.Onspeed)
 			m.fitClock = 0
 		}
-		m.fitClock -= Dt
+		m.fitClock -= m.Stride()
 		if m.fitClock <= 0 && speed >= 1 {
 			// Below the same 1 m/s floor the aero pass sits out there is nothing
 			// to fit: at rest in calm air the relative airspeed is exactly zero,
@@ -298,13 +298,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 		} else if flying > 0 || in.Trim != 0 {
 			m.path, m.drift = gamma, 0
 		} else {
-			m.drift = clamp(m.drift+(m.path-gamma)*0.5*Dt, -2*math.Pi/180, 2*math.Pi/180)
+			m.drift = clamp(m.drift+(m.path-gamma)*0.5*m.Stride(), -2*math.Pi/180, 2*math.Pi/180)
 		}
 		if !m.flyaway {
 			if extension := m.State.Gear.Extension; (extension > 0.02 && extension < 0.98) || math.Abs(commanded-droopTarget) > 0.5*math.Pi/180 {
 				m.settle = 3
 			} else {
-				m.settle = math.Max(0, m.settle-Dt)
+				m.settle = math.Max(0, m.settle-m.Stride())
 			}
 			push := 1.5 * math.Pi / 180
 			if m.settle > 0 {
@@ -330,8 +330,8 @@ func (m *Model) fcs(in Inputs, local Air) {
 			f.Reference = pitch // leave the deck holding the deck attitude
 		}
 		errorTerm := (demand-a)*2.2 - q*1.8
-		f.Integral = clamp(f.Integral+errorTerm*0.45*Dt, -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
-		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10       // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
+		f.Integral = clamp(f.Integral+errorTerm*0.45*m.Stride(), -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
+		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10               // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
 		if !m.State.Gear.Wow {
 			brakeTarget = 0 // the landing configuration auto-retracts the speedbrake in flight (NATOPS 2.8.4.8: not in auto flaps up, it retracts below 250 knots); on the ground the speedbrake operates normally, whatever law the wheels select
 		}
@@ -340,10 +340,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// the same structural weakness the up-and-away limits do.
 		if !m.State.Gear.Wow {
 			if m.State.Fcs.Normal > 2.0 {
-				m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * Dt
+				m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * m.Stride()
 			}
 			if m.State.Fcs.Normal < 0 {
-				m.State.Damage.Stress -= m.State.Fcs.Normal * Dt
+				m.State.Damage.Stress -= m.State.Fcs.Normal * m.Stride()
 			}
 		}
 		// Wing leveler on deck: as lift builds down the stroke the wheels
@@ -382,12 +382,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 		} else if in.Trim != 0 {
 			// The pitch trim switch, UA sense: stick-free it walks the held
 			// attitude datum — the chase pauses so the nudge is not undone.
-			f.Reference = clamp(f.Reference+clamp(in.Trim, -1, 1)*0.0105*Dt, -0.6, 0.6)
+			f.Reference = clamp(f.Reference+clamp(in.Trim, -1, 1)*0.0105*m.Stride(), -0.6, 0.6)
 		} else {
 			// After release the reference CHASES the nose at a fraction of the pitch
 			// rate (deadbanded), pinning where motion dies. A powered pitch-up outruns
 			// the chase, so it cannot ratchet around a loop.
-			chase := 0.92 * math.Max(0, math.Abs(q)-0.015) * Dt
+			chase := 0.92 * math.Max(0, math.Abs(q)-0.015) * m.Stride()
 			if ext := m.State.Gear.Extension; ext > 0.02 && ext < 0.98 {
 				chase = 0 // configuration change in transit: hold the datum FIRM — the trim is re-learning (decayed across the law switch), and chasing the un-trimmed sag walked the flyaway climb down to bare-airframe trim (the post-launch sudden pitch-down)
 			}
@@ -408,14 +408,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// the placard feeds the same structural weakness the other limits do,
 		// scaled by how far out the gear is.
 		if ext := m.State.Gear.Extension; ext > 0.02 && m.State.Fcs.Normal > 2.0 {
-			m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * ext * Dt
+			m.State.Damage.Stress += (m.State.Fcs.Normal - 2.0) * ext * m.Stride()
 		}
 		shaping := 25.0
 		if math.Abs(demand-level) < math.Abs(f.Demand-level) {
 			shaping = 50
 		}
 		asked := demand // the stick's own ask, pre-shaping: the release window below is scoped on sensed-minus-ASKED, which is zero in a steady tracked turn and large only when the stick has actually come off a pull
-		f.Demand += clamp(demand-f.Demand, -shaping*Dt, shaping*Dt)
+		f.Demand += clamp(demand-f.Demand, -shaping*m.Stride(), shaping*m.Stride())
 		demand = f.Demand
 		// Cascaded pitch: the g error commands a PITCH RATE, and the carefree limits
 		// shape that demand - the limiter is a smooth property of the command path,
@@ -440,7 +440,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if f.Demand > ceiling-0.5 || f.Demand < floor+0.5 {
 			fast = 0.7
 		}
-		f.Integral = clamp(f.Integral+flying*delta*gain*(0.3+fast)*Dt, -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce). ERROR-ADAPTIVE rate (#131): the gentle 0.3 keeps fine tracking calm, but against a large persistent error it triples — at a flat 0.3 the boundary trim needed ~15 s to close the last g and sustained pulls parked at 6.5
+		f.Integral = clamp(f.Integral+flying*delta*gain*(0.3+fast)*m.Stride(), -0.5, 0.5) // trim learns only while the stick flies the jet; stick-free the attitude loop owns the state // conditional integration: trim tracks steady errors but big transients don't wind it (release-bounce). ERROR-ADAPTIVE rate (#131): the gentle 0.3 keeps fine tracking calm, but against a large persistent error it triples — at a flat 0.3 the boundary trim needed ~15 s to close the last g and sustained pulls parked at 6.5
 		// Kinematic feedforward: sustaining n at this speed already needs q =
 		// (g/V)·(n − upright) before any closure. It reads the DEMAND, never the
 		// sensed n - fed the sensed load an overshoot sustains itself and the
@@ -475,12 +475,12 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// clears the tracking band but breaks the idle-decel sink arrest - both live
 		// in the same q band; the washout separates them.
 		washed := excess - m.State.Fcs.Pitchwash
-		m.State.Fcs.Pitchwash += (excess - m.State.Fcs.Pitchwash) * Dt / 0.8
+		m.State.Fcs.Pitchwash += (excess - m.State.Fcs.Pitchwash) * m.Stride() / 0.8
 		shaped -= washed * 0.75 * clamp((20000-pressure)/14000, 0, 1)
 		// Back-calculation anti-windup: pull the g-trim integral toward what
 		// the limits actually allow. (A blanket decay here oscillates at a
 		// sustained boundary: bind → bleed → g sags → unbind → rebuild.)
-		f.Integral += (shaped - rateDemand) * 3 * Dt
+		f.Integral += (shaped - rateDemand) * 3 * m.Stride()
 		inner := shaped - q
 		// Air-data gain scheduling: stabilator power grows with dynamic
 		// pressure, so a fixed inner gain that is crisp at 20 kPa rings past
@@ -492,7 +492,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// The trim integrator walks the alpha-trim curve; stick-flown its rate
 			// triples so the pull's tail is not trim-limited. The P path must NOT get
 			// the same treatment - 3× P limit-cycles the actuator.
-			f.Trim = clamp(f.Trim+inner*(0.25+0.50*flying)*authority*Dt, -0.35, 0.35)
+			f.Trim = clamp(f.Trim+inner*(0.25+0.50*flying)*authority*m.Stride(), -0.35, 0.35)
 		}
 		command := -(inner*0.30*authority + f.Trim)
 		// Overstress accounting for the damage model: exposure beyond the
@@ -500,13 +500,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// airframe's placard (~740 KCAS equivalent) — battle converts the
 		// accumulated exposure into structural weakness.
 		if m.State.Fcs.Normal > m.Airframe.Limit.Positive {
-			m.State.Damage.Stress += (m.State.Fcs.Normal - m.Airframe.Limit.Positive) * Dt
+			m.State.Damage.Stress += (m.State.Fcs.Normal - m.Airframe.Limit.Positive) * m.Stride()
 		}
 		if m.State.Fcs.Normal < m.Airframe.Limit.Negative {
-			m.State.Damage.Stress += (m.Airframe.Limit.Negative - m.State.Fcs.Normal) * Dt
+			m.State.Damage.Stress += (m.Airframe.Limit.Negative - m.State.Fcs.Normal) * m.Stride()
 		}
 		if equivalent := speed * math.Sqrt(local.Density/1.225); equivalent > 380 {
-			m.State.Damage.Stress += (equivalent - 380) * 0.02 * Dt
+			m.State.Damage.Stress += (equivalent - 380) * 0.02 * m.Stride()
 		}
 		stabTarget = command
 		// AUTO manoeuvring flaps: the trailing edge droops with alpha and
@@ -585,7 +585,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if !m.reverted {
 			m.mismatch = (f.Stabilator.Left+f.Stabilator.Right)/2 - pitch
 		}
-		fade := 0.75 * math.Pi / 180 * Dt
+		fade := 0.75 * math.Pi / 180 * m.Stride()
 		m.mismatch -= clamp(m.mismatch, -fade, fade)
 		stabTarget = pitch + m.mismatch
 		flapTarget = lateral * c.Gearing.Roll
@@ -613,7 +613,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	slew := func(current float64, target float64, rate float64, limit float64) float64 {
 		bound := limit * math.Min(available, 1)
 		target = clamp(target, -bound, bound)
-		return current + clamp(target-current, -rate*Dt, rate*Dt)
+		return current + clamp(target-current, -rate*m.Stride(), rate*m.Stride())
 	}
 	symmetric := clamp(stabTarget, -c.Throw.Down, c.Throw.Up)
 	differential := clamp(flapTarget, -0.35, 0.35)
@@ -630,13 +630,13 @@ func (m *Model) fcs(in Inputs, local Air) {
 	f.Flaperon.Left = slew(f.Flaperon.Left, clamp(droopTarget+aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonLeft), c.Throw.Flaperon.Down)
 	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
 	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
-	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*Dt, c.Rate.Slat*d.jam(ChannelSlat)*Dt)
+	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*m.Stride(), c.Rate.Slat*d.jam(ChannelSlat)*m.Stride())
 	// Was `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a no-op
 	// for a non-finite operand -- 0*Inf and 0*NaN are both NaN -- so that term
 	// contributed nothing except a path for a poisoned actuator position to
 	// reach the Flap readout and ride the wire in the encoded state (#136).
 	f.Flap = droopTarget // droop is carried inside the flaperon targets; keep the readout
-	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt, c.Rate.Brake*d.jam(ChannelSpeedbrake)*Dt)
+	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride(), c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride())
 }
 
 // recovery runs the spin recovery system with its switch in NORM (NATOPS
@@ -684,7 +684,7 @@ func taper(a float64, limit float64) float64 {
 }
 
 func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r float64, f *FcsState) float64 {
-	f.Washout += (r - f.Washout) * Dt / 1.0
+	f.Washout += (r - f.Washout) * m.Stride() / 1.0
 	damped := r - f.Washout
 	// RSRI (NATOPS 2.8.2.8): the interconnect schedules with increasing
 	// alpha AND decreasing airspeed — slow and nose-high is where the rudder
