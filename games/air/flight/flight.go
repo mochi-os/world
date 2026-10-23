@@ -19,9 +19,10 @@ import (
 )
 
 // Version identifies the model's behaviour and state layout. It travels in the
-// multiplayer join payload; hosts on different versions disable prediction
-// rather than mispredict. Bump on ANY behavioural change.
-const Version = 4
+// multiplayer join payload and the server listing; hosts on different versions
+// disable prediction rather than mispredict. Held at 1: it changes only on the
+// project owner's instruction, never as a side effect of a behavioural change.
+const Version = 1
 
 // Dt is the simulation timestep. Hosts choose how many steps to run, not how
 // long a step is, with one exception: single player's time compression sets
