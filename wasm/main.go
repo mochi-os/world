@@ -242,6 +242,7 @@ func controls() (flight.Inputs, int) {
 		Mechanical: flags&8192 != 0, // MECH ON
 		Hook:       flags&8 != 0,
 		Launch:     flags&16 != 0,
+		Retract:    flags&65536 != 0, // the LAUNCH BAR switch at RETRACT
 		Override:   flags&32 != 0,
 		Probe:      flags&64 != 0,
 		Trim:       input[9],

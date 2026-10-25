@@ -186,6 +186,9 @@ func (m *Model) catapult(s *State, in Inputs) {
 			s.Gear.Stroke = -1
 			return
 		}
+		if in.Retract {
+			return // the launch bar is up: nothing drops over the shuttle (NATOPS 2.10.4)
+		}
 		if in.Yaw > 0.5 || in.Yaw < -0.5 {
 			return // steering away is not asking to hook up
 		}
@@ -239,7 +242,10 @@ func (m *Model) catapult(s *State, in Inputs) {
 		return
 	}
 	if s.Gear.Stroke < 0 {
-		if in.Launch {
+		if in.Retract {
+			s.Gear.Catapult = -1 // the launch bar raised before the tension: it lifts off the shuttle and the crew unhooks; extended again, it drops back on
+			s.Gear.Stroke = -1
+		} else if in.Launch {
 			if s.Gear.Stroke == -1 {
 				s.Gear.Stroke = -3 // tension first: the couple squares the jet (holdback applies the forces), events fires the shot when straight
 			}

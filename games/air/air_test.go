@@ -2795,6 +2795,18 @@ func TestInputBypass(t *testing.T) {
 	}
 }
 
+// TestInputRetract: the wire's "retract" is the LAUNCH BAR switch at RETRACT,
+// and a sample without it (an older client) keeps the bar extended, so the crew
+// still hook it up as they always have.
+func TestInputRetract(t *testing.T) {
+	if in := input(map[string]any{"retract": true}); !in.Retract {
+		t.Error("retract sent: the bar must read retracted")
+	}
+	if in := input(map[string]any{"launch": true}); in.Retract {
+		t.Error("a sample without retract must leave the bar extended")
+	}
+}
+
 // TestInputSteering: the wire's "steering" is the nosewheel steering mode,
 // -1 off, 0 LOW, +1 HI, rounded and clamped; a sample without it (an older
 // client) keeps LOW.

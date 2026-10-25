@@ -86,6 +86,46 @@ func TestHookupGate(t *testing.T) {
 	}
 }
 
+// TestHookupLaunchBar: the crew hook up only a jet whose launch bar is
+// extended (NATOPS 2.10.4). With the switch at RETRACT a jet parked square on
+// the shuttle stays free; raised before the tension, the bar lifts off and the
+// jet is released, and extended again it drops back on; once the shuttle is
+// tensioned the bar is captive and the shot fires whatever the switch says.
+func TestHookupLaunchBar(t *testing.T) {
+	idle := func(m *Model, in Inputs, seconds float64) (held bool) { // whether the crew had it hooked on any step
+		for i := 0; i < int(240*seconds); i++ {
+			m.Step(in)
+			held = held || m.State.Gear.Catapult >= 0
+		}
+		return held
+	}
+	m := aboard()
+	approaching(m, 0, 0, 0, 0)
+	if idle(m, Inputs{Gear: true, Throttle: 0.15, Brake: true, Retract: true}, 4) { // on the brakes, as a free jet at idle creeps off the spot
+		t.Fatalf("parked on the shuttle with the bar retracted: hooked on some step, want free on every one")
+	}
+	if at := hooked(m, 4); at < 0 {
+		t.Fatalf("the bar extended on the same spot: never attached")
+	}
+	idle(m, Inputs{Gear: true, Throttle: 0.15, Brake: true, Retract: true}, 0.5)
+	if m.State.Gear.Catapult >= 0 || idle(m, Inputs{Gear: true, Throttle: 0.15, Brake: true, Retract: true}, 0.5) {
+		t.Errorf("the bar raised before the tension: still hooked to cat %d, want released", m.State.Gear.Catapult)
+	}
+	if at := hooked(m, 4); at < 0 {
+		t.Errorf("the bar extended again: never attached")
+	}
+	fired := false
+	for i := 0; i < 240*6; i++ {
+		m.Step(Inputs{Gear: true, Throttle: 1, Launch: i < 240, Retract: i >= 1}) // from the step after the request, inside the tension
+		if m.State.Gear.Stroke >= 0 {
+			fired = true
+		}
+	}
+	if !fired {
+		t.Errorf("the switch to RETRACT after the tension began: the shot never fired, want the bar captive")
+	}
+}
+
 // TestHookupCrab: a hookup that arrives crabbed is squared by the bar in the
 // slot at idle, and stays square and upright under mil power and through the
 // launch - the topple was a crabbed jet under thrust leaning on its tyres.

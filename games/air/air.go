@@ -1107,6 +1107,7 @@ func input(data map[string]any) flight.Inputs {
 		Probe:      flag("probe"),
 		Hook:       flag("hook"),
 		Launch:     flag("launch"),
+		Retract:    flag("retract"), // the LAUNCH BAR switch at RETRACT; an older client never sends it and keeps the crew's hook-up
 		Override:   flag("override"),
 		Dump:       flag("dump"),
 		Secure:     [2]bool{flag("port"), flag("starboard")}, // per-engine fuel OFF: engine 0 is the port core

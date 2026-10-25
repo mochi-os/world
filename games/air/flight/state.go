@@ -25,6 +25,7 @@ type Inputs struct {
 	Hook       bool    // true = deployed
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
+	Retract    bool    // the LAUNCH BAR switch at RETRACT (NATOPS 2.10.4): the bar stays up, so the crew cannot hook the jet up and a hook-up not yet in tension is released; the zero value is EXTEND, so a host that never sends it keeps the crew's hook-up
 	Override   bool    // paddle switch: raises the g ceiling, records overstress
 	Trim       float64 // -1..1 held pitch-trim rate, +1 = nose-up: UA nudges the attitude datum, PA biases the alpha datum
 	Lean       float64 // -1..1 held roll-trim rate, +1 = right wing down: walks the differential-flaperon datum
