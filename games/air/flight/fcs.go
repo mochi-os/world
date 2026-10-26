@@ -104,7 +104,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
 	m.spin = 0
 	if !m.Direct {
-		m.spin = m.recovery(calibrated, r, pedal, lateral)
+		m.spin = m.recovery(calibrated, r, pedal, lateral, in.Spin)
 	}
 
 	// Law selection follows the FLAP SWITCH, as the real jet's does (#86):
@@ -639,21 +639,35 @@ func (m *Model) fcs(in Inputs, local Air) {
 	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride(), c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride())
 }
 
-// recovery runs the spin recovery system with its switch in NORM (NATOPS
-// 2.8.2.6). With airspeed at 120 ±15 kt and an uncommanded yaw rate of 15°/s
+// recovery runs the spin recovery system (NATOPS 2.8.2.6). With its switch
+// in NORM: with airspeed at 120 ±15 kt and an uncommanded yaw rate of 15°/s
 // or more, the DDIs ask for lateral stick: into a left yaw with positive g, or
 // a right yaw with negative g, STICK LEFT, and for the other two STICK RIGHT.
 // The stick placed as asked engages the spin recovery mode, which holds until
 // the stick goes prospin, the airspeed passes about 245 kt or the yaw rate
 // falls under 15°/s. The yaw counts as uncommanded unless the pedals push
 // with it; NATOPS asks it be sustained, which a model without a sensor lag
-// takes as present. It returns the direction the display asks for: -1 left,
-// +1 right, 0 no display.
-func (m *Model) recovery(calibrated, r, pedal, lateral float64) float64 {
+// takes as present. With it in RCVY (rcvy): the mode engages at 120 ±15 kt
+// whatever the yaw and the stick, and holds until about 245 kt, full
+// authority prospin or not; a sustained yaw still asks for the stick. Neither
+// engages with the weight on the wheels. It returns the direction the display
+// asks for: -1 left, +1 right, 0 no display.
+func (m *Model) recovery(calibrated, r, pedal, lateral float64, rcvy bool) float64 {
 	f := &m.State.Fcs
 	knots := calibrated * 1.9438
 	yawing := math.Abs(r) >= 15*math.Pi/180 && !m.State.Gear.Wow
 	direction := math.Copysign(1, r) * math.Copysign(1, f.Normal)
+	if rcvy {
+		if f.Recovery && (knots > 245 || m.State.Gear.Wow) {
+			f.Recovery = false
+		} else if !f.Recovery && !m.State.Gear.Wow && math.Abs(knots-120) <= 15 {
+			f.Recovery = true
+		}
+		if yawing {
+			return direction
+		}
+		return 0
+	}
 	if f.Recovery {
 		if !yawing || knots > 245 || lateral*direction < -0.5 {
 			f.Recovery = false

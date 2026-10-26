@@ -1888,13 +1888,49 @@ func TestMissileSight(t *testing.T) {
 	i, _, _ := missileRange(t, place, velocity)
 	i.flying = i.flying[:0] // drop missileRange's hand-built round; this tests launch()
 	shooter := i.aircraft[0]
-	if !i.launch(0, shooter) {
+	if !i.launch(0, shooter, false) {
 		t.Fatal("the shooter could not acquire a target dead ahead at 900 m")
 	}
 	m := i.flying[len(i.flying)-1]
 	want, _ := i.bearing(m.position, i.aircraft[m.target].model.State.Position)
 	if off := math.Acos(clamp(m.sight.Dot(want), -1, 1)) * 180 / math.Pi; off > 0.01 {
 		t.Errorf("the launch sight is %.3f° off the round's own bearing — it was referenced from the jet, not the round", off)
+	}
+}
+
+// TestMissileUncooled: a pilot's heater fired with the IR COOL switch at OFF
+// (#141) leaves unguided, though the cooled seeker has the same target dead
+// ahead; the round is still spent and flies.
+func TestMissileUncooled(t *testing.T) {
+	place, velocity := aim(600, 0, 0, 200)
+	i, _, _ := missileRange(t, place, velocity)
+	i.flying = i.flying[:0]
+	shooter := i.aircraft[0]
+	if !i.launch(0, shooter, false) || i.flying[len(i.flying)-1].target < 0 {
+		t.Fatal("the cooled seeker should have the target dead ahead at 900 m")
+	}
+	if !i.launch(0, shooter, true) {
+		t.Fatal("an uncooled seeker should still let the round go")
+	}
+	if m := i.flying[len(i.flying)-1]; m.target != -1 {
+		t.Errorf("an uncooled round went after slot %d: it should leave unguided", m.target)
+	}
+}
+
+// TestMissileUncooledInput: the pilot's IR COOL switch reaches the launch through
+// the sample (#141) - the same shot fired at OFF leaves unguided, at NORM it
+// goes after the jet chased.
+func TestMissileUncooledInput(t *testing.T) {
+	for _, uncooled := range []bool{false, true} {
+		i := build(t, "furball", map[string]any{"missiles": true}, 2)
+		chase(i, 0, 1, 700)
+		i.Step(0, map[int][]game.Input{0: {{Sequence: 1, Data: map[string]any{"throttle": 0.85, "missile": true, "uncooled": uncooled}}}})
+		if len(i.flying) == 0 {
+			t.Fatalf("uncooled %v: the missile never launched", uncooled)
+		}
+		if got := i.flying[len(i.flying)-1].target; (got == -1) != uncooled {
+			t.Errorf("uncooled %v: the round went after slot %d", uncooled, got)
+		}
 	}
 }
 
@@ -2034,7 +2070,7 @@ func TestDecoy(t *testing.T) {
 	// is the decoy model, not input discipline.
 	for n := 0; n < 6; n++ {
 		place(i, 0, 1, 3000)
-		if !i.launch(0, i.aircraft[0]) {
+		if !i.launch(0, i.aircraft[0], false) {
 			t.Fatal("launch declined")
 		}
 	}
@@ -2835,6 +2871,18 @@ func TestInputSystems(t *testing.T) {
 	}
 	if in := input(map[string]any{}); in.Emergency || in.Mechanical || in.Transfer != [2]int{} {
 		t.Errorf("absent: emergency %v mechanical %v transfer %v, want the zero values", in.Emergency, in.Mechanical, in.Transfer)
+	}
+}
+
+// TestInputSpinCool (#141): the wire's "spin" is the spin recovery switch at
+// RCVY and "uncooled" the IR COOL switch at OFF; a sample without them (an
+// older client) keeps NORM and a cooled seeker.
+func TestInputSpinCool(t *testing.T) {
+	if in := input(map[string]any{"spin": true, "uncooled": true}); !in.Spin || !in.Uncooled {
+		t.Errorf("sent: spin %v uncooled %v, want both", in.Spin, in.Uncooled)
+	}
+	if in := input(map[string]any{}); in.Spin || in.Uncooled {
+		t.Errorf("absent: spin %v uncooled %v, want neither", in.Spin, in.Uncooled)
 	}
 }
 

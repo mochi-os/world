@@ -83,7 +83,7 @@ func TestHeatAlongTheNose(t *testing.T) {
 	shooter.Position, shooter.Velocity, shooter.Attitude = jet.Position, jet.Velocity, jet.Attitude
 	target.Position, target.Velocity, target.Attitude = him.Position, him.Velocity, flight.Look(line)
 	before := len(i.flying)
-	if !i.launch(bot, i.aircraft[bot]) || len(i.flying) != before+1 {
+	if !i.launch(bot, i.aircraft[bot], false) || len(i.flying) != before+1 {
 		t.Fatal("the seeker did not acquire a target 15 degrees off the nose")
 	}
 	fired := i.flying[len(i.flying)-1]

@@ -1206,7 +1206,7 @@ func TestHeaterUnguided(t *testing.T) {
 	i, a = burning(fox2())
 	a.bot, a.brain = true, mind("expert")
 	a.arm()
-	if i.launch(0, a) {
+	if i.launch(0, a, false) {
 		t.Fatalf("a bot launched with nothing in its seeker and nothing burning")
 	}
 }

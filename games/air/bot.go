@@ -1025,7 +1025,7 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 			// be stale): decline while the seeker would acquire a teammate,
 			// and the request comes back by itself once the geometry clears.
 			if locked := i.acquire(slot, a); locked >= 0 && hostile(a, i.aircraft[locked]) && !i.committed(slot, a, locked) {
-				if i.launch(slot, a) && !i.cheat.ammunition {
+				if i.launch(slot, a, false) && !i.cheat.ammunition {
 					b.missiles--
 					b.paired++
 					b.launched = tick

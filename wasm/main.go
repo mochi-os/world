@@ -238,8 +238,9 @@ func controls() (flight.Inputs, int) {
 		Brake:      flags&2 != 0,
 		Bypass:     flags&2048 != 0, // the ANTI SKID switch OFF
 		Gear:       flags&4 != 0,
-		Emergency:  flags&4096 != 0, // the gear handle turned and pulled
-		Mechanical: flags&8192 != 0, // MECH ON
+		Emergency:  flags&4096 != 0,   // the gear handle turned and pulled
+		Mechanical: flags&8192 != 0,   // MECH ON
+		Spin:       flags&131072 != 0, // the spin recovery switch at RCVY
 		Hook:       flags&8 != 0,
 		Launch:     flags&16 != 0,
 		Retract:    flags&65536 != 0, // the LAUNCH BAR switch at RETRACT

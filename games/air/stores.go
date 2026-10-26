@@ -697,7 +697,7 @@ func (i *instance) douse(slot int, a *craft, name string, tick uint64) {
 	a.lead(name)
 	order := a.sequence()
 	if next(order.heaters, a.heaters()) == name {
-		if i.launch(slot, a) && !i.cheat.ammunition {
+		if i.launch(slot, a, false) && !i.cheat.ammunition {
 			b.missiles--
 			b.launched = tick
 			a.release = 0

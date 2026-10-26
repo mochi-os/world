@@ -451,7 +451,7 @@ func TestSpinRecovery(t *testing.T) {
 	m := calm()
 	ask := func(knots, r, g, pedal, lateral float64, engaged bool) (float64, bool) {
 		m.State.Fcs.Normal, m.State.Fcs.Recovery, m.State.Gear.Wow = g, engaged, false
-		return m.recovery(knots*kt, r, pedal, lateral), m.State.Fcs.Recovery
+		return m.recovery(knots*kt, r, pedal, lateral, false), m.State.Fcs.Recovery
 	}
 	check := func(name string, direction float64, engaged bool, want float64, on bool) {
 		t.Helper()
@@ -484,8 +484,61 @@ func TestSpinRecovery(t *testing.T) {
 	d, e = ask(120, -yaw, 1, 0, 1, true)
 	check("engaged, stick prospin", d, e, 0, false)
 	m.State.Gear.Wow = true
-	if d := m.recovery(120*kt, -yaw, 0, -1); d != 0 || m.State.Fcs.Recovery {
+	if d := m.recovery(120*kt, -yaw, 0, -1, false); d != 0 || m.State.Fcs.Recovery {
 		t.Errorf("on the wheels: direction %v engaged %v", d, m.State.Fcs.Recovery)
+	}
+}
+
+// TestSpinRecoverySwitch: the spin recovery switch in RCVY (NATOPS 2.8.2.6.1,
+// #141). The mode engages at 120 ±15 kt with no yaw and no stick, holds through
+// a stick prospin and a yaw dying away, and drops past about 245 kt; a sustained
+// yaw still asks for the stick, and the weight on the wheels engages nothing.
+func TestSpinRecoverySwitch(t *testing.T) {
+	kt := 1 / 1.9438
+	yaw := 30 * math.Pi / 180
+	m := calm()
+	ask := func(knots, r, lateral float64, engaged, wheels bool) (float64, bool) {
+		m.State.Fcs.Normal, m.State.Fcs.Recovery, m.State.Gear.Wow = 1, engaged, wheels
+		return m.recovery(knots*kt, r, 0, lateral, true), m.State.Fcs.Recovery
+	}
+	check := func(name string, direction float64, engaged bool, want float64, on bool) {
+		t.Helper()
+		if direction != want || engaged != on {
+			t.Errorf("%s: direction %v engaged %v, want %v and %v", name, direction, engaged, want, on)
+		}
+	}
+	d, e := ask(120, 0, 0, false, false)
+	check("at 120 kt, no yaw and no stick", d, e, 0, true)
+	d, e = ask(150, 0, 0, false, false)
+	check("above the window", d, e, 0, false)
+	d, e = ask(200, 0, 0, true, false)
+	check("engaged, recovering at 200 kt", d, e, 0, true)
+	d, e = ask(120, -yaw, 1, true, false)
+	check("engaged, a left yaw and the stick prospin", d, e, -1, true)
+	d, e = ask(250, 0, 0, true, false)
+	check("engaged, past 245 kt", d, e, 0, false)
+	d, e = ask(120, 0, 0, false, true)
+	check("on the wheels", d, e, 0, false)
+	d, e = ask(120, 0, 0, true, true)
+	check("engaged, then on the wheels", d, e, 0, false)
+	// and in NORM the same quiet flight at 120 kt engages nothing
+	m.State.Fcs.Recovery, m.State.Gear.Wow = false, false
+	if d := m.recovery(120*kt, 0, 0, 0, false); d != 0 || m.State.Fcs.Recovery {
+		t.Errorf("NORM at 120 kt with no yaw: direction %v engaged %v", d, m.State.Fcs.Recovery)
+	}
+}
+
+// TestSpinRecoverySwitchInput: the switch reaches the flight computers through
+// the frame's inputs: at RCVY a quiet 120 kt engages the mode, at NORM it does not.
+func TestSpinRecoverySwitchInput(t *testing.T) {
+	for _, rcvy := range []bool{true, false} {
+		m := calm()
+		launch(m, 62)
+		m.State.Position.Y = 100
+		m.fcs(Inputs{Spin: rcvy}, air(m.State.Position.Y, m.Environment))
+		if m.State.Fcs.Recovery != rcvy {
+			t.Errorf("spin switch at RCVY %v, 120 kt: mode engaged %v", rcvy, m.State.Fcs.Recovery)
+		}
 	}
 }
 

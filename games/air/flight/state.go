@@ -22,6 +22,7 @@ type Inputs struct {
 	Gear       bool    // commanded position, true = down
 	Emergency  bool    // the gear handle turned 90° and pulled (NATOPS 2.10.1.6): the gear free-falls down and locks whatever the hydraulics, and stays down while the host holds it
 	Mechanical bool    // MECH ON: all electrical power gone, the host judging when (NATOPS 15.17): the flight control computers drop out and the stick drives the stabilators through the mechanical linkage (2.8.2.10)
+	Spin       bool    // the spin recovery switch at RCVY (NATOPS 2.8.2.6.1): the spin mode engages at 120 kt whatever the yaw and holds until about 245 kt; the zero value is NORM, so a host that never sends it keeps the automatic conditions
 	Hook       bool    // true = deployed
 	Probe      bool    // refuelling probe out (drag + the real ~300 KCAS limit stays procedural)
 	Launch     bool    // catapult fire edge, while attached
@@ -44,6 +45,7 @@ type Inputs struct {
 	Solo       bool // the dispenser at BYPASS: a flare edge releases the flare alone, with no chaff bundle beside it
 	Extinguish bool // the FIRE EXTGH pushbutton (NATOPS 2.14.2): an edge the host judges; flight ignores it
 	Missile    bool
+	Uncooled   bool // the IR COOL switch at OFF: the heater's seeker has no cooling and nothing in it, so a launch leaves unguided; flight ignores it, the host judges
 	Radar      bool // the radar missile's own trigger (#27): a separate magazine and a separate edge from the heater's
 	Visual     bool // that trigger edge is a VISUAL shot (#155): no lock, the round's own seeker live off the rail
 	Jammer     bool // the jammer's ARMED state (#31): a level, not an edge — the server judges when it actually radiates

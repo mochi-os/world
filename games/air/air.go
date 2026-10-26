@@ -1103,6 +1103,7 @@ func input(data map[string]any) flight.Inputs {
 		Gear:       flag("gear"),
 		Emergency:  flag("emergency"),                            // the gear handle turned and pulled: the emergency extension
 		Mechanical: flag("mechanical"),                           // MECH ON: the client judges when all electrical power is gone
+		Spin:       flag("spin"),                                 // the spin recovery switch at RCVY; an older client never sends it and keeps NORM
 		Transfer:   [2]int{position("wing"), position("centre")}, // the EXT TANKS switches: -1 STOP, 0 NORM, +1 ORIDE; absent reads NORM
 		Probe:      flag("probe"),
 		Hook:       flag("hook"),
@@ -1119,7 +1120,8 @@ func input(data map[string]any) flight.Inputs {
 		Extinguish: flag("extinguish"), // the FIRE EXTGH pushbutton, an edge
 		Missile:    flag("missile"),
 		Radar:      flag("radar"),
-		Visual:     flag("visual"), // an older client never sends it, and its VISUAL shot stays refused
+		Visual:     flag("visual"),   // an older client never sends it, and its VISUAL shot stays refused
+		Uncooled:   flag("uncooled"), // the IR COOL switch at OFF: an older client never sends it, and its seeker stays cooled
 		Jammer:     flag("jammer"),
 		Sequence:   uint32(number(data, "sequence")),
 	}
@@ -1210,7 +1212,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 				i.events = append(i.events, map[string]any{"kind": "chaff", "slot": slot})
 			}
 			if in.Missile && !previous.Missile && a.alive && i.missiles && i.free() && a.missiles > 0 && a.release > 1.0 {
-				if i.launch(slot, a) {
+				if i.launch(slot, a, in.Uncooled) {
 					if !i.cheat.ammunition {
 						a.missiles--
 						a.model.Stores(a.attach()) // the departed round's bit clears in the SMS firing order (#17)
@@ -1830,13 +1832,17 @@ func fired(a *craft) round.Target {
 // launch fires a missile at the best target in the seeker cone. The seeker
 // is aspect-aware: it sees a tailpipe from the rear hemisphere much farther
 // than a cold nose head-on. A pilot's press with nothing in the seeker sends
-// the round unguided, as the client's trigger does and spends it.
-func (i *instance) launch(slot int, a *craft) bool {
+// the round unguided, as the client's trigger does and spends it; so does one
+// with the seeker uncooled, its IR COOL switch at OFF.
+func (i *instance) launch(slot int, a *craft, uncooled bool) bool {
 	if len(i.flying) >= 256 {
 		return false // belt and braces above the per-life magazines: no session needs more missiles airborne than a full teams match volleying everything at once
 	}
 	forward := a.model.State.Attitude.Rotate(flight.Vec3{X: 1, Y: 0, Z: 0})
 	best := i.acquire(slot, a)
+	if uncooled {
+		best = -1 // the IR COOL switch at OFF (#141): an uncooled seeker has nothing in it, and the round leaves unguided
+	}
 	if best < 0 && a.bot && !a.cooking(next(a.sequence().heaters, a.heaters())) {
 		return false // nothing in a bot's seeker: no shot, unless the round is burning on the rail and is fired off unguided
 	}
