@@ -30,11 +30,13 @@ const (
 )
 
 // Debris is a kill's cloud: where the jet broke up, its velocity then, and
-// when, on the clock the cloud is met by.
+// when, on the clock the cloud is met by, and the wind there, which the pieces
+// slow into and are carried by.
 type Debris struct {
 	Origin   flight.Vec3
 	Velocity flight.Vec3
 	Time     float64
+	Wind     flight.Vec3
 }
 
 // Cloud is the debris at a time: its centre, its radius and the velocity its
@@ -45,9 +47,10 @@ func (d Debris) Cloud(time float64) (flight.Vec3, float64, flight.Vec3, bool) {
 		return flight.Vec3{}, 0, flight.Vec3{}, false
 	}
 	carried := (1 - math.Exp(-debris_drag*age)) / debris_drag
-	centre := d.Origin.Add(d.Velocity.Scale(carried))
+	through := d.Velocity.Subtract(d.Wind) // the pieces lose their speed through the air, not over the sea
+	centre := d.Origin.Add(d.Wind.Scale(age)).Add(through.Scale(carried))
 	centre.Y -= 0.5 * 9.8 * age * age
-	velocity := d.Velocity.Scale(math.Exp(-debris_drag * age))
+	velocity := d.Wind.Add(through.Scale(math.Exp(-debris_drag * age)))
 	velocity.Y -= 9.8 * age
 	return centre, debris_core + debris_spread*age, velocity, true
 }

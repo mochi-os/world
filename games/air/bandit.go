@@ -162,7 +162,7 @@ func (b *Bandit) Menace(words []float64) {
 			// flatter its arrival speed (measured: it changes no verdict at
 			// 3, 12 or 30 km, so this is honesty, not tuning).
 			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity,
-				Life: round.Battery, Fuel: 0, Wrap: b.arena.environment.Wrap}
+				Life: round.Battery, Fuel: 0, Wrap: b.arena.environment.Wrap, Environment: b.craft.model.Environment, Clock: b.craft.model.State.Time} // the player's air, which Air gave the bandit's jet
 		} else if phase <= -2 {
 			m.loose = true // seduced onto a flare, or gimballed off and gone ballistic
 		}

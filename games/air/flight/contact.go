@@ -51,16 +51,35 @@ type Strip struct {
 	Width float64
 }
 
-// Carrier is the ship: pose, deck outline, catapults, and arrestor wires,
-// all in the carrier frame. The pose is a pure function of sim time so
-// prediction replay reproduces the deck exactly.
+// Carrier is the ship: pose, deck outline, catapults, arrestor wires and its
+// island, all in the carrier frame. The pose is a pure function of sim time
+// so prediction replay reproduces the deck exactly; every host gives its
+// aircraft the session's clock (State.Time), so all of them meet the ship in
+// the same place.
 type Carrier struct {
-	Position  Vec3    // deck reference at Time 0 (Y = deck height)
+	Position  Vec3    // deck reference at Time 0 (Y = deck height, which the ship keeps)
 	Heading   float64 // rad
-	Speed     float64 // m/s along heading (0 in the current phase)
+	Speed     float64 // m/s along heading
+	Track     []Leg   // the ship's path in time order; set, it replaces Position, Heading and Speed
 	Deck      []Vec3  // deck outline polygon, carrier frame
 	Catapults []Catapult
 	Wires     []Wire
+	Prisms    []Prism // the island's solids: outline in the carrier frame, Top a world height
+	Posts     []Post  // its mast: position in the carrier frame
+}
+
+// Leg is one stretch of the ship's track: from Start (session time, s) the
+// reference point leaves Position on Heading at Speed, the bow turning at
+// Turn rad/s (0 holds the heading; + turns it as Heading counts, to port). A
+// straight leg may gather or shed way at Change m/s²; a turn holds its speed,
+// and a leg that changes speed is followed by one holding the speed reached.
+type Leg struct {
+	Start    float64
+	Position Vec3
+	Heading  float64
+	Speed    float64
+	Turn     float64
+	Change   float64
 }
 
 // Catapult is one launch track in the carrier frame.
@@ -83,31 +102,94 @@ const (
 	Deck  = 3 // the carrier
 )
 
-// pose is the carrier reference position at a sim time (deterministic under
-// prediction replay: a pure function of time).
-func (c *Carrier) pose(t float64) Vec3 {
-	return c.Position.Add(c.direction().Scale(c.Speed * t))
+// leg is the stretch of the track the ship is on at time t: the last that has
+// started, or the first for a time before it. Without a track the ship holds
+// Position, Heading and Speed from time zero.
+func (c *Carrier) leg(t float64) Leg {
+	if len(c.Track) == 0 {
+		return Leg{Position: c.Position, Heading: c.Heading, Speed: c.Speed}
+	}
+	i := len(c.Track) - 1
+	for i > 0 && c.Track[i].Start > t {
+		i--
+	}
+	return c.Track[i]
 }
 
-// direction is the ship's forward unit vector in the world.
-func (c *Carrier) direction() Vec3 {
-	return Vec3{X: math.Cos(c.Heading), Z: -math.Sin(c.Heading)}
+// At is the carrier's reference point and heading at time t (deterministic
+// under prediction replay: a pure function of time). A turning leg sweeps an
+// arc of radius Speed/Turn.
+func (c *Carrier) At(t float64) (Vec3, float64) {
+	l := c.leg(t)
+	dt := t - l.Start
+	heading := l.Heading + l.Turn*dt
+	at := l.Position
+	if math.Abs(l.Turn) < 1e-9 {
+		at = at.Add(direction(l.Heading).Scale(l.Speed*dt + 0.5*l.Change*dt*dt))
+	} else {
+		r := l.Speed / l.Turn
+		at.X += r * (math.Sin(heading) - math.Sin(l.Heading))
+		at.Z += r * (math.Cos(heading) - math.Cos(l.Heading))
+	}
+	at.Y = c.Position.Y
+	return at, heading
+}
+
+// heading is the ship's heading at a sim time.
+func (c *Carrier) heading(t float64) float64 {
+	_, heading := c.At(t)
+	return heading
+}
+
+// direction is a heading's forward unit vector in the world.
+func direction(heading float64) Vec3 {
+	return Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+}
+
+// Way is the ship's speed through the water at a sim time.
+func (c *Carrier) Way(t float64) float64 {
+	l := c.leg(t)
+	if l.Turn != 0 {
+		return l.Speed
+	}
+	return l.Speed + l.Change*(t-l.Start)
+}
+
+// velocity is the deck's own velocity at a world point at time t: the
+// reference point's along the heading, plus the turn's sweep about it.
+func (c *Carrier) velocity(p Vec3, t float64, wrap float64) Vec3 {
+	l := c.leg(t)
+	at, heading := c.At(t)
+	v := direction(heading).Scale(c.Way(t))
+	if l.Turn != 0 {
+		dx, dz := Shortest(at.X, p.X, wrap), Shortest(at.Z, p.Z, wrap)
+		v.X += l.Turn * dz // ω about +y crossed with the offset
+		v.Z -= l.Turn * dx
+	}
+	return v
+}
+
+// Aboard reports whether a world point is on the carrier's deck at time t:
+// over the deck's outline, and within a few metres of its height.
+func (c *Carrier) Aboard(p Vec3, t float64, wrap float64) bool {
+	local := c.local(p, t, wrap)
+	return local.Y > -2 && local.Y < 8 && inside(local, c.Deck)
 }
 
 // local transforms a world point into the carrier deck frame at time t
 // (minimum-image, so ops near a wrap seam stay correct).
 func (c *Carrier) local(p Vec3, t float64, wrap float64) Vec3 {
-	at := c.pose(t)
+	at, heading := c.At(t)
 	dx := Shortest(at.X, p.X, wrap)
 	dz := Shortest(at.Z, p.Z, wrap)
-	sin, cos := math.Sin(c.Heading), math.Cos(c.Heading)
+	sin, cos := math.Sin(heading), math.Cos(heading)
 	return Vec3{X: dx*cos - dz*sin, Y: p.Y - at.Y, Z: dx*sin + dz*cos}
 }
 
 // world transforms a carrier-frame point back to world coordinates.
 func (c *Carrier) world(p Vec3, t float64) Vec3 {
-	at := c.pose(t)
-	sin, cos := math.Sin(c.Heading), math.Cos(c.Heading)
+	at, heading := c.At(t)
+	sin, cos := math.Sin(heading), math.Cos(heading)
 	return Vec3{X: at.X + p.X*cos + p.Z*sin, Y: at.Y + p.Y, Z: at.Z - p.X*sin + p.Z*cos}
 }
 
@@ -163,7 +245,7 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 		local := w.Carrier.local(p, t, wrap)
 		if local.Y > -12 && local.Y < 25 && math.Abs(local.X) < 180 && math.Abs(local.Z) < 60 {
 			if inside(local, w.Carrier.Deck) {
-				return w.Carrier.pose(t).Y, Deck, w.Carrier.direction().Scale(w.Carrier.Speed), true
+				return w.Carrier.Position.Y, Deck, w.Carrier.velocity(p, t, wrap), true
 			}
 		}
 	}
@@ -194,8 +276,25 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 }
 
 // struck reports whether a world point is inside a prism or a post, each
-// taken at its minimum image so a seam hides nothing.
-func (w *World) struck(p Vec3, wrap float64) bool {
+// taken at its minimum image so a seam hides nothing - the carrier's island
+// among them, met where the ship is at time t.
+func (w *World) struck(p Vec3, t float64, wrap float64) bool {
+	if c := w.Carrier; c != nil && (len(c.Prisms) > 0 || len(c.Posts) > 0) {
+		local := c.local(p, t, wrap)
+		for pi := range c.Prisms {
+			prism := &c.Prisms[pi]
+			if p.Y <= prism.Top && len(prism.Outline) >= 3 && inside(local, prism.Outline) {
+				return true
+			}
+		}
+		for pi := range c.Posts {
+			post := &c.Posts[pi]
+			dx, dz := local.X-post.Position.X, local.Z-post.Position.Z
+			if p.Y <= post.Top && dx*dx+dz*dz <= post.Radius*post.Radius {
+				return true
+			}
+		}
+	}
 	for pi := range w.Prisms {
 		prism := &w.Prisms[pi]
 		if p.Y > prism.Top || len(prism.Outline) < 3 {

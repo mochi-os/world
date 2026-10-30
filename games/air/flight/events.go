@@ -141,7 +141,7 @@ func (m *Model) probes(s *State) {
 		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
-		if m.World.struck(point, m.Environment.Wrap) {
+		if m.World.struck(point, s.Time, m.Environment.Wrap) {
 			s.Gear.Contact = i // a building or a mast is solid at any speed
 			return
 		}
@@ -192,7 +192,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 		if in.Yaw > 0.5 || in.Yaw < -0.5 {
 			return // steering away is not asking to hook up
 		}
-		relative := s.Velocity.Subtract(c.direction().Scale(c.Speed))
+		relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
 		if relative.Length() > 4 {
 			return
 		}
@@ -209,7 +209,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 			// shuttle. A 25° gate on proximity alone let the slot haul a crossing
 			// jet's nose sideways, which swung it into a 20° crab that mil power
 			// then rolled over (the holdback is a jackknife under thrust).
-			heading := c.Heading + c.Catapults[i].Heading
+			heading := c.heading(s.Time) + c.Catapults[i].Heading
 			track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 			if math.Abs(dx*track.Z-dz*track.X) > lateral || forward.X*track.X+forward.Z*track.Z < aligned {
 				continue
@@ -222,7 +222,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 	}
 	cat := &c.Catapults[s.Gear.Catapult]
 	if s.Gear.Stroke <= -3 {
-		heading := c.Heading + cat.Heading
+		heading := c.heading(s.Time) + cat.Heading
 		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 		forward := s.Attitude.Rotate(Vec3{X: 1})
 		swing := forward.X*track.Z - forward.Z*track.X
@@ -255,9 +255,9 @@ func (m *Model) catapult(s *State, in Inputs) {
 		}
 		return
 	}
-	heading := c.Heading + cat.Heading
+	heading := c.heading(s.Time) + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
-	relative := s.Velocity.Subtract(c.direction().Scale(c.Speed))
+	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
 	s.Gear.Stroke += math.Max(relative.Dot(track), 0) * m.Stride()
 	if s.Gear.Stroke >= cat.Stroke {
 		s.Gear.Catapult = -1
@@ -282,7 +282,7 @@ func (m *Model) wire(s *State, in Inputs) {
 		m.scrape, m.skip = false, 0 // a raised hook forgets the pass
 		return
 	}
-	relative := s.Velocity.Subtract(c.direction().Scale(c.Speed))
+	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
 	if relative.Length() < 15 { // taxiing over a wire does not catch
 		return
 	}

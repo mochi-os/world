@@ -44,11 +44,15 @@ func debris_reset() {
 // velocity then.
 func debris_lay(this js.Value, arguments []js.Value) any {
 	receive(arguments[0], laid[:])
-	wreckage = append(wreckage, battle.Debris{
+	d := battle.Debris{
 		Origin:   flight.Vec3{X: laid[0], Y: laid[1], Z: laid[2]},
 		Velocity: flight.Vec3{X: laid[3], Y: laid[4], Z: laid[5]},
 		Time:     clock,
-	})
+	}
+	if model != nil {
+		d.Wind = flight.Wind(d.Origin, model.State.Time, model.Environment) // the pieces slow into the air, and it carries them
+	}
+	wreckage = append(wreckage, d)
 	return ""
 }
 

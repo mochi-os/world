@@ -37,6 +37,7 @@ import (
 
 	"world/games/air/aircraft"
 	"world/games/air/flight"
+	"world/games/air/ship"
 )
 
 // Extra is the instrument tail appended to the encoded state.
@@ -75,6 +76,7 @@ func main() {
 		"stores":   guard(stores),
 		"catalog":  guard(catalog),
 		"gust":     guard(gust),
+		"wind":     guard(wind),
 		"approach": guard(approach),
 		"cruise":   guard(cruise),
 		"climb":    guard(climb),
@@ -93,6 +95,9 @@ func main() {
 		exports[name] = export
 	}
 	for name, export := range debris_exports() {
+		exports[name] = export
+	}
+	for name, export := range ship_exports() {
 		exports[name] = export
 	}
 	js.Global().Set("air_flight", js.ValueOf(exports))
@@ -127,6 +132,20 @@ func gust(js.Value, []js.Value) any {
 	return fmt.Sprintf("%.2f,%.2f,%.2f", g.X, g.Y, g.Z)
 }
 
+// wind writes the air's own velocity at a point, [x, y, z] in and out, on the
+// jet's clock: the wind the weapons and what they shed fly through, which the
+// engine's own rounds and smoke drift in. Nothing before a mission.
+func wind(this js.Value, arguments []js.Value) any {
+	var at [3]float64
+	receive(arguments[0], at[:])
+	var blown flight.Vec3
+	if model != nil {
+		blown = flight.Wind(flight.Vec3{X: at[0], Y: at[1], Z: at[2]}, model.State.Time, model.Environment)
+	}
+	send([]float64{blown.X, blown.Y, blown.Z}, arguments[1])
+	return nil
+}
+
 // initialize builds the model from a JSON payload of environment and world
 // geometry. Returns an error string, or "" on success.
 func initialize(this js.Value, arguments []js.Value) any {
@@ -147,6 +166,7 @@ func initialize(this js.Value, arguments []js.Value) any {
 	rings = [ring]slot{}
 	wake_reset(payload.Environment)
 	debris_reset()
+	vessel, steered = ship.Ship{}, false // a new mission's ship: planned, or taken from the server, afresh
 	return ""
 }
 

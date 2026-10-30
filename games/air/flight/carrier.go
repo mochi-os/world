@@ -52,8 +52,8 @@ func (m *Model) holdback(s *State, total *Forces) {
 		X: Shortest(point.X, shuttle.X, m.Environment.Wrap),
 		Z: Shortest(point.Z, shuttle.Z, m.Environment.Wrap),
 	}
-	velocity := s.Velocity.Subtract(c.direction().Scale(c.Speed))
-	heading := c.Heading + cat.Heading
+	velocity := s.Velocity.Subtract(c.velocity(point, s.Time, m.Environment.Wrap))
+	heading := c.heading(s.Time) + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 	// The launch bar rides in the track SLOT: laterally stiff (the slot is
 	// mechanical), the along-track gather distance-scheduled. Alignment emerges by
@@ -116,7 +116,7 @@ func (m *Model) stroke(s *State, total *Forces) {
 	if s.Gear.Stroke >= cat.Stroke {
 		return
 	}
-	heading := c.Heading + cat.Heading
+	heading := c.heading(s.Time) + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 	// The bar stays captive in the slot for the whole run: a lateral nose
 	// capture (force, not torque) pulls a crooked start onto the track line
@@ -172,13 +172,13 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 		return
 	}
 	// Payout rate from the hook-tip velocity resolved along both legs.
-	velocity := s.Velocity.Subtract(c.direction().Scale(c.Speed))
+	velocity := s.Velocity.Subtract(c.velocity(tip, s.Time, m.Environment.Wrap))
 	rate := -velocity.Dot(legA.Normalize()) - velocity.Dot(legB.Normalize())
 	// Weight setting, dialled per engagement: the retard scales with the energy a
 	// correctly-flown engagement carries at THIS gross mass, so runout and felt g
 	// stay constant across fuel states.
 	stall := math.Sqrt(2 * m.mass * gravity / (air(s.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
-	engage := math.Max(1.16*stall-c.Speed, 30)
+	engage := math.Max(1.16*stall-c.Way(s.Time), 30)
 	setting := m.mass * engage * engage / reference
 	pull := clamp(setting*(tension*payout+absorb*rate), 0, setting*greatest)
 	if rate < 0 {

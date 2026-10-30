@@ -35,6 +35,14 @@ func noise(seed uint64, index uint64) float64 {
 	return float64(mix(seed, index)>>11) / float64(1<<53)
 }
 
+// Wind is the air's own velocity at a world position and session time: the
+// whole field, without a carrier's burble. The weapons fly through it - a
+// missile, a shell, a flare and a falling wreck are carried by the air just as
+// the jets are, so a shot flies the same whichever way the wind blows.
+func Wind(position Vec3, time float64, env Environment) Vec3 {
+	return wind(position, time, env, nil)
+}
+
 // wind evaluates the total air velocity at a world position and sim time.
 func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 	h := math.Max(position.Y, 2)
@@ -111,15 +119,15 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 	// Carrier burble: a deficit plus downdraft pocket astern of the island,
 	// scaled by wind over deck. Deterministic, only near the boat.
 	if carrier != nil {
-		deck := carrier.Position.Add(Vec3{X: math.Cos(carrier.Heading), Z: -math.Sin(carrier.Heading)}.Scale(carrier.Speed * time))
+		deck, heading := carrier.At(time)
 		dx := Shortest(deck.X, position.X, env.Wrap)
 		dz := Shortest(deck.Z, position.Z, env.Wrap)
-		forward := Vec3{X: math.Cos(carrier.Heading), Z: -math.Sin(carrier.Heading)}
+		forward := direction(heading)
 		behind := -(dx*forward.X + dz*forward.Z) // + when astern
 		lateral := math.Abs(dx*forward.Z - dz*forward.X)
 		height := position.Y - deck.Y
 		if behind > 0 && behind < burble_reach && lateral < 60 && height > -5 && height < 60 {
-			over := forward.Scale(-carrier.Speed).Subtract(mean).Length() // wind over deck
+			over := forward.Scale(-carrier.Way(time)).Subtract(mean).Length() // wind over deck
 			fade := (1 - behind/burble_reach) * (1 - lateral/60) * math.Exp(-height/25)
 			mean = mean.Add(forward.Scale(0.3 * over * fade)) // deficit along the deck wind
 			mean.Y -= 0.4 * over * fade                       // the sink in the groove

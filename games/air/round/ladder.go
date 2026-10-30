@@ -31,11 +31,13 @@ type Zone struct {
 // escape is the defensive break assumed for the no-escape rung.
 const escape = 7.5 * 9.80665
 
-// Ladder computes the zone for a shooter and a tracked target. dt is the
+// Ladder computes the zone for a shooter and a tracked target, the round
+// flying the environment's air from the session time clock. dt is the
 // simulation stride — 0.2 s keeps a full ladder cheap enough for a cockpit
 // refresh while staying inside the acceptance bands.
-func Ladder(shooter Target, target Target, wrap float64) Zone {
+func Ladder(shooter Target, target Target, environment flight.Environment, clock float64) Zone {
 	const dt = 0.2
+	wrap := environment.Wrap
 	sight := relative(shooter.Position, target.Position, wrap)
 	distance := sight.Length()
 	if distance < 1 {
@@ -46,10 +48,13 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 	// One flight at a virtual launch range, returning the arrival Mach (or
 	// -1 for a miss). The virtual target starts at the trial range along
 	// TODAY's line of sight with today's velocity; the escaping variant
-	// banks 7.5 g away from the shooter until it points down the line.
+	// banks 7.5 g away from the shooter until it points down the line. Both
+	// fly through the air, as the round does: the velocity held, and turned,
+	// is the one through the air, and the wind where the target is carries it.
 	arrival := func(trial float64, breaking bool) float64 {
 		virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-		m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, wrap)
+		m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, environment, clock)
+		air := virtual.Velocity.Subtract(flight.Wind(virtual.Position, clock, environment))
 		closest, mach := math.MaxFloat64, -1.0
 		for {
 			support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
@@ -60,9 +65,9 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 				// Turn the victim's velocity away from the shooter at the
 				// break rate, holding speed — the no-escape assumption.
 				away := relative(shooter.Position, virtual.Position, wrap).Normalize()
-				speed := virtual.Velocity.Length()
+				speed := air.Length()
 				if speed > 1 {
-					heading := virtual.Velocity.Scale(1 / speed)
+					heading := air.Scale(1 / speed)
 					if heading.Dot(away) < 0.999 {
 						// The turn is toward the component of the flee direction
 						// PERPENDICULAR to the present heading. Exactly anti-parallel
@@ -81,16 +86,16 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 							}
 						}
 						turned := heading.Add(turn.Normalize().Scale(escape / speed * dt))
-						virtual.Velocity = turned.Normalize().Scale(speed)
+						air = turned.Normalize().Scale(speed)
 					}
 				}
 			}
+			virtual.Velocity = air.Add(flight.Wind(virtual.Position, clock+m.Time, environment))
 			virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
 			miss := relative(m.Position, virtual.Position, wrap).Length()
 			if miss < closest {
 				closest = miss
-				_, sound := atmosphere(m.Position.Y)
-				mach = m.Velocity.Length() / sound
+				mach = m.Mach()
 			} else if miss > closest+2000 {
 				break // past the merge and opening: done
 			}
@@ -193,22 +198,23 @@ func Ladder(shooter Target, target Target, wrap float64) Zone {
 
 // Lethal is the defender's credibility judgement on a round already in flight:
 // from its present state, would it still arrive supersonic against a target
-// flying on as now? The model is copied and flown virtually; the caller's round
-// is untouched.
+// flying on as now, through the air? The model is copied and flown virtually;
+// the caller's round is untouched.
 func Lethal(m Model, target Target, dt float64) bool {
 	virtual := target
+	air := virtual.Velocity.Subtract(flight.Wind(virtual.Position, m.Clock+m.Time, m.Environment))
 	closest, mach := math.MaxFloat64, -1.0
 	for {
 		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
 		if !m.Step(dt, support, &virtual) {
 			break
 		}
+		virtual.Velocity = air.Add(flight.Wind(virtual.Position, m.Clock+m.Time, m.Environment))
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
 		miss := m.relative(m.Position, virtual.Position).Length()
 		if miss < closest {
 			closest = miss
-			_, sound := atmosphere(m.Position.Y)
-			mach = m.Velocity.Length() / sound
+			mach = m.Mach()
 		} else if miss > closest+2000 {
 			break
 		}

@@ -25,6 +25,7 @@ type saddler struct {
 	where   flight.Vec3
 	heading flight.Vec3
 	lost    int
+	air     flight.Environment // the match's air, which his HUD and his eyes read
 }
 
 func (s *saddler) fly(me, foe *flight.State, tick uint64) map[string]any {
@@ -58,7 +59,7 @@ func (s *saddler) fly(me, foe *flight.State, tick uint64) map[string]any {
 func (s *saddler) track(me, foe *flight.State) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	span := math.Max(toward.Length(), 1)
-	point := foe.Position.Subtract(foe.Velocity.Normalize().Scale(math.Min(120, span*0.3)))
+	point := foe.Position.Subtract(foe.Velocity.Subtract(flight.Wind(foe.Position, foe.Time, s.air)).Normalize().Scale(math.Min(120, span*0.3))) // behind his heading
 	want := point.Subtract(me.Position).Normalize()
 	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
 	right := me.Attitude.Rotate(flight.Vec3{Z: 1})
@@ -68,11 +69,12 @@ func (s *saddler) track(me, foe *flight.State) map[string]any {
 	if want.Dot(forward) < 0 {
 		roll = clamp(math.Asin(clamp(want.Dot(right), -1, 1))*4, -1, 1)
 	}
-	overtake := me.Velocity.Length() - foe.Velocity.Length()
+	mine := me.Velocity.Subtract(flight.Wind(me.Position, me.Time, s.air)).Length() // airspeeds, as the HUD reads them
+	overtake := mine - foe.Velocity.Subtract(flight.Wind(foe.Position, foe.Time, s.air)).Length()
 	throttle, reheat := 1.0, 0.0
 	if span < 500 {
 		throttle = clamp(0.7-(overtake-15)*0.01, 0.2, 1)
-	} else if me.Velocity.Length() < 170 {
+	} else if mine < 170 {
 		reheat = 1
 	}
 	return map[string]any{"pitch": pitch, "roll": roll, "throttle": throttle, "reheat": reheat, "fire": true}
@@ -120,7 +122,7 @@ func TestSaddlePressure(t *testing.T) {
 		}
 		place(i, bot, 0, -1200) // converted to the six, arriving — the opening burst must be earned, not scripted (at 700 m the first seconds wrecked the engines and 71% of every fight was flown limp)
 		me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
-		attacker := &saddler{}
+		attacker := &saddler{air: i.environment}
 		for tick := uint64(0); tick < 120*60; tick++ {
 			data := attacker.fly(me, foe, tick)
 			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})

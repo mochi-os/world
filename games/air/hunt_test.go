@@ -667,7 +667,7 @@ func TestRadarCounterfire(t *testing.T) {
 		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, flight.Quat{W: 1}
 		park(c, flight.Vec3{X: x, Y: height}, velocity)
 		a.brain.target, a.brain.alerted = slot, 1
-		inbound := round.New(flight.Vec3{X: -4000, Y: 3000}, flight.Vec3{X: 900}, nil, 0) // an active round closing from behind
+		inbound := round.New(flight.Vec3{X: -4000, Y: 3000}, flight.Vec3{X: 900}, nil, flight.Environment{}, 0) // an active round closing from behind
 		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: inbound.Position, velocity: inbound.Velocity, life: 60})
 		before := a.amraams
 		i.counterfire(self, a, 100)
@@ -698,7 +698,7 @@ func TestDefendChaff(t *testing.T) {
 		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: height}, flight.Vec3{Z: 250}, flight.Quat{W: 1}
 		a.clouded, a.chaff = 10, 20
 		a.brain.alerted = 1
-		inbound := round.New(flight.Vec3{X: -8000, Y: 3000}, flight.Vec3{X: 900}, nil, 0) // an active round closing on the beam
+		inbound := round.New(flight.Vec3{X: -8000, Y: 3000}, flight.Vec3{X: 900}, nil, flight.Environment{}, 0) // an active round closing on the beam
 		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: inbound.Position, velocity: inbound.Velocity, life: 60, number: 1})
 		a.brain.bloom = false
 		i.defend(self, a, 600)
@@ -726,7 +726,7 @@ func TestDefendPassed(t *testing.T) {
 		park(c, flight.Vec3{X: 60000, Y: 3000}, flight.Vec3{X: 250})
 		a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: 3000}, flight.Vec3{Z: 250}, flight.Quat{W: 1}
 		a.brain.alerted = 1
-		inbound := round.New(position, velocity, nil, 0)
+		inbound := round.New(position, velocity, nil, flight.Environment{}, 0)
 		inbound.Phase = round.Active
 		i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: position, velocity: velocity, life: 60, number: 1})
 		return i.defend(self, a, 600)
@@ -782,7 +782,7 @@ func TestCrankSeam(t *testing.T) {
 		park(c, flight.Vec3{X: truth, Y: 300}, flight.Vec3{Z: 250}) // on the beam against the sea: in the notch, no fresh lock
 		b.target = slot
 		b.known[slot] = &track{when: 0, position: flight.Vec3{X: picture, Y: 3000}, velocity: flight.Vec3{}}
-		own := round.New(flight.Vec3{X: 500, Y: 3000}, flight.Vec3{X: 900}, &round.Target{Position: flight.Vec3{X: picture, Y: 3000}}, 0) // a radar shot: midcourse on the datalinked estimate
+		own := round.New(flight.Vec3{X: 500, Y: 3000}, flight.Vec3{X: 900}, &round.Target{Position: flight.Vec3{X: picture, Y: 3000}}, flight.Environment{}, 0) // a radar shot: midcourse on the datalinked estimate
 		if own.Phase >= round.Active {
 			t.Fatalf("a fresh round is already %v: no midcourse to crank for", own.Phase)
 		}

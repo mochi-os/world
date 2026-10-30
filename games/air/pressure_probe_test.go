@@ -73,7 +73,7 @@ func TestPressureProbe(t *testing.T) {
 	}
 	place(i, bot, 0, start)
 	me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
-	hunter := &chaser{}
+	hunter := &chaser{air: i.environment}
 	b := i.aircraft[bot].brain
 	fmt.Printf("seed %d\n", seed)
 	length := uint64(60)
@@ -155,7 +155,7 @@ func TestPressureOracle(t *testing.T) {
 		}
 		place(i, 1, 0, -1200) // attacker (0) behind the "bandit" (1)
 		me, foe := &i.aircraft[0].model.State, &i.aircraft[1].model.State
-		hunter, defender := &chaser{}, &chaser{}
+		hunter, defender := &chaser{air: i.environment}, &chaser{air: i.environment}
 		for tick := uint64(0); tick < 120*60; tick++ {
 			i.Step(tick, map[int][]game.Input{0: {{Data: hunter.fly(me, foe, tick)}}, 1: {{Data: defender.fly(foe, me, tick)}}})
 			if !i.aircraft[0].alive || !i.aircraft[1].alive || i.aircraft[0].model == nil || i.aircraft[1].model == nil {

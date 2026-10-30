@@ -77,11 +77,13 @@ func seek(t *testing.T, span float64, off float64, aspect float64, speed float64
 		// the state pursue's fuse is about to judge — BEFORE the call, not
 		// after. A fusing round leaves i.flying inside pursue, so measuring
 		// afterwards skips the one frame that decides whether it hit, and
-		// reports every kill as a near miss.
+		// reports every kill as a near miss. The target is read where he was
+		// at the round's time: the jets have stepped, the round has not.
+		seen := target.model.State.Position.Subtract(target.model.State.Velocity.Scale(dt))
 		relative := flight.Vec3{
-			X: flight.Shortest(was.position.X, target.model.State.Position.X, i.environment.Wrap),
-			Y: target.model.State.Position.Y - was.position.Y,
-			Z: flight.Shortest(was.position.Z, target.model.State.Position.Z, i.environment.Wrap),
+			X: flight.Shortest(was.position.X, seen.X, i.environment.Wrap),
+			Y: seen.Y - was.position.Y,
+			Z: flight.Shortest(was.position.Z, seen.Z, i.environment.Wrap),
 		}
 		closure := target.model.State.Velocity.Subtract(was.velocity)
 		step := 0.0
@@ -97,7 +99,7 @@ func seek(t *testing.T, span float64, off float64, aspect float64, speed float64
 			break
 		}
 		// Reconstruct the frame the guidance just judged.
-		direction, span := i.bearing(was.position, target.model.State.Position)
+		direction, span := i.bearing(was.position, seen)
 		axis := was.velocity.Normalize()
 		rate := direction.Subtract(was.sight).Scale(1 / dt)
 		rate = rate.Subtract(direction.Scale(rate.Dot(direction)))
@@ -226,7 +228,7 @@ func TestSeekerPredictor(t *testing.T) {
 			heading := flight.Vec3{X: math.Cos(off + aspect*math.Pi/180), Z: math.Sin(off + aspect*math.Pi/180)}
 			shooter := round.Target{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 250}}
 			prey := round.Target{Position: flight.Vec3{Y: 3000}.Add(line.Scale(span)), Velocity: heading.Scale(200)}
-			says := reaches(shooter, prey, line, flight.Vec3{}, 250000, span, false)
+			says := reaches(shooter, prey, line, flight.Vec3{}, flight.Environment{Wrap: 250000}, 0, span, false)
 
 			frames, m, closest := seek(t, span, off, aspect*math.Pi/180, 200, 0)
 			_, why := broke(frames)
@@ -297,7 +299,7 @@ func TestSeekerCoverage(t *testing.T) {
 			break
 		}
 		if m.loose && !was.loose {
-			direction, span := i.bearing(was.position, target.model.State.Position)
+			direction, span := i.bearing(was.position, target.model.State.Position.Subtract(target.model.State.Velocity.Scale(dt))) // the target at the round's time, as pursue reads it
 			rate := direction.Subtract(was.sight).Scale(1 / dt)
 			rate = rate.Subtract(direction.Scale(rate.Dot(direction)))
 			cone := direction.Dot(was.velocity.Normalize())

@@ -177,6 +177,7 @@ func volley(this js.Value, arguments []js.Value) any {
 	seed := uint64(0)
 	if model != nil {
 		seed = model.Environment.Seed
+		shooter.Wind = flight.Wind(shooter.Position, model.State.Time, model.Environment) // the air the rounds fly through
 	}
 	airborne = append(airborne, battle.Volley(shooter, int(arsenal[16]), seed, uint64(arsenal[0]), uint64(arsenal[17]))...)
 	return len(airborne)
@@ -268,6 +269,9 @@ func fly(this js.Value, arguments []js.Value) any {
 		}
 		if landed {
 			continue
+		}
+		if model != nil {
+			round.Feel(model.Environment, model.State.Time)
 		}
 		if !battle.Fly(round, dt) {
 			alive = append(alive, *round)

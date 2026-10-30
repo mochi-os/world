@@ -113,6 +113,14 @@ func (m *Model) Calibrated(tas float64, altitude float64) float64 {
 	return calibrated(tas, altitude, m.Environment)
 }
 
+// Equivalent is the equivalent airspeed of a true airspeed at an altitude in
+// an environment's air: the sea-level speed with the same dynamic pressure,
+// which is what lift, and so the g a wing has, goes with. The bots judge their
+// wing and their limits in it.
+func Equivalent(tas float64, altitude float64, env Environment) float64 {
+	return tas * math.Sqrt(air(altitude, env).Density/1.225)
+}
+
 // calibrated is the same compressible-pitot conversion for an arbitrary
 // point — the V-speed survey prints it so its numbers land in the HUD's
 // units instead of KEAS.

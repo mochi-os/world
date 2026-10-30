@@ -298,23 +298,24 @@ type hornet struct {
 	until     uint64      // and the tick it may be re-picked at
 	branch    string      // which law last set pitch, for the departure trace (#214)
 	// The rest is mimic's (#45), zero for the hornet itself.
-	lead        float64     // the run-in's lead turn, begun first at 1.6 km: +1 toward his side of me, -1 away from it
-	sense       float64     // the lead turn being flown: +1 right, -1 left, 0 not yet begun
-	passed      bool        // he has gone by: the lead turn is over and the fight is on
-	floor, band float64     // the regain's floor and exit speed, m/s
-	alpha       float64     // the fighting alpha, deg (0: the hornet's 30)
-	ceiling     float64     // the alpha that starts the regain, deg (0: the hornet's 32)
-	stick       float64     // the everyday pull's ceiling (0: the hornet's 0.85)
-	cued        bool        // heaters on the shoot cue, not on a nose angle
-	wary        bool        // flares whenever his nose comes on close
-	last        flight.Vec3 // his velocity a tick ago: the zone's swing
-	zone        round.Zone  // his heater zone as the cue reads it, refreshed a few times a second
-	zoned, cue  uint64      // the tick the zone was read, and the tick the cue came on (0: off)
-	wind        flight.Vec3 // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
-	full        bool        // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 expert
-	late        float64     // seconds the rounds inbound have flown before the pilot sees them (0: at launch)
-	slice       float64     // after the pass, the lift vector this many degrees below him: the user's descending turn (0: on him)
-	sighted     uint64      // one past the tick the rounds inbound were first in the air (0: none inbound)
+	lead        float64            // the run-in's lead turn, begun first at 1.6 km: +1 toward his side of me, -1 away from it
+	sense       float64            // the lead turn being flown: +1 right, -1 left, 0 not yet begun
+	passed      bool               // he has gone by: the lead turn is over and the fight is on
+	floor, band float64            // the regain's floor and exit speed, m/s
+	alpha       float64            // the fighting alpha, deg (0: the hornet's 30)
+	ceiling     float64            // the alpha that starts the regain, deg (0: the hornet's 32)
+	stick       float64            // the everyday pull's ceiling (0: the hornet's 0.85)
+	cued        bool               // heaters on the shoot cue, not on a nose angle
+	wary        bool               // flares whenever his nose comes on close
+	last        flight.Vec3        // his velocity a tick ago: the zone's swing
+	zone        round.Zone         // his heater zone as the cue reads it, refreshed a few times a second
+	zoned, cue  uint64             // the tick the zone was read, and the tick the cue came on (0: off)
+	wind        flight.Vec3        // the air at the jet this tick, set by the sweep: a pilot flies the airspeed and alpha his HUD reads, not his speed over the ground
+	air         flight.Environment // the match's air, which its heaters fly: the shoot cue reads their zone in it
+	full        bool               // full aft stick in the close fight below 250 kt, the alpha left to the flight control law: the user's slow fight in 01a10e5e (33-37 deg at 145-240 kt), which beat the stage 16 expert
+	late        float64            // seconds the rounds inbound have flown before the pilot sees them (0: at launch)
+	slice       float64            // after the pass, the lift vector this many degrees below him: the user's descending turn (0: on him)
+	sighted     uint64             // one past the tick the rounds inbound were first in the air (0: none inbound)
 }
 
 // mimic flies the fight the user flew against the stage 15 expert in the sorties
@@ -370,8 +371,8 @@ func (h *hornet) tone(me, foe *flight.State, span float64, tick uint64) bool {
 	if locked {
 		if h.zoned == 0 || tick-h.zoned >= 15 {
 			swing := foe.Velocity.Subtract(h.last).Scale(60)
-			h.zone = Heat(launcher(me),
-				round.Target{Position: foe.Position, Velocity: foe.Velocity}, swing, lit, 0)
+			h.zone = Heat(launcher(me, h.air),
+				round.Target{Position: foe.Position, Velocity: foe.Velocity}, swing, lit, h.air, me.Time)
 			h.zoned = tick
 		}
 		locked = span > h.zone.Minimum && span <= h.zone.Max
@@ -441,7 +442,7 @@ func (h *hornet) fly(me, foe *flight.State, threats []threat, tick uint64) map[s
 			// A pilot picks a direction and holds it until the thing is past.
 			if tick >= h.until || h.beam.Length() < 0.5 {
 				toward := nearest.position.Subtract(me.Position).Normalize()
-				if flightPath := me.Velocity; flightPath.Length() > 1 {
+				if flightPath := me.Velocity.Subtract(h.wind); flightPath.Length() > 1 { // the beam off my heading through the air, as every other line here is flown
 					v := flightPath.Normalize()
 					beam := v.Subtract(toward.Scale(v.Dot(toward)))
 					if beam.Length() <= 1e-3 {
@@ -960,7 +961,8 @@ func sweepFrom(t *testing.T, level, mode string, opponent func() flyer, missiles
 		}
 		for tick := uint64(0); tick < uint64(seconds*60); tick++ {
 			if h, ok := pilot.(*hornet); ok {
-				h.wind = i.aircraft[0].model.Gust() // the scripts fly the air their jet is in
+				h.wind = flight.Wind(me.Position, me.Time, i.environment) // the scripts fly the air their jet is in: sampled there, as the model's own sample is its last step's and a jet yet to step has none
+				h.air = i.environment
 			}
 			data := pilot.fly(me, &i.aircraft[bot].model.State, inbound(i, 0), tick)
 			if os.Getenv("AIR_DEPART") != "" {
@@ -1215,7 +1217,11 @@ func jousted(i *instance, bot int) {
 	east := flight.Vec3{X: 1}
 	him, me := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
 	him.Position, me.Position = flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 2778, Y: 4572}
-	him.Velocity, me.Velocity = east.Scale(220), east.Scale(-220)
+	// 428 kt through the match's air, as single player spawns the pair: over
+	// the ground the 30 m/s of trades at 15,000 ft sent one jet in 60 m/s
+	// faster than the other.
+	him.Velocity = east.Scale(220).Add(flight.Wind(him.Position, him.Time, i.aircraft[bot].model.Environment))
+	me.Velocity = east.Scale(-220).Add(flight.Wind(me.Position, me.Time, i.aircraft[0].model.Environment))
 	him.Attitude, me.Attitude = flight.Look(east), flight.Look(east.Scale(-1))
 }
 

@@ -51,7 +51,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		own = me.Velocity.Subtract(s.velocity).Scale(60)
 	}
 	s.velocity = me.Velocity
-	if b.prey == nil || b.recovers(me) {
+	if b.prey == nil || b.recovers(me, m.Environment) {
 		s.branch = "deck"
 		b.play = s.branch       // the recording's Doctrine channel reads it
 		return b.steer(m, tick) // the recovery owns the stick near the water, whatever the plan
@@ -76,8 +76,12 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// bandit flies the pilot's air, and with the ground speed the regain began at
 	// 172 kt into a 40 kt headwind and held until 268 kt, 12.8 s unloaded with its
 	// tail to him (01a10e19). The geometry below stays over the ground, where
-	// both jets' tracks are.
-	speed := me.Velocity.Subtract(m.Gust()).Length()
+	// both jets' tracks are; where a jet points, his nose or my tail, goes with
+	// its heading through the air. The wing's numbers are equivalent airspeeds,
+	// as the corner is; the speed set against his is the true one.
+	wind := flight.Wind(me.Position, me.Time, m.Environment) // the steady air at me: the model's own sample is its last step's, and a jet yet to step has none
+	speed := me.Velocity.Subtract(wind).Length()
+	equivalent := flight.Equivalent(speed, me.Position.Y, m.Environment)
 
 	// The run-in: a line 400 m beside him, then the lead turn toward his side at
 	// mimic's 1.6 km, held until he has gone by. Flown through steer(), which
@@ -89,7 +93,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// never fired.
 	if !s.judged {
 		s.judged = true
-		if his := b.prey.velocity; his.Length() < 1 || his.Normalize().Dot(want.Scale(-1)) < 0.5 {
+		if his := b.prey.velocity.Subtract(b.prey.blown); his.Length() < 1 || his.Normalize().Dot(want.Scale(-1)) < 0.5 { // his look is his heading through the air
 			s.passed = true
 		}
 	}
@@ -109,7 +113,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	breaking := false
 	if s.incoming.Length() > 0.5 {
 		if tick >= s.until || s.beam.Length() < 0.5 {
-			path := me.Velocity.Normalize()
+			path := airflow(me, m.Environment).Normalize() // the round's sight-line rate and gimbal go with the path through the air it flies in
 			beam := path.Subtract(s.incoming.Scale(path.Dot(s.incoming)))
 			if beam.Length() <= 1e-3 {
 				beam = right // dead on the nose or the tail: pick the wing line
@@ -184,7 +188,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		}
 	}
 	now := seen.position
-	astern := gunning && me.Position.Subtract(now).Dot(seen.velocity) < 0 // on the gun from behind him: an overtake
+	astern := gunning && me.Position.Subtract(now).Dot(seen.velocity.Subtract(seen.blown)) < 0 // on the gun from behind him, astern of his heading: an overtake
 	// Fast in a guns match: closing faster than 60 m/s with no missiles in the
 	// match. With no missiles the fight comes back round to a second merge,
 	// and the instructor tiers met it on the gun at 98-139 m and crossed later
@@ -230,19 +234,19 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// whenever he closed, and extended 7 s at 186-351 m in front of a
 	// heater-armed pilot; the fight law's turn opens that miss instead, as it
 	// does for the instructor tiers.
-	pursued := now.Subtract(me.Position).Dot(me.Velocity) < 0
+	pursued := now.Subtract(me.Position).Dot(me.Velocity.Subtract(wind)) < 0 // behind my 3/9 line, which my heading through the air sets
 	fast, slow := false, false
 	if gap := now.Subtract(me.Position); gap.Length() > 1 {
 		closure := me.Velocity.Subtract(seen.velocity).Dot(gap.Normalize())
 		fast = !i.missiles && closure > 60
-		slow = i.missiles && gunning && !astern && closure > 100 && m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2) < 3
+		slow = i.missiles && gunning && !astern && closure > 100 && m.Airframe.Limit.Positive*math.Pow(equivalent/corner(m), 2) < 3
 	}
 	if !breaking && (b.skill.library < 3 && !pursued || astern || fast || slow || s.away.Length() > 0.5) {
 		if now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) >= 0 {
 			s.away = flight.Vec3{} // the range is opening: the pass is over
 		}
 		if s.away.Length() < 0.5 {
-			wing := math.Min(b.skill.pull, m.Airframe.Limit.Positive*math.Pow(speed/corner(m), 2)) // the g the wing has at this speed
+			wing := math.Min(b.skill.pull, m.Airframe.Limit.Positive*math.Pow(equivalent/corner(m), 2)) // the g the wing has at this speed
 			// The five-second look on a fast pass as well: with the overtake's
 			// three seconds, 5 of the 36 head-on passes went inside the bubble.
 			//
@@ -274,7 +278,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			case !fast:
 				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
 			}
-			if miss, when := nearest(&seen, me, now, own, math.Max(ahead, 5)); when > 0.1 && when < ahead && miss.Length() < room {
+			if miss, when := nearest(&seen, me, now, own, wind, math.Max(ahead, 5)); when > 0.1 && when < ahead && miss.Length() < room {
 				// Chased: his nose within 30 degrees of me and his turn carrying
 				// it toward me. A jet crossing on a straight line to the meeting
 				// point has its nose on me too, and does not follow.
@@ -282,11 +286,11 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 				chased := false
 				if from.Length() > 1 && bending(&seen) > 10 {
 					from = from.Normalize()
-					path := seen.velocity.Normalize()
+					path := seen.velocity.Subtract(seen.blown).Normalize() // a jet turns its velocity through the air
 					toward := from.Subtract(path.Scale(from.Dot(path)))
 					chased = b.prey.nose.Dot(from) > math.Cos(30*math.Pi/180) && seen.swing.Dot(toward) > 0
 				}
-				s.away = escape(miss, when, me, me.Position.Y < now.Y, chased, wing)
+				s.away = escape(miss, when, me, wind, me.Position.Y < now.Y, chased, wing)
 			}
 		}
 		if s.away.Length() > 0.5 {
@@ -310,7 +314,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// to gun range or his turn, a novice fight went by at 94 m in its deck
 	// recovery: 2 of 256 with a close approach after the merge against 1.
 	steady := !breaking && !gunning && !clearing && span > 600 && bending(&seen) <= 15
-	if steady && seen.velocity.Length() > speed && now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) > 0 {
+	if steady && seen.velocity.Subtract(seen.blown).Length() > speed && now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) > 0 {
 		s.running++
 	} else {
 		s.running = 0
@@ -396,7 +400,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		lift = lift.Normalize()
 		roll = clamp(math.Atan2(lift.Dot(right), lift.Dot(up))*2.5, -1, 1)
 	}
-	limit := clamp((speed-60)/90, 0.15, 1)
+	limit := clamp((equivalent-tuned(60))/tuned(90), 0.15, 1)
 	goal := clamp(angle/180*math.Pi*3, 0, 1) * b.skill.alpha
 	if w < 1 {
 		one := riding * math.Max(up.Y, 0) / math.Max(m.Nz(), 0.5) // the alpha that holds a g in the plane of the wings
@@ -404,7 +408,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		goal = goal*w + (one+2*offset)*(1-w)
 	}
 	if pursuing {
-		goal = math.Min(goal, b.skill.alpha*clamp(math.Pow(speed/corner(m), 2), 0.3, 1)) // only as hard as the speed affords
+		goal = math.Min(goal, b.skill.alpha*clamp(math.Pow(equivalent/corner(m), 2), 0.3, 1)) // only as hard as the speed affords
 	}
 	// Inside 1.5 km the fighting alpha is held whatever the nose is doing, which
 	// is what sustains a turning fight; against a jet that is not turning the
@@ -472,9 +476,9 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// the lift vector rolled below the horizon away from his nose, turned the
 	// path 5 degrees and took 7.4 s: at 134 kt there is no turn to be had, and
 	// the regain is as short as gravity makes it.
-	if speed < n.floor || riding > n.ceiling {
+	if equivalent < tuned(n.floor) || riding > n.ceiling {
 		s.regaining = true
-	} else if speed > n.band && riding < 20 {
+	} else if equivalent > tuned(n.band) && riding < 20 {
 		s.regaining = false
 	}
 	if s.regaining {
@@ -483,7 +487,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	// Roll with the speed there is, and a nudge only at high alpha: a lift
 	// vector flipping as he crosses the nose departs a jet at the limiter.
-	roll *= clamp((speed-60)/100, 0.15, 1)
+	roll *= clamp((equivalent-tuned(60))/tuned(100), 0.15, 1)
 	roll *= clamp((36-riding)/8, 0.1, 1)
 	if pitch > 0 {
 		pitch *= clamp((44-riding)/10, 0.08, 1)
@@ -498,7 +502,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	fire := gunning && b.squeeze(m, tick)
 	b.play, b.rolled = s.branch, roll
 	b.demand.Stick = pitch
-	return flight.Inputs{Pitch: pitch, Roll: roll, Throttle: 1, Reheat: i.reheat(b, me, span, speed), Fire: fire}
+	return flight.Inputs{Pitch: pitch, Roll: roll, Throttle: 1, Reheat: i.reheat(b, me, span, equivalent, wind, tick), Fire: fire}
 }
 
 // reheat is the fight's burner: COLD, military power, inside the heater span
@@ -528,21 +532,21 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 // 29 without the plume, the two in three the target asks for; with the whole
 // cone 45 and 10, with half 37 and 23. Flown cold through a clear as well, a
 // clear tripped and short of speed met him at 106 m, so a clear is lit.
-func (i *instance) reheat(b *brain, me *flight.State, span, speed float64) float64 {
+func (i *instance) reheat(b *brain, me *flight.State, span, speed float64, wind flight.Vec3, tick uint64) float64 {
 	n := &b.tactics.script.cold
 	if b.skill.plume == 0 || !i.missiles || span >= b.tactics.missile.span || b.routine.regaining || b.routine.away.Length() > 0.5 {
 		return 1 // and lit while clearing a pass: the speed is what opens it
 	}
 	cone := n.cone * b.skill.plume
-	if speed > n.speed {
+	if speed > tuned(n.speed) { // equivalent, as the floors are
 		cone = n.wide * b.skill.plume
 	}
-	if back, _ := i.bearing(b.prey.position, me.Position); b.prey.nose.Dot(back) > math.Cos(cone*math.Pi/180) {
+	if back, _ := i.bearing(b.prey.carried(float64(tick)/60), me.Position); b.prey.nose.Dot(back) > math.Cos(cone*math.Pi/180) {
 		// Inside his heater's fuse floor the plume hides nothing he can shoot,
 		// and the gun is the threat: the burner buys the turn.
 		tail := 0.0
-		if v := me.Velocity.Length(); v > 1 {
-			tail = math.Max(0, back.Dot(me.Velocity.Scale(1/v)))
+		if heading := me.Velocity.Subtract(wind); heading.Length() > 1 { // my tailpipe points down my heading through the air
+			tail = math.Max(0, back.Dot(heading.Normalize()))
 		}
 		if span < arming(b.prey.velocity.Subtract(me.Velocity).Dot(back), tail, 1) {
 			return 1
@@ -555,10 +559,11 @@ func (i *instance) reheat(b *brain, me *flight.State, span, speed float64) float
 // bending is how hard he is turning as the track last saw him, m/s2: his
 // acceleration across his own flight path. 15 is about a g and a half.
 func bending(t *track) float64 {
-	if t.velocity.Length() < 1 {
+	path := t.velocity.Subtract(t.blown) // the turn is the swing across his path through the air
+	if path.Length() < 1 {
 		return 0
 	}
-	path := t.velocity.Normalize()
+	path = path.Normalize()
 	return t.swing.Subtract(path.Scale(t.swing.Dot(path))).Length()
 }
 
@@ -593,8 +598,9 @@ func projected(prey *track, me *flight.State, spot flight.Vec3) flight.Vec3 {
 // the miss at the closest point inside the horizon (my position less his) and
 // when it comes. Two jets in a hard turning fight each turn a quarter
 // circle or more in that time, which a straight line, or a parabola, does not
-// follow.
-func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float64) (miss flight.Vec3, when float64) {
+// follow. Each turns its velocity through the air, and the wind it flies in,
+// mine the wind at me, carries the whole circle.
+func nearest(prey *track, me *flight.State, spot, own, wind flight.Vec3, horizon float64) (miss flight.Vec3, when float64) {
 	const dt = 0.05
 	rate := func(velocity, swing flight.Vec3) flight.Vec3 { // the turn's rate vector, rad/s
 		speed := velocity.Dot(velocity)
@@ -603,7 +609,7 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float
 		}
 		return velocity.Cross(swing).Scale(1 / speed)
 	}
-	mine, his, fly, flown := me.Position, spot, me.Velocity, prey.velocity
+	mine, his, fly, flown := me.Position, spot, me.Velocity.Subtract(wind), prey.velocity.Subtract(prey.blown)
 	spin, turn := rate(fly, own), rate(flown, prey.swing)
 	least := math.Inf(1)
 	for k := 0.0; k <= horizon; k += dt {
@@ -612,7 +618,7 @@ func nearest(prey *track, me *flight.State, spot, own flight.Vec3, horizon float
 		}
 		fly = fly.Add(spin.Cross(fly).Scale(dt)).Normalize().Scale(fly.Length())
 		flown = flown.Add(turn.Cross(flown).Scale(dt)).Normalize().Scale(flown.Length())
-		mine, his = mine.Add(fly.Scale(dt)), his.Add(flown.Scale(dt))
+		mine, his = mine.Add(fly.Add(wind).Scale(dt)), his.Add(flown.Add(prey.blown).Scale(dt))
 	}
 	return miss, when
 }
@@ -648,17 +654,18 @@ func (i *instance) overtake(a *craft, b *brain) {
 		s.away = flight.Vec3{} // far, or the range is opening: the pass is over
 		return
 	}
-	if s.away.Length() < 0.5 && me.Position.Subtract(him.Position).Dot(him.Velocity) < 0 && me.Velocity.Subtract(him.Velocity).Dot(gap.Normalize()) > 100 {
+	if s.away.Length() < 0.5 && me.Position.Subtract(him.Position).Dot(him.Velocity.Subtract(flight.Wind(him.Position, him.Time, quarry.model.Environment))) < 0 && me.Velocity.Subtract(him.Velocity).Dot(gap.Normalize()) > 100 { // astern of his heading, closing fast; the wind at him sampled here, since single player's mirrored pilot never steps to sample it
 		seen := *b.prey
 		seen.position, seen.velocity = him.Position, him.Velocity // in plain sight this close
-		if miss, when := nearest(&seen, me, him.Position, flight.Vec3{}, 3); when > 0.1 && when < 3 && miss.Length() < 1.2*bubble {
-			speed := me.Velocity.Subtract(a.model.Gust()).Length()
+		wind := flight.Wind(me.Position, me.Time, a.model.Environment)
+		if miss, when := nearest(&seen, me, him.Position, flight.Vec3{}, wind, 3); when > 0.1 && when < 3 && miss.Length() < 1.2*bubble {
+			speed := flight.Equivalent(me.Velocity.Subtract(wind).Length(), me.Position.Y, a.model.Environment)
 			wing := math.Min(b.skill.pull, a.model.Airframe.Limit.Positive*math.Pow(speed/corner(a.model), 2))
-			s.away = escape(miss, when, me, me.Position.Y < him.Position.Y, false, wing)
+			s.away = escape(miss, when, me, wind, me.Position.Y < him.Position.Y, false, wing)
 		}
 	}
 	if s.away.Length() > 0.5 {
-		b.aim = me.Velocity.Normalize().Add(s.away.Scale(2)).Normalize()
+		b.aim = airflow(me, a.model.Environment).Normalize().Add(s.away.Scale(2)).Normalize()
 		b.g, b.shoot = b.skill.pull, false
 	}
 }
@@ -678,7 +685,7 @@ func (i *instance) overtake(a *craft, b *brain) {
 // against every jet, 28 of the 84 crossings in TestScriptClearsTheCrossing went
 // inside the bubble: a jet crossing in a straight line from below carries on
 // above the meeting point, and under is the way out.
-func escape(miss flight.Vec3, when float64, me *flight.State, below, chased bool, wing float64) flight.Vec3 {
+func escape(miss flight.Vec3, when float64, me *flight.State, wind flight.Vec3, below, chased bool, wing float64) flight.Vec3 {
 	away := miss.Normalize()
 	if miss.Length() < bubble/2 {
 		away = flight.Vec3{Y: 1}
@@ -686,7 +693,7 @@ func escape(miss flight.Vec3, when float64, me *flight.State, below, chased bool
 			away = flight.Vec3{Y: -1}
 		}
 	}
-	path := me.Velocity.Normalize()
+	path := me.Velocity.Subtract(wind).Normalize()        // the lift that opens the miss is square to my path through the air
 	reach := func(d flight.Vec3) (flight.Vec3, float64) { // the way, across my path, and the miss it makes by the pass
 		d = d.Subtract(path.Scale(d.Dot(path)))
 		if d.Length() < 0.1 {
@@ -740,14 +747,15 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	}
 	apart := me.Position.Subtract(pass).Dot(s.side)
 	clear := me.Position.Subtract(pass).Length() // the same miss in three dimensions
-	flat := flight.Vec3{X: me.Velocity.X, Z: me.Velocity.Z}.Normalize()
+	path := airflow(me, m.Environment)
+	flat := flight.Vec3{X: path.X, Z: path.Z}.Normalize()
 	if span < b.tactics.script.lead && b.skill.library >= 2 {
 		s.turning = true // the novice holds its line through the pass and turns after it
 	}
 	b.g, b.throttle, b.reheat, b.brake = b.skill.pull, 1, 0, 0 // military power, as the user runs in
 	closing := math.Max(me.Velocity.Subtract(b.prey.velocity).Dot(want), 50)
 	line := func() {
-		point := spot.Add(b.prey.velocity.Scale(span / closing)).Add(s.side.Scale(offset)).Subtract(me.Position)
+		point := spot.Add(b.prey.velocity.Subtract(b.prey.blown).Scale(span / closing)).Add(s.side.Scale(offset)).Subtract(me.Position) // where we meet in the air we share: the line is flown through it
 		s.course = flight.Vec3{X: point.X, Z: point.Z}.Normalize()
 	}
 	// A full lead turn from 1.6 km moves the jet about 390 m toward him before
@@ -822,8 +830,9 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 		rise = -1
 	}
 	// The line climbs, or dives, to the height of the pass: vertical off his
-	// level by the time we meet, at the closure we have.
-	travel := math.Max(me.Velocity.Length()*span/closing, 1)
+	// level by the time we meet, at the closure we have, along the path through
+	// the air the line is flown onto.
+	travel := math.Max(airflow(me, m.Environment).Length()*span/closing, 1)
 	climb := clamp((spot.Y+rise*vertical-me.Position.Y)/travel, -0.15, 0.25)
 	switch {
 	case s.turning && clear < 1.3*bubble:

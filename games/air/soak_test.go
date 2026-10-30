@@ -39,7 +39,7 @@ func TestSoak(t *testing.T) {
 		me, foe := &i.aircraft[0].model.State, &i.aircraft[drone].model.State
 		hits, killedAt := 0, -1.0
 		for tick := uint64(0); tick < 60*120; tick++ {
-			data := pursue(me, foe)
+			data := pursue(me, foe, i.environment)
 			data["fire"] = true // pursue sets "guns", but the wire key is "fire"
 			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 			for _, e := range i.events {

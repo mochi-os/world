@@ -22,12 +22,12 @@ import (
 // unwinnable by construction.) The high fighter that converts at a moment of
 // its choosing is stood in for by one that never converts at all — every
 // second beneath it is the bot's own choice.
-func hover(me *flight.State, centre flight.Vec3, ceiling float64, tick uint64) map[string]any {
+func hover(me *flight.State, centre flight.Vec3, ceiling float64, tick uint64, air flight.Environment) map[string]any {
 	angle := float64(tick) / 60 * 0.15
 	ghost := flight.State{}
 	ghost.Position = flight.Vec3{X: centre.X + 900*math.Cos(angle), Y: ceiling, Z: centre.Z + 900*math.Sin(angle)}
 	ghost.Velocity = flight.Vec3{X: -135 * math.Sin(angle), Z: 135 * math.Cos(angle)}
-	data := pursue(me, &ghost)
+	data := pursue(me, &ghost, air)
 	data["fire"] = false
 	return data
 }
@@ -69,7 +69,7 @@ func TestPerchDiscipline(t *testing.T) {
 		centre := foe.Position
 		ceiling := me.Position.Y
 		for tick := uint64(0); tick < 120*60; tick++ {
-			data := hover(me, centre, ceiling, tick)
+			data := hover(me, centre, ceiling, tick, i.environment)
 			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
 			if !i.aircraft[0].alive || !i.aircraft[bot].alive ||
 				i.aircraft[0].model == nil || i.aircraft[bot].model == nil {

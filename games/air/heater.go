@@ -25,9 +25,11 @@ import (
 // the zone came out empty for exactly the shot a pilot takes on tone. Measured
 // in the slow fight (both jets at 210 kt, 800 m abeam), the scripted expert beat
 // mimic 3 times and lost 11 of 24 that way, and 17 and 7 with both zones
-// drawn here.
-func launcher(s *flight.State) round.Target {
-	return round.Target{Position: s.Position, Velocity: s.Attitude.Rotate(flight.Vec3{X: 1}).Scale(s.Velocity.Length())}
+// drawn here. The speed is the jet's through the air, and the wind carries the
+// round off the rail as it carries the jet.
+func launcher(s *flight.State, environment flight.Environment) round.Target {
+	wind := flight.Wind(s.Position, s.Time, environment)
+	return round.Target{Position: s.Position, Velocity: s.Attitude.Rotate(flight.Vec3{X: 1}).Scale(s.Velocity.Subtract(wind).Length()).Add(wind)}
 }
 
 // arming is a heater shot's fuse floor: the closure while the fuse arms, plus
@@ -45,8 +47,10 @@ func arming(closing, tail, lit float64) float64 {
 // line, the jet's speed along its NOSE (launcher gives it), not his flight
 // path; swing is the target's present acceleration (m/s2, zero flies him
 // straight); lit is his afterburner (0..1), which sets the seeker's
-// acquisition reach and caps the zone.
-func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, wrap float64) round.Zone {
+// acquisition reach and caps the zone. The round and the target fly the
+// environment's air from the session time clock.
+func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, environment flight.Environment, clock float64) round.Zone {
+	wrap := environment.Wrap
 	sight := shortest(shooter.Position, target.Position, wrap)
 	distance := math.Max(sight.Length(), 1)
 	direction := sight.Scale(1 / distance)
@@ -55,14 +59,15 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 	// line of sight and either flies on or bends 7.5 g away. No flares (the zone
 	// cannot know them) and no seeker acquisition roll.
 	arrives := func(trial float64, breaking bool) bool {
-		return reaches(shooter, target, direction, swing, wrap, trial, breaking)
+		return reaches(shooter, target, direction, swing, environment, clock, trial, breaking)
 	}
 
 	// The seeker's reach at this aspect, exactly as acquire() judges a lock:
-	// full range square at a tailpipe, the plume's floor head-on.
+	// full range square at a tailpipe, the plume's floor head-on. The tail is
+	// where the jet points, along its way through the air.
 	tail := 0.0
-	if speed := target.Velocity.Length(); speed > 1 {
-		tail = math.Max(0, direction.Dot(target.Velocity.Scale(1/speed)))
+	if air := target.Velocity.Subtract(flight.Wind(target.Position, clock, environment)); air.Length() > 1 {
+		tail = math.Max(0, direction.Dot(air.Normalize()))
 	}
 	// The fuse floor: the closure while the fuse arms, plus turn-in room. It
 	// also has to buy the round a SEDUCTION it can survive (#213). reaches()
@@ -186,11 +191,15 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 // present line of sight and reports whether it fuses. This is the ladder's
 // whole opinion of a shot: every rung in Heat is a bisection over it, and the
 // bot's gate is a question about it. breaking bends the target into the beam
-// at 7.5 g; otherwise it holds its measured turn.
-func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, wrap float64, trial float64, breaking bool) bool {
+// at 7.5 g; otherwise it holds its measured turn. Both fly through the air, as
+// pursue() flies them: the round's speed, axis and drag are the air's, and the
+// target holds and turns its velocity through the air while the wind carries it.
+func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, environment flight.Environment, clock float64, trial float64, breaking bool) bool {
 	const dt = 1.0 / 60
+	wrap := environment.Wrap
 	virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	forward := shooter.Velocity
+	air := virtual.Velocity.Subtract(flight.Wind(virtual.Position, clock, environment)) // the target's velocity through the air
+	forward := shooter.Velocity.Subtract(flight.Wind(shooter.Position, clock, environment))
 	if forward.Length() > 1 {
 		forward = forward.Normalize()
 	} else {
@@ -207,7 +216,8 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 	for m.life > 0 {
 		m.life -= dt
 		m.flew += dt
-		speed := m.velocity.Length()
+		wind := flight.Wind(m.position, clock+m.flew, environment)
+		speed := m.velocity.Subtract(wind).Length()
 		// The proximity fuse: closest approach inside this step, exactly
 		// as pursue() judges it.
 		if m.flew > missile_arm {
@@ -230,7 +240,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		// consults, so a predictor one release out of step with the weapon
 		// would score doctrine against a round nobody fires.
 		sight := shortest(m.position, virtual.Position, wrap).Normalize()
-		axis := m.velocity.Normalize()
+		axis := m.velocity.Subtract(wind).Normalize()
 		if sight.Dot(axis) < missile_gimbal {
 			m.loose = true
 		}
@@ -248,10 +258,11 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				accel = accel.Scale(limit / pull)
 			}
 			m.velocity = m.velocity.Add(accel.Scale(dt))
-			speed = m.velocity.Length()
+			through := m.velocity.Subtract(wind)
+			speed = through.Length()
 			bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
-			m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
-			if m.burn <= 0 && speed < virtual.Velocity.Length()+60 && closing < 40 {
+			m.velocity = wind.Add(through.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6)))
+			if m.burn <= 0 && speed < air.Length()+60 && closing < 40 {
 				return false // energy death: coasting below convergence speed, opening
 			}
 		}
@@ -262,14 +273,14 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		}
 		if m.burn > 0 {
 			m.burn -= dt
-			m.velocity = m.velocity.Add(m.velocity.Normalize().Scale(missile_thrust * dt))
+			m.velocity = m.velocity.Add(m.velocity.Subtract(wind).Normalize().Scale(missile_thrust * dt))
 		}
 		m.position = m.position.Add(m.velocity.Scale(dt))
 		if m.position.Y <= 0 {
 			return false
 		}
-		if speed := virtual.Velocity.Length(); speed > 1 {
-			heading := virtual.Velocity.Scale(1 / speed)
+		if speed := air.Length(); speed > 1 {
+			heading := air.Scale(1 / speed)
 			if breaking {
 				// The heater's escape is the BEAM, not the AMRAAM's tail-on run: square
 				// the missile's line of sight at 7.5 g, re-squared as it rotates, so the
@@ -282,7 +293,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				beam := side.Subtract(line.Scale(side.Dot(line))).Normalize()
 				if heading.Dot(beam) < 0.999 {
 					turned := heading.Add(beam.Subtract(heading.Scale(beam.Dot(heading))).Normalize().Scale(7.5 * 9.80665 / speed * dt))
-					virtual.Velocity = turned.Normalize().Scale(speed)
+					air = turned.Normalize().Scale(speed)
 				}
 			} else if turn := swing.Subtract(heading.Scale(swing.Dot(heading))); turn.Length() > 1 {
 				// Flying on as now means holding his present turn: the
@@ -297,9 +308,10 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				// evolve() now flies the same arc (#42). Change them together: a
 				// launch zone and the doctrine that consults it disagreeing about
 				// where the target will be is how #212 happened.
-				virtual.Velocity = heading.Add(turn.Scale(dt / speed)).Normalize().Scale(speed)
+				air = heading.Add(turn.Scale(dt / speed)).Normalize().Scale(speed)
 			}
 		}
+		virtual.Velocity = air.Add(flight.Wind(virtual.Position, clock+m.flew, environment))
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
 	}
 	return false

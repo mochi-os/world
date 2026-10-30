@@ -103,7 +103,7 @@ func TestConvert(t *testing.T) {
 			for tick := uint64(0); tick < 60*150; tick++ {
 				var data map[string]any
 				if tick < 60*8 {
-					data = pursue(me, &i.aircraft[bot].model.State)
+					data = pursue(me, &i.aircraft[bot].model.State, i.environment)
 					data["fire"] = false // the chase is PRESSURE: the recorded scenario offered an undamaged bot its six, and a script-aimed hose would cripple it first
 				} else {
 					data = offer(me)

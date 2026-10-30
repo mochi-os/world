@@ -29,6 +29,7 @@ type spiraler struct {
 	angle  float64
 	roof   float64
 	since  uint64
+	air    flight.Environment // the match's air
 }
 
 func (s *spiraler) fly(me, foe *flight.State, tick uint64) map[string]any {
@@ -69,7 +70,7 @@ func (s *spiraler) fly(me, foe *flight.State, tick uint64) map[string]any {
 		if gap < 100 && held > 3*60 {
 			s.phase, s.since = "deadlock", tick // height spent or he rejoined: back to the equilibrium
 		} else {
-			return pursue(me, foe) // roll in from above, lag to his six, fire on parameters
+			return pursue(me, foe, s.air) // roll in from above, lag to his six, fire on parameters
 		}
 	}
 	// Deadlock and bank both orbit a ghost on the circle: ~800 m radius at
@@ -79,12 +80,12 @@ func (s *spiraler) fly(me, foe *flight.State, tick uint64) map[string]any {
 	ghost := flight.State{}
 	ghost.Position = flight.Vec3{X: s.centre.X + 800*math.Cos(s.angle), Y: s.roof, Z: s.centre.Z + 800*math.Sin(s.angle)}
 	ghost.Velocity = flight.Vec3{X: -170 * math.Sin(s.angle), Z: 170 * math.Cos(s.angle)}
-	data := pursue(me, &ghost)
+	data := pursue(me, &ghost, s.air)
 	data["fire"] = false
 	if apart < 500 && gap < -100 {
 		// He is converting from above: honest defence, break into him rather
 		// than orbiting on rails.
-		data = pursue(me, foe)
+		data = pursue(me, foe, s.air)
 		data["fire"] = false
 	}
 	return data
@@ -131,7 +132,7 @@ func TestSpiralDefection(t *testing.T) {
 		place(i, bot, 0, -1500)
 		me := &i.aircraft[bot].model.State
 		foe := &i.aircraft[0].model.State
-		probe := &spiraler{}
+		probe := &spiraler{air: i.environment}
 		was, tabled := "", false
 		settled := uint64(0) // ticks the fight has continuously qualified as a deadlock
 		for tick := uint64(0); tick < 150*60; tick++ {

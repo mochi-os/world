@@ -29,8 +29,22 @@ type moment struct {
 	direction flight.Vec3 // unit, me toward him
 	distance  float64
 	closure   float64
-	grain     float64 // committed merge side, +1/-1; 0 = uncommitted (#251): a lead turn that re-picks its side as the geometry drifts reads as dithering and IS dithering
+	grain     float64            // committed merge side, +1/-1; 0 = uncommitted (#251): a lead turn that re-picks its side as the geometry drifts reads as dithering and IS dithering
+	wind      flight.Vec3        // the steady wind where I am
+	blown     flight.Vec3        // the steady wind where he is
+	air       flight.Environment // the air: my equivalent airspeed is read in it
 }
+
+// airspeed is my true airspeed: my energy, and every speed set against his.
+func (m *moment) airspeed() float64 { return m.me.Velocity.Subtract(m.wind).Length() }
+
+// equivalent is my equivalent airspeed, the speed the corner (pace) is.
+func (m *moment) equivalent() float64 {
+	return flight.Equivalent(m.airspeed(), m.me.Position.Y, m.air)
+}
+
+// his is his true airspeed.
+func (m *moment) his() float64 { return m.velocity.Subtract(m.blown).Length() }
 
 // derive fills the dependent fields from the endpoints.
 func (m *moment) derive() {
@@ -42,7 +56,8 @@ func (m *moment) derive() {
 
 // flat returns my normalized horizontal flight path.
 func (m *moment) flat() flight.Vec3 {
-	f := flight.Vec3{X: m.me.Velocity.X, Z: m.me.Velocity.Z}
+	path := m.me.Velocity.Subtract(m.wind) // through the air, the path the aim is flown onto
+	f := flight.Vec3{X: path.X, Z: path.Z}
 	if f.Length() < 1 {
 		n := m.me.Attitude.Rotate(flight.Vec3{X: 1})
 		f = flight.Vec3{X: n.X, Z: n.Z}
@@ -71,9 +86,9 @@ func (m *moment) lead() flight.Vec3 {
 // when the circle is not readable.
 func (m *moment) lag() flight.Vec3 {
 	if m.ring.valid {
-		return m.ring.behind(m.prey, 0.85)
+		return m.ring.behind(m.prey, 0.85, m.me.Time)
 	}
-	back := m.velocity
+	back := m.velocity.Subtract(m.blown) // behind his tail, which his heading through the air points away from
 	if back.Length() > 1 {
 		back = back.Normalize()
 	}
@@ -82,7 +97,7 @@ func (m *moment) lag() flight.Vec3 {
 
 // side reports which side of my flight path he sits: +1 right, -1 left.
 func (m *moment) side() float64 {
-	v := m.me.Velocity
+	v := m.me.Velocity.Subtract(m.wind)
 	if v.Length() < 1 {
 		v = m.me.Attitude.Rotate(flight.Vec3{X: 1})
 	}
@@ -128,7 +143,7 @@ type play struct {
 var plays = []play{
 	{"press", 1, 0, func(m *moment) order {
 		o := order{aim: m.direction, g: m.pull, throttle: 1, reheat: 1}
-		speed := m.me.Velocity.Length()
+		speed := m.airspeed()
 		if m.distance < 1200 {
 			o.aim = m.aloft(m.lead()) // in range: fly the gun solution, not the jet
 		}
@@ -161,13 +176,13 @@ var plays = []play{
 			// this play 620-640 m behind a target in full burner, opening at
 			// 3-10 m/s, for the four seconds a 4-7 degree track lasted. Behind
 			// him the plume is hidden from the seeker that matters.
-			if speed < m.velocity.Length()+goal-30 {
+			if speed < m.his()+goal-30 {
 				o.reheat = 1
 			}
 		} else if m.distance < 1500 {
 			o.throttle = clamp(1-(m.closure-40)/200, 0.35, 1)
 			o.reheat = 0
-			if speed < m.pace-60 {
+			if m.equivalent() < m.pace-tuned(60) {
 				o.reheat = 1
 			}
 		}
@@ -185,7 +200,7 @@ var plays = []play{
 	}},
 	{"lag", 2, 0, func(m *moment) order {
 		o := order{aim: m.aloft(m.lag()), g: m.pull * 0.92, throttle: 1}
-		if m.me.Velocity.Length() < m.pace {
+		if m.equivalent() < m.pace {
 			o.reheat = 1
 		}
 		return o
@@ -214,7 +229,7 @@ var plays = []play{
 		// below him in burner" was a dive that never ended - 528 kt mean and
 		// a 120-second fight nobody won.
 		rise := m.me.Position.Y - m.prey.Y
-		speed := m.me.Velocity.Length()
+		speed := m.equivalent()
 		climbing := m.me.Velocity.Y > 0 || rise <= 0
 		// Stop pulling when the FLOAT will top out where the yo-yo wants it,
 		// not when the jet has already got there: at 150 m/s of vertical speed
@@ -229,8 +244,8 @@ var plays = []play{
 		// than sixty degrees off its tail. A tail chase closing at forty is a
 		// shot forming, not a threat, and closure alone would climb out of it.
 		aspect := 0.0
-		if his := m.velocity.Length(); his > 1 {
-			aspect = m.velocity.Scale(1 / his).Dot(m.direction)
+		if heading := m.velocity.Subtract(m.blown); heading.Length() > 1 {
+			aspect = heading.Normalize().Dot(m.direction)
 		}
 		threat := m.closure > 40 && aspect < 0.5
 		if climbing && threat && apex < 450 && speed > m.pace*0.6 {
@@ -248,7 +263,7 @@ var plays = []play{
 			side = m.side()
 		}
 		o := order{aim: m.swing(side * 1.9), g: m.pull, throttle: 0.35}
-		if m.me.Velocity.Length() > m.pace {
+		if m.equivalent() > m.pace {
 			o.brake = 1
 		}
 		return o
@@ -257,8 +272,8 @@ var plays = []play{
 		// The slow saddle (#250): park astern at HIS speed - a 280 m perch with a
 		// speed bias that closes gently from behind and never blows through.
 		o := order{aim: m.aloft(m.lead()), g: m.pull * 0.85, throttle: 0.6}
-		his := m.velocity.Length()
-		mine := m.me.Velocity.Length()
+		his := m.his()
+		mine := m.airspeed()
 		want := his + clamp((m.distance-280)*0.12, -25, 60)
 		o.throttle = clamp(0.55+(want-mine)*0.012, 0, 1)
 		if mine > want+25 {
@@ -290,7 +305,7 @@ var plays = []play{
 		// through onto him. Staged on STATE, not time, so one law carries both phases
 		// and the rollout can fly it whole - hence the long horizon.
 		rise := m.me.Position.Y - m.prey.Y
-		speed := m.me.Velocity.Length()
+		speed := m.equivalent()
 		if rise < 600 && speed > m.pace*0.75 {
 			f := m.flat()
 			return order{aim: flight.Vec3{X: f.X * 0.5, Y: 0.85, Z: f.Z * 0.5}.Normalize(), g: 4.5, throttle: 1, reheat: 1}
@@ -306,7 +321,7 @@ var plays = []play{
 		// across his path so the pass ends angles-on instead of neutral;
 		// once past, pull hard into him. The arbiter's merges were straight
 		// — every fight restarted from scratch after the pass.
-		vhat := m.me.Velocity
+		vhat := m.me.Velocity.Subtract(m.wind)
 		if vhat.Length() > 1 {
 			vhat = vhat.Normalize()
 		}
@@ -341,7 +356,7 @@ var plays = []play{
 		// The completed overshoot trap (#251): while he is behind, break across to
 		// spend his closure; the moment he crosses my 3/9 line, reverse INTO him and
 		// convert.
-		vhat := m.me.Velocity
+		vhat := m.me.Velocity.Subtract(m.wind)
 		if vhat.Length() > 1 {
 			vhat = vhat.Normalize()
 		}
@@ -351,7 +366,7 @@ var plays = []play{
 				side = m.side()
 			}
 			o := order{aim: m.swing(side * 1.7), g: m.pull, throttle: 0.45}
-			if m.me.Velocity.Length() > m.pace {
+			if m.equivalent() > m.pace {
 				o.brake = 1
 			}
 			return o
@@ -419,11 +434,16 @@ func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
 	// must not become a second simulation. Only the component of swing across
 	// the velocity turns the jet; the along-track part would change speed, and
 	// the old code discarded that too by renormalising.
-	speed := t.velocity.Length()
+	//
+	// The arc is flown through the air, as a jet turns: it is his velocity
+	// through the air that swings, and the wind carries the whole circle.
+	// Turned over the ground, the arc turned the wind with it as well.
+	air := t.velocity.Subtract(t.blown)
+	speed := air.Length()
 	if speed <= 1 {
 		return t.position.Add(t.velocity.Scale(dt)), t.velocity
 	}
-	ahead := t.velocity.Scale(1 / speed)
+	ahead := air.Scale(1 / speed)
 	across := t.swing.Subtract(ahead.Scale(t.swing.Dot(ahead)))
 	pull := across.Length()
 	if pull < 0.01 { // straight enough that the arc and the line agree
@@ -434,8 +454,9 @@ func evolve(t *track, dt float64) (flight.Vec3, flight.Vec3) {
 	radius := speed / (pull / speed)
 	position := t.position.
 		Add(ahead.Scale(radius * math.Sin(turn))).
-		Add(inward.Scale(radius * (1 - math.Cos(turn))))
-	velocity := ahead.Scale(speed * math.Cos(turn)).Add(inward.Scale(speed * math.Sin(turn)))
+		Add(inward.Scale(radius * (1 - math.Cos(turn)))).
+		Add(t.blown.Scale(dt))
+	velocity := ahead.Scale(speed * math.Cos(turn)).Add(inward.Scale(speed * math.Sin(turn))).Add(t.blown)
 	return position, velocity
 }
 
@@ -473,7 +494,7 @@ func husband(me *flight.State) float64 {
 // the pursuit gains, how long since a shot was worth taking, and his energy -
 // the four-second arbiter cannot represent a plan that pays at twenty. The
 // posture is COMMITTED between re-judgements; DENY and RESET carry exits.
-func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float64, menace int, gap float64) {
+func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float64, menace int, gap float64, air flight.Environment) {
 	if b.skill.library < 2 {
 		return // the novice holds no fight-level intent
 	}
@@ -487,7 +508,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 		// conversion the moment it feels slow. It must not hold against the two
 		// signals that cannot wait: an attacker arriving, and an opponent beaten.
 		urgent := (threatened && b.intent != "deny") ||
-			(b.skill.library >= 3 && b.intent != "finish" && (prey.velocity.Length() < 170 && distance < 2200 || b.promise > 0.6))
+			(b.skill.library >= 3 && b.intent != "finish" && (flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), prey.position.Y, air) < tuned(170) && distance < 2200 || b.promise > 0.6))
 		if !urgent {
 			return
 		}
@@ -496,16 +517,16 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	// mine intact, and enough sky under me to spend. Without the guard the
 	// posture chose itself off the opponent's state alone — including while
 	// low, slow, and pointing away, where "spend everything" is suicide.
-	speed := me.Velocity.Length()
+	speed := airspeed(me, air) // true: energy
 	mine := speed*speed/2 + 9.81*me.Position.Y
-	him := prey.velocity.Length()
+	him := prey.velocity.Subtract(prey.blown).Length()
 	his := him*him/2 + 9.81*prey.position.Y
-	slow := him < 170 && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
+	slow := flight.Equivalent(him, prey.position.Y, air) < tuned(170) && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
 	// FINISH on OPPORTUNITY: a line whose rehearsal spends most of its instants ON
 	// the gun solution is a saddle held, not hoped for. It claims on PARITY rather
 	// than the `slow` claim's fifth of energy - a held solution is spent in
 	// seconds - but never below the skill's speed floor, and never below the deck.
-	opportune := b.skill.library >= 3 && b.promise > 0.6 && distance < 1500 && mine >= his && speed > b.skill.floor && me.Position.Y > 600
+	opportune := b.skill.library >= 3 && b.promise > 0.6 && distance < 1500 && mine >= his && flight.Equivalent(speed, me.Position.Y, air) > tuned(b.skill.floor) && me.Position.Y > 600
 	slow = slow || opportune
 	starving := tick-b.chanced > 2700 && b.nearing < 12 // 45 s without a shot worth its price, and the range is not coming down
 	next := "convert"
@@ -549,15 +570,16 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 // the comment at its use. SWEEP THIS, do not guess it.
 const keen = 6.0
 
-func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit, t *tactics) (float64, float64) {
+func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, sk *skill, ring orbit, t *tactics, wind, blown flight.Vec3, air flight.Environment) (float64, float64) {
 	stack, sharp, danger, chase, progress, press := 0.45, keen, 1.3, 0.35, 0.15, 1.0
 	los := hisP.Subtract(s.Position)
 	r := math.Max(los.Length(), 1)
 	lhat := los.Scale(1 / r)
 	nose := s.Attitude.Rotate(flight.Vec3{X: 1})
-	speed := math.Max(s.Velocity.Length(), 1)
-	vhat := s.Velocity.Scale(1 / speed)
-	hv := hisV
+	speed := math.Max(s.Velocity.Subtract(wind).Length(), 1)  // true: energy
+	equivalent := flight.Equivalent(speed, s.Position.Y, air) // the corner (pace) is an equivalent airspeed
+	vhat := s.Velocity.Subtract(wind).Scale(1 / speed)        // my path through the air
+	hv := hisV.Subtract(blown)                                // his heading through the air, which his tailpipes point back along
 	if hv.Length() > 1 {
 		hv = hv.Normalize()
 	}
@@ -608,7 +630,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// penalty when I am below fighting speed AND he holds the edge to punish it.
 	// No pursuit term either: every remedy tried broke BVR, where standing off IS
 	// the discipline.
-	hungry := clamp((0.85*pace-speed)/(0.35*pace), 0, 1)
+	hungry := clamp((0.85*pace-equivalent)/(0.35*pace), 0, 1)
 	// The chase gradient: outside the gun band the geometry terms flatten to zero,
 	// so without this the choice at 3 km is decided by selection noise. It fades
 	// approaching the band, where arriving hot is the blown pass.
@@ -617,15 +639,17 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// not the balance - this is what makes zooming off a floater score as winning.
 	// Its weight is a skill: the novice chases the nose and ignores it.
 	mine := speed*speed/2 + 9.81*s.Position.Y
-	his := hisV.Length()*hisV.Length()/2 + 9.81*hisP.Y
-	edge := clamp((mine-his)/(pace*pace/2), -1, 1)
+	him := hisV.Subtract(blown).Length()
+	his := him*him/2 + 9.81*hisP.Y
+	scale := pace * speed / math.Max(equivalent, 1) // the corner as a true airspeed here: the energy scale
+	edge := clamp((mine-his)/(scale*scale/2), -1, 1)
 	// The circle truth (#248): where I sit relative to HIS turn circle.
 	// Inside it, modest angles convert; outside it, the same angles are an
 	// overshoot being prepared. Instructor tiers only — this is the piece of
 	// BFM that arrives at the weapons school.
 	standing := 0.0
 	if ring.valid && r < 2500 {
-		radial := s.Position.Subtract(ring.centre)
+		radial := s.Position.Subtract(ring.at(s.Time))
 		planar := radial.Subtract(ring.normal.Scale(radial.Dot(ring.normal)))
 		standing = clamp((ring.radius-planar.Length())/math.Max(ring.radius, 200), -1, 1)
 	}
@@ -671,7 +695,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	if s.Velocity.Y < 0 {
 		score -= 1.5 * clamp((700-s.Position.Y)/300, 0, 1)
 	}
-	if speed < 80 {
+	if equivalent < tuned(80) {
 		score -= 1
 	}
 	// Midair avoidance (#215), a penalty and NOT a play: 14 m kills both jets for
@@ -692,12 +716,15 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 	shadow := *b                               // the executor's scalar state rides along; maps are untouched
 	shadow.shoot = false
 	pace := corner(a.model)
+	// The wind is taken once for the rehearsal, where I am and where he was
+	// seen: over its few seconds and kilometres it barely changes.
+	wind := flight.Wind(a.model.State.Position, a.model.State.Time, a.model.Environment)
 	age := float64(tick-prey.when) / 60
 	score, offence, samples := 0.0, 0.0, 0.0
 	for k := 1; k <= horizon; k++ {
 		t := float64(k) / 60
 		hisP, hisV := evolve(prey, age+t)
-		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning}
+		m := moment{me: &sim.State, prey: hisP, velocity: hisV, ring: b.ring, pace: pace, pull: b.skill.pull, grain: b.turning, wind: wind, blown: prey.blown, air: a.model.Environment}
 		m.derive()
 		o := chosen.law(&m)
 		o.gravity = b.tactics.gravity
@@ -705,7 +732,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 			// The point-mass surrogate flies the ORDER directly: no stick, no
 			// FCS, no blade element (#256).
 			for sub := 0; sub < rehearsal.substeps(); sub++ {
-				glide(sim, o, rehearsal.span())
+				glide(sim, o, rehearsal.span(), wind)
 			}
 		} else {
 			shadow.aim, shadow.g, shadow.throttle, shadow.reheat, shadow.brake = o.aim, o.g, o.throttle, o.reheat, o.brake
@@ -734,7 +761,7 @@ func (i *instance) rehearse(a *craft, b *brain, sim *flight.Model, chosen play, 
 				stance.energy *= 1 + 2.0*(1-nurse)
 				stance.offence *= 0.4 + 0.6*nurse
 			}
-			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring, &b.tactics)
+			one, guns := appraise(&sim.State, hisP, hisV, pace, stance, &b.skill, b.ring, &b.tactics, wind, prey.blown, a.model.Environment)
 			score += one
 			offence += guns
 			samples++
@@ -941,7 +968,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	if b.chanced == 0 {
 		b.chanced = tick // the conversion clock starts when the fight does
 	}
-	b.judge(me, prey, tick, distance, menace, gap)
+	b.judge(me, prey, tick, distance, menace, gap, a.model.Environment)
 
 	// The regain bailout (#64): the perch-and-pounce pattern that has beaten
 	// the bot in every piloted fight hides from BOTH deciding layers. Each
@@ -959,9 +986,9 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		if b.audit == nil {
 			b.audit = map[string]int{}
 		}
-		speed := me.Velocity.Length()
+		speed := equivalent(a.model)
 		above := prey.position.Y - me.Position.Y
-		diving := -prey.velocity.Dot(direction) > 120 && distance < 2500
+		diving := -prey.velocity.Subtract(prey.blown).Dot(direction) > 120 && distance < 2500 // his dive through the air: the wind carries a perch at me without his attacking
 		if diving && above > 250 {
 			b.dove = tick // he attacked from above: the perch is a THREAT, not a bystander
 		}
@@ -988,7 +1015,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		// free kills (0/12) and inverted the BVR top rung. An opponent who
 		// has never attacked from his perch is a target, not a threat.
 		if b.regained == 0 && holds && !diving && menace < 0 && b.promise < 0.4 && b.intent != "finish" &&
-			prey.velocity.Length() < 200 && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
+			flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), prey.position.Y, a.model.Environment) < tuned(200) && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
 			b.audit["calm"]++
 			if b.ceded != 0 && tick-b.ceded > 300 {
 				b.audit["enter"]++
@@ -1006,7 +1033,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 				exit = "parity"
 			case distance > 4500:
 				exit = "left" // past reach it is not regaining, it is leaving (the reset's own range bound)
-			case speed < b.skill.floor*0.85:
+			case speed < tuned(b.skill.floor)*0.85:
 				exit = "slow"
 			}
 			if exit != "" {
@@ -1015,7 +1042,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 				b.until = tick // the catalogue re-arbitrates immediately
 			} else {
 				b.audit["hold"]++
-				out := me.Position.Subtract(prey.position)
+				out := me.Position.Subtract(prey.carried(float64(tick) / 60))
 				out.Y = 0
 				if out.Length() > 1 {
 					out = out.Normalize()
@@ -1044,7 +1071,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	// Re-judge when the committed line expires, or when the picture breaks it: an
 	// attacker arriving close behind invalidates any offensive line, and HIS
 	// overshoot (#251) opens a window the normal cadence sleeps through.
-	vhat := me.Velocity
+	vhat := airflow(me, a.model.Environment)
 	if vhat.Length() > 1 {
 		vhat = vhat.Normalize()
 	}
@@ -1077,7 +1104,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 	// Fly the committed law against the LIVE geometry — commitment holds the
 	// line, never a stale aim point.
 	pace := corner(a.model)
-	m := moment{me: me, ring: b.ring, pace: pace, pull: b.skill.pull}
+	m := moment{me: me, ring: b.ring, pace: pace, pull: b.skill.pull, wind: flight.Wind(me.Position, me.Time, a.model.Environment), blown: prey.blown, air: a.model.Environment}
 	age := float64(tick-prey.when) / 60
 	// The LIVE aim predicts with the track's measured swing, not the fitted
 	// circle: gunnery needs local precision and a weaving target breaks any circle

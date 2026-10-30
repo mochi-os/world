@@ -28,6 +28,7 @@ import (
 	"world/games/air/battle"
 	"world/games/air/flight"
 	"world/games/air/round"
+	"world/games/air/ship"
 )
 
 const (
@@ -78,11 +79,18 @@ const (
 	commit      = 27780.0 // m (15 nmi): organisation room beyond head-on Rmax
 )
 
+// trades is a match's wind, single player's: 25 kt (12.9 m/s) from 070, the way
+// the air moves (x east, z south), the trade wind the carrier steams into.
+var trades = flight.Vec3{X: -12.9 * math.Sin(70*math.Pi/180), Z: 12.9 * math.Cos(70*math.Pi/180)}
+
+// The spawn's separations are judged in still air: they size the start, and a
+// shot flies the same whichever way the wind blows, so the air's motion has no
+// part in them.
 var separation = sync.OnceValue(func() float64 {
 	ladder := round.Ladder(
 		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
-		0,
+		flight.Environment{}, 0,
 	)
 	return ladder.Max + commit
 })
@@ -124,7 +132,7 @@ func Draw(seed uint64, wrap float64) Opening {
 	for pass := 0; pass < 4; pass++ {
 		reach := 0.0
 		for slot := 0; slot < 2; slot++ {
-			reach = math.Max(reach, round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max)
+			reach = math.Max(reach, round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), flight.Environment{}, 0).Max)
 		}
 		o.Apart = reach + commit
 	}
@@ -228,13 +236,14 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		mode:        mode,
 		weapons:     weapons,
 		missiles:    weapons != "guns",
-		environment: flight.Environment{Seed: session.Seed, Wrap: wrap},
+		environment: flight.Environment{Seed: session.Seed, Wrap: wrap, Wind: trades},
 		aircraft:    map[int]*craft{},
 		chart:       chart,
 	}
 	if mode == "teams" {
 		i.score = map[string]int{"red": 0, "blue": 0}
 	}
+	i.underway()
 	// Practice bots (#81 verification / solo flying): server-flown aircraft on
 	// scripted gentle manoeuvres, filling slots from the TOP so the framework's
 	// low-slot assignment for real players cannot collide in practice. Open
@@ -613,7 +622,8 @@ type instance struct {
 		fuel         bool // the tank never depletes — humans and bots alike
 	}
 	aircraft map[int]*craft
-	chart    *chart // the map: the world every model flies against, and its name and hash for the welcome
+	chart    *chart    // the map: the world every model flies against, and its name and hash for the welcome
+	ship     ship.Ship // the carrier's steering: it writes the chart's carrier's track (underway.go)
 	flying   []*missile
 	rounds   []battle.Round // gun rounds in flight: spawned by guns(), flown and resolved by fly() (#real-TOF)
 	wrecks   []*wreck
@@ -708,6 +718,7 @@ func (i *instance) slots() []int {
 // spawn in opposing 120° arcs — red centred on one bearing, blue opposite —
 // so a team match opens as a line-abreast wall meeting a wall.
 func (i *instance) spawn(slot int, m *flight.Model, team string, tank float64) {
+	m.State.Time = i.clock() // the session's clock, which places the carrier: Level keeps it
 	if i.apart > 0 && i.bvr(slot, m, team, tank) {
 		return
 	}
@@ -736,6 +747,7 @@ func (i *instance) spawn(slot int, m *flight.Model, team string, tank float64) {
 // separated shapes and the team walls keep their own geometry, which is the
 // match's shape rather than a re-entry.
 func (i *instance) enter(slot int, m *flight.Model, team string, tank float64) {
+	m.State.Time = i.clock()
 	if team == "" && i.mode != "joust" {
 		if position, facing, found := i.clearing(slot); found {
 			m.State = flight.Level(m, position, facing, speed, tank)
@@ -1007,7 +1019,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 	}
 	waiting := i.mode == "joust" && !i.started
 	welcome := map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
-		"map": map[string]any{"name": i.chart.name, "hash": i.chart.hash}}
+		"map": map[string]any{"name": i.chart.name, "hash": i.chart.hash}, "ship": i.voyage(), "wind": []float64{i.environment.Wind.X, i.environment.Wind.Y, i.environment.Wind.Z}}
 	if i.mode == "teams" {
 		welcome["team"] = team
 		welcome["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
@@ -1295,8 +1307,10 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	// Every flying jet lays its wake on the session's clock before any of them
 	// steps, so each meets the others' as they stood at the start of the tick.
 	clock := float64(tick) / 60
+	i.steer(tick, clock)
 	for _, slot := range i.slots() {
 		if a := i.aircraft[slot]; a.alive && a.model != nil {
+			a.model.State.Time = clock // one clock for the match: each jet meets the carrier where the others do
 			i.wakes.Record(slot, clock, a.model)
 		}
 	}
@@ -1532,6 +1546,7 @@ func (i *instance) guns(dt float64, tick uint64) {
 			Right:    state.Attitude.Rotate(flight.Vec3{Z: 1}),
 			Velocity: state.Velocity,
 		}
+		shooter.Wind = flight.Wind(shooter.Position, state.Time, i.environment)
 		// Rounds fly REAL time of flight now: the volley enters the world and
 		// fly() resolves each round against wherever its victims actually are
 		// when it reaches them — so a break after the trigger is a defence,
@@ -1599,6 +1614,7 @@ func (i *instance) fly(dt float64, tick uint64) {
 		if landed {
 			continue
 		}
+		round.Feel(i.environment, float64(tick)/60)
 		if !battle.Fly(round, dt) {
 			alive = append(alive, *round)
 		}
@@ -1707,9 +1723,9 @@ func (i *instance) zoned(a *craft, b *brain, distance float64, tick uint64) bool
 	// not the clock.
 	if b.heated == 0 || tick-b.heated >= 60 || b.warmed != b.target || b.glowed != lit {
 		me := &a.model.State
-		b.heat = Heat(launcher(me),
+		b.heat = Heat(launcher(me, a.model.Environment),
 			round.Target{Position: b.prey.position, Velocity: b.prey.velocity},
-			b.prey.swing, lit, i.environment.Wrap)
+			b.prey.swing, lit, a.model.Environment, me.Time) // the air the jet flies, which the round will
 		b.heated, b.warmed, b.glowed = tick, b.target, lit
 	}
 	zone := b.heat
@@ -1807,15 +1823,19 @@ func rail(nose flight.Vec3, speed float64) flight.Vec3 {
 // ejector (the cheek LAU-116, the inboard pylon's LAU-115C) along the nose at
 // the jet's speed and 15 m/s, punched 8 m/s down. The mirror of the client's
 // amraam_departure.
+//
+// The speed is the jet's through the air and the round leaves in the same air:
+// the wind carries it off the rail as it carries the jet.
 func departure(a *craft) flight.Vec3 {
 	s := &a.model.State
 	nose := s.Attitude.Rotate(flight.Vec3{X: 1}).Normalize()
-	speed := s.Velocity.Length()
+	wind := flight.Wind(s.Position, s.Time, a.model.Environment)
+	speed := s.Velocity.Subtract(wind).Length()
 	order := stores_amraams(a.loadout)
 	if next := len(order) - a.amraams; next >= 0 && next < len(order) && stores_eject(a.loadout, order[next]) {
-		return nose.Scale(speed + 15).Add(flight.Vec3{Y: -8})
+		return nose.Scale(speed + 15).Add(flight.Vec3{Y: -8}).Add(wind)
 	}
-	return rail(nose, speed)
+	return rail(nose, speed).Add(wind)
 }
 
 // fired is a shooter as round.Ladder takes him: the next round's own launch,
@@ -1854,7 +1874,8 @@ func (i *instance) launch(slot int, a *craft, uncooled bool) bool {
 	// Here the round left along the flight path, which at 30 degrees of alpha
 	// runs about 24 degrees below the nose, so a pilot pulling his nose onto a
 	// target heard tone and fired a round that broke lock leaving the rail.
-	separation := rail(forward, a.model.State.Velocity.Length())
+	wind := flight.Wind(a.model.State.Position, a.model.State.Time, i.environment)
+	separation := rail(forward, a.model.State.Velocity.Subtract(wind).Length()).Add(wind) // the jet's speed through the air, and the air's own motion
 	// The boresight reference is taken from where the ROUND is, not where the
 	// jet is: the two are 3 m apart, and now that the track rate is judged
 	// from the first frame (#207) a sight referenced 3 m astern reads as a
@@ -1924,7 +1945,8 @@ func (i *instance) fox3(slot int, a *craft, visual bool) bool {
 		a.model.State.Position.Add(forward.Scale(3)),
 		departure(a),
 		estimate,
-		i.environment.Wrap,
+		i.environment,
+		a.model.State.Time,
 	)
 	m.position, m.velocity = m.radar.Position, m.radar.Velocity
 	i.flying = append(i.flying, m)
@@ -1973,7 +1995,9 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	}
 	var support, truth *round.Target
 	if target.alive {
-		truth = &round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
+		// The target at the round's epoch: the round was fired before the
+		// jets stepped and flies after they have (pursue reads the same way).
+		truth = &round.Target{Position: target.model.State.Position.Subtract(target.model.State.Velocity.Scale(dt)), Velocity: target.model.State.Velocity}
 	}
 	if shooter := i.aircraft[m.shooter]; shooter != nil && shooter.alive && shooter.emitter == 2 && shooter.lock == m.target && truth != nil {
 		// The datalink is only as good as the shooter's radar, and that
@@ -1993,7 +2017,8 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	// the round package's doppler gate decides — in the notch it seduces,
 	// out of it the velocity gate rejects it, exactly as briefed.
 	if truth != nil && target.clouded < round.Window {
-		if m.radar.Distract(target.cloud, *truth) {
+		bloom := target.cloud.Add(flight.Wind(target.cloud, target.model.State.Time, i.environment).Scale(math.Max(target.clouded-dt, 0))) // the cloud hangs in the air, so the wind has carried it since it bloomed, up to the round's epoch
+		if m.radar.Distract(bloom, *truth) {
 			i.events = append(i.events, map[string]any{"kind": "seduce", "slot": m.target}) // the seeker took the cloud (#43): the chaff programme's own measure
 		}
 	}
@@ -2002,6 +2027,10 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 	m.position, m.velocity = m.radar.Position, m.radar.Velocity
 	m.life = m.radar.Life
 	if fired && target.alive {
+		// The burst is where the round was at its closest approach, inside the
+		// frame; the warhead reads it against the jet where it is now, so it
+		// keeps its place from the jet as the jet was at that instant.
+		burst = burst.Subtract(m.radar.Struck).Add(target.model.State.Position)
 		if i.cheat.invulnerable && !target.bot {
 			return false // the fuse fires but the warhead cannot hurt a human under the cheat
 		}
@@ -2026,6 +2055,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 // flare decoys judged once per flare drop, and a proximity fuse feeding the
 // battle warhead — a direct hit kills outright, a fringe burst fragments.
 func (i *instance) pursue(dt float64, tick uint64) {
+	clock := float64(tick) / 60
 	alive := i.flying[:0]
 	for _, m := range i.flying {
 		if m.radar != nil { // the AIM-120 flies the shared core (#27 phase 2c)
@@ -2044,9 +2074,23 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		}
 		m.life -= dt
 		m.flew += dt
-		speed := m.velocity.Length()
+		// The round flies through the air, and the air moves: its speed, the
+		// axis it points along and its drag are the air's, and the wind
+		// carries it as it carries the target.
+		wind := flight.Wind(m.position, clock, i.environment)
+		speed := m.velocity.Subtract(wind).Length()
 		target := i.aircraft[m.target]
 		tracking := !m.loose && m.blind <= 0 && target != nil && target.alive
+		// The target where it was when the round was where it is. A round is
+		// launched before the jets step and flown after they have, so the
+		// world is a tick ahead of it: read against the jet's own position,
+		// its first look saw the target's whole step over the ground as line
+		// of sight rate, a tick of the target's motion over the ground stood in
+		// its fuse geometry, and both changed with the wind.
+		var seen flight.Vec3
+		if target != nil && target.model != nil {
+			seen = target.model.State.Position.Subtract(target.model.State.Velocity.Scale(dt))
+		}
 		if m.life <= 0 || (m.target >= 0 && target == nil) {
 			continue
 		}
@@ -2056,7 +2100,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		if tracking && target.flared < flare_window {
 			if !m.window {
 				m.window = true
-				direction, _ := i.bearing(m.position, target.model.State.Position)
+				direction, _ := i.bearing(m.position, seen)
 				tail := direction.Dot(target.model.State.Attitude.Rotate(flight.Vec3{X: 1}))
 				decoy := seduction(tail, target.latest.Reheat)
 				// Diminishing returns, not independent coin flips. Every flare
@@ -2069,7 +2113,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				// the whole point of the M's counter-countermeasures.
 				decoy *= math.Pow(0.5, float64(m.rejected))
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
-					m.lure = target.model.State.Position.Add(flight.Vec3{Y: -30})
+					m.lure = seen.Add(flight.Vec3{Y: -30})
 					m.blind = flare_blind
 					tracking = false
 					m.sight, _ = i.bearing(m.position, m.lure) // the seeker is ON the flare now: re-reference the track, or the aim-point swap reads as an LOS-rate spike and breaks the lock at the seduction instant
@@ -2092,9 +2136,9 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		// pass ever scored the direct kill.
 		if m.flew > missile_arm && target != nil && target.alive {
 			relative := flight.Vec3{
-				X: flight.Shortest(m.position.X, target.model.State.Position.X, i.environment.Wrap),
-				Y: target.model.State.Position.Y - m.position.Y,
-				Z: flight.Shortest(m.position.Z, target.model.State.Position.Z, i.environment.Wrap),
+				X: flight.Shortest(m.position.X, seen.X, i.environment.Wrap),
+				Y: seen.Y - m.position.Y,
+				Z: flight.Shortest(m.position.Z, seen.Z, i.environment.Wrap),
 			}
 			closure := target.model.State.Velocity.Subtract(m.velocity)
 			step := 0.0
@@ -2123,14 +2167,15 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		}
 
 		// The guidance point: the target, or a swallowed flare falling away.
-		var aim flight.Vec3
+		var aim, lured flight.Vec3
 		var mark *flight.Vec3
 		if tracking {
-			aim = target.model.State.Position
+			aim = seen
 			mark = &aim
 		} else if m.blind > 0 {
 			m.blind -= dt
-			m.lure.Y -= 45 * dt // flares fall
+			lured = flight.Wind(m.lure, clock, i.environment)             // the flare hangs in the air
+			m.lure = m.lure.Add(lured.Add(flight.Vec3{Y: -45}).Scale(dt)) // flares fall, and drift with the wind
 			aim = m.lure
 			mark = &aim
 			if m.blind <= 0 {
@@ -2142,8 +2187,8 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				// ballistic from here with the fuse still live.
 				m.loose = true
 				if target != nil && target.alive {
-					sight, _ := i.bearing(m.position, target.model.State.Position)
-					if sight.Dot(m.velocity.Normalize()) > missile_gimbal &&
+					sight, _ := i.bearing(m.position, seen)
+					if sight.Dot(m.velocity.Subtract(wind).Normalize()) > missile_gimbal &&
 						battle.Roll(i.environment.Seed, m.number, tick, 53) < flare_reject {
 						m.loose, m.blind, m.window = false, 0, false
 						m.sight = sight
@@ -2165,9 +2210,10 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		// separation is the fins, and the seeker head was never blind.
 		if mark != nil {
 			direction, _ := i.bearing(m.position, *mark)
-			// The seeker: gimbal cone off the velocity axis, and a track-rate
-			// ceiling. Beyond either the lock breaks — ballistic, fuse live.
-			axis := m.velocity.Normalize()
+			// The seeker: gimbal cone off the round's axis, which points along its
+			// way through the air, and a track-rate ceiling. Beyond either the
+			// lock breaks — ballistic, fuse live.
+			axis := m.velocity.Subtract(wind).Normalize()
 			if direction.Dot(axis) < missile_gimbal {
 				m.loose = true
 			}
@@ -2184,7 +2230,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				if tracking {
 					closing = target.model.State.Velocity.Subtract(m.velocity).Dot(direction)
 				} else {
-					closing = -m.velocity.Dot(direction)
+					closing = -m.velocity.Subtract(lured).Dot(direction)
 				}
 				closing = math.Abs(closing)
 				accel := rate.Scale(missile_n * closing)
@@ -2196,11 +2242,13 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				}
 				m.velocity = m.velocity.Add(accel.Scale(dt))
 				// Induced drag: every commanded g is paid for in airspeed.
-				speed = m.velocity.Length()
+				through := m.velocity.Subtract(wind)
+				speed = through.Length()
 				bleed := missile_dragk * speed * speed * (1 + 3*(accel.Length()/(missile_g*9.81))*(accel.Length()/(missile_g*9.81)))
-				m.velocity = m.velocity.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6))
+				m.velocity = wind.Add(through.Scale(math.Max(speed-bleed*dt, 60) / math.Max(speed, 1e-6)))
 				// Energy death: coasting below convergence speed, opening — done.
-				if m.burn <= 0 && tracking && speed < target.model.State.Velocity.Length()+60 && closing < 40 {
+				// Both speeds are through the air.
+				if m.burn <= 0 && tracking && speed < target.model.State.Velocity.Subtract(flight.Wind(target.model.State.Position, clock, i.environment)).Length()+60 && closing < 40 {
 					continue
 				}
 			}
@@ -2209,11 +2257,12 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		// Propulsion: boost hard, then coast against the base drag.
 		if m.burn > 0 {
 			m.burn -= dt
-			axis := m.velocity.Normalize()
+			axis := m.velocity.Subtract(wind).Normalize()
 			m.velocity = m.velocity.Add(axis.Scale(missile_thrust * dt))
 		} else if m.loose || mark == nil {
-			speed = m.velocity.Length()
-			m.velocity = m.velocity.Scale(math.Max(speed-missile_dragk*speed*speed*dt, 60) / math.Max(speed, 1e-6))
+			through := m.velocity.Subtract(wind)
+			speed = through.Length()
+			m.velocity = wind.Add(through.Scale(math.Max(speed-missile_dragk*speed*speed*dt, 60) / math.Max(speed, 1e-6)))
 		}
 		m.position = m.position.Add(m.velocity.Scale(dt))
 		if m.position.Y <= 0 {
@@ -2263,7 +2312,8 @@ func (i *instance) fell(victim int, by int, cause string, other int) {
 	a.wait = pause
 	a.deaths++
 	if a.model != nil {
-		i.debris = append(i.debris, battle.Debris{Origin: a.model.State.Position, Velocity: a.model.State.Velocity, Time: float64(i.stepped) / 60})
+		i.debris = append(i.debris, battle.Debris{Origin: a.model.State.Position, Velocity: a.model.State.Velocity, Time: float64(i.stepped) / 60,
+			Wind: flight.Wind(a.model.State.Position, float64(i.stepped)/60, i.environment)})
 	}
 	if killer := i.aircraft[by]; by >= 0 && killer != nil {
 		// Friendly fire is live in the teams mode, and it costs: a teammate

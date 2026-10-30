@@ -299,6 +299,7 @@ func Atmosphere(altitude float64, env Environment) Air {
 // kt into it, and each joust began with the pilot 53 kt faster or slower than
 // the bandit on the side the coin gave him.
 func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64) State {
+	clock := m.State.Time // the jet keeps the clock it was given: the session's, which places the carrier
 	m.State.Fuel = fuel
 	m.weigh()
 	q := 0.5 * air(position.Y, m.Environment).Density * speed * speed
@@ -320,10 +321,11 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
-		Velocity: forward.Scale(speed).Add(wind(position, 0, m.Environment, nil)), // the state's clock starts at zero
+		Velocity: forward.Scale(speed).Add(wind(position, clock, m.Environment, nil)),
 		Attitude: attitude,
 		Fuel:     fuel,
 		External: m.State.External, // the stores' tanks as the trim weighed them, as Approach keeps them
+		Time:     clock,
 	}
 	s.Engine[0] = EngineState{Spool: spool}
 	s.Engine[1] = EngineState{Spool: spool}
@@ -338,6 +340,7 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 // descending), returning the trimmed state and the throttle that holds it.
 // Alpha is fixed and the speed follows from weight, so it is solved statically.
 func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float64) (State, float64) {
+	clock := m.State.Time // kept, as Level keeps it
 	m.State.Fuel = fuel
 	m.weigh()
 	alpha := m.Airframe.Control.Onspeed
@@ -372,7 +375,7 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	// The trim is through the air: the state rides the wind, as Level's does.
 	// Left out, a start into the ship's wind over the deck began that much
 	// fast, shed it in a climb, and ballooned off the altitude it was given.
-	velocity = velocity.Add(wind(position, 0, m.Environment, nil)) // the state's clock starts at zero
+	velocity = velocity.Add(wind(position, clock, m.Environment, nil))
 	// Attitude = flight path + on-speed alpha: the PA law's neutral demand
 	// exactly, so there is no capture transient to fly out of.
 	side := forward.Cross(Vec3{Y: 1}).Normalize()
@@ -381,7 +384,7 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 
 	// The stores' tanks as the trim weighed them: the caller mounts the loadout
 	// first, and a state without their fuel flies lighter than it was trimmed.
-	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel, External: m.State.External}
+	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel, External: m.State.External, Time: clock}
 	achieved := idle + clamp(throttle, 0, 1)*(1-idle) // the lever commands through the idle floor
 	s.Engine[0] = EngineState{Spool: achieved}
 	s.Engine[1] = EngineState{Spool: achieved}

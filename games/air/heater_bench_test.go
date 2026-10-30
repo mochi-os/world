@@ -3,6 +3,7 @@ package air
 import (
 	"testing"
 
+	"world/games/air/flight"
 	"world/games/air/round"
 )
 
@@ -11,6 +12,6 @@ func BenchmarkHeat(b *testing.B) {
 	shooter := round.Target{Position: c.shooterP, Velocity: c.shooterV}
 	target := round.Target{Position: c.targetP, Velocity: c.targetV}
 	for i := 0; i < b.N; i++ {
-		Heat(shooter, target, c.swing, 1, 0)
+		Heat(shooter, target, c.swing, 1, flight.Environment{}, 0)
 	}
 }

@@ -57,6 +57,7 @@ type Pose struct {
 	Up       flight.Vec3 // unit, for the dispersion basis
 	Right    flight.Vec3 // unit
 	Velocity flight.Vec3 // the shooter's velocity rides on every round
+	Wind     flight.Vec3 // the air's velocity at the muzzle, which the volley flies through
 }
 
 // ImpactPoints caps how many per-round strike positions one report carries.
@@ -72,6 +73,25 @@ type Round struct {
 	Born     uint64 // tick fired: keys the damage rolls
 	Index    uint64 // position within its volley: keys the damage rolls
 	Age      float64
+	Wind     flight.Vec3 // the air it flies through, taken at the muzzle and every Sampled seconds after (Feel)
+	Felt     float64     // its age when it last took the wind
+}
+
+// Sampled is how often a round in flight takes the wind where it is. The wind
+// grows and veers with height and wanders across the map: a round fired
+// steeply crosses air moving over ten metres a second differently from the
+// muzzle's, and the drag carries it metres off a round that kept the muzzle's
+// air, within two kilometres. Taken every quarter second it stays within a few
+// decimetres of one that takes the wind every step, at a sixtieth of the cost
+// when tens of thousands of rounds are in the air.
+const Sampled = 0.25 // s
+
+// Feel takes the wind where the round is, once Sampled seconds have passed
+// since it last did - at the muzzle, when it was fired.
+func (r *Round) Feel(environment flight.Environment, clock float64) {
+	if r.Age-r.Felt >= Sampled {
+		r.Wind, r.Felt = flight.Wind(r.Position, clock, environment), r.Age
+	}
 }
 
 // Depth is how many parts a shell reaches, from its striking speed. One is
@@ -113,6 +133,7 @@ func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []R
 			Shooter:  int(slot),
 			Born:     tick,
 			Index:    round,
+			Wind:     shooter.Wind,
 		})
 	}
 	return born
@@ -182,15 +203,16 @@ func Near(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.
 	return best, at, true
 }
 
-// Fly advances a round one step of dt: ballistic, gravity only (20 mm drag
-// over these ranges is a second-order correction the fire control never
-// modelled either). Returns true once the round is spent.
+// Fly advances a round one step of dt: drag and gravity. Returns true once
+// the round is spent.
 func Fly(r *Round, dt float64) bool {
-	// Quadratic drag on the whole vector: the round flies through the air
-	// mass, and the air does not care which part of the speed was barrel
-	// and which was inherited from the shooter.
-	if speed := r.Velocity.Length(); speed > 1 {
-		r.Velocity = r.Velocity.Scale(1 / (1 + speed*dt/stretched(r.Position.Y)))
+	// Quadratic drag on the whole velocity through the air: the round flies
+	// through the air mass, and the air does not care which part of the speed
+	// was barrel and which was inherited from the shooter. The wind is the
+	// air's own motion, so the round slows toward it, not toward the sea.
+	through := r.Velocity.Subtract(r.Wind)
+	if speed := through.Length(); speed > 1 {
+		r.Velocity = r.Wind.Add(through.Scale(1 / (1 + speed*dt/stretched(r.Position.Y))))
 	}
 	r.Velocity.Y -= 9.8 * dt
 	r.Position = r.Position.Add(r.Velocity.Scale(dt))

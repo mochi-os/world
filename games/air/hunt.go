@@ -92,7 +92,10 @@ func aspect(line flight.Vec3, velocity flight.Vec3) float64 {
 	return 1 - 0.2*math.Abs(velocity.Dot(line))/speed
 }
 
-// detection is how far this target paints, this look.
+// detection is how far this target paints, this look. Its aspect is read off
+// its track, as the pilot's radar (radar.ts) reads it: the two radars hold the
+// same numbers, and in the match's breeze the drift moves the aspect term by
+// up to 3% of the range.
 func (i *instance) detection(a, c *craft) float64 {
 	line, _ := i.bearing(a.model.State.Position, c.model.State.Position)
 	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*round.Clutter(a.model.State.Position, c.model.State.Position, i.environment.Wrap))
@@ -243,7 +246,7 @@ func (i *instance) counterfire(slot int, a *craft, tick uint64) {
 	zone := round.Ladder(
 		fired(a),
 		round.Target{Position: prey.model.State.Position, Velocity: prey.model.State.Velocity},
-		i.environment.Wrap)
+		a.model.Environment, a.model.State.Time) // the air the jet flies, which the round will
 	if span > zone.Max || span < zone.Minimum {
 		return
 	}
@@ -298,6 +301,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 			// Investigate the last contact: a mutual defence staleness both pictures at
 			// once, and the course a defence ends on points at the beam, not the fight.
 			// Three minutes of memory lets the pair re-commit.
+			b.lane = flight.Vec3{}
 			to := b.contact.Subtract(a.model.State.Position)
 			if to.Length() > 1 {
 				b.aim = soar(to.Normalize(), a.model.State.Position.Y)
@@ -306,15 +310,21 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		} else if b.mode == "cruise" {
 			// Hold the lane: with nothing known, cruise walks every bot onto the same
 			// patrol track and the joust becomes a tail-chase that never closes. An
-			// armed searcher flies the course it is on.
-			direction := a.model.State.Velocity
-			if direction.Length() > 1 {
-				b.aim = soar(direction.Normalize(), a.model.State.Position.Y)
+			// armed searcher flies the course it is on, taken as the search begins.
+			// Re-read from its own track every tick, it turned with every crab: in the
+			// trades a novice opening a BVR joust walked thirty degrees downwind in two
+			// minutes, its target slid off the radar's scan, and it never locked.
+			if b.lane == (flight.Vec3{}) && a.model.State.Velocity.Length() > 1 {
+				b.lane = level(airflow(&a.model.State, a.model.Environment)) // the heading it flies, onto which the aim is flown
+			}
+			if b.lane != (flight.Vec3{}) {
+				b.aim = soar(b.lane, a.model.State.Position.Y)
 				b.g = 1.4
 			}
 		}
 		return
 	}
+	b.lane = flight.Vec3{} // a contact: the next search takes the course it is on then
 
 	nose := a.model.State.Attitude.Rotate(flight.Vec3{X: 1})
 	locked := a.emitter == 2 && a.lock == target
@@ -339,7 +349,7 @@ func (i *instance) hunt(slot int, a *craft, tick uint64) {
 		b.zone = round.Ladder(
 			fired(a),
 			round.Target{Position: position, Velocity: velocity},
-			i.environment.Wrap)
+			a.model.Environment, a.model.State.Time) // the air the jet flies, which the round will
 	}
 
 	d := pressing(b.skill.library)
@@ -592,7 +602,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 			Z: line.X*sin + line.Z*cos,
 		})
 	}
-	b.aim = b.beam
+	b.aim = crab(b.beam, airspeed(&a.model.State, a.model.Environment), flight.Wind(a.model.State.Position, a.model.State.Time, a.model.Environment)) // the beam over the ground, which the notch is: the aim is flown through the air
 	b.g = 4.5
 	b.throttle, b.reheat = 1, 0
 	b.mode = "notch"

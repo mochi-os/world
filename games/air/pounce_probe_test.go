@@ -25,6 +25,7 @@ type pouncer struct {
 	ceiling float64
 	centre  flight.Vec3
 	since   uint64
+	air     flight.Environment // the match's air
 }
 
 func (p *pouncer) fly(me, foe *flight.State, tick uint64) map[string]any {
@@ -53,7 +54,7 @@ func (p *pouncer) fly(me, foe *flight.State, tick uint64) map[string]any {
 			p.phase, p.since = "zoom", tick
 			break
 		}
-		return pursue(me, foe) // trigger live: pursue fires on parameters
+		return pursue(me, foe, p.air) // trigger live: pursue fires on parameters
 	case "zoom":
 		if gap > 800 || held > 20*60 {
 			p.phase, p.since = "perch", tick
@@ -61,7 +62,7 @@ func (p *pouncer) fly(me, foe *flight.State, tick uint64) map[string]any {
 	default: // perch
 		if gap > 500 && span < 2500 && held > 3*60 {
 			p.phase, p.since = "pounce", tick
-			return pursue(me, foe)
+			return pursue(me, foe, p.air)
 		}
 	}
 	// Perch and zoom both fly toward a ghost: the orbit station while
@@ -83,7 +84,7 @@ func (p *pouncer) fly(me, foe *flight.State, tick uint64) map[string]any {
 		ghost.Position = flight.Vec3{X: p.centre.X + 900*math.Cos(angle), Y: p.ceiling, Z: p.centre.Z + 900*math.Sin(angle)}
 		ghost.Velocity = flight.Vec3{X: -135 * math.Sin(angle), Z: 135 * math.Cos(angle)}
 	}
-	data := pursue(me, &ghost)
+	data := pursue(me, &ghost, p.air)
 	data["fire"] = false
 	return data
 }
@@ -120,7 +121,7 @@ func TestPounceExposure(t *testing.T) {
 		me := &i.aircraft[0].model.State
 		me.Position.Y = i.aircraft[bot].model.State.Position.Y + 1200
 		foe := &i.aircraft[bot].model.State
-		attacker := &pouncer{}
+		attacker := &pouncer{air: i.environment}
 		for tick := uint64(0); tick < 150*60; tick++ {
 			data := attacker.fly(me, foe, tick)
 			i.Step(tick, map[int][]game.Input{0: {{Data: data}}})

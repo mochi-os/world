@@ -24,8 +24,10 @@
 // 13 Mach, 14 closest approach so far.
 //
 // round_ladder input words: 0-2 shooter position, 3-5 shooter velocity,
-// 6-8 target position, 9-11 target velocity, 12 wrap. Output words:
-// 0 aero, 1 max, 2 escape, 3 minimum, 4 seconds-to-active preview.
+// 6-8 target position, 9-11 target velocity, 12 wrap, 13 still (1 judges the
+// shot in still air, as the BVR start's separation is; else the pilot's air).
+// Output words: 0 aero, 1 max, 2 escape, 3 minimum, 4 seconds-to-active
+// preview.
 //
 // heater_ladder (#47) is the AIM-9M's zone in the same shape: input words
 // 0-11 as above, 12-14 the target's present acceleration, 15 the target's
@@ -39,7 +41,6 @@
 package main
 
 import (
-	"math"
 	"syscall/js"
 
 	"world/games/air"
@@ -98,7 +99,8 @@ func round_launch(this js.Value, arguments []js.Value) any {
 	if quiver[7] < 0.5 {
 		estimate = &round.Target{Position: vec(quiver, 8), Velocity: vec(quiver, 11)}
 	}
-	m := round.New(vec(quiver, 1), vec(quiver, 4), estimate, quiver[14])
+	environment, clock := weather(quiver[14])
+	m := round.New(vec(quiver, 1), vec(quiver, 4), estimate, environment, clock)
 	if quiver[15] < 0.5 {
 		m.Loft = false
 	}
@@ -142,21 +144,22 @@ func round_step(this js.Value, arguments []js.Value) any {
 		// position, which at Mach 2.5 is tens of metres away.
 		out[2], out[3], out[4] = burst.X, burst.Y, burst.Z
 	}
-	out[13] = 0
-	if speed := m.Velocity.Length(); speed > 0 {
-		out[13] = speed / sound(m.Position.Y)
-	}
+	out[13] = m.Mach()
 	out[14] = m.Least
 	send(out, arguments[1])
 	return nil
 }
 
 func round_ladder(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:13])
+	receive(arguments[0], quiver[:14])
+	environment, clock := weather(quiver[12])
+	if quiver[13] > 0.5 {
+		environment, clock = flight.Environment{Wrap: quiver[12]}, 0
+	}
 	zone := round.Ladder(
 		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
 		round.Target{Position: vec(quiver, 6), Velocity: vec(quiver, 9)},
-		quiver[12],
+		environment, clock,
 	)
 	out := quiver[:5]
 	out[0], out[1], out[2], out[3], out[4] = zone.Aero, zone.Max, zone.Escape, zone.Minimum, zone.Active
@@ -166,10 +169,11 @@ func round_ladder(this js.Value, arguments []js.Value) any {
 
 func heater_ladder(this js.Value, arguments []js.Value) any {
 	receive(arguments[0], quiver[:17])
+	environment, clock := weather(quiver[16])
 	zone := air.Heat(
 		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
 		round.Target{Position: vec(quiver, 6), Velocity: vec(quiver, 9)},
-		vec(quiver, 12), quiver[15], quiver[16],
+		vec(quiver, 12), quiver[15], environment, clock,
 	)
 	out := quiver[:5]
 	out[0], out[1], out[2], out[3], out[4] = zone.Aero, zone.Max, zone.Escape, zone.Minimum, zone.Active
@@ -185,13 +189,14 @@ func round_drop(this js.Value, arguments []js.Value) any {
 	return nil
 }
 
-// sound is the ISA speed of sound, mirroring the round package's atmosphere
-// for the Mach readout.
-func sound(altitude float64) float64 {
-	h := math.Max(0, altitude)
-	temperature := 216.65
-	if h <= 11000 {
-		temperature = 288.15 - 0.0065*h
+// weather is the air the weapons fly through, the pilot's own - the mission's
+// wind, and in a match the server's - on the wrap given, with the clock it
+// blows on; still air before a mission.
+func weather(wrap float64) (flight.Environment, float64) {
+	if model == nil {
+		return flight.Environment{Wrap: wrap}, 0
 	}
-	return math.Sqrt(1.4 * 287.05 * temperature)
+	environment := model.Environment
+	environment.Wrap = wrap
+	return environment, model.State.Time
 }

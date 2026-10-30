@@ -23,7 +23,7 @@ import (
 
 // pursue flies the crude attacker: point at the bandit's projected six with
 // enough lead to close, hold ~350 kt (the sustained corner band), and pull.
-func pursue(me, foe *flight.State) map[string]any {
+func pursue(me, foe *flight.State, air flight.Environment) map[string]any {
 	toward := foe.Position.Subtract(me.Position)
 	range_ := toward.Length()
 	if range_ < 1 {
@@ -36,7 +36,8 @@ func pursue(me, foe *flight.State) map[string]any {
 	if closing := rel.Dot(toward.Scale(1 / range_)); range_ < 400 && closing > 70 {
 		return map[string]any{"pitch": 0.1, "roll": 0.0, "throttle": 0.85, "fire": false}
 	}
-	six := foe.Position.Subtract(foe.Velocity.Normalize().Scale(math.Min(300, range_*0.6)))
+	heading := foe.Velocity.Subtract(flight.Wind(foe.Position, foe.Time, air)) // his six is behind his heading, as a pilot sees it, not his track
+	six := foe.Position.Subtract(heading.Normalize().Scale(math.Min(300, range_*0.6)))
 	want := six.Subtract(me.Position).Normalize()
 	forward := me.Attitude.Rotate(flight.Vec3{X: 1})
 	up := me.Attitude.Rotate(flight.Vec3{Y: 1})
@@ -50,7 +51,7 @@ func pursue(me, foe *flight.State) map[string]any {
 		roll = clamp(yawError*4, -1, 1) // way off the nose: roll harder
 	}
 	pitch := clamp(pitchError*2.5+0.15, -1, 1)
-	speed := me.Velocity.Length()
+	speed := me.Velocity.Subtract(flight.Wind(me.Position, me.Time, air)).Length() // the airspeed his HUD reads
 	throttle, reheat := 1.0, 0.0
 	if speed > 200 { // ~390 kt: stop accelerating, keep the energy
 		throttle = 0.85
@@ -64,13 +65,14 @@ func pursue(me, foe *flight.State) map[string]any {
 // enough off his nose, sooner the harder he is pulling, and flies the line he
 // last saw without shooting. pursue stays perfect - two suites fixture it.
 type chaser struct {
-	lost    int         // times the tally went, for the probe
-	blew    int         // ticks spent riding an overshoot through the pass
-	closest float64     // and the fastest he ever arrived, m/s of closure
-	widest  float64     // and the furthest off his nose the bandit ever got
-	blind   uint64      // ticks of lost tally remaining, 0 = he has him
-	where   flight.Vec3 // where the bandit was when he lost him
-	heading flight.Vec3 // and where he was going
+	lost    int                // times the tally went, for the probe
+	blew    int                // ticks spent riding an overshoot through the pass
+	closest float64            // and the fastest he ever arrived, m/s of closure
+	widest  float64            // and the furthest off his nose the bandit ever got
+	blind   uint64             // ticks of lost tally remaining, 0 = he has him
+	where   flight.Vec3        // where the bandit was when he lost him
+	heading flight.Vec3        // and where he was going
+	air     flight.Environment // the match's air, which his HUD and his eyes read
 }
 
 func (c *chaser) fly(me, foe *flight.State, tick uint64) map[string]any {
@@ -93,13 +95,13 @@ func (c *chaser) fly(me, foe *flight.State, tick uint64) map[string]any {
 		// Back in front of him and no longer pulling blind: he has the tally again.
 		if c.blind == 0 || off < 45 {
 			c.blind = 0
-			return pursue(me, foe)
+			return pursue(me, foe, c.air)
 		}
 		ghost := *foe
 		ghost.Position = c.where.Add(c.heading.Scale(float64(90-c.blind) / 60))
 		ghost.Velocity = c.heading
-		data := pursue(me, &ghost) // the line he last saw, flown on faith
-		data["fire"] = false       // and no shooting at something he cannot see
+		data := pursue(me, &ghost, c.air) // the line he last saw, flown on faith
+		data["fire"] = false              // and no shooting at something he cannot see
 		return data
 	}
 	// Did the other human failing — arriving too fast to stop — ever fire?
@@ -110,7 +112,7 @@ func (c *chaser) fly(me, foe *flight.State, tick uint64) map[string]any {
 	if closing := rel.Dot(toward.Scale(1 / span)); span < 400 && closing > 70 {
 		c.blew++
 	}
-	return pursue(me, foe)
+	return pursue(me, foe, c.air)
 }
 
 // geometry reports the attacker's position in the bandit's world: range, the
@@ -136,6 +138,13 @@ func geometry(attacker, bandit *flight.State) (rangeM, angleOff, myEnergy, hisEn
 // escape.
 func TestDoctrineUnderHumanPressure(t *testing.T) {
 	heavy(t)
+	// 96 seeds, not 24 (2026-10-27): a tier's count is the few seeds whose
+	// opening burst lands from 1,200 m, and any change to the fight reshuffles
+	// which those are. When matches took the trades, 24 seeds read the
+	// superhuman shot down 3 times against an allowance of 2 while 192 read it
+	// shot down less often in the wind than in still air: the gate was
+	// measuring the draw, not the defence.
+	const seeds = 96
 	levels := []string{"expert", "superhuman"}
 	for _, level := range levels {
 		modes := map[string]int{}
@@ -146,7 +155,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		broke := 0           // seeds where the bandit ever broke contact past 4 km
 		total, switches, slow := 0, 0, 0
 		energyGap, speedSum := 0.0, 0.0
-		for seed := uint64(1); seed <= 24; seed++ {
+		for seed := uint64(1); seed <= seeds; seed++ {
 			g := New()
 			made, err := g.Create(game.Session{Identifier: "doctrine", Game: "air", Mode: "furball", Capacity: 8, Seed: seed,
 				Parameters: map[string]any{"missiles": false, "bots": map[string]any{level: 1.0}}})
@@ -172,7 +181,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			place(i, bot, 0, -1200) // attacker behind the bandit
 			me, foe := &i.aircraft[0].model.State, &i.aircraft[bot].model.State
 			previousMode := ""
-			hunter := &chaser{}
+			hunter := &chaser{air: i.environment}
 			away := false                                  // this seed ever broke contact past 4 km
 			for tick := uint64(0); tick < 120*60; tick++ { // two simulated minutes: from 1,200 m the first pass takes forty seconds to arrive
 				data := hunter.fly(me, foe, tick)
@@ -230,6 +239,7 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			for k, v := range i.aircraft[bot].brain.audit {
 				audit[k] += v
 			}
+			i.Close() // 192 sessions of a bot each: the server-wide budget is 200
 		}
 		type entry struct {
 			mode  string
@@ -240,8 +250,8 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 			list = append(list, entry{mode, n})
 		}
 		sort.Slice(list, func(a, b int) bool { return list[a].ticks > list[b].ticks })
-		fmt.Printf("\n=== %s under a crude tail-chase (24 seeds, 120 s each, from 1,200 m) ===\n", level)
-		fmt.Printf("  OUTCOME: killed the attacker in %d of 24 | shot down in %d | broke contact past 4 km in %d\n", downed, lost, broke)
+		fmt.Printf("\n=== %s under a crude tail-chase (%d seeds, 120 s each, from 1,200 m) ===\n", level, seeds)
+		fmt.Printf("  OUTCOME: killed the attacker in %d of %d | shot down in %d | broke contact past 4 km in %d\n", downed, seeds, lost, broke)
 		fmt.Printf("  tracked in the rear quarter: %.0f%% of the fight | escaped past 4 km: %.0f%% | closest %.0f m | CONVERTED to the attacker's rear quarter %.1f%%\n",
 			100*float64(tracked)/math.Max(1, float64(total)), 100*float64(escaped)/math.Max(1, float64(total)), closest,
 			100*float64(converted)/math.Max(1, float64(total)))
@@ -273,18 +283,19 @@ func TestDoctrineUnderHumanPressure(t *testing.T) {
 		// it is wander, and TestSuperhumanIsTheExpertWithoutHumanLimits names
 		// wander a human limit, so it is not available. The allowance is
 		// therefore the measured honest value per tier, not an ideal.
-		allowed := 1 // the expert: measured 0, with a fight of slack
+		allowed := 7 // the expert: measured 6 of 96 (2026-10-28), in the match's wind as in still air, with a fight of slack
 		if level == "superhuman" {
 			// Zero slack is deliberate here and is safe BECAUSE these sims are
-			// seeded and deterministic: 2 is what the tier reads today, and a
-			// third death is a real change rather than noise. Negative-controlled
-			// against the refuted jink-window shape (#216), which takes this arm
-			// to exactly 3.
-			allowed = 2
+			// seeded and deterministic: 5 of 96 is what the tier reads
+			// (2026-10-28), in the match's wind as in still air, and a sixth
+			// death is a real change rather than noise. At 24 seeds the gate
+			// read 2, negative-controlled against the refuted jink-window shape
+			// (#216), which took that arm to 3.
+			allowed = 5
 		}
 		if lost > allowed {
-			t.Errorf("%s was shot down in %d of 24 by the crude script against an allowance of %d: the defence regressed",
-				level, lost, allowed)
+			t.Errorf("%s was shot down in %d of %d by the crude script against an allowance of %d: the defence regressed",
+				level, lost, seeds, allowed)
 		}
 		if level == "expert" {
 			// The gate carries only the DEFENCE claims it can honestly make (#65):

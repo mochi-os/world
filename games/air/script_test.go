@@ -219,25 +219,42 @@ func TestScriptRecordsItsBranch(t *testing.T) {
 // (01a10e19). Into a headwind the jet must not enter the regain while its
 // airspeed is above the floor, and must leave it once its airspeed is past the
 // band; with a tailwind it must enter it when its airspeed is under the floor.
+// The floor and the band are equivalent airspeeds, the wing's: high or low,
+// the band ends the regain at the same equivalent airspeed, where the true
+// airspeed past it 7,500 m up reads half as much again. The floor sits under
+// the 1 g stall, so a jet only meets it unloaded, the nose on its path through
+// the air: just above it, it holds the fight.
 func TestScriptFliesTheAir(t *testing.T) {
+	through := func(equivalent, height float64) float64 {
+		return equivalent * math.Sqrt(1.225/flight.Atmosphere(height, flight.Environment{}).Density)
+	}
+	band, floor := tuned(standard().script.band), tuned(standard().script.floor)
 	cases := []struct {
 		name      string
 		wind      float64 // surface wind along the jet's heading, m/s (+ a tailwind)
 		airspeed  float64 // m/s
+		height    float64 // m
 		regaining bool    // the regain already flown when the case begins
+		unloaded  bool    // held at zero alpha at the airspeed, level, through the fight
 		want      bool    // the regain flown at the end
 	}{
-		{"into a headwind, above the floor", -15, 100, false, false},
-		{"into a headwind, past the band", -15, 125, true, false},
-		{"with a tailwind, under the floor", 15, 66, false, true},
+		{"into a headwind, above the floor", -15, 100, 4572, false, false, false},
+		{"into a headwind, past the band", -15, 125, 4572, true, false, false},
+		{"with a tailwind, under the floor", 15, 66, 4572, false, false, true},
+		{"low, past the band", 0, through(band+4, 1500), 1500, true, false, false},
+		{"low, short of the band", 0, through(band-4, 1500), 1500, true, false, true},
+		{"high, past the band", 0, through(band+4, 7500), 7500, true, false, false},
+		{"high, short of the band", 0, through(band-4, 7500), 7500, true, false, true},
+		{"unloaded, above the floor", 0, through(floor+4, 4572), 4572, false, true, false},
+		{"unloaded, under the floor", 0, through(floor-4, 4572), 4572, false, true, true},
 	}
 	for _, c := range cases {
 		b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, true)
 		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: c.wind}, Wrap: 250000}
 		b.Air(air)
-		b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: c.airspeed})
+		b.Spawn(flight.Vec3{Y: c.height}, flight.Vec3{X: c.airspeed})
 		pm := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
-		pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: 4572}, flight.Vec3{X: 1}, c.airspeed, fuel)
+		pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: c.height}, flight.Vec3{X: 1}, c.airspeed, fuel)
 		words := make([]float64, flight.Size)
 		for tick := 0; tick < 40; tick++ {
 			if tick == 10 {
@@ -246,6 +263,12 @@ func TestScriptFliesTheAir(t *testing.T) {
 				// stepped has met none.
 				b.craft.brain.routine.passed = true
 				b.craft.brain.routine.regaining = c.regaining
+			}
+			if c.unloaded && tick >= 10 {
+				s := &b.craft.model.State
+				s.Position.Y = c.height
+				s.Velocity = flight.Vec3{X: c.airspeed}.Add(b.craft.model.Gust())
+				s.Attitude = flight.Look(flight.Vec3{X: 1})
 			}
 			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
 			pm.State.Encode(words)
@@ -538,13 +561,13 @@ func TestScriptMergesClear(t *testing.T) {
 func TestEscapeKeepsHisHeight(t *testing.T) {
 	me := &flight.State{Position: flight.Vec3{Y: 1700}, Velocity: flight.Vec3{X: 78}}
 	miss := flight.Vec3{Y: 20}
-	if away := escape(miss, 4.6, me, false, true, 1.4); away.Y < 0 {
+	if away := escape(miss, 4.6, me, flight.Vec3{}, false, true, 1.4); away.Y < 0 {
 		t.Errorf("chased from below, the clear went %+.2f: down across his height", away.Y)
 	}
-	if away := escape(miss.Scale(-1), 4.6, me, true, true, 1.4); away.Y > 0 {
+	if away := escape(miss.Scale(-1), 4.6, me, flight.Vec3{}, true, true, 1.4); away.Y > 0 {
 		t.Errorf("chased from above, the clear went %+.2f: up across his height", away.Y)
 	}
-	if away := escape(miss, 4.6, me, false, false, 1.4); away.Y > -0.5 {
+	if away := escape(miss, 4.6, me, flight.Vec3{}, false, false, 1.4); away.Y > -0.5 {
 		t.Errorf("not chased, the slow wing took %+.2f: under, with gravity, opens it furthest", away.Y)
 	}
 }
@@ -769,18 +792,19 @@ func TestScriptHoldsThePursuer(t *testing.T) {
 }
 
 // TestScriptRegainsNoseLow: below the floor the regain pushes over to buy the
-// band back nose-low, gravity adding to the burner. From 134 kt with a
-// heater-armed pilot 1,000 m astern, every tier dives 20 degrees or more and is
-// back above 214 kt inside 5 s from level flight and 7.5 s from a 30 degree
-// climb; flown to the horizon on four tenths of the stick it took 5.2-5.9 s
-// and 9.0 s.
+// band back nose-low, gravity adding to the burner. From 134 kt at 15,000 ft,
+// or the same equivalent airspeed at 10,000, with a heater-armed pilot 1,000 m
+// astern, every tier dives 20 degrees or more and is back above 214 kt inside
+// 5 s from level flight and 7.5 s from a 30 degree climb; flown to the horizon
+// on four tenths of the stick it took 5.2-5.9 s and 9.0 s.
 func TestScriptRegainsNoseLow(t *testing.T) {
 	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		for _, start := range []struct{ height, climb, within float64 }{{3050, 0, 5}, {4570, 0, 5}, {4570, 30, 7.5}} {
 			b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
-			b.Spawn(flight.Vec3{Y: start.height}, flight.Vec3{X: 69})
+			speed := tuned(69) * math.Sqrt(1.225/flight.Atmosphere(start.height, flight.Environment{}).Density)
+			b.Spawn(flight.Vec3{Y: start.height}, flight.Vec3{X: speed})
 			c := start.climb * math.Pi / 180
-			b.craft.model.State.Velocity = flight.Vec3{X: 69 * math.Cos(c), Y: 69 * math.Sin(c)}
+			b.craft.model.State.Velocity = flight.Vec3{X: speed * math.Cos(c), Y: speed * math.Sin(c)}
 			b.craft.model.State.Attitude = flight.Look(b.craft.model.State.Velocity.Normalize())
 			b.craft.brain.routine.passed = true
 			pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
@@ -858,6 +882,45 @@ func TestScriptJinks(t *testing.T) {
 			t.Errorf("%s under his gun from 300 m astern never jinked", level)
 		case level != "novice" && first > 90:
 			t.Errorf("%s under his gun from 300 m astern: first jink at %.2f s, want inside 1.5 s", level, float64(first)/60)
+		}
+	}
+}
+
+// TestScriptChaseReadsTheAir: the chase starts when he runs away faster than
+// me through the air. Downwind 2 km ahead, flying 30 degrees off his line, the
+// range opens over the ground whether he is a little faster or a little slower
+// than me; only the faster one is running, and over the ground the wind he
+// flies with would make the slower one look it.
+func TestScriptChaseReadsTheAir(t *testing.T) {
+	for _, c := range []struct {
+		his  float64 // his true airspeed, m/s; mine is 200
+		want bool
+	}{{210, true}, {190, false}} {
+		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: 10}, Wrap: 250000}
+		b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, true)
+		b.Air(air)
+		b.Spawn(flight.Vec3{X: -2000, Y: 4572}, flight.Vec3{X: 200})
+		pm := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
+		pm.State = flight.Level(pm, flight.Vec3{Y: 4572}, flight.Vec3{X: 1}, c.his, fuel)
+		blown := flight.Wind(pm.State.Position, 0, air)
+		pm.State.Velocity = flight.Vec3{X: c.his}.Add(blown)
+		off := flight.Vec3{X: math.Cos(math.Pi / 6), Z: math.Sin(math.Pi / 6)}
+		words := make([]float64, flight.Size)
+		for tick := 0; tick < 300; tick++ {
+			if tick == 10 {
+				b.craft.brain.routine.passed = true // the fight, not the run-in
+			}
+			s := &b.craft.model.State
+			s.Position = pm.State.Position.Subtract(flight.Vec3{X: 2000})
+			s.Velocity = off.Scale(200).Add(flight.Wind(s.Position, s.Time, air))
+			s.Attitude = flight.Look(off)
+			pm.State.Position = pm.State.Position.Add(pm.State.Velocity.Scale(1.0 / 60))
+			pm.State.Encode(words)
+			b.Mirror(words, false, true)
+			b.Step()
+		}
+		if got := b.craft.brain.routine.chasing; got != c.want {
+			t.Errorf("he runs at %.0f m/s through the air against my 200, %.0f over the ground: chasing %v, ran %d ticks", c.his, pm.State.Velocity.Length(), got, b.craft.brain.routine.running)
 		}
 	}
 }

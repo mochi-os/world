@@ -54,10 +54,10 @@ func TestHeatAlongTheNose(t *testing.T) {
 	line := flight.Vec3{X: math.Cos(above), Y: math.Sin(above)}
 	jet := flight.State{Position: flight.Vec3{Y: 4500}, Velocity: path.Scale(120), Attitude: flight.Basis(nose, up)}
 	him := round.Target{Position: jet.Position.Add(line.Scale(1100)), Velocity: line.Scale(150)}
-	if z := Heat(launcher(&jet), him, flight.Vec3{}, 1, 0); !(1100 > z.Minimum && 1100 <= z.Max) {
+	if z := Heat(launcher(&jet, flight.Environment{}), him, flight.Vec3{}, 1, flight.Environment{}, 0); !(1100 > z.Minimum && 1100 <= z.Max) {
 		t.Errorf("the round off the nose does not arrive at 1,100 m: %+v", z)
 	}
-	if z := Heat(round.Target{Position: jet.Position, Velocity: jet.Velocity}, him, flight.Vec3{}, 1, 0); z.Max > 0 {
+	if z := Heat(round.Target{Position: jet.Position, Velocity: jet.Velocity}, him, flight.Vec3{}, 1, flight.Environment{}, 0); z.Max > 0 {
 		t.Errorf("the control is not a control: drawn off the flight path the zone should be empty, got %+v", z)
 	}
 
@@ -80,18 +80,20 @@ func TestHeatAlongTheNose(t *testing.T) {
 		}
 	}
 	shooter, target := &i.aircraft[bot].model.State, &i.aircraft[0].model.State
-	shooter.Position, shooter.Velocity, shooter.Attitude = jet.Position, jet.Velocity, jet.Attitude
-	target.Position, target.Velocity, target.Attitude = him.Position, him.Velocity, flight.Look(line)
+	wind := flight.Wind(jet.Position, shooter.Time, i.environment) // the match's air: the jet flies through it at its 120 m/s
+	shooter.Position, shooter.Velocity, shooter.Attitude = jet.Position, jet.Velocity.Add(wind), jet.Attitude
+	target.Position, target.Velocity, target.Attitude = him.Position, him.Velocity.Add(wind), flight.Look(line)
 	before := len(i.flying)
 	if !i.launch(bot, i.aircraft[bot], false) || len(i.flying) != before+1 {
 		t.Fatal("the seeker did not acquire a target 15 degrees off the nose")
 	}
 	fired := i.flying[len(i.flying)-1]
-	if off := math.Acos(clamp(fired.velocity.Normalize().Dot(nose), -1, 1)) * 180 / math.Pi; off > 0.5 {
+	through := fired.velocity.Subtract(wind) // through the air, which carries the round as it carries the jet
+	if off := math.Acos(clamp(through.Normalize().Dot(nose), -1, 1)) * 180 / math.Pi; off > 0.5 {
 		t.Errorf("the round left the rail %.1f degrees off the nose", off)
 	}
-	if speed := fired.velocity.Length(); math.Abs(speed-150) > 0.5 {
-		t.Errorf("the round left the rail at %.1f m/s, want the jet's 120 and the launcher's 30", speed)
+	if speed := through.Length(); math.Abs(speed-150) > 0.5 {
+		t.Errorf("the round left the rail at %.1f m/s through the air, want the jet's 120 and the launcher's 30", speed)
 	}
 }
 
@@ -106,9 +108,9 @@ func TestHeatZone(t *testing.T) {
 		// away (a tail shot), pi flies at the shooter (head-on).
 		return round.Target{Position: flight.Vec3{X: 3000, Y: 4000}, Velocity: flight.Vec3{X: 205 * math.Cos(aspect), Z: 205 * math.Sin(aspect)}}
 	}
-	tail := Heat(shooter, place(0), flight.Vec3{}, 0, 0)
-	beam := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 0, 0)
-	head := Heat(shooter, place(math.Pi), flight.Vec3{}, 0, 0)
+	tail := Heat(shooter, place(0), flight.Vec3{}, 0, flight.Environment{}, 0)
+	beam := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 0, flight.Environment{}, 0)
+	head := Heat(shooter, place(math.Pi), flight.Vec3{}, 0, flight.Environment{}, 0)
 	for name, z := range map[string]round.Zone{"tail": tail, "head": head} {
 		if z.Max <= 0 {
 			t.Errorf("%s: no Rmax at all (%+v)", name, z)
@@ -144,7 +146,7 @@ func TestHeatZone(t *testing.T) {
 	// #104's real invariant: every range the ladder endorses must arrive.
 	beamward := shortest(shooter.Position, place(math.Pi/2).Position, 0).Normalize()
 	for _, trial := range []float64{beam.Minimum, (beam.Minimum + beam.Max) / 2, beam.Max} {
-		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, 0, trial, false) {
+		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, flight.Environment{}, 0, trial, false) {
 			t.Errorf("the ladder endorses %.0f m on a cold beam but its own round refuses it: %+v", trial, beam)
 		}
 	}
@@ -167,12 +169,12 @@ func TestHeatZone(t *testing.T) {
 		t.Errorf("a cold head-on nose should be lockable only to the plume floor (%.0f m), got %.0f", missile_range*0.15, head.Max)
 	}
 	// Lit up, the head-on reach grows: the plume is the beacon.
-	if lit := Heat(shooter, place(math.Pi), flight.Vec3{}, 1, 0); lit.Max <= head.Max {
+	if lit := Heat(shooter, place(math.Pi), flight.Vec3{}, 1, flight.Environment{}, 0); lit.Max <= head.Max {
 		t.Errorf("a burner-lit head-on nose should be lockable further than a cold one: %.0f v %.0f m", lit.Max, head.Max)
 	}
 	// And the plume is what re-opens the beam, by carrying the acquisition
 	// reach out to where the crossing rate is slow enough to track.
-	if lit := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 1, 0); lit.Max <= 0 || lit.Minimum >= lit.Max {
+	if lit := Heat(shooter, place(math.Pi/2), flight.Vec3{}, 1, flight.Environment{}, 0); lit.Max <= 0 || lit.Minimum >= lit.Max {
 		t.Errorf("a burner-lit beam target should offer a far-band shot, got %+v", lit)
 	}
 	t.Logf("tail %+v", tail)
@@ -211,7 +213,7 @@ func TestHeatRecordedShots(t *testing.T) {
 	for _, s := range shots {
 		shooter := round.Target{Position: flight.Vec3{X: s.sx, Y: s.sy, Z: s.sz}, Velocity: flight.Vec3{X: s.svx, Y: s.svy, Z: s.svz}}
 		target := round.Target{Position: flight.Vec3{X: s.tx, Y: s.ty, Z: s.tz}, Velocity: flight.Vec3{X: s.tvx, Y: s.tvy, Z: s.tvz}}
-		z := Heat(shooter, target, flight.Vec3{X: s.ax, Y: s.ay, Z: s.az}, s.lit, 0)
+		z := Heat(shooter, target, flight.Vec3{X: s.ax, Y: s.ay, Z: s.az}, s.lit, flight.Environment{}, 0)
 		span := target.Position.Subtract(shooter.Position).Length()
 		cue := "tone only"
 		switch {
@@ -259,7 +261,7 @@ func TestHeaterRefusesTheSaturatingBeamShot(t *testing.T) {
 	near := recorded()[1]
 	for _, lit := range []float64{0, 1} {
 		z := Heat(round.Target{Position: near.shooterP, Velocity: near.shooterV},
-			round.Target{Position: near.targetP, Velocity: near.targetV}, near.swing, lit, 0)
+			round.Target{Position: near.targetP, Velocity: near.targetV}, near.swing, lit, flight.Environment{}, 0)
 		if near.fired > z.Minimum && near.fired <= z.Escape {
 			t.Errorf("lit=%.0f: the ladder endorses the saturating beam shot at %.0f m (%+v)", lit, near.fired, z)
 		}
@@ -270,7 +272,7 @@ func TestHeaterRefusesTheSaturatingBeamShot(t *testing.T) {
 	// the shot the seeker CAN hold, and it must still be endorsed.
 	chase := near.shooterV.Normalize()
 	stern := round.Target{Position: near.shooterP.Add(chase.Scale(1400)), Velocity: chase.Scale(240)}
-	z := Heat(round.Target{Position: near.shooterP, Velocity: near.shooterV}, stern, flight.Vec3{}, 0, 0)
+	z := Heat(round.Target{Position: near.shooterP, Velocity: near.shooterV}, stern, flight.Vec3{}, 0, flight.Environment{}, 0)
 	span := stern.Position.Subtract(near.shooterP).Length()
 	if !(span > z.Minimum && span <= z.Escape) {
 		t.Errorf("a stern chase at %.0f m should still be a shot, got %+v", span, z)
@@ -288,14 +290,14 @@ func TestHeatFloorFlown(t *testing.T) {
 	target := round.Target{Position: flight.Vec3{X: 142.4, Y: 2610.0, Z: -195.4}, Velocity: flight.Vec3{X: -51.6, Y: -99.1, Z: 1.4}}
 	direction := target.Position.Subtract(shooter.Position)
 	span := direction.Length()
-	if reaches(shooter, target, direction.Normalize(), flight.Vec3{}, 0, 320, false) {
+	if reaches(shooter, target, direction.Normalize(), flight.Vec3{}, flight.Environment{}, 0, 320, false) {
 		t.Fatal("the recorded geometry no longer saturates the seeker at 320 m: the test has lost its subject")
 	}
-	z := Heat(shooter, target, flight.Vec3{}, 0, 0)
+	z := Heat(shooter, target, flight.Vec3{}, 0, flight.Environment{}, 0)
 	if span > z.Minimum {
 		t.Errorf("the zone endorses the %.0f m shot its own round misses: %+v", span, z)
 	}
-	if !reaches(shooter, target, direction.Normalize(), flight.Vec3{}, 0, z.Minimum+5, false) {
+	if !reaches(shooter, target, direction.Normalize(), flight.Vec3{}, flight.Environment{}, 0, z.Minimum+5, false) {
 		t.Errorf("the inner edge %.0f m sits inside the band the round cannot fly", z.Minimum)
 	}
 
@@ -303,7 +305,7 @@ func TestHeatFloorFlown(t *testing.T) {
 	// and the floor stays the inner edge.
 	chase := nose
 	stern := round.Target{Position: shooter.Position.Add(chase.Scale(320)), Velocity: chase.Scale(100)}
-	if z := Heat(shooter, stern, flight.Vec3{}, 0, 0); !(320 > z.Minimum && 320 <= z.Max) {
+	if z := Heat(shooter, stern, flight.Vec3{}, 0, flight.Environment{}, 0); !(320 > z.Minimum && 320 <= z.Max) {
 		t.Errorf("a stern chase at 320 m should still be a shot, got %+v", z)
 	}
 }
@@ -319,10 +321,10 @@ func TestHeatNoEscapeEdgeUnfloored(t *testing.T) {
 	b, h := 10*math.Pi/180, 45*math.Pi/180
 	target := round.Target{Position: flight.Vec3{X: 340 * math.Cos(b), Y: 3000, Z: 340 * math.Sin(b)}, Velocity: flight.Vec3{X: 108 * math.Cos(h), Z: 108 * math.Sin(h)}}
 	direction := target.Position.Subtract(shooter.Position).Normalize()
-	if !reaches(shooter, target, direction, flight.Vec3{}, 0, 300, false) || reaches(shooter, target, direction, flight.Vec3{}, 0, 340, true) {
+	if !reaches(shooter, target, direction, flight.Vec3{}, flight.Environment{}, 0, 300, false) || reaches(shooter, target, direction, flight.Vec3{}, flight.Environment{}, 0, 340, true) {
 		t.Fatal("the geometry no longer splits the two rungs at the floor: the test has lost its subject")
 	}
-	if z := Heat(shooter, target, flight.Vec3{}, 0, 0); !(340 > z.Minimum && 340 <= z.Max) {
+	if z := Heat(shooter, target, flight.Vec3{}, 0, flight.Environment{}, 0); !(340 > z.Minimum && 340 <= z.Max) {
 		t.Errorf("the shot that arrives against the target flying on is refused: %+v", z)
 	}
 }
@@ -447,7 +449,7 @@ func TestHeatFlare(t *testing.T) {
 	// Head-on and cold is the worst case: maximum closure, maximum decoy
 	// chance, so the round must carry flare_blind seconds of closure on top of
 	// its arming time or a seduction inside the last second is unrecoverable.
-	front := Heat(shooter, place(-205), flight.Vec3{}, 0, 0)
+	front := Heat(shooter, place(-205), flight.Vec3{}, 0, flight.Environment{}, 0)
 	bare := 410 * (missile_arm + 0.5)
 	if front.Minimum <= bare {
 		t.Errorf("a cold head-on floor of %.0f m prices no seduction at all: kinematics alone give %.0f m", front.Minimum, bare)
@@ -457,7 +459,7 @@ func TestHeatFlare(t *testing.T) {
 	}
 	// Astern the flare is weakest AND the closure is slight, so the floor is
 	// left alone - that is the shot the recorded fight actually converted.
-	astern := Heat(shooter, place(205), flight.Vec3{}, 0, 0)
+	astern := Heat(shooter, place(205), flight.Vec3{}, 0, flight.Environment{}, 0)
 	if astern.Minimum >= front.Minimum {
 		t.Errorf("astern floor %.0f m should sit well under the head-on floor %.0f m", astern.Minimum, front.Minimum)
 	}

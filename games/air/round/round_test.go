@@ -27,7 +27,7 @@ func launch(altitude float64, mach float64, lofting bool) *Model {
 		flight.Vec3{Y: altitude},
 		flight.Vec3{X: mach * sound},
 		&Target{Position: flight.Vec3{X: 500000, Y: altitude}},
-		0,
+		flight.Environment{}, 0,
 	)
 	m.Loft = lofting
 	m.Life = 1e9
@@ -175,7 +175,7 @@ func TestIntercept(t *testing.T) {
 		m := New(flight.Vec3{Y: 8000}, flight.Vec3{X: 0.9 * sound}, &Target{
 			Position: flight.Vec3{X: 30000, Y: 8000},
 			Velocity: flight.Vec3{X: -250},
-		}, 0)
+		}, flight.Environment{}, 0)
 		target := Target{Position: flight.Vec3{X: 30000, Y: 8000}, Velocity: flight.Vec3{X: -250}}
 		phases := map[int]bool{}
 		fused := false
@@ -207,7 +207,7 @@ func TestIntercept(t *testing.T) {
 // finds ahead — and never lofts.
 func TestVisual(t *testing.T) {
 	_, sound := atmosphere(3000)
-	m := New(flight.Vec3{Y: 3000}, flight.Vec3{X: 0.8 * sound}, nil, 0)
+	m := New(flight.Vec3{Y: 3000}, flight.Vec3{X: 0.8 * sound}, nil, flight.Environment{}, 0)
 	if m.Phase != Active || m.Loft {
 		t.Fatalf("visual launch starts phase %d loft %v, want Active and no loft", m.Phase, m.Loft)
 	}
@@ -249,7 +249,7 @@ func TestNotched(t *testing.T) {
 		t.Error("a slow jet above the radar sits in the notch")
 	}
 	acquired := func(height float64) bool {
-		m := New(flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, nil, 0)
+		m := New(flight.Vec3{Y: 3000}, flight.Vec3{X: 250}, nil, flight.Environment{}, 0)
 		target := Target{Position: flight.Vec3{X: 8000, Y: height}, Velocity: beam}
 		m.Step(dt, nil, &target)
 		return m.Phase == Pitbull
@@ -282,7 +282,7 @@ func TestDeterminism(t *testing.T) {
 
 // TestBattery: the default life ends the flight.
 func TestBattery(t *testing.T) {
-	m := New(flight.Vec3{Y: 5000}, flight.Vec3{X: 300}, &Target{Position: flight.Vec3{X: 400000, Y: 5000}}, 0)
+	m := New(flight.Vec3{Y: 5000}, flight.Vec3{X: 300}, &Target{Position: flight.Vec3{X: 400000, Y: 5000}}, flight.Environment{}, 0)
 	steps := 0
 	for m.Step(dt, nil, nil) {
 		steps++
@@ -303,7 +303,7 @@ func TestLadder(t *testing.T) {
 	head := Ladder(
 		Target{Position: flight.Vec3{Y: 10000}, Velocity: flight.Vec3{X: 0.9 * high}},
 		Target{Position: flight.Vec3{X: 70000, Y: 10000}, Velocity: flight.Vec3{X: -0.9 * high}},
-		0,
+		flight.Environment{}, 0,
 	)
 	if !(head.Minimum < head.Escape && head.Escape <= head.Max && head.Max <= head.Aero) {
 		t.Fatalf("head-on rungs disordered: %+v", head)
@@ -318,7 +318,7 @@ func TestLadder(t *testing.T) {
 	tail := Ladder(
 		Target{Position: flight.Vec3{Y: 10000}, Velocity: flight.Vec3{X: 0.9 * high}},
 		Target{Position: flight.Vec3{X: 40000, Y: 10000}, Velocity: flight.Vec3{X: 0.9 * high}},
-		0,
+		flight.Environment{}, 0,
 	)
 	if tail.Max >= head.Max*0.7 {
 		t.Fatalf("tail-chase Rmax %.0f km should sit well under head-on %.0f km", tail.Max/1000, head.Max/1000)
@@ -328,7 +328,7 @@ func TestLadder(t *testing.T) {
 	deck := Ladder(
 		Target{Position: flight.Vec3{Y: 1000}, Velocity: flight.Vec3{X: 0.9 * low}},
 		Target{Position: flight.Vec3{X: 40000, Y: 1000}, Velocity: flight.Vec3{X: -0.9 * low}},
-		0,
+		flight.Environment{}, 0,
 	)
 	if deck.Max >= head.Max {
 		t.Fatalf("deck Rmax %.0f km should sit under high-altitude %.0f km", deck.Max/1000, head.Max/1000)
@@ -346,7 +346,7 @@ func TestLadder(t *testing.T) {
 func TestLadderInnerEdge(t *testing.T) {
 	shooter := Target{Position: flight.Vec3{Y: 6000}, Velocity: flight.Vec3{X: 250}}
 	for _, crossing := range []float64{300, 250} {
-		z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{Z: crossing}}, 0)
+		z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{Z: crossing}}, flight.Environment{}, 0)
 		if z.Minimum <= 1500 || z.Minimum >= z.Max {
 			t.Errorf("crossing at %.0f m/s: the zone endorses the 1,500 m shot its round misses: %+v", crossing, z)
 		}
@@ -354,7 +354,7 @@ func TestLadderInnerEdge(t *testing.T) {
 
 	// The positive control: a stern chase at the same range arrives, and keeps
 	// the floor as its inner edge.
-	if z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{X: 200}}, 0); !(z.Minimum < 1500 && 1500 <= z.Max) {
+	if z := Ladder(shooter, Target{Position: flight.Vec3{X: 1500, Y: 6000}, Velocity: flight.Vec3{X: 200}}, flight.Environment{}, 0); !(z.Minimum < 1500 && 1500 <= z.Max) {
 		t.Errorf("a stern chase at 1,500 m should still be a shot, got %+v", z)
 	}
 }
@@ -367,7 +367,7 @@ func TestTerminalMiss(t *testing.T) {
 	fly := func(evading bool) float64 {
 		_, sound := atmosphere(6000)
 		start := Target{Position: flight.Vec3{X: 20000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
-		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: start.Position, Velocity: start.Velocity}, 0)
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: start.Position, Velocity: start.Velocity}, flight.Environment{}, 0)
 		target := start
 		closest := math.MaxFloat64
 		for m.Time < 60 {
@@ -394,6 +394,29 @@ func TestTerminalMiss(t *testing.T) {
 	// grazes a breaking target at 8-15 m, which the fragments spray past.
 	if miss := fly(true); miss > 4 {
 		t.Fatalf("breaking target: closest approach %.1f m, want under 4", miss)
+	}
+}
+
+// TestAdvanceFusesOnTheTargetWhereItIs: Advance flies the target along each
+// slice with the round, and the fuse rewinds both across the slice from where
+// they are at its end, so the target is moved on before the fuse reads it. A
+// round passing 6 m from a jet crossing at 400 m/s measures a 6 m pass and
+// records where the jet was as it burst; read a slice behind, the jet stood
+// 1.7 m back along its path and the pass measured 6.2 m.
+func TestAdvanceFusesOnTheTargetWhereItIs(t *testing.T) {
+	crossing := flight.Vec3{X: 400}
+	m := New(flight.Vec3{Y: 3000}, crossing.Add(flight.Vec3{Z: 1000}), nil, flight.Environment{}, 0)
+	m.Time = 10
+	truth := Target{Position: flight.Vec3{Y: 3006, Z: 1}, Velocity: crossing} // closing along Z alone: the pass is the 6 m in Y
+	_, fired, burst := m.Advance(1.0/60, nil, &truth)
+	if !fired {
+		t.Fatalf("a pass 6 m from the jet never fused (closest %.2f m)", m.Least)
+	}
+	if math.Abs(m.Least-6) > 0.05 {
+		t.Errorf("a pass 6 m from a crossing jet measured %.2f m", m.Least)
+	}
+	if off := burst.Subtract(m.Struck); math.Abs(off.Length()-6) > 0.05 || math.Abs(off.X) > 0.05 {
+		t.Errorf("the burst sits %.2f m from the jet where it was as it burst (%.2f m along his path), want 6 m square to it", off.Length(), off.X)
 	}
 }
 
@@ -436,7 +459,7 @@ func TestFrameRate(t *testing.T) {
 	fly := func(stride float64) (flight.Vec3, bool) {
 		_, sound := atmosphere(6000)
 		target := Target{Position: flight.Vec3{X: 20000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
-		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, flight.Environment{}, 0)
 		fused := false
 		for m.Time < 60 {
 			alive, fired, _ := m.Advance(stride, &Target{Position: target.Position, Velocity: target.Velocity}, &target)
@@ -475,7 +498,7 @@ func TestChaff(t *testing.T) {
 		// Approach HOT to Pitbull: a beaming target cannot be freshly acquired. The
 		// established track holds through the notch; only chaff steals it.
 		target := Target{Position: flight.Vec3{X: 14000, Y: height}, Velocity: flight.Vec3{X: -0.9 * sound}}
-		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, flight.Environment{}, 0)
 		for m.Time < 60 && m.Phase != Pitbull {
 			if !m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target) {
 				break
@@ -562,7 +585,7 @@ func TestChaffDefeat(t *testing.T) {
 		// breaks into the beam and dispenses as the seeker goes terminal —
 		// the notch-and-chaff defence flown as briefed.
 		target := Target{Position: flight.Vec3{X: 16000, Y: height}, Velocity: flight.Vec3{X: -0.85 * sound}}
-		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, flight.Environment{}, 0)
 		offered, broke := false, false
 		for m.Time < Battery {
 			if !m.Step(dt, nil, &target) {
@@ -621,7 +644,7 @@ func TestBeacon(t *testing.T) {
 	// and the bloom.
 	fly := func(radiating func(m *Model) bool) (bool, float64) {
 		target := Target{Position: flight.Vec3{X: 16000, Y: 2000}, Velocity: flight.Vec3{X: -0.85 * sound}}
-		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+		m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, flight.Environment{}, 0)
 		offered, broke := false, false
 		for m.Time < Battery {
 			m.Beacon = radiating(m)
@@ -673,7 +696,7 @@ func TestBeacon(t *testing.T) {
 			start = flight.Vec3{X: 30000, Y: 8000}
 		}
 		target := Target{Position: start, Velocity: velocity}
-		m := New(flight.Vec3{Y: 8000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: start.Add(flight.Vec3{Z: 3000}), Velocity: flight.Vec3{}}, 0)
+		m := New(flight.Vec3{Y: 8000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: start.Add(flight.Vec3{Z: 3000}), Velocity: flight.Vec3{}}, flight.Environment{}, 0)
 		m.Life = 1e9
 		for m.Time < 200 {
 			m.Beacon = radiating
@@ -702,7 +725,7 @@ func TestBeacon(t *testing.T) {
 func TestChaffResolve(t *testing.T) {
 	_, sound := atmosphere(6000)
 	target := Target{Position: flight.Vec3{X: 14000, Y: 6000}, Velocity: flight.Vec3{X: -0.9 * sound}}
-	m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, 0)
+	m := New(flight.Vec3{Y: 6000}, flight.Vec3{X: 0.9 * sound}, &Target{Position: target.Position, Velocity: target.Velocity}, flight.Environment{}, 0)
 	for m.Time < 60 && m.Phase != Pitbull {
 		if !m.Step(dt, &Target{Position: target.Position, Velocity: target.Velocity}, &target) {
 			break
@@ -743,7 +766,7 @@ func TestEscapeTurnFromExactlyHeadOn(t *testing.T) {
 	shooter := Target{Position: flight.Vec3{Y: 9144}, Velocity: flight.Vec3{X: 250}}
 	// EXACTLY anti-parallel: no perpendicular component whatsoever.
 	target := Target{Position: flight.Vec3{X: 30000, Y: 9144}, Velocity: flight.Vec3{X: -250}}
-	zone := Ladder(shooter, target, 0)
+	zone := Ladder(shooter, target, flight.Environment{}, 0)
 	if zone.Escape >= zone.Max {
 		t.Errorf("an exactly head-on target never broke: Escape %.0f, Max %.0f — the escape turn is degenerate",
 			zone.Escape, zone.Max)
@@ -758,7 +781,7 @@ func TestEscapeTurnFromExactlyHeadOn(t *testing.T) {
 	// fails too, the guard broke the ordinary path rather than fixing the edge.
 	oblique := Target{Position: flight.Vec3{X: 30000, Y: 9144},
 		Velocity: flight.Vec3{X: 250 * math.Cos(2.356), Z: 250 * math.Sin(2.356)}}
-	if z := Ladder(shooter, oblique, 0); z.Escape >= z.Max {
+	if z := Ladder(shooter, oblique, flight.Environment{}, 0); z.Escape >= z.Max {
 		t.Errorf("the oblique escape regressed: Escape %.0f, Max %.0f", z.Escape, z.Max)
 	}
 }

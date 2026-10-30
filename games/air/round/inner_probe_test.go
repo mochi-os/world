@@ -26,7 +26,7 @@ func flown(shooter Target, target Target, wrap float64, trial float64, breaking 
 	const step = 0.2 // ladder.go's own integration step
 	direction := relative(shooter.Position, target.Position, wrap).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, wrap)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
 	closest, mach := math.MaxFloat64, -1.0
 	for {
 		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
@@ -66,7 +66,7 @@ func fled(shooter Target, target Target, wrap float64, trial float64, breaking b
 	const step = 0.2
 	direction := relative(shooter.Position, target.Position, wrap).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, wrap)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
 	closest, flew := math.MaxFloat64, 0.0
 	for {
 		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
@@ -104,7 +104,7 @@ func trace(shooter Target, target Target, wrap float64, trial float64) string {
 	const step = 0.2
 	direction := relative(shooter.Position, target.Position, wrap).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, wrap)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
 	closest, flew, alive := math.MaxFloat64, 0.0, true
 	marks := []float64{}
 	for {
@@ -160,7 +160,7 @@ func TestAmraamInnerBand(t *testing.T) {
 		rad := at.cross * math.Pi / 180
 		target := Target{Position: flight.Vec3{X: 30000, Y: at.height},
 			Velocity: flight.Vec3{X: at.theirs * math.Cos(rad), Z: at.theirs * math.Sin(rad)}}
-		zone := Ladder(shooter, target, 0)
+		zone := Ladder(shooter, target, flight.Environment{}, 0)
 
 		// The control: the replication's own outermost arriving range, found
 		// the same way rung() finds it. If this disagrees with Ladder's Max
@@ -233,7 +233,7 @@ func endless(shooter Target, target Target, wrap float64, trial float64) (float6
 	const step = 0.2
 	direction := relative(shooter.Position, target.Position, wrap).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, wrap)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
 	m.Life = 1e9 // the battery is the thing under suspicion: take it out of the way
 	closest, mach, flew := math.MaxFloat64, -1.0, 0.0
 	for {
@@ -265,7 +265,7 @@ func TestSubsonicArrivalExists(t *testing.T) {
 	shooter := Target{Position: flight.Vec3{Y: 9144}, Velocity: flight.Vec3{X: 250}}
 	target := Target{Position: flight.Vec3{X: 30000, Y: 9144},
 		Velocity: flight.Vec3{X: 250 * math.Cos(math.Pi), Z: 250 * math.Sin(math.Pi)}}
-	zone := Ladder(shooter, target, 0)
+	zone := Ladder(shooter, target, flight.Environment{}, 0)
 	fmt.Printf("battery-limited ladder: Aero %.0f  Max %.0f  Escape %.0f\n", zone.Aero, zone.Max, zone.Escape)
 	fmt.Println("\nwith the battery REMOVED — where does arrival actually go subsonic?")
 	fmt.Println("    launch km |  flew  | closest |  arrival Mach")
@@ -295,7 +295,7 @@ func TestSubsonicArrivalAgainstSlowTarget(t *testing.T) {
 	for _, speed := range []float64{250, 150, 80, 30} {
 		target := Target{Position: flight.Vec3{X: 30000, Y: 9144},
 			Velocity: flight.Vec3{X: speed * math.Cos(math.Pi), Z: speed * math.Sin(math.Pi)}}
-		zone := Ladder(shooter, target, 0)
+		zone := Ladder(shooter, target, flight.Environment{}, 0)
 		gap := ""
 		if zone.Aero > zone.Max+100 {
 			gap = "   <- Aero and Max SEPARATE here"
@@ -334,7 +334,7 @@ func TestAeroVersusMaxAcrossTheEnvelope(t *testing.T) {
 				shooter := Target{Position: flight.Vec3{Y: height}, Velocity: flight.Vec3{X: 250}}
 				target := Target{Position: flight.Vec3{X: 30000, Y: height},
 					Velocity: flight.Vec3{X: speed * math.Cos(rad), Z: speed * math.Sin(rad)}}
-				zone := Ladder(shooter, target, 0)
+				zone := Ladder(shooter, target, flight.Environment{}, 0)
 				if zone.Max <= 0 {
 					continue
 				}

@@ -781,7 +781,7 @@ func TestAmraamAlongTheNose(t *testing.T) {
 	target.model.State.Position, target.model.State.Velocity = flight.Vec3{X: 30000, Y: 7000}, flight.Vec3{X: -250}
 	shooter.emitter, shooter.lock = 2, 1
 	him := round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
-	honest := round.Ladder(fired(shooter), him, 0)
+	honest := round.Ladder(fired(shooter), him, flight.Environment{}, 0)
 	for k, want := range []struct {
 		station string
 		launch  flight.Vec3
@@ -802,7 +802,7 @@ func TestAmraamAlongTheNose(t *testing.T) {
 			t.Errorf("%s: the DLZ was drawn for a round leaving at %+v, and fox3 fired one at %+v", want.station, drawn, launched)
 		}
 	}
-	path := round.Ladder(round.Target{Position: shooter.model.State.Position, Velocity: shooter.model.State.Velocity}, him, 0)
+	path := round.Ladder(round.Target{Position: shooter.model.State.Position, Velocity: shooter.model.State.Velocity}, him, flight.Environment{}, 0)
 	if honest.Escape < path.Escape+5000 {
 		t.Errorf("the no-escape range barely moved off the flight path (%.0f m against %.0f m): the control is not a control", honest.Escape, path.Escape)
 	}
@@ -816,7 +816,7 @@ func TestSeparation(t *testing.T) {
 	ladder := round.Ladder(
 		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
-		0,
+		flight.Environment{}, 0,
 	)
 	apart := separation()
 	if apart != ladder.Max+commit {
@@ -877,7 +877,7 @@ func TestOpening(t *testing.T) {
 			split++
 		}
 		for slot := 0; slot < 2; slot++ {
-			if reach := round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), 0).Max; o.Apart < reach+commit-1 {
+			if reach := round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), flight.Environment{}, 0).Max; o.Apart < reach+commit-1 {
 				t.Fatalf("seed %d: slot %d's Rmax %.0f m plus the commit buffer reaches past the %.0f m apart", seed, slot, reach, o.Apart)
 			}
 		}
@@ -930,20 +930,25 @@ func TestOpeningSpawn(t *testing.T) {
 	if i.opening != o || i.apart != o.Apart {
 		t.Fatalf("the joust opened on %+v, apart %.0f; the seed draws %+v", i.opening, i.apart, o)
 	}
+	// The drawn heading and speed are the jets' through the air: the match's wind
+	// carries them on it.
+	through := func(i *instance, st *flight.State) flight.Vec3 {
+		return st.Velocity.Subtract(flight.Wind(st.Position, st.Time, i.environment))
+	}
 	for slot, st := range pair {
 		want := o.state(slot, o.Apart)
 		if st.Position.Subtract(want.Position).Length() > 1 {
 			t.Errorf("slot %d spawned at %+v, want %+v", slot, st.Position, want.Position)
 		}
-		if heading := st.Velocity.Normalize(); heading.Dot(want.Velocity.Normalize()) < 0.999 {
-			t.Errorf("slot %d spawned heading %+v, want %+v", slot, heading, want.Velocity.Normalize())
+		if heading := through(i, st).Normalize(); heading.Dot(want.Velocity.Normalize()) < 0.999 {
+			t.Errorf("slot %d spawned heading %+v through the air, want %+v", slot, heading, want.Velocity.Normalize())
 		}
-		if speed := st.Velocity.Length(); math.Abs(speed-o.Speed) > 0.5 { // the match has no wind
-			t.Errorf("slot %d spawned at %.1f m/s, want the drawn %.1f", slot, speed, o.Speed)
+		if speed := through(i, st).Length(); math.Abs(speed-o.Speed) > 0.5 {
+			t.Errorf("slot %d spawned at %.1f m/s through the air, want the drawn %.1f", slot, speed, o.Speed)
 		}
 	}
 	i, pair = joust(map[string]any{"opening": "head"})
-	if i.opening != headon() || pair[0].Position.Y != bvraltitude || pair[1].Position.Y != bvraltitude || math.Abs(pair[0].Velocity.Length()-bvrspeed) > 0.5 {
+	if i.opening != headon() || pair[0].Position.Y != bvraltitude || pair[1].Position.Y != bvraltitude || math.Abs(through(i, pair[0]).Length()-bvrspeed) > 0.5 {
 		t.Errorf(`"opening": "head" did not pin the classic start: %+v, blocks %.0f/%.0f`, i.opening, pair[0].Position.Y, pair[1].Position.Y)
 	}
 }

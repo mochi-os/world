@@ -31,6 +31,10 @@ func TestSaddleFinish(t *testing.T) {
 	slow := flight.Vec3{X: 140}
 	fired, starved := false, false
 	for tick := uint64(0); tick < 60*12; tick++ {
+		if !prey.alive || prey.model == nil {
+			fired = true // shot down: the trigger came
+			break
+		}
 		aloft(expert, base, slow)
 		aloft(prey, base.Add(flight.Vec3{X: 400}), slow)
 		i.Step(tick, nil)
@@ -100,11 +104,15 @@ func TestDuelSaddleFinish(t *testing.T) {
 	i, expert, prey := duellist(t, "drone")
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	slow := flight.Vec3{X: 100} // 194 kt: under 0.55 of corner at this height
-	if gate := 0.55 * corner(expert.model); slow.X >= gate {
-		t.Fatalf("the twin must sit under the reflex's gate: 100 m/s against %.0f", gate)
+	if gate, speed := 0.55*corner(expert.model), flight.Equivalent(slow.X, base.Y, flight.Environment{}); speed >= gate {
+		t.Fatalf("the twin must sit under the reflex's gate: %.0f m/s equivalent against %.0f", speed, gate)
 	}
 	fired, starved := false, false
 	for tick := uint64(0); tick < 60*12; tick++ {
+		if !prey.alive || prey.model == nil {
+			fired = true // shot down: the trigger came
+			break
+		}
 		aloft(expert, base, slow)
 		aloft(prey, base.Add(flight.Vec3{X: 400}), slow)
 		i.Step(tick, nil)

@@ -99,7 +99,7 @@ func TestDeckBudgetsTheRecovery(t *testing.T) {
 			for _, bank := range []float64{0, 180} {
 				low, high := 0.0, 12000.0
 				for k := 0; k < 40; k++ {
-					if middle := (low + high) / 2; deck(&diving(middle, knots, dive, bank).State) {
+					if middle := (low + high) / 2; deck(&diving(middle, knots, dive, bank).State, flight.Environment{}) {
 						low = middle
 					} else {
 						high = middle
@@ -137,18 +137,18 @@ func TestDeckBudgetsTheRecovery(t *testing.T) {
 // lets go once the jet climbs.
 func TestRecoveryHoldsUntilClimbing(t *testing.T) {
 	inverted, upright := diving(2400, 500, 75, 180), diving(2400, 500, 75, 0)
-	if !deck(&inverted.State) || deck(&upright.State) {
+	if !deck(&inverted.State, flight.Environment{}) || deck(&upright.State, flight.Environment{}) {
 		t.Fatalf("the fixture is wrong: at 7,900 ft deck() reads %v inverted and %v upright, want true and false",
-			deck(&inverted.State), deck(&upright.State))
+			deck(&inverted.State, flight.Environment{}), deck(&upright.State, flight.Environment{}))
 	}
 	b := &brain{}
-	if !b.recovers(&inverted.State) {
+	if !b.recovers(&inverted.State, flight.Environment{}) {
 		t.Fatal("inverted in a 75 degree dive at 7,900 ft, the recovery was not called")
 	}
-	if !b.recovers(&upright.State) {
+	if !b.recovers(&upright.State, flight.Environment{}) {
 		t.Error("rolled upright and still diving, the recovery let go of the stick")
 	}
-	if b.recovers(&diving(2400, 500, -10, 0).State) {
+	if b.recovers(&diving(2400, 500, -10, 0).State, flight.Environment{}) {
 		t.Error("climbing, the recovery kept the stick")
 	}
 }
@@ -193,5 +193,39 @@ func TestScriptDiveHoldsTheFight(t *testing.T) {
 	}
 	if ticks, entries := fly(1900, 450, 60); ticks == 0 || entries > 1 {
 		t.Errorf("diving at 6,200 ft the deck recovery took the stick %d times for %.1f s in all, want once", entries, float64(ticks)/60)
+	}
+}
+
+// TestDeckReadsTheAir: the pull-out is judged on the dive through the air. A
+// dive flown downwind reads shallower and faster over the ground, and one
+// flown into the wind steeper and slower; the jet pulls out through the air,
+// so in the match's wind deck() calls the recovery at the height it calls the
+// same dive in still air.
+func TestDeckReadsTheAir(t *testing.T) {
+	blown := flight.Environment{Seed: 1, Wind: trades}
+	for _, knots := range []float64{250, 450} {
+		for _, dive := range []float64{20, 45, 75} {
+			for _, heading := range []float64{0, math.Pi} {
+				call := func(environment flight.Environment) float64 {
+					low, high := 0.0, 12000.0
+					for k := 0; k < 40; k++ {
+						middle := (low + high) / 2
+						m := diving(middle, knots, dive, 0)
+						turn := flight.Axis(flight.Vec3{Y: 1}, heading)
+						m.State.Velocity = turn.Rotate(m.State.Velocity).Add(flight.Wind(m.State.Position, m.State.Time, environment))
+						m.State.Attitude = turn.Multiply(m.State.Attitude)
+						if deck(&m.State, environment) {
+							low = middle
+						} else {
+							high = middle
+						}
+					}
+					return low
+				}
+				if still, carried := call(flight.Environment{Seed: 1}), call(blown); math.Abs(still-carried) > 1 {
+					t.Errorf("a %.0f kt %.0f degree dive heading %.0f degrees: the recovery is called %.0f m up in still air and %.0f in the wind", knots, dive, heading*180/math.Pi, still, carried)
+				}
+			}
+		}
 	}
 }

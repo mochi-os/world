@@ -432,7 +432,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 					slow := uint64(tick / 4) // the 60 Hz tick the live path counts in
 					target.Step(you.fly(target, me, slow))
 					if float64(slow-sampled)/60 >= 0.25 {
-						b.ring = circle(sampleP, sampleV, sampled, target.State.Position, target.State.Velocity, slow)
+						b.ring = circle(sampleP, sampleV, sampled, target.State.Position, target.State.Velocity, slow, flight.Vec3{})
 						sampleP, sampleV, sampled = target.State.Position, target.State.Velocity, slow
 					}
 					// refresh the track the way the live path does, so pipper()
@@ -657,7 +657,7 @@ func TestGunSolutionAimSweep(t *testing.T) {
 					slow := uint64(tick / 4)
 					target.Step(you.fly(target, me, slow))
 					if float64(slow-sampled)/60 >= 0.25 {
-						b.ring = circle(sampleP, sampleV, sampled, target.State.Position, target.State.Velocity, slow)
+						b.ring = circle(sampleP, sampleV, sampled, target.State.Position, target.State.Velocity, slow, flight.Vec3{})
 						sampleP, sampleV, sampled = target.State.Position, target.State.Velocity, slow
 					}
 					swing := target.State.Velocity.Subtract(b.prey.velocity).Scale(60)

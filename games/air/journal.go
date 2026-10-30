@@ -176,7 +176,7 @@ func (i *instance) chronicle(slot int, a *craft, tick uint64) {
 		his = &quarry.model.State.Position
 	}
 	b.journal.resolve(tick, me.Position, his, i.environment.Wrap)
-	b.journal.notice(tick, b.mode, me.Velocity.Length(), 0.55*corner(a.model))
+	b.journal.notice(tick, b.mode, equivalent(a.model), 0.55*corner(a.model))
 }
 
 // minute writes one re-plan into the journal. The winner is flown once more

@@ -78,7 +78,11 @@ type Model struct {
 	Loft     bool // the loft autopilot (off for VISUAL/boresight shots)
 	Wrap     float64
 
+	Environment flight.Environment // the weather it flies through: the wind carries the round as it carries the jets
+	Clock       float64            // the session time at launch, the wind's own clock
+
 	Least    float64     // closest approach to the truth seen so far, m (0 = never measured)
+	Struck   flight.Vec3 // where the target was at the instant the fuse fired: the burst is read against the jet there
 	Beacon   bool        // the target is RADIATING this step (#31): the seeker homes on the jam — set by the caller, who owns emission truth
 	Estimate flight.Vec3 // where the round believes the target is (datalinked, then coasted)
 	Drift    flight.Vec3 // the estimate's velocity
@@ -113,17 +117,17 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	m.Phase = Active
 	m.held = Hold
 	m.Estimate = bloom
-	m.Drift = flight.Vec3{Y: -1} // the cloud hangs, sinking
+	m.Drift = flight.Wind(bloom, m.Clock+m.Time, m.Environment).Add(flight.Vec3{Y: -1}) // the cloud hangs in the air, sinking, and goes where the wind takes it
 	m.Stale = 0
 	return true
 }
 
 // New launches a round from the shooter's position and velocity (launch
 // mechanics are the caller's, already applied to velocity) with an initial
-// target estimate. A nil estimate is a VISUAL shot: the seeker is active
-// immediately.
-func New(position flight.Vec3, velocity flight.Vec3, estimate *Target, wrap float64) *Model {
-	m := &Model{Position: position, Velocity: velocity, Life: Battery, Fuel: Propellant, Wrap: wrap, Loft: true}
+// target estimate, into the environment's air at the session time clock. A
+// nil estimate is a VISUAL shot: the seeker is active immediately.
+func New(position flight.Vec3, velocity flight.Vec3, estimate *Target, environment flight.Environment, clock float64) *Model {
+	m := &Model{Position: position, Velocity: velocity, Life: Battery, Fuel: Propellant, Wrap: environment.Wrap, Environment: environment, Clock: clock, Loft: true}
 	if estimate != nil {
 		m.Estimate = estimate.Position
 		m.Drift = estimate.Velocity
@@ -188,6 +192,17 @@ func (m *Model) relative(from flight.Vec3, to flight.Vec3) flight.Vec3 {
 // Range is the distance to the current estimate.
 func (m *Model) Range() float64 { return m.relative(m.Position, m.Estimate).Length() }
 
+// Wind is the air's own velocity where the round is now.
+func (m *Model) Wind() flight.Vec3 {
+	return flight.Wind(m.Position, m.Clock+m.Time, m.Environment)
+}
+
+// Mach is the round's speed through the air over the speed of sound there.
+func (m *Model) Mach() float64 {
+	_, sound := atmosphere(m.Position.Y)
+	return m.Velocity.Subtract(m.Wind()).Length() / sound
+}
+
 // Step advances the round by dt seconds. support is a fresh datalink estimate
 // (nil when unsupported); truth is the target's actual state. Returns false
 // once the round is spent; the fuse is the caller's, via Fused.
@@ -224,11 +239,17 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	// the ESTIMATE — a coasted estimate still schedules activation, which is
 	// how a shot survives a dropped track. It holds the target (Pitbull)
 	// once the truth sits inside the look cone at seeker range.
-	speed := m.Velocity.Length()
+	//
+	// The round flies through the air, and the air moves: its speed, the axis
+	// it points along, its drag and its lift are the air's, and the wind
+	// carries it as it carries the target. Over the ground they would make a
+	// shot downwind come up short and one upwind reach further.
+	wind := m.Wind()
+	speed := m.Velocity.Subtract(wind).Length()
 	if speed < 1 {
 		speed = 1
 	}
-	forward := m.Velocity.Scale(1 / speed)
+	forward := m.Velocity.Subtract(wind).Scale(1 / speed)
 
 	// HOME-ON-JAM (#31): the beacon overrides the chaff hold, the notch, the
 	// datalink and the activation schedule, but gives angle only - pursuit, no
@@ -335,9 +356,10 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		sight := m.relative(m.Position, m.Estimate)
 		reach := sight.Length()
 		predicted := m.Estimate
+		drift := m.Drift.Subtract(wind) // the estimate's motion through the air the round flies in: the collision is the same in it
 		for i := 0; i < 2; i++ {
 			togo := m.relative(m.Position, predicted).Length() / speed
-			predicted = m.Estimate.Add(m.Drift.Scale(togo))
+			predicted = m.Estimate.Add(drift.Scale(togo))
 		}
 		desired := m.relative(m.Position, predicted).Normalize()
 		if m.Loft && m.Phase == Midcourse {
@@ -363,7 +385,8 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 
 // integrate applies one slice of physics for a commanded lateral
 // acceleration: the shared tail of every guidance mode, including the
-// home-on-jam pursuit that bypasses the phase machine entirely.
+// home-on-jam pursuit that bypasses the phase machine entirely. speed and
+// forward are the round's through the air.
 func (m *Model) integrate(dt float64, command flight.Vec3, speed float64, forward flight.Vec3) bool {
 	// The lateral channel, capped by structure and by what the air gives.
 	density, sound := atmosphere(m.Position.Y)
@@ -434,10 +457,12 @@ func (m *Model) Advance(dt float64, support *Target, truth *Target) (bool, bool,
 		left -= step
 		alive = m.Step(step, feed, moving)
 		if moving != nil {
+			// The target to the slice's end before the fuse reads it: the fuse
+			// rewinds both across the slice from where they are at its end.
+			moving.Position = moving.Position.Add(moving.Velocity.Scale(step))
 			if fired, burst := m.Fused(step, *moving); fired {
 				return alive, true, burst
 			}
-			moving.Position = moving.Position.Add(moving.Velocity.Scale(step))
 		}
 		if feed != nil {
 			feed.Position = feed.Position.Add(feed.Velocity.Scale(step))
@@ -475,7 +500,8 @@ func (m *Model) Fused(dt float64, truth Target) (bool, flight.Vec3) {
 	if nearest.Length() > Fuse || at >= dt {
 		return false, flight.Vec3{} // outside, or still closing at the step's end
 	}
-	// The burst: the round's own position at that instant.
+	// The burst: the round's own position at that instant, and the target's.
+	m.Struck = truth.Position.Subtract(truth.Velocity.Scale(dt - at))
 	return true, m.Position.Subtract(m.Velocity.Scale(dt - at))
 }
 

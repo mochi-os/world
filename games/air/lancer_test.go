@@ -244,7 +244,7 @@ func (l *lancer) fly(i *instance, seat, bandit int, tick uint64) (map[string]any
 	// zone's edge: a pilot about to defend answers with the round he has, as the
 	// bot's counterfire does, or he defends with every round still aboard.
 	if l.locked && l.starved == 0 && (l.zoned == 0 || tick+1-l.zoned >= 60) {
-		l.zone = round.Ladder(fired(a), round.Target{Position: l.position, Velocity: l.velocity}, wrap)
+		l.zone = round.Ladder(fired(a), round.Target{Position: l.position, Velocity: l.velocity}, flight.Environment{Wrap: wrap}, 0)
 		l.zoned = tick + 1
 	}
 	window := l.zone.Escape + l.depth*math.Max(l.zone.Max-l.zone.Escape, 0)
@@ -469,7 +469,7 @@ func joust(t *testing.T, level string, seed uint64, pilot *lancer, seconds int, 
 		}
 		if him.amraams < rack {
 			f.launches++
-			zone := round.Ladder(fired(him), round.Target{Position: me.model.State.Position, Velocity: me.model.State.Velocity}, i.environment.Wrap)
+			zone := round.Ladder(fired(him), round.Target{Position: me.model.State.Position, Velocity: me.model.State.Velocity}, i.environment, 0)
 			if span > zone.Max || span < zone.Minimum {
 				f.outside++
 			}
@@ -874,7 +874,7 @@ func TestLancerRadar(t *testing.T) {
 // before it shoots again.
 func TestLancerShot(t *testing.T) {
 	_, me, him := bench(flight.Vec3{X: 40000, Y: 6000}, flight.Vec3{X: -1})
-	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, 0)
+	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, flight.Environment{}, 0)
 	if zone.Escape <= 2*zone.Minimum || zone.Max <= 1.5*zone.Escape {
 		t.Fatalf("the bench's zone has no room to test in: %+v", zone)
 	}
@@ -986,7 +986,7 @@ func TestLancerCrank(t *testing.T) {
 // zone and short of its own shot, and flies at him when he is not looking.
 func TestLancerWary(t *testing.T) {
 	_, me, him := bench(flight.Vec3{X: 50000, Y: 6000}, flight.Vec3{X: -1})
-	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, 0)
+	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, flight.Environment{}, 0)
 	window := zone.Escape + 0.6*(zone.Max-zone.Escape)
 	start := (window + zone.Max) / 2
 	if start-window < 6000 {
@@ -1056,7 +1056,7 @@ func TestLancerChase(t *testing.T) {
 // the shot's cone for a whole run-in.
 func TestLancerPoint(t *testing.T) {
 	_, me, him := bench(flight.Vec3{X: 14000, Y: 2500}, flight.Vec3{X: -1})
-	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, 0)
+	zone := round.Ladder(fired(me), round.Target{Position: him.model.State.Position, Velocity: him.model.State.Velocity}, flight.Environment{}, 0)
 	if zone.Escape < 15000 {
 		t.Fatalf("the bench's no-escape range is %.0f m, inside the 14 km it starts at", zone.Escape)
 	}

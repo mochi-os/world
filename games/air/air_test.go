@@ -654,11 +654,12 @@ func TestBotCircles(t *testing.T) {
 		}
 		// Head-on INSIDE the lead-turn gate: the probe pins the decision at the
 		// first think — a longer sim lets both jets maneuver the geometry away.
+		// Both speeds are through the match's air.
 		mark.model.State.Position = flight.Vec3{X: 0, Y: 4500, Z: 0}
-		mark.model.State.Velocity = flight.Vec3{X: 220}
+		mark.model.State.Velocity = flight.Vec3{X: 220}.Add(flight.Wind(mark.model.State.Position, 0, i.environment))
 		mark.model.State.Attitude = flight.Look(flight.Vec3{X: 1})
 		expert.model.State.Position = flight.Vec3{X: 500, Y: height, Z: 30}
-		expert.model.State.Velocity = flight.Vec3{X: -speed}
+		expert.model.State.Velocity = flight.Vec3{X: -speed}.Add(flight.Wind(expert.model.State.Position, 0, i.environment))
 		expert.model.State.Attitude = flight.Look(flight.Vec3{X: -1})
 		i.Step(0, nil)
 		return expert.brain.plan
@@ -892,10 +893,11 @@ func teams(t *testing.T) (*instance, *craft, *craft, *craft, *craft) {
 	return i, expert, mate, blue1, blue2
 }
 
-// aloft parks a craft at a position with a velocity, well above the floor.
+// aloft parks a craft at a position with a velocity through the air, well
+// above the floor.
 func aloft(c *craft, position, velocity flight.Vec3) {
 	c.model.State.Position = position
-	c.model.State.Velocity = velocity
+	c.model.State.Velocity = velocity.Add(flight.Wind(position, c.model.State.Time, c.model.Environment)) // through the match's air
 	c.model.State.Attitude = flight.Look(velocity.Normalize())
 }
 
@@ -1671,8 +1673,9 @@ func TestBotDrag(t *testing.T) {
 	for tick := uint64(0); tick < 60*8; tick++ {
 		place()
 		s := &expert.model.State
-		if speed := s.Velocity.Length(); speed > 0.66*corner(expert.model) {
-			s.Velocity = s.Velocity.Scale(0.6 * corner(expert.model) / speed) // hold him spent: the burner would rebuild through the gate mid-test
+		if speed := equivalent(expert.model); speed > 0.66*corner(expert.model) {
+			wind := flight.Wind(s.Position, s.Time, expert.model.Environment)
+			s.Velocity = s.Velocity.Subtract(wind).Scale(0.6 * corner(expert.model) / speed).Add(wind) // hold him spent, through the air: the burner would rebuild through the gate mid-test
 		}
 		i.Step(tick, nil)
 		if expert.brain.mode == "drag" {
@@ -2312,8 +2315,10 @@ func trimmed(i *instance, a *craft) flight.State {
 	m := flight.New(a.model.Airframe, i.environment, i.chart.world)
 	m.Stores(a.model.Attached())
 	s := &a.model.State
+	m.State.Time = s.Time
 	forward := s.Attitude.Rotate(flight.Vec3{X: 1})
-	return flight.Level(m, s.Position, flight.Vec3{X: forward.X, Z: forward.Z}, s.Velocity.Length(), s.Fuel)
+	airspeed := s.Velocity.Subtract(flight.Wind(s.Position, s.Time, i.environment)).Length() // Level trims for a speed through the air, and the match's wind carries the jet
+	return flight.Level(m, s.Position, flight.Vec3{X: forward.X, Z: forward.Z}, airspeed, s.Fuel)
 }
 
 // spawned reports where a craft's state is not the trim of the jet it flies.

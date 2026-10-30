@@ -53,10 +53,14 @@ func (f fidelity) reduced() bool { return f == surrogate || f == both }
 // advanced from the play's ORDER rather than through the stick, FCS and
 // blade-element aero. It keeps what ranks plays - thrust against drag, induced
 // drag per g, the aero g ceiling - and takes thrust and atmosphere from the
-// real tables.
-func glide(m *flight.Model, o order, dt float64) {
+// real tables. The jet flies through the air of the wind given, which the
+// rehearsal takes once: its speed, its path, its drag and its turns are the
+// air's, and the wind carries it. It steers its path over the ground onto the
+// aim, as the live law does.
+func glide(m *flight.Model, o order, dt float64, wind flight.Vec3) {
 	s := &m.State
-	speed := s.Velocity.Length()
+	air := s.Velocity.Subtract(wind)
+	speed := air.Length()
 	if speed < 1 {
 		speed = 1
 	}
@@ -94,7 +98,8 @@ func glide(m *flight.Model, o order, dt float64) {
 	// gives, in the plane the WINGS span this instant. The lift direction slews at
 	// the FCS roll-rate law, so a rehearsed reversal costs the roll the live jet
 	// pays. The limiter's rolling-pull reduction is deliberately not mirrored.
-	direction := s.Velocity.Scale(1 / speed)
+	direction := air.Scale(1 / speed)
+	track := direction // the path through the air, which the aim is flown onto, as compose flies it
 	skyward := flight.Vec3{Y: 1}.Subtract(direction.Scale(direction.Y))
 	lifting := s.Attitude.Rotate(flight.Vec3{Y: 1})
 	lifting = lifting.Subtract(direction.Scale(lifting.Dot(direction)))
@@ -112,8 +117,8 @@ func glide(m *flight.Model, o order, dt float64) {
 	angle := 0.0
 	if aim := o.aim; aim.Length() > 0.5 {
 		want := aim.Normalize()
-		angle = math.Acos(clamp(direction.Dot(want), -1, 1))
-		if axis := direction.Cross(want); angle > 1e-4 && axis.Length() > 1e-6 {
+		angle = math.Acos(clamp(track.Dot(want), -1, 1))
+		if axis := track.Cross(want); angle > 1e-4 && axis.Length() > 1e-6 {
 			pull := axis.Normalize().Cross(direction)
 			desired = pull.Scale(9.81 * math.Sqrt(math.Max(lift*lift-1, 0))).Add(skyward.Scale(9.81))
 		}
@@ -170,7 +175,7 @@ func glide(m *flight.Model, o order, dt float64) {
 	if speed < 30 {
 		speed = 30 // a surrogate that stops flying stops ranking; the aero ceiling above already prices the mush
 	}
-	s.Velocity = direction.Scale(speed)
+	s.Velocity = direction.Scale(speed).Add(wind)
 	s.Position = s.Position.Add(s.Velocity.Scale(dt))
 	// The NOSE, not the flight path (#256): the conversion machinery lives in the
 	// alpha gap between them and appraise() scores the nose. Store the full frame
