@@ -70,7 +70,7 @@ func salvo(pose Pose, body *Body, m *flight.Model, rounds int, tick uint64, mano
 		alive := flying[:0]
 		for i := range flying {
 			r := &flying[i]
-			hit, _, impact := Strike(r, m.State.Position, m.State.Attitude, m.State.Velocity, body, dt, 0, 7)
+			hit, _, impact := Strike(r, m.State.Position, m.State.Attitude, m.State.Velocity, body, dt, 7)
 			if hit {
 				hits++
 				if len(impacts) < ImpactPoints {
@@ -252,12 +252,12 @@ func TestShed(t *testing.T) {
 // TestBlast: a direct hit is a structural kill; a fringe burst fragments.
 func TestBlast(t *testing.T) {
 	body, m := target()
-	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 2}), 650, m.State.Position, m.State.Attitude, body, 0, 7, 3, 1)
+	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 2}), 650, m.State.Position, m.State.Attitude, body, 7, 3, 1)
 	if !kill {
 		t.Fatal("a 2 m miss must be a structural kill")
 	}
 	body, m = target()
-	kill, events, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), 650, m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
+	kill, events, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), 650, m.State.Position, m.State.Attitude, body, 7, 3, 2)
 	if kill {
 		t.Fatal("a 9 m miss must not be an outright kill")
 	}
@@ -272,7 +272,7 @@ func TestBlast(t *testing.T) {
 // running, it is neither exploded nor falling out of the sky.
 func TestFringeFlies(t *testing.T) {
 	body, m := target()
-	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), 650, m.State.Position, m.State.Attitude, body, 0, 7, 3, 2)
+	kill, _, _ := Blast(m.State.Position.Add(flight.Vec3{Y: 9}), 650, m.State.Position, m.State.Attitude, body, 7, 3, 2)
 	if kill {
 		t.Fatal("the fringe blast killed outright — the premise of this test needs re-basing")
 	}
@@ -448,7 +448,7 @@ func TestFringeRate(t *testing.T) {
 		if point.Subtract(m.State.Position).Length() <= lethal {
 			continue // inside the certainty radius: not a fringe burst
 		}
-		kill, _, _ := Blast(point, 650, m.State.Position, m.State.Attitude, body, 0, seed, 3, 2)
+		kill, _, _ := Blast(point, 650, m.State.Position, m.State.Attitude, body, seed, 3, 2)
 		if kill {
 			continue // an outright structural kill is the certainty radius, not this measurement
 		}
@@ -556,7 +556,7 @@ func TestShellDepth(t *testing.T) {
 // TestShellLife: damage does not decay with speed, so Life is a cost cap, not a
 // lethality one - it must not cut a shell off inside gunnery ranges.
 func TestShellLife(t *testing.T) {
-	environment := flight.Environment{Seed: 1, Wrap: 250000}
+	environment := flight.Environment{Seed: 1}
 	_ = environment
 	// How far a round gets before Life expires, from a jet at a fighting speed.
 	round := Round{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: Muzzle + 240}}

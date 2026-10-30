@@ -32,7 +32,10 @@ func TestParabola(t *testing.T) {
 	elapsed := float64(steps) * Dt
 	wantX := 100 * elapsed
 	wantY := 50*elapsed - 0.5*m.Gravity*elapsed*elapsed
-	if math.Abs(m.State.Position.X-wantX) > 1e-6 || math.Abs(m.State.Position.Y-wantY) > 1e-6 {
+	// Gravity points down the ellipsoid's normal, which leans back toward
+	// Midway as the block flies east of it: 400 m out it has pulled it 1.6 mm
+	// short of the flat parabola, and the integrator answers to that.
+	if math.Abs(m.State.Position.X-wantX) > 0.003 || math.Abs(m.State.Position.Y-wantY) > 1e-4 {
 		t.Fatalf("got (%f, %f), want (%f, %f)", m.State.Position.X, m.State.Position.Y, wantX, wantY)
 	}
 	if m.State.Time < elapsed-1e-9 {
@@ -88,7 +91,7 @@ func TestDzhanibekov(t *testing.T) {
 
 // TestHold: a no-force, no-gravity, no-rotation run holds state constant.
 func TestHold(t *testing.T) {
-	m := New(block(), Environment{Wrap: 250000}, World{})
+	m := New(block(), Environment{}, World{})
 	m.Gravity = 0
 	m.State.Position = Vec3{X: 5000, Y: 3000, Z: -2000}
 	m.State.Velocity = Vec3{}
@@ -97,8 +100,11 @@ func TestHold(t *testing.T) {
 		m.Step(Inputs{})
 	}
 	after := m.State
-	if after.Position != before.Position || after.Velocity != before.Velocity ||
-		after.Attitude != before.Attitude || after.Omega != before.Omega || after.Fuel != before.Fuel {
+	// Each step works level under the block and goes back: the round trip
+	// costs the last bits of a coordinate, and nothing more.
+	if after.Position.Subtract(before.Position).Length() > 1e-9 || after.Velocity != before.Velocity ||
+		math.Abs(after.Attitude.W-before.Attitude.W)+math.Abs(after.Attitude.X-before.Attitude.X)+math.Abs(after.Attitude.Y-before.Attitude.Y)+math.Abs(after.Attitude.Z-before.Attitude.Z) > 1e-12 ||
+		after.Omega != before.Omega || after.Fuel != before.Fuel {
 		t.Fatalf("state drifted with no forces:\n%+v\n%+v", before, after)
 	}
 }
@@ -125,7 +131,7 @@ func TestFuelShift(t *testing.T) {
 
 // TestAllocations: the hot path must not allocate.
 func TestAllocations(t *testing.T) {
-	m := New(block(), Environment{Wrap: 250000}, World{})
+	m := New(block(), Environment{}, World{})
 	in := Inputs{Throttle: 0.8, Pitch: 0.2}
 	if avg := testing.AllocsPerRun(1000, func() { m.Step(in) }); avg != 0 {
 		t.Fatalf("Step allocates: %f allocations per run", avg)

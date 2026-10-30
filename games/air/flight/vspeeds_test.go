@@ -40,7 +40,7 @@ func vsBoth(tas, alt float64) string {
 }
 
 func vsJet(fuel, alt, speed float64, gear bool) *Model {
-	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{Sea: 0})
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State.Position = Vec3{Y: alt}
 	m.State.Velocity = Vec3{X: speed}
 	m.State.Attitude = Look(Vec3{X: 1})
@@ -106,7 +106,7 @@ func vsStall(fuel, alt float64, gear bool) float64 {
 // show what leaving the switch up costs.
 func vsRotate(fuel float64, flap float64) (float64, float64) {
 	world := World{Sea: 0, Fields: []Field{{Height: 0, Strips: []Strip{{A: Vec3{X: -200}, B: Vec3{X: 4000}, Width: 60}}}}}
-	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, world)
+	m := New(Fighter, Environment{Seed: 1}, world)
 	m.State.Position = Vec3{Y: 2.6}
 	m.State.Velocity = Vec3{X: 0.5}
 	m.State.Attitude = Look(Vec3{X: 1})

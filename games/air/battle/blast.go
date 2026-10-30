@@ -30,15 +30,15 @@ const (
 // Blast detonates an AIM-9M-class warhead at a world point against a target
 // body. Returns whether the blast was an outright structural kill, and the
 // events the fragment strikes raised.
-func Blast(point flight.Vec3, closure float64, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
-	return Warhead(Heater, point, closure, position, attitude, body, wrap, seed, slot, tick)
+func Blast(point flight.Vec3, closure float64, position flight.Vec3, attitude flight.Quat, body *Body, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
+	return Warhead(Heater, point, closure, position, attitude, body, seed, slot, tick)
 }
 
 // Warhead is Blast with an explicit charge class (Heater, Radar): the radii
 // scale with the cube root of the charge mass. The final return is where the
 // fragments landed, in the target's body frame — the visible evidence of a
 // connecting burst, as against a fireball the target flies through unmarked.
-func Warhead(class float64, point flight.Vec3, closure float64, position flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
+func Warhead(class float64, point flight.Vec3, closure float64, position flight.Vec3, attitude flight.Quat, body *Body, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
 	lethal, fringe := lethal*class, fringe*class
 	// Closure scales the fragments, not the blast (#57): they leave the case
 	// at ~2 km/s and the engagement's relative speed adds head-on, subtracts
@@ -54,12 +54,7 @@ func Warhead(class float64, point flight.Vec3, closure float64, position flight.
 		arrival := (2000 + closure) / 2650
 		sway = clamp(arrival*arrival, 0.6, 2.2)
 	}
-	relative := flight.Vec3{
-		X: flight.Shortest(position.X, point.X, wrap),
-		Y: point.Y - position.Y,
-		Z: flight.Shortest(position.Z, point.Z, wrap),
-	}
-	burst := attitude.Unrotate(relative)
+	burst := attitude.Unrotate(point.Subtract(position))
 	miss := burst.Length()
 	if miss < lethal {
 		return true, []Event{{Kind: "explode", Engine: -1, Surface: -1}}, []flight.Vec3{burst}

@@ -76,21 +76,21 @@ func TestFootingIsTheDecks(t *testing.T) {
 	w := harbor()
 	spot := Vec3{X: 43, Y: 2.5, Z: -0.6} // the catapult spot, the jet's origin above the deck
 	moving := func(at float64) Vec3 {    // that spot's own motion over the sea, measured from where she has it either side
-		ahead, behind := w.Carrier.world(spot, at+0.001), w.Carrier.world(spot, at-0.001)
+		ahead, behind := w.Carrier.world(spot, at+0.001, Identity), w.Carrier.world(spot, at-0.001, Identity)
 		return ahead.Subtract(behind).Scale(1 / 0.002)
 	}
 	w.Carrier.Heading, w.Carrier.Speed = 0.4, 2.6
-	if got, want := w.Footing(w.Carrier.world(spot, 30), 30, 0), moving(30); got.Subtract(want).Length() > 1e-6 {
+	if got, want := w.Footing(w.Carrier.world(spot, 30, Identity), 30, Identity), moving(30); got.Subtract(want).Length() > 1e-6 {
 		t.Fatalf("on the deck of a ship steaming 2.6 m/s the footing is %v, the deck moves %v", got, want)
 	}
 	w.Carrier.Track = []Leg{{Start: 0, Position: Vec3{Y: 19}, Heading: 0.4, Speed: 15.4, Turn: 15.4 / 700}}
-	if got, want := w.Footing(w.Carrier.world(spot, 30), 30, 0), moving(30); got.Subtract(want).Length() > 1e-3 {
+	if got, want := w.Footing(w.Carrier.world(spot, 30, Identity), 30, Identity), moving(30); got.Subtract(want).Length() > 1e-3 {
 		t.Fatalf("on the deck of a ship turning at 30 kt the footing is %v, the deck moves %v", got, want)
 	}
 	for name, p := range map[string]Vec3{
-		"the runway": {X: 0, Y: 4, Z: 8000}, "the sea": {X: 0, Y: 1, Z: 3000}, "the air over the deck": w.Carrier.world(spot, 30).Add(Vec3{Y: 500}),
+		"the runway": {X: 0, Y: 4, Z: 8000}, "the sea": {X: 0, Y: 1, Z: 3000}, "the air over the deck": w.Carrier.world(spot, 30, Identity).Add(Vec3{Y: 500}),
 	} {
-		if got := w.Footing(p, 30, 0); got.Length() != 0 {
+		if got := w.Footing(p, 30, Identity); got.Length() != 0 {
 			t.Errorf("%s moves at %v", name, got)
 		}
 	}
@@ -178,11 +178,16 @@ func TestSteeringModes(t *testing.T) {
 		}
 		m.State.Velocity = Vec3{X: 3, Z: 1}
 		var total Forces
+		out := m.level() // the tyres are worked level under the jet, as a step works them
 		m.strut(&m.State, &m.Airframe.Gear.Nose, Inputs{Gear: true, Steering: mode}, 1, true, 0, &total)
+		m.unlevel(out)
 		return total.Force.Z
 	}
-	if force := side(-1); math.Abs(force) > 1e-6 {
-		t.Errorf("a castoring nosewheel carried %.1f N of side force", force)
+	// The deck is level on the sea under the ship, which leans by a few
+	// hundred-thousandths of a radian against level 150 m away: that much of
+	// the strut's load lies along the wing, a few hundredths of a newton.
+	if force := side(-1); math.Abs(force) > 0.1 {
+		t.Errorf("a castoring nosewheel carried %.3f N of side force", force)
 	}
 	if force := side(0); math.Abs(force) < 1000 {
 		t.Errorf("LOW's nose tyre carried %.1f N of side force sliding at 1 m/s, want it to grip", force)
@@ -492,7 +497,7 @@ func TestTaxiUpSlow(t *testing.T) {
 			m.Step(Inputs{Gear: true})
 		}
 		cat := m.World.Carrier.Catapults[m.State.Gear.Catapult]
-		shuttle := m.World.Carrier.world(cat.Position, m.State.Time)
+		shuttle := m.World.Carrier.world(cat.Position, m.State.Time, Identity)
 		nose := m.State.Position.Add(m.State.Attitude.Rotate(m.Airframe.Gear.Nose.Attach.Subtract(m.center)))
 		off := Vec3{X: nose.X - shuttle.X, Z: nose.Z - shuttle.Z}.Length()
 		heading := m.World.Carrier.Heading + cat.Heading
@@ -550,7 +555,7 @@ func TestSurfaceIgnoresTheSky(t *testing.T) {
 		{"just above the deck", Vec3{Y: 25}, Deck, true},
 		{"at altitude over the deck", Vec3{Y: 4000}, 0, false},
 	} {
-		_, kind, _, found := w.surface(c.point, 0, 250000)
+		_, kind, _, found := w.surface(c.point, 0, Identity)
 		if found != c.found || (found && kind != c.kind) {
 			t.Errorf("%s (%.0f m): found %v kind %d, want found %v kind %d", c.where, c.point.Y, found, kind, c.found, c.kind)
 		}

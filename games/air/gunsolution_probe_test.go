@@ -95,7 +95,7 @@ func TestGunSolution(t *testing.T) {
 		t.Skip("measurement probe: set AIR_POINT=1")
 	}
 	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = at
 		m.State.Velocity = facing.Normalize().Scale(speed)
 		m.State.Attitude = flight.Look(facing.Normalize())
@@ -206,7 +206,7 @@ func TestGunSolutionByRange(t *testing.T) {
 		t.Skip("measurement probe: set AIR_POINT=1")
 	}
 	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = at
 		m.State.Velocity = facing.Normalize().Scale(speed)
 		m.State.Attitude = flight.Look(facing.Normalize())
@@ -351,7 +351,7 @@ func TestGunSolutionBotSeat(t *testing.T) {
 		t.Skip("measurement probe: set AIR_POINT=1")
 	}
 	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = at
 		m.State.Velocity = facing.Normalize().Scale(speed)
 		m.State.Attitude = flight.Look(facing.Normalize())
@@ -620,7 +620,7 @@ func TestGunSolutionAimSweep(t *testing.T) {
 		t.Skip("measurement probe: set AIR_POINT=1")
 	}
 	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position, m.State.Velocity = at, facing.Normalize().Scale(speed)
 		m.State.Attitude = flight.Look(facing.Normalize())
 		m.State.Gear.Extension = 0

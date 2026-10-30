@@ -16,9 +16,9 @@ func TestMergeRoll(t *testing.T) {
 	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		total, worst := 0.0, 0.0
 		for seed := 1; seed <= 5; seed++ {
-			b := NewBandit(level, uint64(seed), 250000, "", false, false, "", 0, false)
+			b := NewBandit(level, uint64(seed), "", false, false, "", 0, false)
 			b.Spawn(flight.Vec3{X: -2750, Y: 4572}, flight.Vec3{X: 220})
-			env := flight.Environment{Seed: uint64(seed), Wrap: 250000}
+			env := flight.Environment{Seed: uint64(seed)}
 			pm := flight.New(aircraft.Get("fa18c"), env, flight.World{Sea: sea})
 			pm.State = flight.Level(pm, flight.Vec3{X: 2750, Y: 4572}, flight.Vec3{X: -1}, 220, fuel)
 			words := make([]float64, flight.Size)

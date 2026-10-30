@@ -194,16 +194,16 @@ func (s *Ship) turn(c *flight.Carrier, start float64, after float64) {
 }
 
 // Needed reports whether anyone needs the deck at time t: an aircraft on it,
-// or one coming in to land - gear down within Approach of the ship.
-func Needed(c *flight.Carrier, t float64, wrap float64, aircraft []flight.State) bool {
-	at, _ := c.At(t)
+// or one coming in to land - gear down within Approach of the ship. The
+// aircraft are in the world frame, where the ship sails.
+func Needed(c *flight.Carrier, t float64, aircraft []flight.State) bool {
+	at, _ := c.Where(t, flight.Identity)
 	for i := range aircraft {
 		a := &aircraft[i]
-		if c.Aboard(a.Position, t, wrap) {
+		if c.Aboard(a.Position, t, flight.Identity) {
 			return true
 		}
-		dx, dz := flight.Shortest(at.X, a.Position.X, wrap), flight.Shortest(at.Z, a.Position.Z, wrap)
-		if a.Gear.Extension > 0.5 && math.Hypot(dx, dz) < Approach {
+		if a.Gear.Extension > 0.5 && a.Position.Subtract(at).Length() < Approach {
 			return true
 		}
 	}

@@ -51,6 +51,7 @@ func debris_lay(this js.Value, arguments []js.Value) any {
 	}
 	if model != nil {
 		d.Wind = flight.Wind(d.Origin, model.State.Time, model.Environment) // the pieces slow into the air, and it carries them
+		d.Up = model.Environment.Theatre().Up(d.Origin)                     // and fall down the level up where the jet broke
 	}
 	wreckage = append(wreckage, d)
 	return ""
@@ -83,7 +84,7 @@ func debris_meet(this js.Value, arguments []js.Value) any {
 	strikes := 0
 	for k, d := range wreckage {
 		seed := model.Environment.Seed + uint64(k+1)*0x9e3779b97f4a7c15
-		hit, found, points := d.Meet(clock, span, position, model.State.Velocity, attitude, body, model.Environment.Wrap, seed, pilot, meetings)
+		hit, found, points := d.Meet(clock, span, position, model.State.Velocity, attitude, body, seed, pilot, meetings)
 		if hit {
 			strikes++
 			raised = append(raised, found...)

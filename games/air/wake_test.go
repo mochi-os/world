@@ -62,14 +62,14 @@ func TestSessionForget(t *testing.T) {
 		i.Step(tick, nil)
 	}
 	behind := leaving.model.State.Position.Subtract(flight.Vec3{X: 300, Y: 3})
-	if len(i.wakes.Near(9, behind, 5, 0, i.environment.Wrap)) == 0 {
+	if len(i.wakes.Near(9, behind, 5, 0)) == 0 {
 		t.Fatal("no wake behind the jet before it left")
 	}
 	if n := i.wakes.Trails(); n != 2 {
 		t.Fatalf("%d trails laid before the player left, want both jets'", n)
 	}
 	i.Leave(leaving.player)
-	if pieces := i.wakes.Near(9, behind, 5, 0, i.environment.Wrap); len(pieces) != 0 {
+	if pieces := i.wakes.Near(9, behind, 5, 0); len(pieces) != 0 {
 		t.Errorf("the player left and %d pieces of their wake are still laid", len(pieces))
 	}
 	if n := i.wakes.Trails(); n != 1 {

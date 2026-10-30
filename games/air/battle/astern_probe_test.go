@@ -38,7 +38,7 @@ func TestAsternProbe(t *testing.T) {
 			body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
 			// Attitude identity: the body frame IS the world frame, so the probe
 			// point is the burst point.
-			kill, events, hits := Blast(b.point, 624, flight.Vec3{}, flight.Quat{W: 1}, body, 0, seed, 3, seed)
+			kill, events, hits := Blast(b.point, 624, flight.Vec3{}, flight.Quat{W: 1}, body, seed, 3, seed)
 			if kill {
 				kills++
 				continue

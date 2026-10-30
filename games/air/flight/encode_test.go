@@ -13,7 +13,7 @@ import (
 // TestEncode: a flown state round-trips bit-exact, and stepping the decoded
 // copy matches stepping the original — the property prediction relies on.
 func TestEncode(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 7, Turbulence: 1, Wrap: 250000}, World{})
+	m := New(Fighter, Environment{Seed: 7, Turbulence: 1}, World{})
 	m.State.Position = Vec3{Y: 2000}
 	m.State.Velocity = Vec3{X: 180}
 	in := Inputs{Throttle: 0.9, Pitch: 0.4, Roll: 0.2, Yaw: 0.1}
@@ -79,7 +79,7 @@ func TestDecodeShortFrame(t *testing.T) {
 	}
 	// The guard must not clip a real frame: Size words still decode.
 	full := make([]float64, Size)
-	model := New(Fighter, Environment{Wrap: 250000}, World{})
+	model := New(Fighter, Environment{}, World{})
 	model.State.Position = Vec3{X: 11, Y: 2200, Z: -37}
 	model.State.Encode(full)
 	if decoded := Decode(full); decoded.Position != model.State.Position {

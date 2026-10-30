@@ -98,7 +98,7 @@ func aspect(line flight.Vec3, velocity flight.Vec3) float64 {
 // up to 3% of the range.
 func (i *instance) detection(a, c *craft) float64 {
 	line, _ := i.bearing(a.model.State.Position, c.model.State.Position)
-	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*round.Clutter(a.model.State.Position, c.model.State.Position, i.environment.Wrap))
+	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*round.Clutter(a.model.State.Position, c.model.State.Position))
 }
 
 // probability is the chance one frame's look paints a target at this span
@@ -135,7 +135,7 @@ func (i *instance) painted(a, c *craft, tick uint64) bool {
 		return false
 	}
 	line, span := i.bearing(a.model.State.Position, c.model.State.Position)
-	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || round.Notched(a.model.State.Position, c.model.State.Position, c.model.State.Velocity, i.environment.Wrap) {
+	if a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) < round.Gimbal || round.Notched(a.model.State.Position, c.model.State.Position, c.model.State.Velocity) {
 		return false
 	}
 	if math.Abs(math.Asin(clamp(line.Y, -1, 1))-i.antenna(a, tick)) > radar_bars*radar_beam/2 {
@@ -174,7 +174,7 @@ func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
 	if locked {
 		reach *= radar_hold
 	}
-	starved := round.Notched(a.model.State.Position, prey.model.State.Position, prey.model.State.Velocity, i.environment.Wrap) || (prey.loud && span > round.Burnthrough)
+	starved := round.Notched(a.model.State.Position, prey.model.State.Position, prey.model.State.Velocity) || (prey.loud && span > round.Burnthrough)
 	if !locked || !starved {
 		b.notching = 0
 	} else if b.notching == 0 {
@@ -610,7 +610,7 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	// the jet is in the seeker's notch, and never into the five cartridges each
 	// other inbound round will want. The 1.4 s cadence is measured: waiting for
 	// the seeker's Hold to expire leaves half-second gaps with no fresh cloud.
-	if a.clouded > 1.4 && span > round.Resolve && round.Notched(threat.position, a.model.State.Position, a.model.State.Velocity, i.environment.Wrap) && a.chaff > 5*(inbound-1) {
+	if a.clouded > 1.4 && span > round.Resolve && round.Notched(threat.position, a.model.State.Position, a.model.State.Velocity) && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
 	// No bot arms its jammer: the superhuman flies the expert's doctrine, and the

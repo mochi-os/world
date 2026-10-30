@@ -68,7 +68,7 @@ func (m *Model) envelope(a, speed, roll float64, override, reverted bool) (level
 	}
 	// Neutral-stick feedforward: the load that holds the current flight path
 	// (cos γ), less the alpha backstop.
-	gamma := math.Asin(clamp(m.State.Velocity.Y/math.Max(speed, 1), -1, 1))
+	gamma := math.Asin(clamp(m.State.Velocity.Dot(m.Up())/math.Max(speed, 1), -1, 1))
 	level = math.Cos(gamma)
 	level -= clamp((a-0.15)*5, 0, 0.8)
 	return level, ceiling

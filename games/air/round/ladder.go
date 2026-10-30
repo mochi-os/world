@@ -37,8 +37,8 @@ const escape = 7.5 * 9.80665
 // refresh while staying inside the acceptance bands.
 func Ladder(shooter Target, target Target, environment flight.Environment, clock float64) Zone {
 	const dt = 0.2
-	wrap := environment.Wrap
-	sight := relative(shooter.Position, target.Position, wrap)
+	up := environment.Theatre().Up(shooter.Position) // the level the break is banked in
+	sight := target.Position.Subtract(shooter.Position)
 	distance := sight.Length()
 	if distance < 1 {
 		distance = 1
@@ -64,7 +64,7 @@ func Ladder(shooter Target, target Target, environment flight.Environment, clock
 			if breaking {
 				// Turn the victim's velocity away from the shooter at the
 				// break rate, holding speed — the no-escape assumption.
-				away := relative(shooter.Position, virtual.Position, wrap).Normalize()
+				away := virtual.Position.Subtract(shooter.Position).Normalize()
 				speed := air.Length()
 				if speed > 1 {
 					heading := air.Scale(1 / speed)
@@ -76,12 +76,13 @@ func Ladder(shooter Target, target Target, environment flight.Environment, clock
 						// Normalize() has nothing to point at and the break silently
 						// never happened: measured, Escape read identically to Max and
 						// the target's velocity was unchanged after a hundred seconds
-						// of nominal 7.5 g. Real geometry carries enough float noise to
-						// avoid it, but a synthetic head-on lands on it exactly. A jet
-						// reversing picks a side; pick one rather than fly on.
+						// of nominal 7.5 g. A jet reversing picks a side, level: inside
+						// a degree of dead head-on the flee direction's own remainder is
+						// the curve of the earth and the wind's lean, which would turn
+						// it up or down by accident, so it turns level instead.
 						turn := away.Subtract(heading.Scale(away.Dot(heading)))
-						if turn.Length() < 1e-6 {
-							if turn = (flight.Vec3{Y: 1}).Cross(heading); turn.Length() < 1e-6 {
+						if turn.Length() < 0.02 {
+							if turn = up.Cross(heading); turn.Length() < 1e-6 {
 								turn = (flight.Vec3{X: 1}).Cross(heading)
 							}
 						}
@@ -92,7 +93,7 @@ func Ladder(shooter Target, target Target, environment flight.Environment, clock
 			}
 			virtual.Velocity = air.Add(flight.Wind(virtual.Position, clock+m.Time, environment))
 			virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
-			miss := relative(m.Position, virtual.Position, wrap).Length()
+			miss := virtual.Position.Subtract(m.Position).Length()
 			if miss < closest {
 				closest = miss
 				mach = m.Mach()

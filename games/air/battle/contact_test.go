@@ -58,15 +58,15 @@ func TestContactSweep(t *testing.T) {
 	still := flight.Quat{W: 1}
 	a := Mover{Parts: cross(), Position: flight.Vec3{X: 5}, Attitude: still, Velocity: flight.Vec3{X: 300}}
 	b := Mover{Parts: cross(), Position: flight.Vec3{X: 0, Z: 11.8}, Attitude: still, Velocity: flight.Vec3{X: -300}}
-	metA, metB := Contact(a, b, 1.0/60, 0)
+	metA, metB := Contact(a, b, 1.0/60)
 	if len(metA) != 1 || metA[0] != 1 || len(metB) != 1 || metB[0] != 1 {
 		t.Errorf("wingtips crossing inside the tick: met %v %v, want the wings only", metA, metB)
 	}
-	if metA, metB := Contact(a, b, 0, 0); len(metA) != 0 || len(metB) != 0 {
+	if metA, metB := Contact(a, b, 0); len(metA) != 0 || len(metB) != 0 {
 		t.Errorf("without the sweep the end poses are clear: met %v %v", metA, metB)
 	}
 	b.Position.Z = 12.8
-	if metA, metB := Contact(a, b, 1.0/60, 0); len(metA) != 0 || len(metB) != 0 {
+	if metA, metB := Contact(a, b, 1.0/60); len(metA) != 0 || len(metB) != 0 {
 		t.Errorf("a 0.2 m gap at the tips is a miss: met %v %v", metA, metB)
 	}
 }
@@ -82,7 +82,7 @@ func TestContactBounded(t *testing.T) {
 	b := Mover{Parts: cross(), Position: flight.Vec3{Z: 11.8}, Attitude: still}
 	done := make(chan [2][]int, 1)
 	go func() {
-		metA, metB := Contact(a, b, 1.0/60, 0)
+		metA, metB := Contact(a, b, 1.0/60)
 		done <- [2][]int{metA, metB}
 	}()
 	select {
@@ -95,26 +95,22 @@ func TestContactBounded(t *testing.T) {
 	}
 }
 
-// TestContactFrames: b's capsules are carried through both attitudes, and the
-// world's wrap - a jet across the seam is as close as it really is.
+// TestContactFrames: b's capsules are carried through both attitudes, and a
+// pair far apart is as far apart as it really is: the world has no seam.
 func TestContactFrames(t *testing.T) {
 	yaw := func(angle float64) flight.Quat { return flight.Quat{W: math.Cos(angle / 2), Y: math.Sin(angle / 2)} }
 	a := Mover{Parts: cross(), Attitude: yaw(math.Pi / 2)}
 	// a's wing, in the world, now lies along X; b nose-on to it along Z at 4 m
 	// from a's centre runs its fuselage into that wing.
 	b := Mover{Parts: cross(), Position: flight.Vec3{Z: 4}, Attitude: yaw(0)}
-	metA, metB := Contact(a, b, 1.0/60, 0)
+	metA, metB := Contact(a, b, 1.0/60)
 	if len(metA) == 0 || len(metB) == 0 {
 		t.Fatalf("rotated wing across b's nose: met %v %v", metA, metB)
 	}
-	// Across the seam: 1,000 m short of the wrap is 11.8 m from the origin.
 	c := Mover{Parts: cross(), Position: flight.Vec3{X: 0, Z: 1000 - 11.8}, Attitude: yaw(0)}
 	d := Mover{Parts: cross(), Position: flight.Vec3{}, Attitude: yaw(0)}
-	if metC, metD := Contact(c, d, 1.0/60, 1000); len(metC) == 0 || len(metD) == 0 {
-		t.Errorf("wingtips overlapping across the seam: met %v %v", metC, metD)
-	}
-	if metC, metD := Contact(c, d, 1.0/60, 0); len(metC) != 0 || len(metD) != 0 {
-		t.Errorf("without a wrap the same pair is 988 m apart: met %v %v", metC, metD)
+	if metC, metD := Contact(c, d, 1.0/60); len(metC) != 0 || len(metD) != 0 {
+		t.Errorf("a pair 988 m apart met %v %v", metC, metD)
 	}
 }
 
@@ -125,11 +121,11 @@ func TestContactStores(t *testing.T) {
 	rail := []Part{{Kind: Ordnance, Index: 3, Surface: -1, A: flight.Vec3{X: -1}, B: flight.Vec3{X: 1}, Radius: 0.35, Warhead: 9}}
 	a := Mover{Parts: cross(), Attitude: still}
 	b := Mover{Parts: rail, Position: flight.Vec3{Z: 6.2}, Attitude: still, Stores: 1 << 3}
-	if metA, metB := Contact(a, b, 0, 0); len(metA) != 1 || len(metB) != 1 {
+	if metA, metB := Contact(a, b, 0); len(metA) != 1 || len(metB) != 1 {
 		t.Errorf("a loaded rail at the wingtip meets it: %v %v", metA, metB)
 	}
 	b.Stores = 0
-	if metA, metB := Contact(a, b, 0, 0); len(metA) != 0 || len(metB) != 0 {
+	if metA, metB := Contact(a, b, 0); len(metA) != 0 || len(metB) != 0 {
 		t.Errorf("an empty rail is empty air: %v %v", metA, metB)
 	}
 }

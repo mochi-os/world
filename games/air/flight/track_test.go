@@ -59,12 +59,12 @@ func TestTrackPose(t *testing.T) {
 	const h = 1e-4
 	for _, t0 := range []float64{10, 31, 90, end + 20} {
 		for _, deck := range []Vec3{{}, {X: 140, Z: 20}, {X: -150, Z: -25}} {
-			p := c.world(deck, t0)
-			moved := c.world(deck, t0+h).Subtract(c.world(deck, t0-h)).Scale(1 / (2 * h))
-			if v := c.velocity(p, t0, 0); v.Subtract(moved).Length() > 1e-3 {
+			p := c.world(deck, t0, Identity)
+			moved := c.world(deck, t0+h, Identity).Subtract(c.world(deck, t0-h, Identity)).Scale(1 / (2 * h))
+			if v := c.velocity(p, t0, Identity); v.Subtract(moved).Length() > 1e-3 {
 				t.Fatalf("at %.0f s deck point %v moves %v, velocity reports %v", t0, deck, moved, v)
 			}
-			if back := c.local(p, t0, 0); back.Subtract(deck).Length() > 1e-9 {
+			if back := c.local(p, t0, Identity); back.Subtract(deck).Length() > 1e-9 {
 				t.Fatalf("local(world(p)) = %v, want %v", back, deck)
 			}
 		}
@@ -87,9 +87,9 @@ func TestTrackPose(t *testing.T) {
 		if way := surge.Way(t0); math.Abs(way-want) > 1e-9 {
 			t.Fatalf("at %.0f s the ship makes %.3f m/s, want %.3f", t0, way, want)
 		}
-		p := surge.world(Vec3{X: 50, Z: 10}, t0)
-		moved := surge.world(Vec3{X: 50, Z: 10}, t0+h).Subtract(surge.world(Vec3{X: 50, Z: 10}, t0-h)).Scale(1 / (2 * h))
-		if v := surge.velocity(p, t0, 0); v.Subtract(moved).Length() > 1e-3 && t0 != end {
+		p := surge.world(Vec3{X: 50, Z: 10}, t0, Identity)
+		moved := surge.world(Vec3{X: 50, Z: 10}, t0+h, Identity).Subtract(surge.world(Vec3{X: 50, Z: 10}, t0-h, Identity)).Scale(1 / (2 * h))
+		if v := surge.velocity(p, t0, Identity); v.Subtract(moved).Length() > 1e-3 && t0 != end {
 			t.Fatalf("gathering way at %.0f s: the deck moves %v, velocity reports %v", t0, moved, v)
 		}
 	}
@@ -110,21 +110,21 @@ func TestRideTheTurn(t *testing.T) {
 	rate := 15.4 / 700
 	c.Track = []Leg{{Position: c.Position, Speed: 15.4, Turn: rate}}
 	park(m, -30, 5)
-	m.State.Velocity = c.velocity(m.State.Position, 0, 0)
+	m.State.Velocity = c.velocity(m.State.Position, 0, Identity)
 	m.State.Omega = Vec3{Y: rate}
-	spot := c.local(m.State.Position, 0, 0)
+	spot := c.local(m.State.Position, 0, Identity)
 	for i := 0; i < 240*60; i++ {
 		m.Step(Inputs{Gear: true, Brake: true})
 	}
 	if !m.State.Gear.Wow {
 		t.Fatal("no weight on wheels")
 	}
-	now := c.local(m.State.Position, m.State.Time, 0)
+	now := c.local(m.State.Position, m.State.Time, Identity)
 	if moved := math.Hypot(now.X-spot.X, now.Z-spot.Z); moved > 0.3 {
 		t.Fatalf("the jet crept %.2f m on the deck in a minute's turn (at %.1f, %.1f)", moved, now.X, now.Z)
 	}
 	nose := m.State.Attitude.Rotate(Vec3{X: 1})
-	if off := math.Abs(math.Remainder(math.Atan2(-nose.Z, nose.X)-c.heading(m.State.Time), 2*math.Pi)); off > 1*math.Pi/180 {
+	if off := math.Abs(math.Remainder(math.Atan2(-nose.Z, nose.X)-heading(c, m.State.Time), 2*math.Pi)); off > 1*math.Pi/180 {
 		t.Fatalf("the jet's nose is %.2f° off the ship's heading after the turn", off*180/math.Pi)
 	}
 }
@@ -137,16 +137,16 @@ func TestRideTheSurge(t *testing.T) {
 	c := m.World.Carrier
 	c.Track = []Leg{{Position: c.Position, Speed: 2.6, Change: 0.1}}
 	park(m, -30, 5)
-	m.State.Velocity = c.velocity(m.State.Position, 0, 0)
-	spot := c.local(m.State.Position, 0, 0)
+	m.State.Velocity = c.velocity(m.State.Position, 0, Identity)
+	spot := c.local(m.State.Position, 0, Identity)
 	for i := 0; i < 240*60; i++ {
 		m.Step(Inputs{Gear: true, Brake: true})
 	}
-	now := c.local(m.State.Position, m.State.Time, 0)
+	now := c.local(m.State.Position, m.State.Time, Identity)
 	if moved := math.Hypot(now.X-spot.X, now.Z-spot.Z); moved > 0.3 || !m.State.Gear.Wow {
 		t.Fatalf("the jet crept %.2f m on a deck gathering way for a minute (weight on wheels %v)", moved, m.State.Gear.Wow)
 	}
-	if relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, 0)).Length(); relative > 0.05 {
+	if relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, Identity)).Length(); relative > 0.05 {
 		t.Fatalf("the jet moves %.2f m/s over the deck", relative)
 	}
 }
@@ -160,18 +160,37 @@ func TestIslandRidesTheShip(t *testing.T) {
 	c.Posts = []Post{{Position: Vec3{X: 0, Z: 20}, Radius: 1.5, Top: 60}}
 	c.Track = []Leg{{Position: c.Position, Speed: 15}}
 	for _, probe := range []Vec3{{X: 0, Y: 30, Z: 20}, {X: 0, Y: 50, Z: 20}} {
-		if !w.struck(probe, 0, 0) {
+		if !w.struck(probe, 0, Identity) {
 			t.Fatalf("%v misses the island at time zero", probe)
 		}
-		if w.struck(probe, 10, 0) {
+		if w.struck(probe, 10, Identity) {
 			t.Fatalf("%v strikes the island ten seconds after the ship has steamed 150 m on", probe)
 		}
-		if moved := c.world(Vec3{X: probe.X, Z: probe.Z}, 10); !w.struck(Vec3{X: moved.X, Y: probe.Y, Z: moved.Z}, 10, 0) {
+		if moved := c.world(Vec3{X: probe.X, Z: probe.Z}, 10, Identity); !w.struck(Vec3{X: moved.X, Y: probe.Y, Z: moved.Z}, 10, Identity) {
 			t.Fatalf("%v misses the island where the ship has taken it", probe)
 		}
 	}
-	if w.struck(Vec3{X: 5, Y: 45, Z: 20}, 0, 0) {
+	if w.struck(Vec3{X: 5, Y: 45, Z: 20}, 0, Identity) {
 		t.Fatal("above the island's top but below the mast's, beside the mast: a strike")
+	}
+}
+
+// TestKnownIsTheTracksFirstStart: the earliest time the track covers is its
+// first leg's start, moving on as the steering drops old legs; a ship with no
+// track has held her course from any time.
+func TestKnownIsTheTracksFirstStart(t *testing.T) {
+	c := &Carrier{Position: Vec3{Y: 19}, Heading: 0.4, Speed: 2.6}
+	if known := c.Known(); !math.IsInf(known, -1) {
+		t.Fatalf("a ship without a track is known from %v, want -Inf", known)
+	}
+	voyage(c, 15, 30)
+	c.Track[0].Start = -12
+	if known := c.Known(); known != -12 {
+		t.Fatalf("known from %v, want the first leg's start -12", known)
+	}
+	c.Track = c.Track[1:]
+	if known := c.Known(); known != 30 {
+		t.Fatalf("with the first leg dropped, known from %v, want the turn's start 30", known)
 	}
 }
 
@@ -201,11 +220,11 @@ func TestTrapUnderWay(t *testing.T) {
 	if !caught {
 		t.Fatal("hook never found a wire")
 	}
-	relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, 0))
+	relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, Identity))
 	if relative.Length() > 3 {
 		t.Fatalf("trap did not stop the jet on the deck: %.1f m/s relative", relative.Length())
 	}
-	if local := c.local(m.State.Position, m.State.Time, 0); local.X > 60 || !m.State.Gear.Wow {
+	if local := c.local(m.State.Position, m.State.Time, Identity); local.X > 60 || !m.State.Gear.Wow {
 		t.Fatalf("rollout past the deck: x=%.0f, weight on wheels %v", local.X, m.State.Gear.Wow)
 	}
 }
@@ -219,7 +238,7 @@ func TestCatapultUnderWay(t *testing.T) {
 	rate := 15.0 / 700
 	c.Track = []Leg{{Position: c.Position, Speed: 15, Turn: rate}}
 	park(m, 42.7, -0.6)
-	m.State.Velocity = c.velocity(m.State.Position, 0, 0)
+	m.State.Velocity = c.velocity(m.State.Position, 0, Identity)
 	m.State.Omega = Vec3{Y: rate}
 	for i := 0; i < 240*2; i++ {
 		m.Step(Inputs{Gear: true})
@@ -229,18 +248,18 @@ func TestCatapultUnderWay(t *testing.T) {
 	}
 	m.State.Engine[0] = EngineState{Spool: 1}
 	m.State.Engine[1] = EngineState{Spool: 1}
-	held := c.local(m.State.Position, m.State.Time, 0)
+	held := c.local(m.State.Position, m.State.Time, Identity)
 	for i := 0; i < 240*2; i++ {
 		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1})
 	}
-	if crept := c.local(m.State.Position, m.State.Time, 0).Subtract(held).Length(); crept > 1 {
+	if crept := c.local(m.State.Position, m.State.Time, Identity).Subtract(held).Length(); crept > 1 {
 		t.Fatalf("crept %.2f m along the deck against the holdback", crept)
 	}
 	for i := 0; i < 240*6; i++ {
 		m.Step(Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: i > 240})
 		if m.State.Gear.Catapult < 0 && i > 240 {
-			relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, 0))
-			track := c.heading(m.State.Time) + c.Catapults[0].Heading
+			relative := m.State.Velocity.Subtract(c.velocity(m.State.Position, m.State.Time, Identity))
+			track := heading(c, m.State.Time) + c.Catapults[0].Heading
 			along := relative.Dot(Vec3{X: math.Cos(track), Z: -math.Sin(track)})
 			if along < 60 {
 				t.Fatalf("limp shot under way: %.1f m/s along the track relative to the deck", along)

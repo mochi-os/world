@@ -29,6 +29,7 @@ func ship_exports() map[string]any {
 		"steer":   guard(steer),
 		"voyage":  guard(voyage),
 		"carrier": guard(carrier),
+		"deck":    guard(deck),
 	}
 }
 
@@ -56,7 +57,9 @@ func steer(js.Value, []js.Value) any {
 		return false
 	}
 	c, t := model.World.Carrier, model.State.Time
-	return vessel.Step(c, t, ship.Needed(c, t, model.Environment.Wrap, []flight.State{model.State}))
+	jet := model.State
+	jet.Position = model.Environment.Placement().Point(jet.Position) // the ship sails the world frame
+	return vessel.Step(c, t, ship.Needed(c, t, []flight.State{jet}))
 }
 
 // voyage takes a match's track from the server, as its welcome and its ship
@@ -84,8 +87,11 @@ func voyage(this js.Value, arguments []js.Value) any {
 	return ""
 }
 
-// carrier is the ship's pose at time t, as [x, z, heading, closed]: closed is
-// 1 while it turns or steams away from the wind, when the deck takes no one.
+// carrier is the ship's pose at time t, as [x, z, heading, closed, way,
+// known]: closed is 1 while it turns or steams away from the wind, when the
+// deck takes no one; way is her speed through the water, which her bow wave
+// and wake are drawn from; known is the earliest time her track covers
+// (-Infinity without one).
 func carrier(this js.Value, arguments []js.Value) any {
 	if model == nil || model.World.Carrier == nil {
 		return nil
@@ -96,5 +102,16 @@ func carrier(this js.Value, arguments []js.Value) any {
 	if len(c.Track) > 0 && vessel.Closed(c, t) {
 		closed = 1
 	}
-	return []any{at.X, at.Z, heading, closed}
+	return []any{at.X, at.Z, heading, closed, c.Way(t), c.Known()}
+}
+
+// deck is where the ship floats at time t in the client's frame, as [x, y,
+// z, w, qx, qy, qz]: her deck reference point and the attitude of her deck
+// frame (x to the bow, y up, z to starboard), level on the curved sea.
+func deck(this js.Value, arguments []js.Value) any {
+	if model == nil || model.World.Carrier == nil {
+		return nil
+	}
+	at, attitude := model.World.Carrier.Where(arguments[0].Float(), model.Environment.Placement())
+	return []any{at.X, at.Y, at.Z, attitude.W, attitude.X, attitude.Y, attitude.Z}
 }

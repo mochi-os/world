@@ -58,7 +58,7 @@ func (i *instance) steer(tick uint64, clock float64) {
 			states = append(states, a.model.State)
 		}
 	}
-	if i.ship.Step(c, clock, ship.Needed(c, clock, i.environment.Wrap, states)) {
+	if i.ship.Step(c, clock, ship.Needed(c, clock, states)) {
 		i.events = append(i.events, map[string]any{"kind": "ship", "ship": i.voyage()})
 	}
 }

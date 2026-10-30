@@ -98,7 +98,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 	beneath := m.World.Sea
 	ceiling := m.World.top() // the probe gate must clear the world's HIGHEST surface: a sea-referenced gate skipped the probe exactly over the elevated terrain the reference exists for
 	if s.Position.Y-ceiling < 6*a.Reference.Span {
-		if top, _, _, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap); found && top > beneath {
+		if top, _, _, found := m.World.surface(s.Position, s.Time, m.place); found && top > beneath {
 			beneath = top
 		}
 	}

@@ -302,18 +302,23 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	clock := m.State.Time // the jet keeps the clock it was given: the session's, which places the carrier
 	m.State.Fuel = fuel
 	m.weigh()
-	q := 0.5 * air(position.Y, m.Environment).Density * speed * speed
+	// The trim is worked level under the spawn, where direction is laid flat
+	// and the altitude is the sea's distance below; the state goes back to
+	// the environment's frame.
+	altitude, home, back := m.under(position)
+	direction = back.Inverse().Vector(direction)
+	q := 0.5 * air(altitude, m.Environment).Density * speed * speed
 	demand := m.mass * gravity / (q * m.Airframe.Reference.Area)
 	angle := 0.0
 	for sweep := -0.05; sweep <= 0.45; sweep += 0.002 {
-		cl, _ := m.Evaluate(speed, sweep, position.Y)
+		cl, _ := m.Evaluate(speed, sweep, altitude)
 		angle = sweep
 		if cl >= demand {
 			break
 		}
 	}
-	_, drag := m.Evaluate(speed, angle, position.Y)
-	dry, _ := m.Thrust(speed, position.Y)
+	_, drag := m.Evaluate(speed, angle, altitude)
+	dry, _ := m.Thrust(speed, altitude)
 	spool := clamp(drag*q*m.Airframe.Reference.Area/math.Max(dry, 1), 0.1, 1)
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
 	// Axis(side, +angle) pitches the nose UP by angle. Inverting this sign spawns
@@ -321,8 +326,8 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	attitude := Axis(forward.Cross(Vec3{Y: 1}).Normalize(), angle).Multiply(Look(forward)).Normalize()
 	s := State{
 		Position: position,
-		Velocity: forward.Scale(speed).Add(wind(position, clock, m.Environment, nil)),
-		Attitude: attitude,
+		Velocity: back.Vector(forward.Scale(speed).Add(field(home, altitude, clock, m.Environment, nil, Identity))),
+		Attitude: back.Attitude(attitude),
 		Fuel:     fuel,
 		External: m.State.External, // the stores' tanks as the trim weighed them, as Approach keeps them
 		Time:     clock,
@@ -344,20 +349,22 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	m.State.Fuel = fuel
 	m.weigh()
 	alpha := m.Airframe.Control.Onspeed
+	altitude, home, back := m.under(position) // worked level under the spawn, as Level is
+	direction = back.Inverse().Vector(direction)
 
 	// Newton on (speed, stabilator, throttle) with alpha and the flight path held;
 	// residuals as in Glide. The stabilator must be solved: it carries the
 	// download balancing the droop's nose-down moment, in lift and drag.
 	speed, stabilator, throttle := 70.0, -0.02, 0.2
 	for iteration := 0; iteration < 80; iteration++ {
-		r1, r2, r3 := m.approaching(speed, position.Y, alpha, stabilator, throttle, path)
+		r1, r2, r3 := m.approaching(speed, altitude, alpha, stabilator, throttle, path)
 		if math.Abs(r1) < 1e-7 && math.Abs(r2) < 1e-7 && math.Abs(r3) < 1e-7 {
 			break
 		}
 		const h = 1e-6
-		a1, a2, a3 := m.approaching(speed+h, position.Y, alpha, stabilator, throttle, path)
-		b1, b2, b3 := m.approaching(speed, position.Y, alpha, stabilator+h, throttle, path)
-		c1, c2, c3 := m.approaching(speed, position.Y, alpha, stabilator, throttle+h, path)
+		a1, a2, a3 := m.approaching(speed+h, altitude, alpha, stabilator, throttle, path)
+		b1, b2, b3 := m.approaching(speed, altitude, alpha, stabilator+h, throttle, path)
+		c1, c2, c3 := m.approaching(speed, altitude, alpha, stabilator, throttle+h, path)
 		jacobian := Mat3{
 			{(a1 - r1) / h, (b1 - r1) / h, (c1 - r1) / h},
 			{(a2 - r2) / h, (b2 - r2) / h, (c2 - r2) / h},
@@ -375,16 +382,16 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	// The trim is through the air: the state rides the wind, as Level's does.
 	// Left out, a start into the ship's wind over the deck began that much
 	// fast, shed it in a climb, and ballooned off the altitude it was given.
-	velocity = velocity.Add(wind(position, clock, m.Environment, nil))
+	velocity = velocity.Add(field(home, altitude, clock, m.Environment, nil, Identity))
 	// Attitude = flight path + on-speed alpha: the PA law's neutral demand
 	// exactly, so there is no capture transient to fly out of.
 	side := forward.Cross(Vec3{Y: 1}).Normalize()
 	attitude := Axis(side, path+alpha).Multiply(Look(forward)).Normalize() // +angle pitches the nose UP; see the note in Level, which still carries the opposite sign
-	droop, slat := m.Approaching(0.5 * air(position.Y, m.Environment).Density * speed * speed)
+	droop, slat := m.Approaching(0.5 * air(altitude, m.Environment).Density * speed * speed)
 
 	// The stores' tanks as the trim weighed them: the caller mounts the loadout
 	// first, and a state without their fuel flies lighter than it was trimmed.
-	s := State{Position: position, Velocity: velocity, Attitude: attitude, Fuel: fuel, External: m.State.External, Time: clock}
+	s := State{Position: position, Velocity: back.Vector(velocity), Attitude: back.Attitude(attitude), Fuel: fuel, External: m.State.External, Time: clock}
 	achieved := idle + clamp(throttle, 0, 1)*(1-idle) // the lever commands through the idle floor
 	s.Engine[0] = EngineState{Spool: achieved}
 	s.Engine[1] = EngineState{Spool: achieved}
@@ -402,6 +409,15 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	s.Fcs.Reference = path + alpha
 	s.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	return s, throttle
+}
+
+// under is a point's altitude, its place in Home (where the weather is
+// fixed) and the motion from the tangent frame under it back to the model's
+// environment frame: what a trim worked level under a spawn needs.
+func (m *Model) under(position Vec3) (float64, Vec3, Rigid) {
+	theatre := m.Environment.Theatre()
+	place, level := theatre.Survey(position)
+	return place.Altitude, m.Environment.Placement().Point(position), Between(level, theatre)
 }
 
 // approaching evaluates the steady-state errors for a trial powered-approach

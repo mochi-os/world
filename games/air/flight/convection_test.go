@@ -48,28 +48,28 @@ func TestConvectionShape(t *testing.T) {
 
 	// Inside a vigorous cell: bumpy, rising.
 	core.Y = 1200
-	chop, draft := convection(core, trades)
+	chop, draft := convection(core.X, core.Z, core.Y, trades)
 	if chop < 1 || draft < 1 {
 		t.Fatalf("inside a strong cell: chop %.2f draft %.2f, want both well above calm", chop, draft)
 	}
 
 	// Beneath the cell: a thermal.
 	core.Y = 450
-	_, thermal := convection(core, trades)
+	_, thermal := convection(core.X, core.Z, core.Y, trades)
 	if thermal < 0.5 {
 		t.Fatalf("under a strong cell: draft %.2f, want a rising thermal", thermal)
 	}
 
 	// The gap between cells: gentle sink, no chop.
 	gap.Y = 450
-	chop, sink := convection(gap, trades)
+	chop, sink := convection(gap.X, gap.Z, gap.Y, trades)
 	if chop != 0 || sink >= 0 {
 		t.Fatalf("between cells: chop %.2f draft %.2f, want calm sink", chop, sink)
 	}
 
 	// Above the tops: smooth.
 	core.Y = 5200
-	chop, draft = convection(core, trades)
+	chop, draft = convection(core.X, core.Z, core.Y, trades)
 	if chop != 0 || draft != 0 {
 		t.Fatalf("above the tops: chop %.2f draft %.2f, want smooth air", chop, draft)
 	}
@@ -79,17 +79,17 @@ func TestStratiformSmooth(t *testing.T) {
 	core, _, _, _ := strongest(t)
 	core.Y = 300
 	deck := Cloud{Base: 152, Top: 460, High: 460, Convective: 0, Gate: Gate{}}
-	if chop, draft := convection(core, deck); chop != 0 || draft != 0 {
+	if chop, draft := convection(core.X, core.Z, core.Y, deck); chop != 0 || draft != 0 {
 		t.Fatalf("stratiform deck: chop %.2f draft %.2f, want smooth stable air", chop, draft)
 	}
-	if chop, draft := convection(core, Cloud{}); chop != 0 || draft != 0 {
+	if chop, draft := convection(core.X, core.Z, core.Y, Cloud{}); chop != 0 || draft != 0 {
 		t.Fatalf("clear sky: chop %.2f draft %.2f, want nothing", chop, draft)
 	}
 }
 
 func TestWindCloudIntegration(t *testing.T) {
 	core, _, _, _ := strongest(t)
-	env := Environment{Seed: 7, Wrap: 250000}
+	env := Environment{Seed: 7}
 	calm := wind(Vec3{X: core.X, Y: 1200, Z: core.Z}, 30, env, nil)
 	env.Cloud = trades
 	stormy := wind(Vec3{X: core.X, Y: 1200, Z: core.Z}, 30, env, nil)

@@ -15,7 +15,7 @@ import (
 )
 
 func TestBanditSpawnTrimmed(t *testing.T) {
-	b := NewBandit("expert", 1, 250000, "", false, false, "", 0, false)
+	b := NewBandit("expert", 1, "", false, false, "", 0, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	s := &b.craft.model.State
 	v := s.Attitude.Unrotate(s.Velocity)
@@ -36,9 +36,9 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 // player's core had the trade wind, so each joust began with the pilot about
 // 53 kt faster or slower by the coin flip that picked his end.
 func TestBanditFliesThePlayersAir(t *testing.T) {
-	air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}, Wrap: 250000}
+	air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}}
 	for _, east := range []float64{1, -1} {
-		b := NewBandit("expert", 7, 250000, "", false, true, "fox2", 0, true)
+		b := NewBandit("expert", 7, "", false, true, "fox2", 0, true)
 		b.Air(air)
 		b.Spawn(flight.Vec3{X: -2778 * east, Y: 4572}, flight.Vec3{X: 220 * east})
 		player := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
@@ -59,13 +59,13 @@ func TestBanditFliesThePlayersAir(t *testing.T) {
 // open class arms it, its radar acquires beyond visual range, a DLZ shot leaves
 // the rail, and the guns class stays byte-inert.
 func TestBanditBvr(t *testing.T) {
-	b := NewBandit("expert", 3, 250000, "", false, true, "open", 0, false)
+	b := NewBandit("expert", 3, "", false, true, "open", 0, false)
 	if b.craft.amraams == 0 {
 		t.Fatal("open-class bandit spawned without AMRAAMs")
 	}
 	b.Spawn(flight.Vec3{X: 25000, Y: 6096}, flight.Vec3{X: -272})
 
-	environment := flight.Environment{Seed: 3, Wrap: 250000}
+	environment := flight.Environment{Seed: 3}
 	player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
 	player.State = flight.Level(player, flight.Vec3{X: 0, Y: 6096}, flight.Vec3{X: 1}, 272, fuel)
 	words := make([]float64, flight.Size)
@@ -125,7 +125,7 @@ func TestBanditBvr(t *testing.T) {
 	}
 
 	// The guns class: today's exact joust, nothing radiates.
-	quiet := NewBandit("expert", 3, 250000, "", false, false, "guns", 0, false)
+	quiet := NewBandit("expert", 3, "", false, false, "guns", 0, false)
 	quiet.Spawn(flight.Vec3{X: 8000, Y: 3000}, flight.Vec3{X: -272})
 	for tick := 0; tick < 60*5; tick++ {
 		player.State.Encode(words)
@@ -158,7 +158,7 @@ func TestBanditJoustHold(t *testing.T) {
 		track   []flight.Vec3
 	}
 	joust := func(level string, seed uint64, weapons string, hold, recoil, scripted bool) outcome {
-		b := NewBandit(level, seed, 250000, "", false, weapons != "guns", weapons, 0, hold)
+		b := NewBandit(level, seed, "", false, weapons != "guns", weapons, 0, hold)
 		b.craft.brain.scripted = scripted
 		if !recoil {
 			quiet := *b.craft.model.Airframe
@@ -166,7 +166,7 @@ func TestBanditJoustHold(t *testing.T) {
 			b.craft.model.Airframe = &quiet
 		}
 		b.Spawn(flight.Vec3{X: 2778, Y: 4572}, flight.Vec3{X: -220})
-		player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: seed, Wrap: 250000}, flight.World{Sea: sea})
+		player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: seed}, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 1}, 220, fuel)
 		words := make([]float64, flight.Size)
 		// behind is the rule in the test's own terms: from lies behind the line
@@ -249,7 +249,7 @@ func TestBanditJoustHold(t *testing.T) {
 // the Go program page-wide rather than being refused. The reflection has to
 // stay flyable afterwards, not merely not crash.
 func TestMirrorShortFrame(t *testing.T) {
-	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{X: 2000, Y: 6096}, flight.Vec3{X: -250})
 	reflection := b.arena.aircraft[0]
 
@@ -285,7 +285,7 @@ func TestBanditCarriesItsStores(t *testing.T) {
 		weapons  string
 		missiles bool
 	}{{"guns", false}, {"fox2", true}, {"open", true}} {
-		b := NewBandit("expert", 1, 250000, "", false, c.missiles, c.weapons, 2000, false)
+		b := NewBandit("expert", 1, "", false, c.missiles, c.weapons, 2000, false)
 		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 220})
 		b.Step()
 		m := b.craft.model

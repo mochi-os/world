@@ -99,7 +99,7 @@ func (m *Model) strut(s *State, leg *Strut, in Inputs, down float64, nose bool, 
 	}
 	body := leg.Attach.Subtract(m.center)
 	point := s.Position.Add(s.Attitude.Rotate(body))
-	height, kind, carried, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+	height, kind, carried, found := m.World.surface(point, s.Time, m.place)
 	if !found {
 		return
 	}
@@ -178,7 +178,7 @@ func (m *Model) carried(s *State) bool {
 			continue
 		}
 		point := s.Position.Add(s.Attitude.Rotate(at.Subtract(m.center)))
-		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+		height, _, _, found := m.World.surface(point, s.Time, m.place)
 		if found && height-point.Y > -0.15 {
 			return true
 		}
@@ -189,7 +189,7 @@ func (m *Model) carried(s *State) bool {
 func (m *Model) skid(s *State, at Vec3, total *Forces) {
 	body := at.Subtract(m.center)
 	point := s.Position.Add(s.Attitude.Rotate(body))
-	height, _, carried, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+	height, _, carried, found := m.World.surface(point, s.Time, m.place)
 	if !found {
 		return
 	}
@@ -213,9 +213,9 @@ func (m *Model) skid(s *State, at Vec3, total *Forces) {
 func (m *Model) apply(s *State, force Vec3, point Vec3, total *Forces) {
 	local := s.Attitude.Unrotate(force)
 	arm := s.Attitude.Unrotate(Vec3{
-		X: Shortest(s.Position.X, point.X, m.Environment.Wrap),
+		X: point.X - s.Position.X,
 		Y: point.Y - s.Position.Y,
-		Z: Shortest(s.Position.Z, point.Z, m.Environment.Wrap),
+		Z: point.Z - s.Position.Z,
 	})
 	total.Force = total.Force.Add(local)
 	total.Moment = total.Moment.Add(arm.Cross(local))

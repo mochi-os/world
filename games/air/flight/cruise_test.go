@@ -39,14 +39,14 @@ func TestCruiseAgreesWithFlight(t *testing.T) {
 		for i := 0; i < 240*(settle+measure); i++ {
 			v := m.State.Velocity.Length()
 			throttle = clamp(throttle+0.0005*(speed-v)*Dt, 0, 1)
-			pitch := clamp(0.004*(altitude-m.State.Position.Y)-0.03*m.State.Velocity.Y, -0.3, 0.3)
+			pitch := clamp(0.004*(altitude-m.Altitude())-0.03*m.State.Velocity.Dot(m.Up()), -0.3, 0.3) // held above the sea, which falls away below a level line
 			m.Step(Inputs{Throttle: clamp(throttle+0.02*(speed-v), 0, 1), Pitch: pitch})
 			if i == 240*settle {
 				start = m.State.Fuel
 			}
 			if i >= 240*settle {
-				machs += m.State.Velocity.Length() / air(m.State.Position.Y, m.Environment).Sound
-				heights += m.State.Position.Y
+				machs += m.State.Velocity.Length() / air(m.Altitude(), m.Environment).Sound
+				heights += m.Altitude()
 			}
 		}
 		burned := (start - m.State.Fuel) / measure

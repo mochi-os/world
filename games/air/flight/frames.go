@@ -82,7 +82,7 @@ func (m *Model) Nz() float64 { return m.State.Fcs.Normal }
 
 // Mach is the flight Mach number.
 func (m *Model) Mach() float64 {
-	return m.State.Velocity.Subtract(m.gust).Length() / air(m.State.Position.Y, m.Environment).Sound
+	return m.State.Velocity.Subtract(m.gust).Length() / air(m.Altitude(), m.Environment).Sound
 }
 
 // Cas returns calibrated airspeed from the compressible pitot equations, with
@@ -103,7 +103,7 @@ func (m *Model) Cas() float64 {
 	if along < cone {
 		recovery = math.Max(0, along/cone)
 	}
-	return calibrated(speed*recovery, m.State.Position.Y, m.Environment)
+	return calibrated(speed*recovery, m.Altitude(), m.Environment)
 }
 
 // Calibrated is the airspeed indicator's reading for a true airspeed at an

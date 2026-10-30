@@ -55,9 +55,10 @@ type Strip struct {
 // island, all in the carrier frame. The pose is a pure function of sim time
 // so prediction replay reproduces the deck exactly; every host gives its
 // aircraft the session's clock (State.Time), so all of them meet the ship in
-// the same place.
+// the same place. Its track is charted in the world frame, Home: the ship
+// sails where the chart puts it, on the curved sea (Pose).
 type Carrier struct {
-	Position  Vec3    // deck reference at Time 0 (Y = deck height, which the ship keeps)
+	Position  Vec3    // deck reference at Time 0 (Y = deck height above the sea, which the ship keeps)
 	Heading   float64 // rad
 	Speed     float64 // m/s along heading
 	Track     []Leg   // the ship's path in time order; set, it replaces Position, Heading and Speed
@@ -135,10 +136,29 @@ func (c *Carrier) At(t float64) (Vec3, float64) {
 	return at, heading
 }
 
-// heading is the ship's heading at a sim time.
-func (c *Carrier) heading(t float64) float64 {
-	_, heading := c.At(t)
-	return heading
+// Pose is the ship's deck reference point and its attitude (the carrier frame
+// to Home) at time t: the track's chart position carried straight down onto
+// the curved sea, the deck at its height above the water there, level on it,
+// and the bow on its heading.
+func (c *Carrier) Pose(t float64) (Vec3, Quat) {
+	at, heading := c.At(t)
+	sea, level := Home.Sea(at.X, at.Z)
+	up := level.Rotate(Vec3{Y: 1})
+	// The bow points the way the chart moves her, laid level on the water:
+	// her heading counts in Home's axes, which lean a little against the
+	// level ones away from Midway.
+	bow := direction(heading)
+	bow = bow.Subtract(up.Scale(bow.Dot(up)))
+	return sea.Add(up.Scale(c.Position.Y)), Basis(bow, up)
+}
+
+// track is the unit level direction, in the caller's frame, of a heading
+// relative to the ship's bow: a catapult's line. place carries the caller's
+// frame to Home.
+func (c *Carrier) track(relative float64, t float64, place Rigid) Vec3 {
+	_, attitude := c.Pose(t)
+	d := place.Inverse().Vector(attitude.Rotate(direction(relative)))
+	return Vec3{X: d.X, Z: d.Z}.Normalize()
 }
 
 // direction is a heading's forward unit vector in the world.
@@ -155,42 +175,69 @@ func (c *Carrier) Way(t float64) float64 {
 	return l.Speed + l.Change*(t-l.Start)
 }
 
-// velocity is the deck's own velocity at a world point at time t: the
-// reference point's along the heading, plus the turn's sweep about it.
-func (c *Carrier) velocity(p Vec3, t float64, wrap float64) Vec3 {
-	l := c.leg(t)
-	at, heading := c.At(t)
-	v := direction(heading).Scale(c.Way(t))
-	if l.Turn != 0 {
-		dx, dz := Shortest(at.X, p.X, wrap), Shortest(at.Z, p.Z, wrap)
-		v.X += l.Turn * dz // ω about +y crossed with the offset
-		v.Z -= l.Turn * dx
+// Known is the earliest time the ship's track covers. Before it, At carries
+// the first leg back in time whatever that leg does, which is where she was
+// only if she held it: a host drawing where she has been (her wake) takes
+// her as steaming steadily before then. Without a track, she always held
+// her course.
+func (c *Carrier) Known() float64 {
+	if len(c.Track) == 0 {
+		return math.Inf(-1)
 	}
-	return v
+	return c.Track[0].Start
 }
 
-// Aboard reports whether a world point is on the carrier's deck at time t:
-// over the deck's outline, and within a few metres of its height.
-func (c *Carrier) Aboard(p Vec3, t float64, wrap float64) bool {
-	local := c.local(p, t, wrap)
+// velocity is the deck's own velocity at a point at time t, in the caller's
+// frame (place carries it to Home): the reference point's along the bow, plus
+// the turn's sweep about it.
+func (c *Carrier) velocity(p Vec3, t float64, place Rigid) Vec3 {
+	l := c.leg(t)
+	at, attitude := c.Pose(t)
+	_, heading := c.At(t)
+	up := attitude.Rotate(Vec3{Y: 1})
+	// The chart moves her reference point along her heading at her way, and
+	// the sea she floats on slopes away under the chart as Pose lays her on
+	// it: her own velocity rises and falls with that slope, and her deck
+	// stands its height up the normal, which tips forward as she goes.
+	along := direction(heading).Scale(c.Way(t))
+	v := Vec3{X: along.X, Y: -(up.X*along.X + up.Z*along.Z) / up.Y, Z: along.Z}
+	spin := up.Scale(l.Turn).Add(up.Cross(v).Scale(1 / curve)) // her turn about her up, and the curve the sea carries her round
+	v = v.Add(spin.Cross(up.Scale(c.Position.Y)))
+	return place.Inverse().Vector(v.Add(spin.Cross(place.Point(p).Subtract(at))))
+}
+
+// curve is the sea's radius of curvature, m: the mean of the WGS84 radii,
+// which differ from it by a third of a percent at most, for a term that is
+// itself a part in a million.
+const curve = 6371008.8
+
+// Aboard reports whether a point is on the carrier's deck at time t: over the
+// deck's outline, and within a few metres of its height. place carries the
+// caller's frame to Home.
+func (c *Carrier) Aboard(p Vec3, t float64, place Rigid) bool {
+	local := c.local(p, t, place)
 	return local.Y > -2 && local.Y < 8 && inside(local, c.Deck)
 }
 
-// local transforms a world point into the carrier deck frame at time t
-// (minimum-image, so ops near a wrap seam stay correct).
-func (c *Carrier) local(p Vec3, t float64, wrap float64) Vec3 {
-	at, heading := c.At(t)
-	dx := Shortest(at.X, p.X, wrap)
-	dz := Shortest(at.Z, p.Z, wrap)
-	sin, cos := math.Sin(heading), math.Cos(heading)
-	return Vec3{X: dx*cos - dz*sin, Y: p.Y - at.Y, Z: dx*sin + dz*cos}
+// local transforms a point of the caller's frame into the carrier deck frame
+// at time t.
+func (c *Carrier) local(p Vec3, t float64, place Rigid) Vec3 {
+	at, attitude := c.Pose(t)
+	return attitude.Unrotate(place.Point(p).Subtract(at))
 }
 
-// world transforms a carrier-frame point back to world coordinates.
-func (c *Carrier) world(p Vec3, t float64) Vec3 {
-	at, heading := c.At(t)
-	sin, cos := math.Sin(heading), math.Cos(heading)
-	return Vec3{X: at.X + p.X*cos + p.Z*sin, Y: at.Y + p.Y, Z: at.Z - p.X*sin + p.Z*cos}
+// world transforms a carrier-frame point to the caller's frame.
+func (c *Carrier) world(p Vec3, t float64, place Rigid) Vec3 {
+	at, attitude := c.Pose(t)
+	return place.Inverse().Point(at.Add(attitude.Rotate(p)))
+}
+
+// Where is the deck reference point at time t in the caller's frame, and the
+// carrier's attitude there: where a host draws the ship or spawns a jet on it.
+func (c *Carrier) Where(t float64, place Rigid) (Vec3, Quat) {
+	at, attitude := c.Pose(t)
+	back := place.Inverse()
+	return back.Point(at), back.Attitude(attitude)
 }
 
 // inside is a 2D point-in-polygon test on the x/z plane.
@@ -229,11 +276,14 @@ func (w *World) top() float64 {
 	return top
 }
 
-// surface finds the contact surface under a world point: carrier deck, then
-// paved strips, then island ground, else none (open sea — the hosts treat
-// water impact as a crash, not a contact). Returns height, kind, and the
-// surface's own velocity (a parked jet rides the ship).
-func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bool) {
+// surface finds the contact surface under a point: carrier deck, then paved
+// strips, then island ground, else none (open sea — the hosts treat water
+// impact as a crash, not a contact). Returns height, kind, and the surface's
+// own velocity (a parked jet rides the ship), in the caller's frame: place
+// carries it to Home, where the map and the ship are. The height is the
+// point's own height less its clearance above the surface, so a caller
+// working level under itself reads the surface beneath it.
+func (w *World) surface(p Vec3, t float64, place Rigid) (float64, int, Vec3, bool) {
 	if p.Y > w.top()+Reach {
 		// Far above anything in this world. Once every server model flew the
 		// match's map, a jet at altitude asked this about 160 times a tick
@@ -242,19 +292,20 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 		return 0, 0, Vec3{}, false
 	}
 	if w.Carrier != nil {
-		local := w.Carrier.local(p, t, wrap)
+		local := w.Carrier.local(p, t, place)
 		if local.Y > -12 && local.Y < 25 && math.Abs(local.X) < 180 && math.Abs(local.Z) < 60 {
 			if inside(local, w.Carrier.Deck) {
-				return w.Carrier.Position.Y, Deck, w.Carrier.velocity(p, t, wrap), true
+				return p.Y - local.Y, Deck, w.Carrier.velocity(p, t, place), true
 			}
 		}
 	}
+	q := place.Point(p) // the point in Home, where the map is charted
 	for fi := range w.Fields {
 		field := &w.Fields[fi]
 		for si := range field.Strips {
 			strip := &field.Strips[si]
-			dx := p.X - strip.A.X
-			dz := p.Z - strip.A.Z
+			dx := q.X - strip.A.X
+			dz := q.Z - strip.A.Z
 			ex := strip.B.X - strip.A.X
 			ez := strip.B.Z - strip.A.Z
 			length := ex*ex + ez*ez
@@ -265,62 +316,65 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 			ox := dx - f*ex
 			oz := dz - f*ez
 			if ox*ox+oz*oz <= strip.Width*strip.Width/4 {
-				return field.Height, Paved, Vec3{}, true
+				return p.Y - (q.Y - field.Height), Paved, Vec3{}, true
 			}
 		}
-		if len(field.Coast) > 2 && inside(p, field.Coast) {
-			return field.Height, Soft, Vec3{}, true
+		if len(field.Coast) > 2 && inside(q, field.Coast) {
+			return p.Y - (q.Y - field.Height), Soft, Vec3{}, true
 		}
 	}
 	return 0, 0, Vec3{}, false
 }
 
-// Footing is the velocity of the surface under a world point at time t, as
-// the gear meets it: the deck's own on the carrier, still on land, and none
-// at sea or in the air. A jet spotted on the deck of a ship under way starts
-// with it, or the deck runs out from under the wheels and the catapult
-// snatches the jet up to the ship's speed.
-func (w *World) Footing(p Vec3, t float64, wrap float64) Vec3 {
-	_, _, velocity, _ := w.surface(p, t, wrap)
+// Footing is the velocity of the surface under a point at time t, as the gear
+// meets it: the deck's own on the carrier, still on land, and none at sea or
+// in the air. A jet spotted on the deck of a ship under way starts with it,
+// or the deck runs out from under the wheels and the catapult snatches the
+// jet up to the ship's speed. place carries the caller's frame to Home.
+func (w *World) Footing(p Vec3, t float64, place Rigid) Vec3 {
+	_, _, velocity, _ := w.surface(p, t, place)
 	return velocity
 }
 
-// struck reports whether a world point is inside a prism or a post, each
-// taken at its minimum image so a seam hides nothing - the carrier's island
-// among them, met where the ship is at time t.
-func (w *World) struck(p Vec3, t float64, wrap float64) bool {
+// struck reports whether a point of the caller's frame is inside a prism or a
+// post - the carrier's island among them, met where the ship is at time t.
+// place carries the point to Home, where the map is charted; a top is a
+// height above the sea, which the carrier's deck frame measures from its own
+// deck.
+func (w *World) struck(p Vec3, t float64, place Rigid) bool {
 	if c := w.Carrier; c != nil && (len(c.Prisms) > 0 || len(c.Posts) > 0) {
-		local := c.local(p, t, wrap)
+		local := c.local(p, t, place)
+		height := local.Y + c.Position.Y
 		for pi := range c.Prisms {
 			prism := &c.Prisms[pi]
-			if p.Y <= prism.Top && len(prism.Outline) >= 3 && inside(local, prism.Outline) {
+			if height <= prism.Top && len(prism.Outline) >= 3 && inside(local, prism.Outline) {
 				return true
 			}
 		}
 		for pi := range c.Posts {
 			post := &c.Posts[pi]
 			dx, dz := local.X-post.Position.X, local.Z-post.Position.Z
-			if p.Y <= post.Top && dx*dx+dz*dz <= post.Radius*post.Radius {
+			if height <= post.Top && dx*dx+dz*dz <= post.Radius*post.Radius {
 				return true
 			}
 		}
 	}
+	q := place.Point(p)
 	for pi := range w.Prisms {
 		prism := &w.Prisms[pi]
-		if p.Y > prism.Top || len(prism.Outline) < 3 {
+		if q.Y > prism.Top || len(prism.Outline) < 3 {
 			continue
 		}
-		at := prism.Outline[0]
-		if inside(Vec3{X: at.X + Shortest(at.X, p.X, wrap), Z: at.Z + Shortest(at.Z, p.Z, wrap)}, prism.Outline) {
+		if inside(q, prism.Outline) {
 			return true
 		}
 	}
 	for pi := range w.Posts {
 		post := &w.Posts[pi]
-		if p.Y > post.Top {
+		if q.Y > post.Top {
 			continue
 		}
-		dx, dz := Shortest(post.Position.X, p.X, wrap), Shortest(post.Position.Z, p.Z, wrap)
+		dx, dz := q.X-post.Position.X, q.Z-post.Position.Z
 		if dx*dx+dz*dz <= post.Radius*post.Radius {
 			return true
 		}

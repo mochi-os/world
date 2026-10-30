@@ -12,7 +12,7 @@ import (
 )
 
 func breeze() Environment {
-	return Environment{Seed: 7, Wind: Vec3{X: 6, Z: 3}, Turbulence: 1.5, Wrap: 250000}
+	return Environment{Seed: 7, Wind: Vec3{X: 6, Z: 3}, Turbulence: 1.5}
 }
 
 // TestWindDeterminism: identical (seed, position, time) gives identical wind.

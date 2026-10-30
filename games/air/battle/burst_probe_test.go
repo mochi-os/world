@@ -65,7 +65,7 @@ func TestBurstProbe(t *testing.T) {
 			// Body frame is world frame at identity attitude, so the point is
 			// the burst offset: astern and a little below.
 			point := flight.Vec3{X: -miss * 0.96, Y: -miss * 0.28}
-			kill, events, hits := Blast(point, 650, flight.Vec3{}, flight.Quat{W: 1}, body, 0, seed, 3, seed)
+			kill, events, hits := Blast(point, 650, flight.Vec3{}, flight.Quat{W: 1}, body, seed, 3, seed)
 			if kill {
 				kills++
 				continue

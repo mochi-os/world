@@ -30,7 +30,7 @@ func TestPoseCarriesAlphaAndLoad(t *testing.T) {
 	a.model.State.Attitude = flight.Axis(flight.Vec3{Z: 1}, pitch*math.Pi/180)
 	a.model.State.Fcs.Normal = 6.37 // to the nearest tenth, 6.4: a truncating byte reads 6.3
 
-	b := pose(0, a)
+	b := pose(0, a, flight.Vec3{})
 	if len(b) != pose_record {
 		t.Fatalf("pose is %d bytes, want pose_record %d", len(b), pose_record)
 	}
@@ -52,7 +52,7 @@ func TestPoseDetailSaturates(t *testing.T) {
 	a.model.State.Attitude = flight.Axis(flight.Vec3{Z: 1}, 150*math.Pi/180) // deep departure
 	a.model.State.Fcs.Normal = 40                                            // far past any limiter
 
-	b := pose(0, a)
+	b := pose(0, a, flight.Vec3{})
 	if alpha := int8(b[37]); alpha < 0 {
 		t.Errorf("byte 37 alpha = %d, a wrapped departure reading as a negative alpha", alpha)
 	}
@@ -73,7 +73,7 @@ func TestPoseCarriesSideslip(t *testing.T) {
 		// angle IS the sideslip, the nose to the left of the path for positive.
 		a.model.State.Velocity = flight.Vec3{X: 200}
 		a.model.State.Attitude = flight.Axis(flight.Vec3{Y: 1}, want*math.Pi/180)
-		b := pose(0, a)
+		b := pose(0, a, flight.Vec3{})
 		core := a.model.Beta() * 180 / math.Pi
 		if got := float64(int8(b[30])); math.Abs(got-core) > 0.5 || math.Abs(got-want) > 0.5 {
 			t.Errorf("nose %.0f deg off the path: byte 30 sideslip = %.0f deg, want about %.0f (the core reads %.1f)", want, got, want, core)
@@ -99,7 +99,7 @@ func TestPoseEngineFires(t *testing.T) {
 		{2, -1, 0xf0}, // out of range either way stays inside its four bits
 	} {
 		a.condition.Fire = [2]float64{c.left, c.right}
-		if got := pose(0, a)[29]; got != c.want {
+		if got := pose(0, a, flight.Vec3{})[29]; got != c.want {
 			t.Errorf("fires %.2f/%.2f: byte 29 = %#02x, want %#02x", c.left, c.right, got, c.want)
 		}
 	}

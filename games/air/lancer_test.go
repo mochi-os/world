@@ -157,7 +157,7 @@ func (l *lancer) look(i *instance, seat, bandit int, tick uint64) {
 	line, span := i.bearing(me.Position, him.Position)
 	inside := me.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) >= math.Cos(1.222) // radar.ts GIMBAL
 	reach := i.detection(a, b)
-	notched := round.Notched(me.Position, him.Position, him.Velocity, i.environment.Wrap)
+	notched := round.Notched(me.Position, him.Position, him.Velocity)
 	if l.locked {
 		switch {
 		case !inside || span > reach*radar_hold:
@@ -189,7 +189,6 @@ func (l *lancer) look(i *instance, seat, bandit int, tick uint64) {
 func (l *lancer) fly(i *instance, seat, bandit int, tick uint64) (map[string]any, int, int) {
 	a, b := i.aircraft[seat], i.aircraft[bandit]
 	me, him := &a.model.State, &b.model.State
-	wrap := i.environment.Wrap
 	if l.block == 0 {
 		l.block = me.Position.Y
 		l.position, l.velocity, l.seen = him.Position, him.Velocity, tick // where the joust puts him is no secret
@@ -244,7 +243,7 @@ func (l *lancer) fly(i *instance, seat, bandit int, tick uint64) (map[string]any
 	// zone's edge: a pilot about to defend answers with the round he has, as the
 	// bot's counterfire does, or he defends with every round still aboard.
 	if l.locked && l.starved == 0 && (l.zoned == 0 || tick+1-l.zoned >= 60) {
-		l.zone = round.Ladder(fired(a), round.Target{Position: l.position, Velocity: l.velocity}, flight.Environment{Wrap: wrap}, 0)
+		l.zone = round.Ladder(fired(a), round.Target{Position: l.position, Velocity: l.velocity}, flight.Environment{}, 0)
 		l.zoned = tick + 1
 	}
 	window := l.zone.Escape + l.depth*math.Max(l.zone.Max-l.zone.Escape, 0)
@@ -292,7 +291,7 @@ func (l *lancer) fly(i *instance, seat, bandit int, tick uint64) (map[string]any
 			l.squared = tick + 1
 		}
 		want = l.beam
-		if round.Clutter(seeker.position, me.Position, wrap) < 0.75 && me.Position.Y > 2000 {
+		if round.Clutter(seeker.position, me.Position) < 0.75 && me.Position.Y > 2000 {
 			want = flight.Vec3{X: l.beam.X, Y: -0.35, Z: l.beam.Z}.Normalize()
 		} else if me.Position.Y < 1500 {
 			want = flight.Vec3{X: l.beam.X, Y: 0.05, Z: l.beam.Z}.Normalize()
@@ -300,7 +299,7 @@ func (l *lancer) fly(i *instance, seat, bandit int, tick uint64) (map[string]any
 		budget = 5
 		l.mode = "beam"
 		if (l.chaffed == 0 || tick+1-l.chaffed >= 84) && d > round.Resolve && a.chaff > 0 &&
-			round.Notched(seeker.position, me.Position, me.Velocity, wrap) {
+			round.Notched(seeker.position, me.Position, me.Velocity) {
 			data["chaff"] = true
 			l.chaffed = tick + 1
 		}
@@ -950,7 +949,7 @@ func TestLancerBeam(t *testing.T) {
 		if height := me.model.State.Position.Y; c.dive != (height < 5000) {
 			t.Errorf("%s: ended at %.0f m from 6,000, dive wanted %v", c.name, height, c.dive)
 		}
-		if behind := round.Clutter(where, me.model.State.Position, 0); behind < 0.5 {
+		if behind := round.Clutter(where, me.model.State.Position); behind < 0.5 {
 			t.Errorf("%s: the round still sees it against the sky (clutter %.2f)", c.name, behind)
 		}
 		if spent := bundles - me.chaff; spent < 3 {

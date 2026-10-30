@@ -32,7 +32,7 @@ func TestEvaluateAtRest(t *testing.T) {
 // over the ground, so in the single-player trade wind (62 kt at 15,000 ft) the
 // joust's 428 kt start flew 366 kt through the air downwind and 490 kt into it.
 func TestLevelInWind(t *testing.T) {
-	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}, Wrap: 250000} // the single-player trades: 12.9 m/s from 070
+	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}} // the single-player trades: 12.9 m/s from 070
 	for _, direction := range []Vec3{{X: 1}, {X: -1}, {Z: 1}} {
 		m := New(Fighter, air, World{})
 		s := Level(m, Vec3{Y: 4572}, direction, 220, 3000)
@@ -51,7 +51,7 @@ func TestLevelInWind(t *testing.T) {
 }
 
 func TestLevel(t *testing.T) {
-	m := New(Fighter, Environment{Wrap: 250000}, World{})
+	m := New(Fighter, Environment{}, World{})
 	s := Level(m, Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)
 	m.State = s
 	in := Inputs{Throttle: s.Engine[0].Spool}
@@ -69,12 +69,12 @@ func TestLevel(t *testing.T) {
 	}
 	// The composed attitude must carry the solved alpha; the tolerances above pass
 	// even with the spawn at minus the trimmed alpha.
-	spawn := Level(New(Fighter, Environment{Wrap: 250000}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)
+	spawn := Level(New(Fighter, Environment{}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 3000)
 	if held := alpha(spawn.Attitude.Unrotate(spawn.Velocity)); held < 0 {
 		t.Fatalf("spawn alpha %.3f° is negative — the trim attitude is inverted", held*180/math.Pi)
 	}
 	for _, direction := range []Vec3{{X: 1}, {Z: 1}, {X: 0.6, Z: 0.8}} {
-		s := Level(New(Fighter, Environment{Wrap: 250000}, World{}), Vec3{Y: 4572}, direction, 220, 3000)
+		s := Level(New(Fighter, Environment{}, World{}), Vec3{Y: 4572}, direction, 220, 3000)
 		forward := s.Attitude.Rotate(Vec3{X: 1})
 		pitch := math.Asin(clamp(forward.Y, -1, 1))
 		if math.Abs(pitch-alpha(s.Attitude.Unrotate(s.Velocity))) > 1e-6 {
@@ -89,7 +89,7 @@ func TestLevel(t *testing.T) {
 // entry lost 14 kt and 31 m in 30 s.
 func TestLevelLoaded(t *testing.T) {
 	load := Fighter.Default | mask(t, "rail2", "9m2", "rail8", "9m8", "rail4", "120c4", "rail6", "120c6", "pylon5", "tank5")
-	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	m := New(Fighter, Environment{Seed: 1}, World{})
 	m.Stores(load)
 	s := Level(m, Vec3{Y: 244}, Vec3{X: 1}, 180, 4877)
 	if s.External.Centre != 1010 {
@@ -112,8 +112,8 @@ func TestLevelLoaded(t *testing.T) {
 // spawn its forces held the thrust, the drag read near zero and the jet came
 // back at the 0.1 spool floor and a lower alpha.
 func TestLevelAfterFlight(t *testing.T) {
-	fresh := Level(New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 4000)
-	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	fresh := Level(New(Fighter, Environment{Seed: 1}, World{}), Vec3{Y: 4572}, Vec3{X: 1}, 220, 4000)
+	m := New(Fighter, Environment{Seed: 1}, World{})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{Z: 1}, 250, 4000)
 	for i := 0; i < 240*5; i++ {
 		m.Step(Inputs{Throttle: 1, Reheat: 1})
@@ -129,8 +129,8 @@ func TestLevelAfterFlight(t *testing.T) {
 // on-speed figure over the ground, so the Case II start, level at 1,200 ft into
 // the trades the deck faces, began some 35 kt fast and ballooned 500 ft.
 func TestApproachInWind(t *testing.T) {
-	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}, Wrap: 250000} // the single-player trades: 12.9 m/s from 070
-	calm := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	air := Environment{Seed: 1, Wind: Vec3{X: -12.1, Z: 4.4}} // the single-player trades: 12.9 m/s from 070
+	calm := New(Fighter, Environment{Seed: 1}, World{})
 	still, _ := Approach(calm, Vec3{Y: 366}, Vec3{X: 1}, 0, 4900)
 	want := still.Velocity.Length()
 	for _, direction := range []Vec3{{X: 1}, {X: -1}, {Z: 1}} {
@@ -159,7 +159,7 @@ func TestApproachInWind(t *testing.T) {
 // the trim weighed, so a loaded jet holds the altitude it was given hands-off.
 func TestApproachLoaded(t *testing.T) {
 	load := Fighter.Default | mask(t, "rail2", "9m2", "rail8", "9m8", "rail4", "120c4", "rail6", "120c6", "pylon5", "tank5")
-	m := New(Fighter, Environment{Seed: 1, Wrap: 250000}, World{})
+	m := New(Fighter, Environment{Seed: 1}, World{})
 	m.Stores(load)
 	s, throttle := Approach(m, Vec3{Y: 366}, Vec3{X: 1}, 0, 4877)
 	if s.External.Centre != 1010 {
@@ -181,7 +181,7 @@ func TestApproachLoaded(t *testing.T) {
 func TestApproach(t *testing.T) {
 	for _, slope := range []float64{-3.5, -4.0} {
 		path := slope * math.Pi / 180
-		m := New(Fighter, Environment{Wrap: 250000}, World{})
+		m := New(Fighter, Environment{}, World{})
 		s, spool := Approach(m, Vec3{Y: 400}, Vec3{X: 1}, path, 3000)
 		m.State = s
 		onspeed := m.Airframe.Control.Onspeed * 180 / math.Pi

@@ -30,13 +30,24 @@ const (
 )
 
 // Debris is a kill's cloud: where the jet broke up, its velocity then, and
-// when, on the clock the cloud is met by, and the wind there, which the pieces
-// slow into and are carried by.
+// when, on the clock the cloud is met by, the wind there, which the pieces
+// slow into and are carried by, and the level up there, which they fall
+// along (zero: the frame's own y).
 type Debris struct {
 	Origin   flight.Vec3
 	Velocity flight.Vec3
 	Time     float64
 	Wind     flight.Vec3
+	Up       flight.Vec3
+}
+
+// Carry moves the debris into another frame: m is the motion there.
+func (d *Debris) Carry(m flight.Rigid) {
+	up := d.Up
+	if up == (flight.Vec3{}) {
+		up = flight.Vec3{Y: 1}
+	}
+	d.Origin, d.Velocity, d.Wind, d.Up = m.Point(d.Origin), m.Vector(d.Velocity), m.Vector(d.Wind), m.Vector(up)
 }
 
 // Cloud is the debris at a time: its centre, its radius and the velocity its
@@ -48,10 +59,12 @@ func (d Debris) Cloud(time float64) (flight.Vec3, float64, flight.Vec3, bool) {
 	}
 	carried := (1 - math.Exp(-debris_drag*age)) / debris_drag
 	through := d.Velocity.Subtract(d.Wind) // the pieces lose their speed through the air, not over the sea
-	centre := d.Origin.Add(d.Wind.Scale(age)).Add(through.Scale(carried))
-	centre.Y -= 0.5 * 9.8 * age * age
-	velocity := d.Wind.Add(through.Scale(math.Exp(-debris_drag * age)))
-	velocity.Y -= 9.8 * age
+	up := d.Up
+	if up == (flight.Vec3{}) {
+		up = flight.Vec3{Y: 1}
+	}
+	centre := d.Origin.Add(d.Wind.Scale(age)).Add(through.Scale(carried)).Subtract(up.Scale(0.5 * 9.8 * age * age))
+	velocity := d.Wind.Add(through.Scale(math.Exp(-debris_drag * age))).Subtract(up.Scale(9.8 * age))
 	return centre, debris_core + debris_spread*age, velocity, true
 }
 
@@ -61,16 +74,12 @@ func (d Debris) Cloud(time float64) (flight.Vec3, float64, flight.Vec3, bool) {
 // piece traced into the airframe along the relative motion, at a severity
 // that goes with the square of that speed. Returns whether a piece struck,
 // the events it raised, and where it landed in the body frame.
-func (d Debris) Meet(time float64, dt float64, position flight.Vec3, velocity flight.Vec3, attitude flight.Quat, body *Body, wrap float64, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
+func (d Debris) Meet(time float64, dt float64, position flight.Vec3, velocity flight.Vec3, attitude flight.Quat, body *Body, seed uint64, slot uint64, tick uint64) (bool, []Event, []flight.Vec3) {
 	centre, radius, moving, alive := d.Cloud(time)
 	if !alive {
 		return false, nil, nil
 	}
-	offset := flight.Vec3{
-		X: flight.Shortest(centre.X, position.X, wrap),
-		Y: position.Y - centre.Y,
-		Z: flight.Shortest(centre.Z, position.Z, wrap),
-	}
+	offset := position.Subtract(centre)
 	if offset.Length() > radius {
 		return false, nil, nil
 	}

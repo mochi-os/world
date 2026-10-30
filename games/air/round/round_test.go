@@ -236,16 +236,16 @@ func TestVisual(t *testing.T) {
 func TestNotched(t *testing.T) {
 	own := flight.Vec3{Y: 3000}
 	beam := flight.Vec3{Z: 250}
-	if Notched(own, flight.Vec3{X: 8000, Y: 3000}, beam, 0) {
+	if Notched(own, flight.Vec3{X: 8000, Y: 3000}, beam) {
 		t.Error("a beaming jet level with the radar sits in the notch with the sky behind it")
 	}
-	if !Notched(own, flight.Vec3{X: 8000, Y: 500}, beam, 0) {
+	if !Notched(own, flight.Vec3{X: 8000, Y: 500}, beam) {
 		t.Error("a beaming jet below the radar, the sea behind it, is out of the notch")
 	}
-	if Notched(own, flight.Vec3{X: 8000, Y: 500}, flight.Vec3{X: -250}, 0) {
+	if Notched(own, flight.Vec3{X: 8000, Y: 500}, flight.Vec3{X: -250}) {
 		t.Error("a jet below flying at the radar sits in the notch")
 	}
-	if Notched(own, flight.Vec3{X: 300, Y: 3500}, flight.Vec3{X: 30, Z: 50}, 0) {
+	if Notched(own, flight.Vec3{X: 300, Y: 3500}, flight.Vec3{X: 30, Z: 50}) {
 		t.Error("a slow jet above the radar sits in the notch")
 	}
 	acquired := func(height float64) bool {

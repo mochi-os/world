@@ -50,8 +50,7 @@ func arming(closing, tail, lit float64) float64 {
 // acquisition reach and caps the zone. The round and the target fly the
 // environment's air from the session time clock.
 func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit float64, environment flight.Environment, clock float64) round.Zone {
-	wrap := environment.Wrap
-	sight := shortest(shooter.Position, target.Position, wrap)
+	sight := target.Position.Subtract(shooter.Position)
 	distance := math.Max(sight.Length(), 1)
 	direction := sight.Scale(1 / distance)
 
@@ -196,7 +195,6 @@ func Heat(shooter round.Target, target round.Target, swing flight.Vec3, lit floa
 // target holds and turns its velocity through the air while the wind carries it.
 func reaches(shooter round.Target, target round.Target, direction flight.Vec3, swing flight.Vec3, environment flight.Environment, clock float64, trial float64, breaking bool) bool {
 	const dt = 1.0 / 60
-	wrap := environment.Wrap
 	virtual := round.Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
 	air := virtual.Velocity.Subtract(flight.Wind(virtual.Position, clock, environment)) // the target's velocity through the air
 	forward := shooter.Velocity.Subtract(flight.Wind(shooter.Position, clock, environment))
@@ -211,7 +209,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		life:     missile_life,
 		burn:     missile_boost,
 	}
-	m.sight = shortest(m.position, virtual.Position, wrap).Normalize()
+	m.sight = virtual.Position.Subtract(m.position).Normalize()
 	closest := math.MaxFloat64
 	for m.life > 0 {
 		m.life -= dt
@@ -221,7 +219,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		// The proximity fuse: closest approach inside this step, exactly
 		// as pursue() judges it.
 		if m.flew > missile_arm {
-			relative := shortest(m.position, virtual.Position, wrap)
+			relative := virtual.Position.Subtract(m.position)
 			closure := virtual.Velocity.Subtract(m.velocity)
 			step := 0.0
 			if squared := closure.Dot(closure); squared > 1e-9 {
@@ -239,7 +237,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		// what every rung of the ladder bisects over and what the launch gate
 		// consults, so a predictor one release out of step with the weapon
 		// would score doctrine against a round nobody fires.
-		sight := shortest(m.position, virtual.Position, wrap).Normalize()
+		sight := virtual.Position.Subtract(m.position).Normalize()
 		axis := m.velocity.Subtract(wind).Normalize()
 		if sight.Dot(axis) < missile_gimbal {
 			m.loose = true
@@ -285,7 +283,7 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 				// The heater's escape is the BEAM, not the AMRAAM's tail-on run: square
 				// the missile's line of sight at 7.5 g, re-squared as it rotates, so the
 				// endgame outruns the seeker's 20 deg/s ceiling.
-				line := shortest(m.position, virtual.Position, wrap).Normalize()
+				line := virtual.Position.Subtract(m.position).Normalize()
 				side := flight.Vec3{Y: 1}.Cross(line).Normalize()
 				if side.Dot(swing) < 0 || (swing.Length() < 1 && side.Dot(heading) < 0) {
 					side = side.Scale(-1)
@@ -315,16 +313,4 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(dt))
 	}
 	return false
-}
-
-// shortest is the wrap-aware displacement from one point to another.
-func shortest(from, to flight.Vec3, wrap float64) flight.Vec3 {
-	if wrap <= 0 {
-		return to.Subtract(from)
-	}
-	return flight.Vec3{
-		X: flight.Shortest(from.X, to.X, wrap),
-		Y: to.Y - from.Y,
-		Z: flight.Shortest(from.Z, to.Z, wrap),
-	}
 }

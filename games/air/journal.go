@@ -122,7 +122,7 @@ func (j *journal) decide(tick uint64, b *brain, scores map[string]float64, horiz
 
 // resolve settles every forecast that has come due against where the two jets
 // really are. A respawn or a lost target simply drops what was pending.
-func (j *journal) resolve(tick uint64, own flight.Vec3, his *flight.Vec3, wrap float64) {
+func (j *journal) resolve(tick uint64, own flight.Vec3, his *flight.Vec3) {
 	waiting := j.pending[:0]
 	for _, p := range j.pending {
 		if tick < p.due {
@@ -136,11 +136,7 @@ func (j *journal) resolve(tick uint64, own flight.Vec3, his *flight.Vec3, wrap f
 			}
 			actual = *his
 		}
-		gap := flight.Vec3{
-			X: flight.Shortest(p.point.X, actual.X, wrap),
-			Y: actual.Y - p.point.Y,
-			Z: flight.Shortest(p.point.Z, actual.Z, wrap),
-		}
+		gap := actual.Subtract(p.point)
 		j.forecasts = trim(append(j.forecasts, forecast{Tick: p.made, Subject: p.subject, Span: p.span, Error: gap.Length()}))
 	}
 	j.pending = waiting
@@ -175,7 +171,7 @@ func (i *instance) chronicle(slot int, a *craft, tick uint64) {
 	if quarry, found := i.aircraft[b.target]; found && quarry != nil && quarry.alive && quarry.model != nil {
 		his = &quarry.model.State.Position
 	}
-	b.journal.resolve(tick, me.Position, his, i.environment.Wrap)
+	b.journal.resolve(tick, me.Position, his)
 	b.journal.notice(tick, b.mode, equivalent(a.model), 0.55*corner(a.model))
 }
 

@@ -144,7 +144,7 @@ func TestHeatZone(t *testing.T) {
 		t.Errorf("the cold beam ceiling should be the acquisition cap (%.0f m), got %.0f", missile_range*0.15, beam.Max)
 	}
 	// #104's real invariant: every range the ladder endorses must arrive.
-	beamward := shortest(shooter.Position, place(math.Pi/2).Position, 0).Normalize()
+	beamward := place(math.Pi / 2).Position.Subtract(shooter.Position).Normalize()
 	for _, trial := range []float64{beam.Minimum, (beam.Minimum + beam.Max) / 2, beam.Max} {
 		if !reaches(shooter, place(math.Pi/2), beamward, flight.Vec3{}, flight.Environment{}, 0, trial, false) {
 			t.Errorf("the ladder endorses %.0f m on a cold beam but its own round refuses it: %+v", trial, beam)

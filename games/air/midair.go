@@ -36,10 +36,10 @@ func (i *instance) midair(dt float64) {
 			}
 			sa, sb := &a.model.State, &b.model.State
 			gate := battle.Extent(a.body.Parts) + battle.Extent(b.body.Parts) + sa.Velocity.Subtract(sb.Velocity).Length()*dt
-			if shortest(sa.Position, sb.Position, i.environment.Wrap).Length() > gate {
+			if sb.Position.Subtract(sa.Position).Length() > gate {
 				continue
 			}
-			metA, metB := battle.Contact(mover(a), mover(b), dt, i.environment.Wrap)
+			metA, metB := battle.Contact(mover(a), mover(b), dt)
 			if len(metA) == 0 {
 				continue
 			}

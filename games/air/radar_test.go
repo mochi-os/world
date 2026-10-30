@@ -19,7 +19,7 @@ import (
 func TestRadarPoseWire(t *testing.T) {
 	i := build(t, "furball", nil, 2)
 
-	fresh := pose(0, i.aircraft[0])
+	fresh := pose(0, i.aircraft[0], flight.Vec3{})
 	if len(fresh) != pose_record {
 		t.Fatalf("pose record %d bytes, want %d", len(fresh), pose_record)
 	}
@@ -31,7 +31,7 @@ func TestRadarPoseWire(t *testing.T) {
 		if want.mode >= 0 {
 			i.Radar(0, want.mode, want.target)
 		}
-		if got := pose(0, i.aircraft[0])[34]; got != want.byte {
+		if got := pose(0, i.aircraft[0], flight.Vec3{})[34]; got != want.byte {
 			t.Errorf("%s: emitter byte %#x, want %#x", want.what, got, want.byte)
 		}
 	}
@@ -97,7 +97,7 @@ func TestRadarLocksAServerBot(t *testing.T) {
 	if me.emitter != 2 || me.lock != bot {
 		t.Fatalf("STT on the bot at slot %d: emitter %d lock %d", bot, me.emitter, me.lock)
 	}
-	if got := pose(0, me)[34]; got != 0x80|byte(bot) {
+	if got := pose(0, me, flight.Vec3{})[34]; got != 0x80|byte(bot) {
 		t.Errorf("STT on slot %d: emitter byte %#x, want %#x", bot, got, 0x80|byte(bot))
 	}
 	if !i.fox3(0, me, false) {

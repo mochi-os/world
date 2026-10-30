@@ -81,9 +81,9 @@ func seek(t *testing.T, span float64, off float64, aspect float64, speed float64
 		// at the round's time: the jets have stepped, the round has not.
 		seen := target.model.State.Position.Subtract(target.model.State.Velocity.Scale(dt))
 		relative := flight.Vec3{
-			X: flight.Shortest(was.position.X, seen.X, i.environment.Wrap),
+			X: (seen.X - was.position.X),
 			Y: seen.Y - was.position.Y,
-			Z: flight.Shortest(was.position.Z, seen.Z, i.environment.Wrap),
+			Z: (seen.Z - was.position.Z),
 		}
 		closure := target.model.State.Velocity.Subtract(was.velocity)
 		step := 0.0
@@ -228,7 +228,7 @@ func TestSeekerPredictor(t *testing.T) {
 			heading := flight.Vec3{X: math.Cos(off + aspect*math.Pi/180), Z: math.Sin(off + aspect*math.Pi/180)}
 			shooter := round.Target{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 250}}
 			prey := round.Target{Position: flight.Vec3{Y: 3000}.Add(line.Scale(span)), Velocity: heading.Scale(200)}
-			says := reaches(shooter, prey, line, flight.Vec3{}, flight.Environment{Wrap: 250000}, 0, span, false)
+			says := reaches(shooter, prey, line, flight.Vec3{}, flight.Environment{}, 0, span, false)
 
 			frames, m, closest := seek(t, span, off, aspect*math.Pi/180, 200, 0)
 			_, why := broke(frames)

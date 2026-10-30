@@ -41,13 +41,12 @@ func bandits() map[string]any {
 	}
 }
 
-// bandit_initialize builds the harness from a JSON payload: level, seed, wrap,
+// bandit_initialize builds the harness from a JSON payload: level, seed,
 // sky (cloud preset), night, missiles, weapons, hold, air. Returns an error string, or "" on success.
 func bandit_initialize(this js.Value, arguments []js.Value) any {
 	payload := struct {
 		Level    string
 		Seed     uint64
-		Wrap     float64
 		Sky      string
 		Night    bool
 		Missiles bool
@@ -58,7 +57,8 @@ func bandit_initialize(this js.Value, arguments []js.Value) any {
 	if err := json.Unmarshal([]byte(arguments[0].String()), &payload); err != nil {
 		return err.Error()
 	}
-	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Wrap, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, 0, payload.Hold) // 0: the load a bot of its class carries, not the player's
+	bandit = air.NewBandit(payload.Level, payload.Seed, payload.Sky, payload.Night, payload.Missiles, payload.Weapons, 0, payload.Hold) // 0: the load a bot of its class carries, not the player's
+	bandit.Reframe(theatre)                                                                                                             // the client's frame, which the positions it hands the bandit are in
 	if payload.Air != nil {
 		bandit.Air(*payload.Air)
 	}

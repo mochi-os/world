@@ -237,8 +237,8 @@ func TestCalledBack(t *testing.T) {
 // within Approach of the ship - and by no one else.
 func TestNeeded(t *testing.T) {
 	c, _ := midway(t)
-	at, _ := c.At(0)
-	on := flight.State{Position: at.Add(flight.Vec3{X: -30 * math.Cos(c.Heading), Y: 2.5, Z: 30 * math.Sin(c.Heading)})}
+	at, attitude := c.Where(0, flight.Identity) // the deck where she floats, on the curved sea
+	on := flight.State{Position: at.Add(attitude.Rotate(flight.Vec3{X: -30, Y: 2.5}))}
 	down := flight.State{Position: at.Add(flight.Vec3{X: 8000, Y: 300})}
 	down.Gear.Extension = 1
 	up := down
@@ -250,11 +250,11 @@ func TestNeeded(t *testing.T) {
 		state flight.State
 		want  bool
 	}{{"aboard", on, true}, {"gear down inbound", down, true}, {"gear up", up, false}, {"gear down far off", far, false}} {
-		if got := Needed(c, 0, 0, []flight.State{test.state}); got != test.want {
+		if got := Needed(c, 0, []flight.State{test.state}); got != test.want {
 			t.Errorf("%s: needed %v, want %v", test.name, got, test.want)
 		}
 	}
-	if Needed(c, 0, 0, nil) {
+	if Needed(c, 0, nil) {
 		t.Error("an empty sky needs the deck")
 	}
 }

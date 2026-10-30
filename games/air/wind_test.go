@@ -272,8 +272,8 @@ func TestBloomDrifts(t *testing.T) {
 	m.radar.Phase = round.Pitbull
 	i.flying = append(i.flying[:0], m)
 	i.fly_radar(m, 1.0/60, 1800)
-	bloom := b.cloud.Add(flight.Wind(b.cloud, 30, i.environment).Scale(1.5 - 1.0/60)) // where the wind has carried it by the round's own time, a tick behind the jets
-	drift := flight.Wind(bloom, m.radar.Clock+m.radar.Time-1.0/60, i.environment).Add(flight.Vec3{Y: -1})
+	bloom := b.cloud.Add(flight.Wind(b.cloud, 30, i.environment).Scale(1.5 - 1.0/60))                                         // where the wind has carried it by the round's own time, a tick behind the jets
+	drift := flight.Wind(bloom, m.radar.Clock+m.radar.Time-1.0/60, i.environment).Subtract(i.environment.Theatre().Up(bloom)) // sinking down the level up there
 	if want := bloom.Add(drift.Scale(1.0 / 60)); m.radar.Estimate.Subtract(want).Length() > 1e-6 {
 		t.Fatalf("the seeker stares at %v, where the wind has carried the cloud %v", m.radar.Estimate, want)
 	}
@@ -336,7 +336,7 @@ func TestHuntZoneInTheAir(t *testing.T) {
 	}
 	target := round.Target{Position: me.model.State.Position, Velocity: me.model.State.Velocity}
 	want := round.Ladder(fired(a), target, a.model.Environment, a.model.State.Time)
-	still := round.Ladder(fired(a), target, flight.Environment{Wrap: i.environment.Wrap}, a.model.State.Time)
+	still := round.Ladder(fired(a), target, flight.Environment{}, a.model.State.Time)
 	if b.zone != want || math.Abs(still.Max-want.Max) < 0.01*want.Max {
 		t.Fatalf("the bot's zone %+v, the round's in the match's air %+v, in still air %+v", b.zone, want, still)
 	}
@@ -1890,11 +1890,11 @@ type choice struct {
 // few ticks old has him where his speed over the ground has since taken him.
 // fighting puts the fight, not the run-in, in hand from the tick given.
 func scripted(still bool, level string, missiles bool, ticks int, height float64, mine, his, offset flight.Vec3, bank, turn, push float64, fighting bool, from int) choice {
-	air := flight.Environment{Seed: 1, Wind: trades, Wrap: 250000}
+	air := flight.Environment{Seed: 1, Wind: trades}
 	if still {
 		air.Wind = flight.Vec3{}
 	}
-	b := NewBandit(level, 1, 250000, "", false, missiles, "", 0, false)
+	b := NewBandit(level, 1, "", false, missiles, "", 0, false)
 	defer b.arena.Close()
 	b.Air(air)
 	at := flight.Vec3{Y: height}
@@ -2093,7 +2093,7 @@ func TestBendingIsTheTurnThroughTheAir(t *testing.T) {
 func TestScriptBurnerConeIsEquivalent(t *testing.T) {
 	n := standard().script.cold
 	for speed := tuned(n.speed) - 3.25; speed <= tuned(n.speed)+3; speed += 0.5 {
-		bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+		bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 		i, b := bandit.arena, bandit.craft.brain
 		me := &bandit.craft.model.State
 		me.Position, me.Velocity = flight.Vec3{Y: 4000}, flight.Vec3{X: 200}
@@ -2119,8 +2119,8 @@ func TestOvertakeClearsOnItsWing(t *testing.T) {
 	telling := 0
 	for name, wind := range map[string]flight.Vec3{"still air": {}, "a headwind": trades, "a tailwind": trades.Scale(-1)} {
 		for equivalent := 100.0; equivalent <= 130; equivalent += 5 {
-			air := flight.Environment{Seed: 1, Wind: wind, Wrap: 250000}
-			bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+			air := flight.Environment{Seed: 1, Wind: wind}
+			bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 			bandit.Air(air)
 			i, a := bandit.arena, bandit.craft
 			b, me, quarry := a.brain, &a.model.State, i.aircraft[0]
@@ -2172,11 +2172,11 @@ func TestScriptHidesOnItsHeading(t *testing.T) {
 	down := trades.Scale(1 / trades.Length())
 	across := down.Cross(flight.Vec3{Y: 1})
 	lit := func(still bool, along flight.Vec3, span, stale float64) float64 {
-		air := flight.Environment{Seed: 1, Wind: trades, Wrap: 250000}
+		air := flight.Environment{Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}
-		bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+		bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 		defer bandit.arena.Close()
 		bandit.Air(air)
 		i, b := bandit.arena, bandit.craft.brain
@@ -2216,11 +2216,11 @@ func TestOvertakeReadsHisHeading(t *testing.T) {
 	down := trades.Scale(1 / trades.Length())
 	across := down.Cross(flight.Vec3{Y: 1})
 	cleared := func(still bool, along flight.Vec3, abeam float64) (bool, flight.Vec3) {
-		air := flight.Environment{Seed: 1, Wind: trades, Wrap: 250000}
+		air := flight.Environment{Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}
-		bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+		bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 		defer bandit.arena.Close()
 		bandit.Air(air)
 		i, a := bandit.arena, bandit.craft
@@ -2575,11 +2575,11 @@ func TestGlareReadsTheAir(t *testing.T) {
 func TestBreakReadsTheAir(t *testing.T) {
 	across := trades.Cross(flight.Vec3{Y: 1}).Normalize()
 	beam := func(still bool, degrees float64) flight.Vec3 {
-		air := flight.Environment{Seed: 1, Wind: trades, Wrap: 250000}
+		air := flight.Environment{Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}
-		b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+		b := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 		defer b.arena.Close()
 		b.Air(air)
 		at := flight.Vec3{Y: 4000}

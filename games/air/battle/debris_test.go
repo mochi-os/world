@@ -30,7 +30,7 @@ func pass(late float64, closing float64, aside float64, seeds uint64) (float64, 
 		for step := 0; step < 240; step++ {
 			time := late - 2 + float64(step)/60
 			position := centre.Add(flight.Vec3{X: speed * (time - late), Y: aside})
-			if hit, _, _ := wreck.Meet(time, 1.0/60, position, flight.Vec3{X: speed}, flight.Quat{W: 1}, body, 0, seed, 3, uint64(step)); hit {
+			if hit, _, _ := wreck.Meet(time, 1.0/60, position, flight.Vec3{X: speed}, flight.Quat{W: 1}, body, seed, 3, uint64(step)); hit {
 				strikes++
 			}
 		}
@@ -91,7 +91,7 @@ func TestDebrisFormation(t *testing.T) {
 	for step := 0; step < 60; step++ {
 		time := float64(step) / 60
 		centre, _, velocity, _ := wreck.Cloud(time)
-		if hit, _, _ := wreck.Meet(time, 1.0/60, centre, velocity, flight.Quat{W: 1}, body, 0, 7, 3, uint64(step)); hit {
+		if hit, _, _ := wreck.Meet(time, 1.0/60, centre, velocity, flight.Quat{W: 1}, body, 7, 3, uint64(step)); hit {
 			t.Fatalf("struck at %.2f s flying with the pieces", time)
 		}
 	}
@@ -112,8 +112,8 @@ func TestDebrisDeterministic(t *testing.T) {
 		a, _ := target()
 		b, _ := target()
 		centre, _, _, _ := wreck.Cloud(0.3)
-		hitA, eventsA, pointsA := wreck.Meet(0.3, 1.0/60, centre, flight.Vec3{X: 260}, flight.Quat{W: 1}, a, 0, 11, 2, tick)
-		hitB, eventsB, pointsB := wreck.Meet(0.3, 1.0/60, centre, flight.Vec3{X: 260}, flight.Quat{W: 1}, b, 0, 11, 2, tick)
+		hitA, eventsA, pointsA := wreck.Meet(0.3, 1.0/60, centre, flight.Vec3{X: 260}, flight.Quat{W: 1}, a, 11, 2, tick)
+		hitB, eventsB, pointsB := wreck.Meet(0.3, 1.0/60, centre, flight.Vec3{X: 260}, flight.Quat{W: 1}, b, 11, 2, tick)
 		if hitA != hitB || !reflect.DeepEqual(eventsA, eventsB) || !reflect.DeepEqual(pointsA, pointsB) || !reflect.DeepEqual(a.Damage, b.Damage) {
 			t.Fatalf("tick %d met differently twice", tick)
 		}

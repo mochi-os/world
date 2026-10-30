@@ -17,6 +17,7 @@
 // to the moment asked for, and returns the pieces close enough to matter. The
 // host hands them to Model.Wake before each step. The model's own freshest
 // wake is left out: the aerodynamics already carries it as the downwash.
+// Every mark and piece is in the world frame, Home, wherever the host works.
 
 package flight
 
@@ -48,12 +49,9 @@ type Vortex struct {
 // for a straight segment, with a Burnham–Hallock core so the speed peaks at
 // the core radius and falls to zero on the axis rather than going infinite,
 // and a taper that brings it to zero at the reach.
-func (v Vortex) induced(p Vec3, wrap float64) Vec3 {
-	from := func(q Vec3) Vec3 { // q to p, the short way round a wrapped world
-		return Vec3{X: Shortest(q.X, p.X, wrap), Y: p.Y - q.Y, Z: Shortest(q.Z, p.Z, wrap)}
-	}
-	first, second := from(v.A), from(v.B) // A to p, B to p
-	along := first.Subtract(second)       // A to B
+func (v Vortex) induced(p Vec3) Vec3 {
+	first, second := p.Subtract(v.A), p.Subtract(v.B) // A to p, B to p
+	along := first.Subtract(second)                   // A to B
 	length := along.Length()
 	near, far := first.Length(), second.Length()
 	if length < 1e-6 || near < 1e-9 || far < 1e-9 {
@@ -70,11 +68,10 @@ func (v Vortex) induced(p Vec3, wrap float64) Vec3 {
 	return cross.Scale(factor * fade)
 }
 
-// distance is how far p lies from the piece's line, the short way round a
-// wrapped world: what its taper reads.
-func (v Vortex) distance(p Vec3, wrap float64) float64 {
-	first := Vec3{X: Shortest(v.A.X, p.X, wrap), Y: p.Y - v.A.Y, Z: Shortest(v.A.Z, p.Z, wrap)}
-	second := Vec3{X: Shortest(v.B.X, p.X, wrap), Y: p.Y - v.B.Y, Z: Shortest(v.B.Z, p.Z, wrap)}
+// distance is how far p, in Home, lies from the piece's line: what its taper
+// reads.
+func (v Vortex) distance(p Vec3) float64 {
+	first, second := p.Subtract(v.A), p.Subtract(v.B)
 	length := first.Subtract(second).Length()
 	if length < 1e-6 {
 		return first.Length()
@@ -82,17 +79,19 @@ func (v Vortex) distance(p Vec3, wrap float64) float64 {
 	return first.Cross(second).Length() / length
 }
 
-// Swirl is the air the wake induced at the model's CG on its last step,
-// world m/s: zero in clean air.
+// Swirl is the air the wake induced at the model's CG on its last step, in
+// the environment's frame, m/s: zero in clean air.
 func (m *Model) Swirl() Vec3 { return m.swirl }
 
-// Induced is the air velocity the pieces induce at p, world m/s.
-func Induced(p Vec3, vortices []Vortex, wrap float64) Vec3 {
+// Induced is the air velocity the pieces induce at p, m/s: p and the result
+// in the caller's frame, which place carries to Home, where the pieces are.
+func Induced(p Vec3, vortices []Vortex, place Rigid) Vec3 {
+	q := place.Point(p)
 	var sum Vec3
 	for _, v := range vortices {
-		sum = sum.Add(v.induced(p, wrap))
+		sum = sum.Add(v.induced(q))
 	}
-	return sum
+	return place.Inverse().Vector(sum)
 }
 
 // mark is one moment of an aircraft's track: where its two vortices were
@@ -101,8 +100,10 @@ func Induced(p Vec3, vortices []Vortex, wrap float64) Vec3 {
 type mark struct {
 	time        float64
 	left, right Vec3
-	sink        Vec3 // unit, opposite the lift
-	air         Vec3 // the air's velocity where they were shed, m/s
+	sink        Vec3    // unit, opposite the lift
+	air         Vec3    // the air's velocity where they were shed, m/s
+	up          Vec3    // the level up where they were shed, Home: what the sea's floor is measured along
+	height      float64 // the altitude they were shed at, m
 	circulation float64
 	spacing     float64
 	broken      bool // the track jumped here (a respawn or reset): no piece joins it to the mark before
@@ -118,11 +119,11 @@ type trail struct {
 	marks   []mark
 	version uint64 // counts the changes to marks
 
-	pairs                         []pair  // the marks aged to moment over sea at turbulence
-	pieces                        []piece // the vortex pieces between them, two to a pair of marks
-	runs                          []run   // runs of those pieces, each in one sphere
-	moment, sea, turbulence, wrap float64 // what they were worked for
-	stood                         uint64  // one past the version they were worked for (0: none yet)
+	pairs                   []pair  // the marks aged to moment over sea at turbulence
+	pieces                  []piece // the vortex pieces between them, two to a pair of marks
+	runs                    []run   // runs of those pieces, each in one sphere
+	moment, sea, turbulence float64 // what they were worked for
+	stood                   uint64  // one past the version they were worked for (0: none yet)
 
 	length   float64 // the trail's length
 	measured uint64  // one past the version length was measured for (0: none yet)
@@ -171,13 +172,26 @@ type Wakes struct {
 // wake_interval seconds of time (the host's clock, shared by every aircraft).
 func (w *Wakes) Record(id int, time float64, m *Model) {
 	s := &m.State
+	if n := w.latest(id); n != nil && time >= n.time && time-n.time < wake_interval {
+		return // the conversions below are for a mark that will be laid
+	}
 	lift := s.Fcs.Normal * m.Mass() * m.Gravity
-	w.Shed(id, time, s.Position, s.Attitude, s.Velocity, lift, m.Airframe.Reference.Span, air(s.Position.Y, m.Environment).Density, m.gust.Subtract(m.swirl))
+	home := m.Environment.Placement()
+	density := air(m.Environment.Theatre().Altitude(s.Position), m.Environment).Density
+	w.Shed(id, time, home.Point(s.Position), home.Attitude(s.Attitude), home.Vector(s.Velocity), lift, m.Airframe.Reference.Span, density, home.Vector(m.gust.Subtract(m.swirl)))
+}
+
+// latest is aircraft id's newest mark, nil before its first.
+func (w *Wakes) latest(id int) *mark {
+	if t := w.trails[id]; t != nil && len(t.marks) > 0 {
+		return &t.marks[len(t.marks)-1]
+	}
+	return nil
 }
 
 // Shed lays a mark from the explicit state of an aircraft the host knows only
-// by its pose: position, attitude, velocity over the ground, the lift it
-// carries (N, negative under a push), its span (m), the air's density there
+// by its pose, in Home: position, attitude, velocity over the ground, the lift
+// it carries (N, negative under a push), its span (m), the air's density there
 // and the air's own velocity.
 func (w *Wakes) Shed(id int, time float64, position Vec3, attitude Quat, velocity Vec3, lift float64, span float64, density float64, air Vec3) {
 	if w.trails == nil {
@@ -210,8 +224,9 @@ func (w *Wakes) Shed(id int, time float64, position Vec3, attitude Quat, velocit
 		sink = up // a pushed jet's pair moves away from its lift, which points down
 	}
 	half := attitude.Rotate(Vec3{Z: 1}).Scale(spacing / 2)
+	place := Home.Place(position)
 	next := mark{time: time, left: position.Subtract(half), right: position.Add(half), sink: sink, air: air,
-		circulation: circulation, spacing: spacing}
+		up: Home.Normal(place), height: place.Altitude, circulation: circulation, spacing: spacing}
 	if n := len(t.marks); n > 0 {
 		prior := t.marks[n-1]
 		middle := prior.left.Add(prior.right).Scale(0.5)
@@ -272,9 +287,20 @@ func (w *Wakes) aged(k mark, time float64, sea float64) (left Vec3, right Vec3, 
 	sinking := descent(k.circulation, k.spacing)
 	shift := k.sink.Scale(sinking * age).Add(k.air.Scale(age))
 	left, right = k.left.Add(shift), k.right.Add(shift)
-	floor := sea + k.spacing/2 // the pair levels off over the sea (a pair shed lower stays where it was shed)
-	left.Y = math.Max(left.Y, math.Min(k.left.Y, floor))
-	right.Y = math.Max(right.Y, math.Min(k.right.Y, floor))
+	// The pair levels off over the sea (a pair shed lower stays where it was
+	// shed): heights along the level up where it was shed, which holds over
+	// the kilometre or two any pair drifts.
+	floor := sea + k.spacing/2
+	middle := k.left.Add(k.right).Scale(0.5)
+	level := func(at Vec3, start Vec3) Vec3 {
+		was := k.height + start.Subtract(middle).Dot(k.up)
+		now := was + at.Subtract(start).Dot(k.up)
+		if least := math.Min(was, floor); now < least {
+			at = at.Add(k.up.Scale(least - now))
+		}
+		return at
+	}
+	left, right = level(left, k.left), level(right, k.right)
 	circulation = k.circulation
 	if hold := 0.4 * life; age > hold {
 		circulation *= 1 - (age-hold)/(life-hold)
@@ -286,8 +312,8 @@ func (w *Wakes) aged(k mark, time float64, sea float64) (left Vec3, right Vec3, 
 // Near is the wake aircraft id meets at position and time: every piece of
 // every trail within reach, aged to time, nearest first and no more than
 // wake_pieces of them. Its own wake counts once it is wake_fresh seconds old.
-// sea is the height the pairs level off above; wrap the toroidal world size.
-func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap float64) []Vortex {
+// position is in Home, and sea the height the pairs level off above.
+func (w *Wakes) Near(id int, position Vec3, time float64, sea float64) []Vortex {
 	type candidate struct {
 		vortex   Vortex
 		distance float64
@@ -318,12 +344,12 @@ func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap floa
 		// covers the drift and the sink since the oldest mark.
 		newest, oldest := t.marks[n-1], t.marks[0]
 		margin := wake_reach*newest.spacing + (newest.air.Length()+30)*(time-oldest.time) + t.path()/2
-		if distance(position, newest.left, wrap) > margin && distance(position, oldest.left, wrap) > margin {
+		if distance(position, newest.left) > margin && distance(position, oldest.left) > margin {
 			continue
 		}
-		pieces, runs := w.stand(t, time, sea, wrap)
+		pieces, runs := w.stand(t, time, sea)
 		for _, b := range runs {
-			if distance(position, b.centre, wrap)-b.radius > b.bound+1 { // a metre over: rounding can never skip a piece in reach
+			if distance(position, b.centre)-b.radius > b.bound+1 { // a metre over: rounding can never skip a piece in reach
 				continue
 			}
 			for k := b.first; k < b.last; k++ {
@@ -331,7 +357,7 @@ func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap floa
 				if p.skip || (owner == id && time-p.time < wake_fresh) {
 					continue
 				}
-				d := distance(position, p.middle, wrap)
+				d := distance(position, p.middle)
 				if d > p.bound {
 					continue
 				}
@@ -348,8 +374,8 @@ func (w *Wakes) Near(id int, position Vec3, time float64, sea float64, wrap floa
 
 // stand is a trail's pieces at time over sea, and its runs: worked by the
 // first aircraft to ask at that moment and shared by the rest.
-func (w *Wakes) stand(t *trail, time float64, sea float64, wrap float64) ([]piece, []run) {
-	if t.stood == t.version+1 && t.moment == time && t.sea == sea && t.turbulence == w.Turbulence && t.wrap == wrap {
+func (w *Wakes) stand(t *trail, time float64, sea float64) ([]piece, []run) {
+	if t.stood == t.version+1 && t.moment == time && t.sea == sea && t.turbulence == w.Turbulence {
 		return t.pieces, t.runs
 	}
 	t.pairs = t.pairs[:0]
@@ -375,12 +401,12 @@ func (w *Wakes) stand(t *trail, time float64, sea float64, wrap float64) ([]piec
 		last := min(first+wake_run, len(t.pieces))
 		b := run{centre: t.pieces[first].middle, first: first, last: last}
 		for k := first; k < last; k++ {
-			b.radius = math.Max(b.radius, distance(b.centre, t.pieces[k].middle, wrap))
+			b.radius = math.Max(b.radius, distance(b.centre, t.pieces[k].middle))
 			b.bound = math.Max(b.bound, t.pieces[k].bound)
 		}
 		t.runs = append(t.runs, b)
 	}
-	t.stood, t.moment, t.sea, t.turbulence, t.wrap = t.version+1, time, sea, w.Turbulence, wrap
+	t.stood, t.moment, t.sea, t.turbulence = t.version+1, time, sea, w.Turbulence
 	return t.pieces, t.runs
 }
 
@@ -397,7 +423,7 @@ func (t *trail) path() float64 {
 	return sum
 }
 
-// distance is the minimum-image distance between two points.
-func distance(a Vec3, b Vec3, wrap float64) float64 {
-	return Vec3{X: Shortest(a.X, b.X, wrap), Y: b.Y - a.Y, Z: Shortest(a.Z, b.Z, wrap)}.Length()
+// distance is the distance between two points.
+func distance(a Vec3, b Vec3) float64 {
+	return b.Subtract(a).Length()
 }

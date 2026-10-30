@@ -22,11 +22,11 @@ import (
 // swept. The replication is validated against Ladder itself before it is
 // trusted: same criterion, same bisection, and the outermost range it finds
 // must agree with the Max that Ladder reports.
-func flown(shooter Target, target Target, wrap float64, trial float64, breaking bool) float64 {
+func flown(shooter Target, target Target, trial float64, breaking bool) float64 {
 	const step = 0.2 // ladder.go's own integration step
-	direction := relative(shooter.Position, target.Position, wrap).Normalize()
+	direction := target.Position.Subtract(shooter.Position).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{}, 0)
 	closest, mach := math.MaxFloat64, -1.0
 	for {
 		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
@@ -34,7 +34,7 @@ func flown(shooter Target, target Target, wrap float64, trial float64, breaking 
 			break
 		}
 		if breaking { // ladder.go's own escape turn, copied exactly
-			away := relative(shooter.Position, virtual.Position, wrap).Normalize()
+			away := virtual.Position.Subtract(shooter.Position).Normalize()
 			if speed := virtual.Velocity.Length(); speed > 1 {
 				heading := virtual.Velocity.Scale(1 / speed)
 				if heading.Dot(away) < 0.999 {
@@ -44,7 +44,7 @@ func flown(shooter Target, target Target, wrap float64, trial float64, breaking 
 			}
 		}
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(step))
-		miss := relative(m.Position, virtual.Position, wrap).Length()
+		miss := virtual.Position.Subtract(m.Position).Length()
 		if miss < closest {
 			closest = miss
 			_, sound := atmosphere(m.Position.Y)
@@ -62,11 +62,11 @@ func flown(shooter Target, target Target, wrap float64, trial float64, breaking 
 // Did the escaping target actually turn? The escape rung reads identically to
 // Max at every geometry, so either the break is inert or it does not matter.
 // This reports the target's heading at the end of the flight.
-func fled(shooter Target, target Target, wrap float64, trial float64, breaking bool) (float64, float64) {
+func fled(shooter Target, target Target, trial float64, breaking bool) (float64, float64) {
 	const step = 0.2
-	direction := relative(shooter.Position, target.Position, wrap).Normalize()
+	direction := target.Position.Subtract(shooter.Position).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{}, 0)
 	closest, flew := math.MaxFloat64, 0.0
 	for {
 		support := &Target{Position: virtual.Position, Velocity: virtual.Velocity}
@@ -75,7 +75,7 @@ func fled(shooter Target, target Target, wrap float64, trial float64, breaking b
 		}
 		flew += step
 		if breaking {
-			away := relative(shooter.Position, virtual.Position, wrap).Normalize()
+			away := virtual.Position.Subtract(shooter.Position).Normalize()
 			if speed := virtual.Velocity.Length(); speed > 1 {
 				heading := virtual.Velocity.Scale(1 / speed)
 				if heading.Dot(away) < 0.999 {
@@ -85,7 +85,7 @@ func fled(shooter Target, target Target, wrap float64, trial float64, breaking b
 			}
 		}
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(step))
-		if miss := relative(m.Position, virtual.Position, wrap).Length(); miss < closest {
+		if miss := virtual.Position.Subtract(m.Position).Length(); miss < closest {
 			closest = miss
 		} else if miss > closest+2000 {
 			break
@@ -100,11 +100,11 @@ func fled(shooter Target, target Target, wrap float64, trial float64, breaking b
 // the closest approach, and which of the two exits ended it. Step has exactly
 // one exit -- Life <= 0 -- so a shot that never gets close died of BATTERY,
 // not of energy, and that distinction is the whole of #105's open question.
-func trace(shooter Target, target Target, wrap float64, trial float64) string {
+func trace(shooter Target, target Target, trial float64) string {
 	const step = 0.2
-	direction := relative(shooter.Position, target.Position, wrap).Normalize()
+	direction := target.Position.Subtract(shooter.Position).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{}, 0)
 	closest, flew, alive := math.MaxFloat64, 0.0, true
 	marks := []float64{}
 	for {
@@ -115,7 +115,7 @@ func trace(shooter Target, target Target, wrap float64, trial float64) string {
 		}
 		flew += step
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(step))
-		if miss := relative(m.Position, virtual.Position, wrap).Length(); miss < closest {
+		if miss := virtual.Position.Subtract(m.Position).Length(); miss < closest {
 			closest = miss
 		} else if miss > closest+2000 {
 			break
@@ -168,7 +168,7 @@ func TestAmraamInnerBand(t *testing.T) {
 		low, high := 2000.0, 150000.0
 		for i := 0; i < 12; i++ {
 			mid := (low + high) / 2
-			if flown(shooter, target, 0, mid, false) >= 1.0 {
+			if flown(shooter, target, mid, false) >= 1.0 {
 				low = mid
 			} else {
 				high = mid
@@ -182,7 +182,7 @@ func TestAmraamInnerBand(t *testing.T) {
 
 		band := ""
 		for r := 400.0; r <= 3000; r += 100 {
-			if flown(shooter, target, 0, r, false) >= 1.0 {
+			if flown(shooter, target, r, false) >= 1.0 {
 				band += "#"
 			} else {
 				band += "."
@@ -195,19 +195,19 @@ func TestAmraamInnerBand(t *testing.T) {
 		fmt.Printf("  ESCAPE TURN, straight v breaking at 7.5 g:\n")
 		for _, f := range []float64{0.9, 1.0} {
 			r := zone.Max * f
-			sx, sc := fled(shooter, target, 0, r, false)
-			bx, bc := fled(shooter, target, 0, r, true)
+			sx, sc := fled(shooter, target, r, false)
+			bx, bc := fled(shooter, target, r, true)
 			fmt.Printf("      %6.0f m: target final velocity X straight %+7.1f closest %6.0f | breaking %+7.1f closest %6.0f\n",
 				r, sx, sc, bx, bc)
 		}
 		for _, f := range []float64{0.3, 0.6, 0.9, 1.0} {
 			r := zone.Max * f
 			fmt.Printf("      %6.0f m (%3.0f%% of Max): straight Mach %5.2f | breaking Mach %5.2f\n",
-				r, f*100, flown(shooter, target, 0, r, false), flown(shooter, target, 0, r, true))
+				r, f*100, flown(shooter, target, r, false), flown(shooter, target, r, true))
 		}
-		fmt.Printf("  at the reported Minimum (%.0f m): arrival Mach %.2f\n", zone.Minimum, flown(shooter, target, 0, zone.Minimum, false))
+		fmt.Printf("  at the reported Minimum (%.0f m): arrival Mach %.2f\n", zone.Minimum, flown(shooter, target, zone.Minimum, false))
 		for _, r := range []float64{800, 1000, 1500, 2000, 2500} {
-			fmt.Printf("      %5.0f m: arrival Mach %.2f\n", r, flown(shooter, target, 0, r, false))
+			fmt.Printf("      %5.0f m: arrival Mach %.2f\n", r, flown(shooter, target, r, false))
 		}
 		// Aero, Max and Escape all read the same number above. If the Mach
 		// thresholds (0.6, 1.0) ever bound anything, arrival must fall THROUGH
@@ -218,7 +218,7 @@ func TestAmraamInnerBand(t *testing.T) {
 		for _, f := range []float64{0.5, 0.8, 0.95, 0.99, 1.0, 1.01} {
 			r := zone.Max * f
 			fmt.Printf("      %6.0f m (%3.0f%% of Max): arrival Mach %5.2f | %s\n",
-				r, f*100, flown(shooter, target, 0, r, false), trace(shooter, target, 0, r))
+				r, f*100, flown(shooter, target, r, false), trace(shooter, target, r))
 		}
 	}
 }
@@ -229,11 +229,11 @@ func TestAmraamInnerBand(t *testing.T) {
 // "arrives supersonic", so a band between Mach 0.6 and 1.0 is what separates
 // them. They read identically today. This asks whether that band exists at all
 // or whether the 100 s battery simply ends every flight first.
-func endless(shooter Target, target Target, wrap float64, trial float64) (float64, float64, float64) {
+func endless(shooter Target, target Target, trial float64) (float64, float64, float64) {
 	const step = 0.2
-	direction := relative(shooter.Position, target.Position, wrap).Normalize()
+	direction := target.Position.Subtract(shooter.Position).Normalize()
 	virtual := Target{Position: shooter.Position.Add(direction.Scale(trial)), Velocity: target.Velocity}
-	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{Wrap: wrap}, 0)
+	m := New(shooter.Position, shooter.Velocity, &Target{Position: virtual.Position, Velocity: virtual.Velocity}, flight.Environment{}, 0)
 	m.Life = 1e9 // the battery is the thing under suspicion: take it out of the way
 	closest, mach, flew := math.MaxFloat64, -1.0, 0.0
 	for {
@@ -243,7 +243,7 @@ func endless(shooter Target, target Target, wrap float64, trial float64) (float6
 		}
 		flew += step
 		virtual.Position = virtual.Position.Add(virtual.Velocity.Scale(step))
-		miss := relative(m.Position, virtual.Position, wrap).Length()
+		miss := virtual.Position.Subtract(m.Position).Length()
 		if miss < closest {
 			closest = miss
 			_, sound := atmosphere(m.Position.Y)
@@ -270,7 +270,7 @@ func TestSubsonicArrivalExists(t *testing.T) {
 	fmt.Println("\nwith the battery REMOVED — where does arrival actually go subsonic?")
 	fmt.Println("    launch km |  flew  | closest |  arrival Mach")
 	for _, km := range []float64{80, 92, 110, 130, 150, 175, 200, 220, 240, 280} {
-		mach, closest, flew := endless(shooter, target, 0, km*1000)
+		mach, closest, flew := endless(shooter, target, km*1000)
 		note := ""
 		if mach > 0 && mach < 1.0 {
 			note = "   <- SUBSONIC: this is the band Aero is meant to describe"
@@ -345,7 +345,7 @@ func TestAeroVersusMaxAcrossTheEnvelope(t *testing.T) {
 				}
 				fmt.Printf("  %6.0f | %5.0f | %6.0f | %7.0f | %7.0f | %8.2f | %5.2f\n",
 					ft, speed, aspect, zone.Max, zone.Aero, zone.Aero/zone.Max,
-					flown(shooter, target, 0, zone.Max, false))
+					flown(shooter, target, zone.Max, false))
 			}
 		}
 	}

@@ -24,7 +24,7 @@ func menace(position, velocity flight.Vec3, shooter int, phase float64) []float6
 // heater that has already lost: the client is the only source of
 // `loose`/`blind` there, and `beaten` (bot.go) reads exactly those two.
 func TestMenaceBeaten(t *testing.T) {
-	bandit := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, false)
+	bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 	position, velocity := flight.Vec3{X: 1000}, flight.Vec3{X: -300}
 
 	for _, c := range []struct {
@@ -74,11 +74,11 @@ func TestMenaceBeatenDefence(t *testing.T) {
 	// The machine tier: no sighting roll and no reaction delay, so the response
 	// is deterministic and the test measures doctrine rather than dice.
 	evading := func(phase float64) bool {
-		bandit := NewBandit("superhuman", 1, 250000, "", false, true, "fox2", 0, false)
+		bandit := NewBandit("superhuman", 1, "", false, true, "fox2", 0, false)
 		bandit.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 		bandit.craft.brain.routine.passed = true // the fight: a joust's hold keeps every round on the rail through the run-in
 
-		environment := flight.Environment{Seed: 1, Wrap: 250000}
+		environment := flight.Environment{Seed: 1}
 		player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{X: 2000, Y: 5000}, flight.Vec3{X: -1}, 220, fuel)
 		words := make([]float64, flight.Size)
@@ -140,8 +140,7 @@ func TestSpent(t *testing.T) {
 // happened against a human. Measured before the fix: 0 credible ticks across
 // 2, 8 and 18 km launches, with the superhuman firing nothing in 40 s.
 func TestMenaceCarriesABattery(t *testing.T) {
-	wrap := 250000.0
-	bandit := NewBandit("expert", 1, wrap, "", false, true, "open", 0, false)
+	bandit := NewBandit("expert", 1, "", false, true, "open", 0, false)
 	bandit.Spawn(flight.Vec3{X: 12000, Y: 8000}, flight.Vec3{X: -240})
 	bandit.Menace(menace(flight.Vec3{Y: 8000}, flight.Vec3{X: 900}, 0, float64(round.Pitbull)))
 
@@ -151,9 +150,6 @@ func TestMenaceCarriesABattery(t *testing.T) {
 	m := bandit.arena.flying[0].radar
 	if m.Life <= 0 {
 		t.Errorf("the mirrored round arrived with a flat battery (Life %.0f): Lethal cannot judge it", m.Life)
-	}
-	if m.Wrap != wrap {
-		t.Errorf("the mirrored round does not wrap with the arena: Wrap %.0f, want %.0f", m.Wrap, wrap)
 	}
 	// The behavioural half: the credibility gate can now answer at all. A
 	// round closing head-on from 12 km IS credible, and that is the judgement

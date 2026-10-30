@@ -73,14 +73,9 @@ func carried(p *Part, stores uint64) bool {
 // Contact sweeps b's capsules through a's over the tick just stepped - both
 // poses are the end of the tick, so the sweep runs back along the relative
 // motion - and returns the parts of each that met, a's indices then b's.
-func Contact(a Mover, b Mover, dt float64, wrap float64) ([]int, []int) {
+func Contact(a Mover, b Mover, dt float64) ([]int, []int) {
 	// b in a's body frame at the end of the tick, and where it came from.
-	offset := flight.Vec3{
-		X: flight.Shortest(a.Position.X, b.Position.X, wrap),
-		Y: b.Position.Y - a.Position.Y,
-		Z: flight.Shortest(a.Position.Z, b.Position.Z, wrap),
-	}
-	origin := a.Attitude.Unrotate(offset)
+	origin := a.Attitude.Unrotate(b.Position.Subtract(a.Position))
 	back := a.Attitude.Unrotate(a.Velocity.Subtract(b.Velocity).Scale(dt))
 	samples := most // the comparison is false for a NaN too, which then costs a bounded sweep rather than a conversion's guess
 	if count := math.Ceil(back.Length()/stride) + 1; count < most {

@@ -32,7 +32,7 @@ import (
 // `return` at the end of the recovery branch and this fails.
 func TestRecoveryOutranksTheJink(t *testing.T) {
 	seat := func(height, climb float64, dodging bool) flight.Inputs {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = flight.Vec3{Y: height}
 		m.State.Velocity = flight.Vec3{X: 200, Y: climb}
 		m.State.Attitude = flight.Look(m.State.Velocity.Normalize())
@@ -161,12 +161,12 @@ func TestRecoveryHoldsUntilClimbing(t *testing.T) {
 // toward him called it and each roll upright cleared it.
 func TestScriptDiveHoldsTheFight(t *testing.T) {
 	fly := func(height, knots, dive float64) (deck, entries int) {
-		b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
+		b := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: height}, flight.Vec3{X: 257})
 		b.craft.brain.routine.passed = true
 		dove := diving(height, knots, dive, 150)
 		b.craft.model.State.Velocity, b.craft.model.State.Attitude = dove.State.Velocity, dove.State.Attitude
-		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		pm.State = flight.Level(pm, flight.Vec3{X: 900, Y: height - 1500, Z: 300}, flight.Vec3{X: 1}, 200, fuel)
 		words := make([]float64, flight.Size)
 		previous := ""

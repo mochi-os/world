@@ -17,7 +17,7 @@ import (
 func approaching(m *Model, crab, back, offset, speed float64) {
 	c := m.World.Carrier
 	cat := &c.Catapults[0]
-	shuttle := c.world(cat.Position, 0)
+	shuttle := c.world(cat.Position, 0, Identity)
 	heading := c.Heading + cat.Heading
 	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
 	side := Vec3{X: track.Z, Z: -track.X}

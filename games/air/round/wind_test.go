@@ -123,7 +123,7 @@ func TestChaffDrifts(t *testing.T) {
 	if !m.Distract(bloom, truth) {
 		t.Fatal("the beaming target's chaff did not seduce the seeker")
 	}
-	want := flight.Wind(bloom, 30, gale).Add(flight.Vec3{Y: -1})
+	want := flight.Wind(bloom, 30, gale).Subtract(gale.Theatre().Up(bloom)) // sinking down the level up there
 	if m.Drift.Subtract(want).Length() > 1e-9 || want.X < 10 {
 		t.Fatalf("the seduced estimate drifts %v, where the wind carries the sinking cloud %v", m.Drift, want)
 	}

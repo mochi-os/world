@@ -178,6 +178,8 @@ func volley(this js.Value, arguments []js.Value) any {
 	if model != nil {
 		seed = model.Environment.Seed
 		shooter.Wind = flight.Wind(shooter.Position, model.State.Time, model.Environment) // the air the rounds fly through
+		place, level := model.Environment.Theatre().Survey(shooter.Position)
+		shooter.Level, shooter.Altitude = flight.Between(level, model.Environment.Theatre()).Vector(flight.Vec3{Y: 1}), place.Altitude // they fall down the level up at the muzzle
 	}
 	airborne = append(airborne, battle.Volley(shooter, int(arsenal[16]), seed, uint64(arsenal[0]), uint64(arsenal[17]))...)
 	return len(airborne)
@@ -228,10 +230,8 @@ func fly(this js.Value, arguments []js.Value) any {
 	position := flight.Vec3{X: arsenal[3], Y: arsenal[4], Z: arsenal[5]}
 	attitude := flight.Quat{W: arsenal[6], X: arsenal[7], Y: arsenal[8], Z: arsenal[9]}
 	velocity := flight.Vec3{X: arsenal[10], Y: arsenal[11], Z: arsenal[12]}
-	wrap := 0.0
 	seed := uint64(0)
 	if model != nil {
-		wrap = model.Environment.Wrap
 		seed = model.Environment.Seed
 	}
 	bandit_hits, own_hits := 0, 0
@@ -242,7 +242,7 @@ func fly(this js.Value, arguments []js.Value) any {
 		round := &airborne[r]
 		landed := false
 		if round.Shooter == 0 && present {
-			hit, _, impact := battle.Strike(round, position, attitude, velocity, &fleet[0].body, dt, wrap, seed)
+			hit, _, impact := battle.Strike(round, position, attitude, velocity, &fleet[0].body, dt, seed)
 			if hit {
 				bandit_hits++
 				if len(impacts) < battle.ImpactPoints {
@@ -252,14 +252,14 @@ func fly(this js.Value, arguments []js.Value) any {
 				fleet[0].condition.Damaged = 0
 				landed = true
 			} else if since >= 0 && float64(round.Born) >= since {
-				if gap, at, near := battle.Near(round, position, attitude, velocity, &fleet[0].body, dt, wrap); near && (!measured || gap < closest) {
+				if gap, at, near := battle.Near(round, position, attitude, velocity, &fleet[0].body, dt); near && (!measured || gap < closest) {
 					closest, spot, measured = gap, at, true
 				}
 			}
 		}
 		if !landed && round.Shooter != 0 && model != nil && !invulnerable {
 			body := battle.Body{Airframe: model.Airframe, Parts: parts(), Damage: &model.State.Damage, Condition: &condition}
-			hit, _, _ := battle.Strike(round, model.State.Position, model.State.Attitude, model.State.Velocity, &body, dt, wrap, seed)
+			hit, _, _ := battle.Strike(round, model.State.Position, model.State.Attitude, model.State.Velocity, &body, dt, seed)
 			if hit {
 				own_hits++
 				condition.Damager = 1
@@ -305,23 +305,22 @@ func blast(this js.Value, arguments []js.Value) any {
 		return 0
 	}
 	point := flight.Vec3{X: arsenal[1], Y: arsenal[2], Z: arsenal[3]}
-	// Seed alongside wrap, as fly does. Reading model.Environment.Seed below
-	// while only wrap was guarded meant a hulk target with no model - aim
-	// resolves one out of `fleet` without touching model - panicked, and the
-	// recovery returned a "panic: ..." string without writing the output
-	// buffer: exactly the stale-verdict hazard the unresolved-target branch
-	// above exists to prevent. No export may require another to have run
-	// first (see scratch).
-	wrap, seed := 0.0, uint64(0)
+	// The seed only once a model exists, as fly does: a hulk target with no
+	// model - aim resolves one out of `fleet` without touching model - would
+	// panic, and the recovery returns a "panic: ..." string without writing
+	// the output buffer: exactly the stale-verdict hazard the
+	// unresolved-target branch above exists to prevent. No export may
+	// require another to have run first (see scratch).
+	seed := uint64(0)
 	if model != nil {
-		wrap, seed = model.Environment.Wrap, model.Environment.Seed
+		seed = model.Environment.Seed
 	}
 	class := battle.Heater // word 13: the warhead class, defaulting to the 9M's charge
 	if arsenal[13] > 1 {
 		class = arsenal[13]
 	}
 	closure := arsenal[14] // word 14: missile-target relative speed at the fuse, m/s; 0 = the 650 anchor (#57)
-	kill, raised, struck := battle.Warhead(class, point, closure, position, attitude, body, wrap,
+	kill, raised, struck := battle.Warhead(class, point, closure, position, attitude, body,
 		seed, uint64(arsenal[11]), uint64(arsenal[12]))
 	if kill || len(raised) > 0 {
 		body.Condition.Damager = int(arsenal[11])
@@ -343,7 +342,7 @@ func blast(this js.Value, arguments []js.Value) any {
 	// and the only way that happens is this measurement disagreeing with the
 	// client's — rotation preserves length, so the relative vector's length is
 	// exactly the miss Warhead judged.
-	relative := flight.Vec3{X: flight.Shortest(position.X, point.X, wrap), Y: point.Y - position.Y, Z: flight.Shortest(position.Z, point.Z, wrap)}
+	relative := point.Subtract(position)
 	tail := 3 + len(struck)*3
 	out[tail] = relative.Length()
 	out[tail+1], out[tail+2], out[tail+3] = position.X, position.Y, position.Z

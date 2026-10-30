@@ -33,7 +33,7 @@ type Bandit struct {
 // `hold` is the joust's weapons hold: true holds the brain's gun and missiles
 // until either jet crosses the other's 3/9 line, the rule the server's joust
 // and the client's own trigger keep; false is the BVR start, free from spawn.
-func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, missiles bool, weapons string, tank float64, hold bool) *Bandit {
+func NewBandit(level string, seed uint64, sky string, night bool, missiles bool, weapons string, tank float64, hold bool) *Bandit {
 	if weapons == "" {
 		if missiles {
 			weapons = "fox2"
@@ -41,7 +41,7 @@ func NewBandit(level string, seed uint64, wrap float64, sky string, night bool, 
 			weapons = "guns"
 		}
 	}
-	environment := flight.Environment{Seed: seed, Wrap: wrap}
+	environment := flight.Environment{Seed: seed}
 	mirror := &craft{player: game.Player{Name: "player", Slot: 0}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9}
 	mirror.arm()
@@ -86,10 +86,17 @@ func (b *Bandit) place(words []float64) {
 // 15,000 ft, and every forecast it made of him read that drift as his own
 // manoeuvring. The arena keeps its own seed, which the brain's draws run on.
 func (b *Bandit) Air(air flight.Environment) {
-	air.Wrap = b.arena.environment.Wrap
+	air.Frame = b.arena.environment.Frame
 	for _, c := range b.arena.aircraft {
 		c.model.Environment = air
 	}
+}
+
+// Reframe moves the bandit's whole arena into another frame: the client's own
+// frame has moved, and the bandit, its rounds and the brain's memories go
+// with it.
+func (b *Bandit) Reframe(frame flight.Frame) {
+	b.arena.reframe(frame)
 }
 
 // Pace sets the seconds each of the bandit's model steps covers: Dt, or as much
@@ -162,7 +169,7 @@ func (b *Bandit) Menace(words []float64) {
 			// flatter its arrival speed (measured: it changes no verdict at
 			// 3, 12 or 30 km, so this is honesty, not tuning).
 			m.radar = &round.Model{Phase: phase, Position: m.position, Velocity: m.velocity,
-				Life: round.Battery, Fuel: 0, Wrap: b.arena.environment.Wrap, Environment: b.craft.model.Environment, Clock: b.craft.model.State.Time} // the player's air, which Air gave the bandit's jet
+				Life: round.Battery, Fuel: 0, Environment: b.craft.model.Environment, Clock: b.craft.model.State.Time} // the player's air, which Air gave the bandit's jet
 		} else if phase <= -2 {
 			m.loose = true // seduced onto a flare, or gimballed off and gone ballistic
 		}

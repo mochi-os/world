@@ -13,7 +13,7 @@
 //
 // round_launch input words: 0 slot, 1-3 position, 4-6 velocity, 7 visual
 // (1 = no estimate, seeker hot off the rail), 8-10 estimate position,
-// 11-13 estimate velocity, 14 wrap, 15 loft (0 disables). No output.
+// 11-13 estimate velocity, 14 loft (0 disables). No output.
 //
 // round_step input words: 0 slot, 1 dt, 2 support (1 = fresh datalink),
 // 3-5 support position, 6-8 support velocity, 9 truth (1 = a target
@@ -24,14 +24,14 @@
 // 13 Mach, 14 closest approach so far.
 //
 // round_ladder input words: 0-2 shooter position, 3-5 shooter velocity,
-// 6-8 target position, 9-11 target velocity, 12 wrap, 13 still (1 judges the
+// 6-8 target position, 9-11 target velocity, 12 still (1 judges the
 // shot in still air, as the BVR start's separation is; else the pilot's air).
 // Output words: 0 aero, 1 max, 2 escape, 3 minimum, 4 seconds-to-active
 // preview.
 //
 // heater_ladder (#47) is the AIM-9M's zone in the same shape: input words
 // 0-11 as above, 12-14 the target's present acceleration, 15 the target's
-// afterburner (0..1), 16 wrap. Output words as round_ladder's.
+// afterburner (0..1). Output words as round_ladder's.
 //
 // round_distract input words: 0 slot, 1-3 bloom position, 4-6 truth
 // position, 7-9 truth velocity. Returns whether the seduction took — the
@@ -64,12 +64,12 @@ func rounds() map[string]any {
 	}
 }
 
-// joust_opening input words: 0 seed, 1 wrap. Output words: 0-1 each slot's
+// joust_opening input words: 0 seed. Output words: 0-1 each slot's
 // block, 2 block speed, 3 flank, 4 separation - the start the world server
 // draws a BVR joust with (#46), so single player draws it the same way.
 func joust_opening(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:2])
-	o := air.Draw(uint64(quiver[0]), quiver[1])
+	receive(arguments[0], quiver[:1])
+	o := air.Draw(uint64(quiver[0]))
 	out := quiver[:5]
 	out[0], out[1], out[2], out[3], out[4] = o.Altitude[0], o.Altitude[1], o.Speed, o.Flank, o.Apart
 	send(out, arguments[1])
@@ -90,7 +90,7 @@ func vec(words []float64, at int) flight.Vec3 {
 }
 
 func round_launch(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:16])
+	receive(arguments[0], quiver[:15])
 	slot := int(quiver[0])
 	if slot < 0 || slot >= len(flying) {
 		return "slot"
@@ -99,9 +99,9 @@ func round_launch(this js.Value, arguments []js.Value) any {
 	if quiver[7] < 0.5 {
 		estimate = &round.Target{Position: vec(quiver, 8), Velocity: vec(quiver, 11)}
 	}
-	environment, clock := weather(quiver[14])
+	environment, clock := weather()
 	m := round.New(vec(quiver, 1), vec(quiver, 4), estimate, environment, clock)
-	if quiver[15] < 0.5 {
+	if quiver[14] < 0.5 {
 		m.Loft = false
 	}
 	flying[slot] = m
@@ -151,10 +151,10 @@ func round_step(this js.Value, arguments []js.Value) any {
 }
 
 func round_ladder(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:14])
-	environment, clock := weather(quiver[12])
-	if quiver[13] > 0.5 {
-		environment, clock = flight.Environment{Wrap: quiver[12]}, 0
+	receive(arguments[0], quiver[:13])
+	environment, clock := weather()
+	if quiver[12] > 0.5 {
+		environment, clock = flight.Environment{Frame: theatre}, 0
 	}
 	zone := round.Ladder(
 		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
@@ -168,8 +168,8 @@ func round_ladder(this js.Value, arguments []js.Value) any {
 }
 
 func heater_ladder(this js.Value, arguments []js.Value) any {
-	receive(arguments[0], quiver[:17])
-	environment, clock := weather(quiver[16])
+	receive(arguments[0], quiver[:16])
+	environment, clock := weather()
 	zone := air.Heat(
 		round.Target{Position: vec(quiver, 0), Velocity: vec(quiver, 3)},
 		round.Target{Position: vec(quiver, 6), Velocity: vec(quiver, 9)},
@@ -190,13 +190,11 @@ func round_drop(this js.Value, arguments []js.Value) any {
 }
 
 // weather is the air the weapons fly through, the pilot's own - the mission's
-// wind, and in a match the server's - on the wrap given, with the clock it
-// blows on; still air before a mission.
-func weather(wrap float64) (flight.Environment, float64) {
+// wind, and in a match the server's - in the client's frame, with the clock
+// it blows on; still air before a mission.
+func weather() (flight.Environment, float64) {
 	if model == nil {
-		return flight.Environment{Wrap: wrap}, 0
+		return flight.Environment{Frame: theatre}, 0
 	}
-	environment := model.Environment
-	environment.Wrap = wrap
-	return environment, model.State.Time
+	return model.Environment, model.State.Time
 }

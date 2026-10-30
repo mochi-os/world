@@ -66,8 +66,14 @@ type Model struct {
 
 	// Wake is the pieces of other aircraft's wakes - and of this one's own,
 	// once it is old enough - that the host hands the model before each step
-	// (Wakes.Near). Empty flies clean air.
+	// (Wakes.Near), in Home. Empty flies clean air.
 	Wake []Vortex
+
+	// place carries the frame the model is working in to Home, where the map,
+	// the carrier, the wakes and the weather are fixed: during a step the
+	// tangent frame under the jet, between steps the environment's frame.
+	place    Rigid
+	stepping bool // inside Step, working level under the jet
 
 	// What each element's geometry fixes for good, which the aero loop would
 	// otherwise recompute for every element at every substep: built by
@@ -80,8 +86,8 @@ type Model struct {
 	center  Vec3 // combined CG, body, from datum
 	inertia Mat3 // about the combined CG
 	inverse Mat3
-	gust    Vec3      // wind at the pre-step position (frozen per step), the wake's swirl included
-	swirl   Vec3      // the air the wake induces at the CG this step, world m/s (part of gust)
+	gust    Vec3      // wind at the pre-step position (frozen per step), the wake's swirl included; the environment's frame between steps
+	swirl   Vec3      // the air the wake induces at the CG this step, m/s (part of gust), in the same frame as gust
 	swirls  []Vec3    // per element, what the wake induces there beyond the swirl at the CG: body m/s, frozen per step
 	near    []Vortex  // the wake's pieces close enough to reach some element this step
 	lift    []float64 // pass-one surface lift coefficients
@@ -99,7 +105,7 @@ func New(airframe *Airframe, environment Environment, world World) *Model {
 	if len(airframe.Stores) > Attachments {
 		panic("flight: airframe " + airframe.Name + " declares more stores than the attach mask can carry")
 	}
-	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity}
+	m := &Model{Airframe: airframe, Environment: environment, World: world, Gravity: gravity, place: environment.Placement()}
 	m.State.Attitude = Quat{W: 1}
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	m.stores = airframe.Default // the airframe's bare configuration; the mask owner asserts the flown loadout (fa18c: wingtips)
@@ -222,17 +228,71 @@ func (m *Model) Step(in Inputs) {
 		m.arrestor = math.Max(0, m.arrestor-m.Stride()/2)
 	}
 	m.weigh()
-	local := air(m.State.Position.Y, m.Environment)
-	m.gust = wind(m.State.Position, m.State.Time, m.Environment, m.World.Carrier)
+	out := m.level()
+	s := &m.State
+	local := air(s.Position.Y, m.Environment)
+	m.gust = field(m.place.Point(s.Position), s.Position.Y, s.Time, m.Environment, m.World.Carrier, m.place)
 	m.stir()
 	m.fcs(in, local)
 	m.spool(in)
 	m.events(in)
 	m.integrate(in, local)
-	m.wrap()
 	m.burn(in)
 	m.shake(local)
+	m.unlevel(out)
 	m.State.Time += m.Stride()
+}
+
+// level carries the state into the tangent frame under the jet, where a
+// step works: gravity is straight down there, the sea is y = 0 to well
+// under a millimetre across the airframe, and every law in this package
+// holds as written. It returns the motion back to the environment's frame.
+func (m *Model) level() Rigid {
+	s := &m.State
+	theatre := m.Environment.Theatre()
+	_, under := theatre.Survey(s.Position)
+	into := Between(theatre, under)
+	out := into.Inverse()
+	s.Position, s.Velocity, s.Attitude = into.Point(s.Position), into.Vector(s.Velocity), into.Attitude(s.Attitude)
+	m.place, m.stepping = out.Then(m.Environment.Placement()), true
+	return out
+}
+
+// unlevel carries the state, and the air it flew in, back to the
+// environment's frame.
+func (m *Model) unlevel(out Rigid) {
+	s := &m.State
+	s.Position, s.Velocity, s.Attitude = out.Point(s.Position), out.Vector(s.Velocity), out.Attitude(s.Attitude)
+	m.gust, m.swirl = out.Vector(m.gust), out.Vector(m.swirl)
+	m.place, m.stepping = m.Environment.Placement(), false
+}
+
+// Altitude is the jet's height above the sea, m.
+func (m *Model) Altitude() float64 {
+	if m.stepping {
+		return m.State.Position.Y // a step works level under the jet
+	}
+	return m.Environment.Theatre().Altitude(m.State.Position)
+}
+
+// Up is the level up at the jet, in the frame its state is in.
+func (m *Model) Up() Vec3 {
+	if m.stepping {
+		return Vec3{Y: 1}
+	}
+	return m.Environment.Theatre().Up(m.State.Position)
+}
+
+// Reframe moves the model into another frame: its state, the air it last
+// flew in and the frame its environment names, so a host can work with it
+// somewhere else on the earth and every accessor still reads true.
+func (m *Model) Reframe(to Frame) {
+	r := Between(m.Environment.Theatre(), to)
+	s := &m.State
+	s.Position, s.Velocity, s.Attitude = r.Point(s.Position), r.Vector(s.Velocity), r.Attitude(s.Attitude)
+	m.gust, m.swirl = r.Vector(m.gust), r.Vector(m.swirl)
+	m.Environment.Frame = to
+	m.place = m.Environment.Placement()
 }
 
 // stir adds the wake the host handed the model to this step's air: the swirl
@@ -246,8 +306,7 @@ func (m *Model) stir() {
 		return
 	}
 	s := &m.State
-	wrap := m.Environment.Wrap
-	m.swirl = Induced(s.Position, m.Wake, wrap)
+	m.swirl = Induced(s.Position, m.Wake, m.place)
 	m.gust = m.gust.Add(m.swirl)
 	// A piece whose line passes further from the CG than its reach and the
 	// airframe's own size tapers to nothing along the whole airframe, so the
@@ -260,7 +319,7 @@ func (m *Model) stir() {
 	}
 	m.near = m.near[:0]
 	for _, v := range m.Wake {
-		if v.distance(s.Position, wrap) < v.Reach+extent {
+		if v.distance(m.place.Point(s.Position)) < v.Reach+extent {
 			m.near = append(m.near, v)
 		}
 	}
@@ -268,7 +327,7 @@ func (m *Model) stir() {
 	for si := range m.Airframe.Surfaces {
 		for _, e := range m.Airframe.Surfaces[si].Elements {
 			at := s.Position.Add(s.Attitude.Rotate(e.Position.Subtract(m.center)))
-			m.swirls = append(m.swirls, s.Attitude.Unrotate(Induced(at, m.near, wrap).Subtract(m.swirl)))
+			m.swirls = append(m.swirls, s.Attitude.Unrotate(Induced(at, m.near, m.place).Subtract(m.swirl)))
 		}
 	}
 }
@@ -414,16 +473,6 @@ func combine(k1, k2, k3, k4 Vec3, h float64) Vec3 {
 
 func blend(k1, k2, k3, k4 float64, h float64) float64 {
 	return (k1 + 2*k2 + 2*k3 + k4) * h / 6
-}
-
-// wrap applies the toroidal world after integration, centred on the origin.
-func (m *Model) wrap() {
-	size := m.Environment.Wrap
-	if size <= 0 {
-		return
-	}
-	m.State.Position.X = Shortest(0, m.State.Position.X, size)
-	m.State.Position.Z = Shortest(0, m.State.Position.Z, size)
 }
 
 func (m *Model) forces(s *State, in Inputs, local Air) Forces {

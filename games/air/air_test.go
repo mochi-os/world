@@ -1723,8 +1723,8 @@ func TestBotSpiral(t *testing.T) {
 // TestBandit: the SP joust harness — the bandit chases a mirrored straight
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
-	b := NewBandit("expert", 9, 250000, "", false, false, "", 0, false) // guns-only, like the client joust
-	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
+	b := NewBandit("expert", 9, "", false, false, "", 0, false) // guns-only, like the client joust
+	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}
 	spawn.State.Attitude = flight.Look(flight.Vec3{X: -1})
@@ -1733,7 +1733,7 @@ func TestBandit(t *testing.T) {
 	b.place(words)
 
 	// The player: straight and level away from the bandit — a towed target.
-	player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
+	player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9}, flight.World{Sea: sea})
 	player.State.Position = flight.Vec3{X: -2778, Y: altitude}
 	player.State.Velocity = flight.Vec3{X: 170}
 	player.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -1997,7 +1997,7 @@ func TestMissileEnergy(t *testing.T) {
 // 3,000 kg load is minutes of burner, not a free button.
 func TestFuelBurn(t *testing.T) {
 	rate := func(reheat float64) float64 {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = flight.Vec3{Y: 300}
 		m.State.Velocity = flight.Vec3{X: 180}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -2317,8 +2317,9 @@ func trimmed(i *instance, a *craft) flight.State {
 	s := &a.model.State
 	m.State.Time = s.Time
 	forward := s.Attitude.Rotate(flight.Vec3{X: 1})
-	airspeed := s.Velocity.Subtract(flight.Wind(s.Position, s.Time, i.environment)).Length() // Level trims for a speed through the air, and the match's wind carries the jet
-	return flight.Level(m, s.Position, flight.Vec3{X: forward.X, Z: forward.Z}, airspeed, s.Fuel)
+	up := i.environment.Theatre().Up(s.Position)
+	airspeed := s.Velocity.Subtract(flight.Wind(s.Position, s.Time, i.environment)).Length()          // Level trims for a speed through the air, and the match's wind carries the jet
+	return flight.Level(m, s.Position, forward.Subtract(up.Scale(forward.Dot(up))), airspeed, s.Fuel) // its heading, laid level where it is
 }
 
 // spawned reports where a craft's state is not the trim of the jet it flies.

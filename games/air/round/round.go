@@ -65,9 +65,9 @@ type Target struct {
 	Velocity flight.Vec3
 }
 
-// Model is one round in flight. Positions are metres, velocities m/s, world
-// +Y up. Wrap is the toroidal world size (0 = infinite), applied to every
-// relative vector like the rest of the game.
+// Model is one round in flight. Positions are metres and velocities m/s, in
+// the environment's frame; each step is flown level under the round, where
+// +Y is up (lay).
 type Model struct {
 	Position flight.Vec3
 	Velocity flight.Vec3
@@ -76,7 +76,6 @@ type Model struct {
 	Fuel     float64 // propellant remaining, kg
 	Phase    int
 	Loft     bool // the loft autopilot (off for VISUAL/boresight shots)
-	Wrap     float64
 
 	Environment flight.Environment // the weather it flies through: the wind carries the round as it carries the jets
 	Clock       float64            // the session time at launch, the wind's own clock
@@ -94,6 +93,54 @@ type Model struct {
 	since float64     // time since the last distinct velocity sample
 	seen  bool        // moved holds a real sample
 	held  float64     // seconds left staring at a chaff cloud (0 = clean)
+
+	level flight.Frame // the tangent frame the round flies in, laid under it
+	laid  flight.Vec3  // where, in the environment's frame, it was laid
+}
+
+// Lay is how far a round flies before the frame it works in is laid under it
+// again: a kilometre leans that frame's up a sixth of a milliradian off the
+// round's own, and its sea 8 cm off the ellipsoid's.
+const Lay = 1000.0
+
+// lay carries the round, and the targets it is steering by, into the tangent
+// frame under it, where every law below holds with +Y up, the sea at y = 0
+// and the air the environment's; it returns the motion back.
+func (m *Model) lay(targets ...*Target) flight.Rigid {
+	theatre := m.Environment.Theatre()
+	if !m.level.Set() || m.Position.Subtract(m.laid).Length() > Lay {
+		m.level, m.laid = theatre.Level(m.Position), m.Position
+	}
+	into := flight.Between(theatre, m.level)
+	m.carry(into)
+	for _, t := range targets {
+		if t != nil {
+			t.Position, t.Velocity = into.Point(t.Position), into.Vector(t.Velocity)
+		}
+	}
+	m.Environment.Frame = m.level
+	return into.Inverse()
+}
+
+// unlay carries the round back to the frame it came from.
+func (m *Model) unlay(out flight.Rigid, frame flight.Frame) {
+	m.carry(out)
+	m.Environment.Frame = frame
+}
+
+// Carry moves the round into another frame of its environment: r is the
+// motion there, and frame names it.
+func (m *Model) Carry(r flight.Rigid, frame flight.Frame) {
+	m.carry(r)
+	m.laid = r.Point(m.laid)
+	m.Environment.Frame = frame
+}
+
+// carry moves every point and direction the round keeps through a motion.
+func (m *Model) carry(r flight.Rigid) {
+	m.Position, m.Velocity, m.Struck = r.Point(m.Position), r.Vector(m.Velocity), r.Point(m.Struck)
+	m.Estimate, m.Drift = r.Point(m.Estimate), r.Vector(m.Drift)
+	m.sight, m.moved, m.accel = r.Vector(m.sight), r.Vector(m.moved), r.Vector(m.accel)
 }
 
 // Distract offers the seeker a chaff bloom, taken only when the seeker is
@@ -111,13 +158,17 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 	if reach < Resolve || reach > Activation {
 		return false // too close: the seeker resolves the jet from the cloud — burn-through, chaff's version
 	}
-	if !Notched(m.Position, truth.Position, truth.Velocity, m.Wrap) {
+	frame := m.Environment.Frame
+	out := m.lay(&truth) // the notch is read level under the round
+	notched := Notched(m.Position, truth.Position, truth.Velocity)
+	m.unlay(out, frame)
+	if !notched {
 		return false // out of the notch: the velocity gate rejects the cloud outright
 	}
 	m.Phase = Active
 	m.held = Hold
 	m.Estimate = bloom
-	m.Drift = flight.Wind(bloom, m.Clock+m.Time, m.Environment).Add(flight.Vec3{Y: -1}) // the cloud hangs in the air, sinking, and goes where the wind takes it
+	m.Drift = flight.Wind(bloom, m.Clock+m.Time, m.Environment).Subtract(m.Environment.Theatre().Up(bloom)) // the cloud hangs in the air, sinking, and goes where the wind takes it
 	m.Stale = 0
 	return true
 }
@@ -127,7 +178,7 @@ func (m *Model) Distract(bloom flight.Vec3, truth Target) bool {
 // target estimate, into the environment's air at the session time clock. A
 // nil estimate is a VISUAL shot: the seeker is active immediately.
 func New(position flight.Vec3, velocity flight.Vec3, estimate *Target, environment flight.Environment, clock float64) *Model {
-	m := &Model{Position: position, Velocity: velocity, Life: Battery, Fuel: Propellant, Wrap: environment.Wrap, Environment: environment, Clock: clock, Loft: true}
+	m := &Model{Position: position, Velocity: velocity, Life: Battery, Fuel: Propellant, Environment: environment, Clock: clock, Loft: true}
 	if estimate != nil {
 		m.Estimate = estimate.Position
 		m.Drift = estimate.Velocity
@@ -148,45 +199,44 @@ const (
 )
 
 // Clutter is how far a target is seen against the sea from a radar at own, 0
-// to 1: its line of sight runs below the horizon, which dips further the
-// higher the radar flies, and a distant target sits lower for the earth's
-// curve. A jet at the same height, or a little below at long range, has the
-// sky behind it. The pilot's radar has the same (radar.ts clutter).
-func Clutter(own flight.Vec3, target flight.Vec3, wrap float64) float64 {
-	sight := relative(own, target, wrap)
+// to 1, in a frame level under the radar (+Y up, y its height): its line of
+// sight runs below the horizon, which dips further the higher the radar
+// flies. The world is the curved earth, so a distant target already sits
+// lower along the line for the curve. A jet at the same height, or a little
+// below at long range, has the sky behind it. The pilot's radar has the same
+// (radar.ts clutter).
+func Clutter(own flight.Vec3, target flight.Vec3) float64 {
+	sight := target.Subtract(own)
 	across := math.Hypot(sight.X, sight.Z)
-	below := math.Atan2(-sight.Y, across) + across/(2*Earth)
+	below := math.Atan2(-sight.Y, across)
 	horizon := math.Acos(Earth / (Earth + math.Max(0, own.Y)))
 	t := math.Max(0, math.Min(1, (below-horizon+Edge)/(2*Edge)))
 	return t * t * (3 - 2*t)
 }
 
-// Notched reports a target in the clutter notch of a radar or seeker at own:
-// seen against the sea, with its own speed along the line of sight inside
-// Notch. The pilot's radar has the same (radar.ts notched).
-func Notched(own flight.Vec3, target flight.Vec3, velocity flight.Vec3, wrap float64) bool {
-	if Clutter(own, target, wrap) <= 0.5 {
+// Notched reports a target in the clutter notch of a radar or seeker at own,
+// in a frame level under it: seen against the sea, with its own speed along
+// the line of sight inside Notch. The pilot's radar has the same (radar.ts
+// notched).
+func Notched(own flight.Vec3, target flight.Vec3, velocity flight.Vec3) bool {
+	if Clutter(own, target) <= 0.5 {
 		return false
 	}
-	sight := relative(own, target, wrap)
+	sight := target.Subtract(own)
 	reach := sight.Length()
 	return reach < 1 || math.Abs(velocity.Dot(sight.Scale(1/reach))) <= Notch
 }
 
-// relative is to - from across the wrap (0 = infinite world).
-func relative(from flight.Vec3, to flight.Vec3, wrap float64) flight.Vec3 {
-	if wrap <= 0 {
-		return to.Subtract(from)
-	}
-	return flight.Vec3{
-		X: flight.Shortest(from.X, to.X, wrap),
-		Y: to.Y - from.Y,
-		Z: flight.Shortest(from.Z, to.Z, wrap),
-	}
+// Masked is Notched for a radar at own anywhere in the environment's frame:
+// worked level under the radar, where its horizon dips as its height says.
+func Masked(environment flight.Environment, own flight.Vec3, target flight.Vec3, velocity flight.Vec3) bool {
+	theatre := environment.Theatre()
+	into := flight.Between(theatre, theatre.Level(own))
+	return Notched(into.Point(own), into.Point(target), into.Vector(velocity))
 }
 
 func (m *Model) relative(from flight.Vec3, to flight.Vec3) flight.Vec3 {
-	return relative(from, to, m.Wrap)
+	return to.Subtract(from)
 }
 
 // Range is the distance to the current estimate.
@@ -199,17 +249,36 @@ func (m *Model) Wind() flight.Vec3 {
 
 // Mach is the round's speed through the air over the speed of sound there.
 func (m *Model) Mach() float64 {
-	_, sound := atmosphere(m.Position.Y)
+	_, sound := atmosphere(m.Environment.Theatre().Altitude(m.Position))
 	return m.Velocity.Subtract(m.Wind()).Length() / sound
 }
 
 // Step advances the round by dt seconds. support is a fresh datalink estimate
 // (nil when unsupported); truth is the target's actual state. Returns false
-// once the round is spent; the fuse is the caller's, via Fused.
+// once the round is spent; the fuse is the caller's, via Fused. The step is
+// flown level under the round (lay); the caller's targets are not touched.
 func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 	if m.Life <= 0 {
 		return false
 	}
+	var feed, seen *Target
+	if support != nil {
+		copied := *support
+		feed = &copied
+	}
+	if truth != nil {
+		copied := *truth
+		seen = &copied
+	}
+	frame := m.Environment.Frame
+	out := m.lay(feed, seen)
+	alive := m.step(dt, feed, seen)
+	m.unlay(out, frame)
+	return alive
+}
+
+// step is Step worked level under the round.
+func (m *Model) step(dt float64, support *Target, truth *Target) bool {
 	m.Time += dt
 	m.Life -= dt
 
@@ -293,7 +362,7 @@ func (m *Model) Step(dt float64, support *Target, truth *Target) bool {
 		// Acquisition respects the clutter notch: a searching seeker cannot pick up a
 		// near-zero radial velocity return against the sea. An established Pitbull
 		// track holds through the notch, so beaming alone never breaks a lock.
-		if reach <= Activation && unit.Dot(forward) >= Gimbal && !Notched(m.Position, truth.Position, truth.Velocity, m.Wrap) {
+		if reach <= Activation && unit.Dot(forward) >= Gimbal && !Notched(m.Position, truth.Position, truth.Velocity) {
 			// HUSKY: the seeker sees the target and becomes the estimate's
 			// source — datalink no longer matters. PITBULL at terminal range.
 			m.Estimate = truth.Position
@@ -422,10 +491,6 @@ func (m *Model) integrate(dt float64, command flight.Vec3, speed float64, forwar
 	acceleration := forward.Scale(axial).Add(lateral).Add(flight.Vec3{Y: -9.80665})
 	m.Velocity = m.Velocity.Add(acceleration.Scale(dt))
 	m.Position = m.Position.Add(m.Velocity.Scale(dt))
-	if m.Wrap > 0 {
-		m.Position.X = flight.Shortest(0, m.Position.X, m.Wrap)
-		m.Position.Z = flight.Shortest(0, m.Position.Z, m.Wrap)
-	}
 	return true
 }
 

@@ -50,34 +50,6 @@ func TestAtmosphereOffsets(t *testing.T) {
 	}
 }
 
-// TestShortest: the loop-free minimum-image matches the iterative definition
-// across the normal range, and a tiny wrap returns instantly, not hanging.
-func TestShortest(t *testing.T) {
-	iterative := func(a, b, size float64) float64 {
-		d := b - a
-		half := size / 2
-		for d > half {
-			d -= size
-		}
-		for d < -half {
-			d += size
-		}
-		return d
-	}
-	for _, size := range []float64{10000, 250000} {
-		for d := -3.4 * size; d <= 3.4*size; d += size / 7.3 {
-			got := Shortest(0, d, size)
-			want := iterative(0, d, size)
-			if math.Abs(got-want) > 1e-6*size {
-				t.Fatalf("Shortest(0, %g, %g) = %g, iterative %g", d, size, got, want)
-			}
-		}
-	}
-	if d := Shortest(0, 2778, 1e-9); math.IsNaN(d) || math.IsInf(d, 0) {
-		t.Fatalf("hostile wrap: %v", d) // and it returned at all — the old loop never did
-	}
-}
-
 // TestPitotReadsTheNose: the airspeed box is a pitot, not a speedometer —
 // parked in wind it reads the ram component down the probe axis, swinging
 // with the nose through a taxi circle (#44): into wind it shows the wind,

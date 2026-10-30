@@ -53,16 +53,3 @@ func TestObstacles(t *testing.T) {
 		t.Errorf("over the mast: probe %d met it", c)
 	}
 }
-
-// TestObstaclesSeam: an obstacle at a wrap seam is met from the other side of
-// it - the world is a torus, and the hangar at x 900-1100 is one image of the
-// hangar at x -4100.
-func TestObstaclesSeam(t *testing.T) {
-	m := New(Fighter, Environment{Wrap: 5000}, built())
-	if flown(m, Vec3{X: -4000, Y: 20, Z: 1000}, 150) < 0 {
-		t.Errorf("through the hangar's image across the seam: no contact")
-	}
-	if c := flown(m, Vec3{X: -3750, Y: 20, Z: 1000}, 150); c >= 0 {
-		t.Errorf("beside the image: probe %d met it", c)
-	}
-}

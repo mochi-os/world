@@ -117,7 +117,7 @@ func headon() Opening {
 }
 
 // Draw is the opening a seed gives in an arena of this wrap (0 unwrapped).
-func Draw(seed uint64, wrap float64) Opening {
+func Draw(seed uint64) Opening {
 	roll := func(salt uint64) float64 { return battle.Roll(seed, 0x6f70656e, salt) }
 	o := Opening{Altitude: [2]float64{4572 + roll(1)*6096, 4572 + roll(2)*6096}, Speed: 230 + roll(3)*60}
 	if roll(4) >= 1.0/3 {
@@ -136,9 +136,7 @@ func Draw(seed uint64, wrap float64) Opening {
 		}
 		o.Apart = reach + commit
 	}
-	if wrap > 0 {
-		o.Apart = math.Min(o.Apart, 0.45*wrap) // across the wrap they would meet the short way round
-	}
+
 	return o
 }
 
@@ -198,17 +196,6 @@ func (f *Air) Name() string     { return "air" }
 func (f *Air) Rate() (int, int) { return 60, 20 }
 
 func (f *Air) Create(session game.Session) (game.Instance, error) {
-	wrap := 250000.0
-	if v, found := session.Parameters["wrap"]; found {
-		// 0 disables wrapping; anything else must exceed the play area by a
-		// wide margin. A tiny wrap once sent flight.Shortest into ~1e12
-		// normalization iterations on the first Step and hung the session
-		// goroutine forever (Shortest is loop-free now, but a sub-arena wrap
-		// is still geometric nonsense).
-		if n, valid := v.(float64); valid && (n == 0 || n >= 10000) {
-			wrap = n
-		}
-	}
 	mode := session.Mode
 	if mode != "joust" && mode != "teams" {
 		mode = "furball"
@@ -236,7 +223,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		mode:        mode,
 		weapons:     weapons,
 		missiles:    weapons != "guns",
-		environment: flight.Environment{Seed: session.Seed, Wrap: wrap, Wind: trades},
+		environment: flight.Environment{Seed: session.Seed, Wind: trades},
 		aircraft:    map[int]*craft{},
 		chart:       chart,
 	}
@@ -258,7 +245,7 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		// The BVR joust (#32): the pair opens the full derived distance apart,
 		// from a start drawn from the match seed (#46) - or the classic head-on
 		// one, which "opening": "head" pins for tests.
-		i.opening = Draw(i.environment.Seed, i.environment.Wrap)
+		i.opening = Draw(i.environment.Seed)
 		if pin, _ := session.Parameters["opening"].(string); pin == "head" {
 			i.opening = headon()
 		}
@@ -788,7 +775,7 @@ func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
 			if other == slot || b == nil || !b.alive || b.model == nil {
 				continue
 			}
-			if span := shortest(at, b.model.State.Position, i.environment.Wrap).Length(); span < least {
+			if span := b.model.State.Position.Subtract(at).Length(); span < least {
 				least = span
 			}
 		}
@@ -803,10 +790,6 @@ func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
 		radius := ring + float64(step/8)*clearance
 		at.X += math.Cos(angle) * radius
 		at.Z += math.Sin(angle) * radius
-		if i.environment.Wrap > 0 {
-			at.X = flight.Shortest(0, at.X, i.environment.Wrap)
-			at.Z = flight.Shortest(0, at.Z, i.environment.Wrap)
-		}
 		if space := nearest(at); space > room {
 			best, room = at, space
 		}
@@ -814,7 +797,7 @@ func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
 			break
 		}
 	}
-	facing := shortest(best, centre, i.environment.Wrap)
+	facing := centre.Subtract(best)
 	facing.Y = 0
 	if facing.Length() < 1 {
 		facing = flight.Vec3{X: 1}
@@ -871,10 +854,6 @@ func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) boo
 	angle := float64(slot) * 2.399963 // golden-angle bearings: re-entries spread, never queue up a lane
 	away := flight.Vec3{X: math.Cos(angle), Z: math.Sin(angle)}
 	position := flight.Vec3{X: centre.X + away.X*radius, Y: bvraltitude, Z: centre.Z + away.Z*radius}
-	if i.environment.Wrap > 0 {
-		position.X = flight.Shortest(0, position.X, i.environment.Wrap)
-		position.Z = flight.Shortest(0, position.Z, i.environment.Wrap)
-	}
 	m.State = flight.Level(m, position, away.Scale(-1), bvrspeed, tank)
 	return true
 }
@@ -1018,7 +997,7 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 		}
 	}
 	waiting := i.mode == "joust" && !i.started
-	welcome := map[string]any{"state": state_payload(&a.model.State), "wrap": i.environment.Wrap, "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
+	welcome := map[string]any{"state": state_payload(&a.model.State), "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
 		"map": map[string]any{"name": i.chart.name, "hash": i.chart.hash}, "ship": i.voyage(), "wind": []float64{i.environment.Wind.X, i.environment.Wind.Y, i.environment.Wind.Z}}
 	if i.mode == "teams" {
 		welcome["team"] = team
@@ -1059,9 +1038,9 @@ func (i *instance) merge() {
 	}
 	behind := func(from, of *flight.Model) bool {
 		rel := flight.Vec3{
-			X: flight.Shortest(of.State.Position.X, from.State.Position.X, i.environment.Wrap),
+			X: (from.State.Position.X - of.State.Position.X),
 			Y: from.State.Position.Y - of.State.Position.Y,
-			Z: flight.Shortest(of.State.Position.Z, from.State.Position.Z, i.environment.Wrap),
+			Z: (from.State.Position.Z - of.State.Position.Z),
 		} // Shortest returns b-a: arguments ordered (of, from) so rel = from - of""}
 		return rel.Dot(of.State.Attitude.Rotate(flight.Vec3{X: 1})) < -5
 	}
@@ -1270,7 +1249,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			if a.brain != nil {
 				i.think(slot, a, tick) // the fighting brain (bot.go)
 			} else {
-				weave(slot, a, tick) // drones keep the original wander
+				i.within(a, func() { weave(slot, a, tick) }) // drones keep the original wander
 			}
 		}
 	}
@@ -1345,7 +1324,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		}
 		fed := a.trigger(i.free())
 		whole := a.model.State // this tick's start, where a jet that breaks up during it is laid to rest
-		a.model.Wake = i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea, i.environment.Wrap)
+		a.model.Wake = i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea)
 		for substep := 0; substep < 4; substep++ {
 			a.model.Step(fed) // 4 × Dt (1/240) per 60 Hz tick
 		}
@@ -1416,7 +1395,7 @@ func (i *instance) scatter(dt float64, tick uint64) {
 				continue // pieces pass through a human under the cheat, as rounds do
 			}
 			state := &a.model.State
-			hit, events, _ := d.Meet(clock, dt, state.Position, state.Velocity, state.Attitude, &a.body, i.environment.Wrap, seed, uint64(slot), tick)
+			hit, events, _ := d.Meet(clock, dt, state.Position, state.Velocity, state.Attitude, &a.body, seed, uint64(slot), tick)
 			if !hit {
 				continue
 			}
@@ -1547,6 +1526,8 @@ func (i *instance) guns(dt float64, tick uint64) {
 			Velocity: state.Velocity,
 		}
 		shooter.Wind = flight.Wind(shooter.Position, state.Time, i.environment)
+		place, level := i.environment.Theatre().Survey(shooter.Position)
+		shooter.Level, shooter.Altitude = flight.Between(level, i.environment.Theatre()).Vector(flight.Vec3{Y: 1}), place.Altitude // the volley falls down the level up at the muzzle
 		// Rounds fly REAL time of flight now: the volley enters the world and
 		// fly() resolves each round against wherever its victims actually are
 		// when it reaches them — so a break after the trigger is a defence,
@@ -1587,12 +1568,12 @@ func (i *instance) fly(dt float64, tick uint64) {
 			}
 			state := &a.model.State
 			if math.Abs(round.Position.Y-state.Position.Y) > 80 ||
-				math.Abs(flight.Shortest(state.Position.X, round.Position.X, i.environment.Wrap)) > 80 ||
-				math.Abs(flight.Shortest(state.Position.Z, round.Position.Z, i.environment.Wrap)) > 80 {
+				math.Abs((round.Position.X-state.Position.X)) > 80 ||
+				math.Abs((round.Position.Z-state.Position.Z)) > 80 {
 				continue
 			}
 			a.body.Belt = float64(a.ammunition) / rounds // what is left in the drum, for the cook-off check
-			hit, events, _ := battle.Strike(round, state.Position, state.Attitude, state.Velocity, &a.body, dt, i.environment.Wrap, i.environment.Seed)
+			hit, events, _ := battle.Strike(round, state.Position, state.Attitude, state.Velocity, &a.body, dt, i.environment.Seed)
 			if !hit {
 				continue
 			}
@@ -1647,9 +1628,9 @@ func seduction(tail, lit float64) float64 {
 
 // bearing returns the unit minimum-image direction and distance from a to b.
 func (i *instance) bearing(a flight.Vec3, b flight.Vec3) (flight.Vec3, float64) {
-	dx := flight.Shortest(a.X, b.X, i.environment.Wrap)
+	dx := (b.X - a.X)
 	dy := b.Y - a.Y
-	dz := flight.Shortest(a.Z, b.Z, i.environment.Wrap)
+	dz := (b.Z - a.Z)
 	distance := math.Sqrt(dx*dx + dy*dy + dz*dz)
 	if distance < 1e-9 {
 		return flight.Vec3{X: 1}, 0
@@ -2009,7 +1990,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 		// inconvenience — and the shooter's own display catching up with
 		// that truth (track memory, broken lock) is the EW task's, not this
 		// line's.
-		if !round.Notched(shooter.model.State.Position, target.model.State.Position, target.model.State.Velocity, i.environment.Wrap) {
+		if !round.Masked(i.environment, shooter.model.State.Position, target.model.State.Position, target.model.State.Velocity) {
 			support = truth
 		}
 	}
@@ -2035,7 +2016,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 			return false // the fuse fires but the warhead cannot hurt a human under the cheat
 		}
 		kill, events, _ := battle.Warhead(battle.Radar, burst, m.velocity.Subtract(target.model.State.Velocity).Length(), target.model.State.Position, target.model.State.Attitude,
-			&target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+			&target.body, i.environment.Seed, uint64(m.shooter), tick)
 		target.condition.Damager = m.shooter
 		target.condition.Damaged = 0
 		for _, event := range events {
@@ -2136,9 +2117,9 @@ func (i *instance) pursue(dt float64, tick uint64) {
 		// pass ever scored the direct kill.
 		if m.flew > missile_arm && target != nil && target.alive {
 			relative := flight.Vec3{
-				X: flight.Shortest(m.position.X, seen.X, i.environment.Wrap),
+				X: (seen.X - m.position.X),
 				Y: seen.Y - m.position.Y,
-				Z: flight.Shortest(m.position.Z, seen.Z, i.environment.Wrap),
+				Z: (seen.Z - m.position.Z),
 			}
 			closure := target.model.State.Velocity.Subtract(m.velocity)
 			step := 0.0
@@ -2151,7 +2132,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 					continue // the fuse fires but the warhead cannot hurt a human under the cheat
 				}
 				burst := target.model.State.Position.Subtract(closest) // the missile at its nearest point, anchored to the target
-				kill, events, _ := battle.Blast(burst, closure.Length(), target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Wrap, i.environment.Seed, uint64(m.shooter), tick)
+				kill, events, _ := battle.Blast(burst, closure.Length(), target.model.State.Position, target.model.State.Attitude, &target.body, i.environment.Seed, uint64(m.shooter), tick)
 				target.condition.Damager = m.shooter
 				target.condition.Damaged = 0
 				for _, event := range events {
@@ -2313,7 +2294,7 @@ func (i *instance) fell(victim int, by int, cause string, other int) {
 	a.deaths++
 	if a.model != nil {
 		i.debris = append(i.debris, battle.Debris{Origin: a.model.State.Position, Velocity: a.model.State.Velocity, Time: float64(i.stepped) / 60,
-			Wind: flight.Wind(a.model.State.Position, float64(i.stepped)/60, i.environment)})
+			Wind: flight.Wind(a.model.State.Position, float64(i.stepped)/60, i.environment), Up: i.environment.Theatre().Up(a.model.State.Position)})
 	}
 	if killer := i.aircraft[by]; by >= 0 && killer != nil {
 		// Friendly fire is live in the teams mode, and it costs: a teammate
@@ -2395,14 +2376,17 @@ const (
 	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
 
-// pose packs one aircraft into the pose_record-byte wire record.
-func pose(slot int, a *craft) []byte {
+// pose packs one aircraft into the pose_record-byte wire record. Its position
+// is from origin, the recipient's own: a 32-bit float holds the earth's whole
+// size to a metre and a half, and a neighbour's offset to a centimetre.
+func pose(slot int, a *craft, origin flight.Vec3) []byte {
 	s := &a.model.State
 	b := make([]byte, pose_record)
 	b[0] = byte(slot)
-	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(s.Position.X)))
-	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(s.Position.Y)))
-	binary.LittleEndian.PutUint32(b[9:], math.Float32bits(float32(s.Position.Z)))
+	offset := s.Position.Subtract(origin)
+	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(offset.X)))
+	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(offset.Y)))
+	binary.LittleEndian.PutUint32(b[9:], math.Float32bits(float32(offset.Z)))
 	quat := func(offset int, v float64) {
 		binary.LittleEndian.PutUint16(b[offset:], uint16(int16(clamp(v, -1, 1)*32767)))
 	}
@@ -2616,9 +2600,9 @@ func (i *instance) statuses(tick uint64) {
 // span is the wrap-aware distance between two aircraft.
 func (i *instance) span(a, b *flight.Model) float64 {
 	return flight.Vec3{
-		X: flight.Shortest(a.State.Position.X, b.State.Position.X, i.environment.Wrap),
+		X: (b.State.Position.X - a.State.Position.X),
 		Y: b.State.Position.Y - a.State.Position.Y,
-		Z: flight.Shortest(a.State.Position.Z, b.State.Position.Z, i.environment.Wrap),
+		Z: (b.State.Position.Z - a.State.Position.Z),
 	}.Length()
 }
 
@@ -2714,10 +2698,11 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			}
 			picked = append(set, far[at:stop]...)
 		}
+		origin := me.model.State.Position // every position below is sent from here, which goes in full
 		blob := make([]byte, 0, (len(picked)+1)*pose_record)
-		blob = append(blob, pose(self, me)...) // self first: the client's no-prediction fallback reads its own pose from the wire
+		blob = append(blob, pose(self, me, origin)...) // self first: the client's no-prediction fallback reads its own pose from the wire
 		for _, slot := range picked {
-			blob = append(blob, pose(slot, i.aircraft[slot])...)
+			blob = append(blob, pose(slot, i.aircraft[slot], origin)...)
 		}
 		// The recipient's nearest missiles, 24 bytes each, capped at 6.
 		type shot struct {
@@ -2727,9 +2712,9 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		shots := make([]shot, 0, len(i.flying))
 		for _, m := range i.flying {
 			d := flight.Vec3{
-				X: flight.Shortest(me.model.State.Position.X, m.position.X, i.environment.Wrap),
+				X: (m.position.X - me.model.State.Position.X),
 				Y: m.position.Y - me.model.State.Position.Y,
-				Z: flight.Shortest(me.model.State.Position.Z, m.position.Z, i.environment.Wrap),
+				Z: (m.position.Z - me.model.State.Position.Z),
 			}.Length()
 			shots = append(shots, shot{m, d})
 		}
@@ -2740,9 +2725,10 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		darts := make([]byte, 0, len(shots)*25)
 		for _, sh := range shots {
 			var d [25]byte
-			binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(sh.m.position.X)))
-			binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(sh.m.position.Y)))
-			binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(sh.m.position.Z)))
+			offset := sh.m.position.Subtract(origin)
+			binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(offset.X)))
+			binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(offset.Y)))
+			binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(offset.Z)))
 			binary.LittleEndian.PutUint32(d[12:], math.Float32bits(float32(sh.m.velocity.X)))
 			binary.LittleEndian.PutUint32(d[16:], math.Float32bits(float32(sh.m.velocity.Y)))
 			binary.LittleEndian.PutUint32(d[20:], math.Float32bits(float32(sh.m.velocity.Z)))
@@ -2752,20 +2738,32 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			}
 			darts = append(darts, d[:]...)
 		}
-		poses[self] = map[string]any{"blob": blob, "missiles": darts}
+		poses[self] = map[string]any{"blob": blob, "missiles": darts, "origin": []float64{origin.X, origin.Y, origin.Z}}
 	}
-	// Wrecks: global, capped, wreck_record-byte records (position, attitude, velocity, burn).
+	// Wrecks: global, capped, wreck_record-byte records (position from the
+	// anchor, attitude, velocity, burn). The anchor is the first wreck's
+	// position, sent in full; the others lie within a fight's reach of it.
 	limit := len(i.wrecks)
 	if limit > 4 {
 		limit = 4
 	}
+	var anchor flight.Vec3
+	if limit > 0 {
+		anchor = i.wrecks[0].model.State.Position
+	}
+	return map[string]any{"wrecks": i.derelicts(limit, anchor), "anchor": []float64{anchor.X, anchor.Y, anchor.Z}, "cores": cores, "poses": poses}
+}
+
+// derelicts packs the first limit wrecks into wreck_record-byte records.
+func (i *instance) derelicts(limit int, origin flight.Vec3) []byte {
 	derelicts := make([]byte, 0, limit*wreck_record)
 	for _, w := range i.wrecks[:limit] {
 		s := &w.model.State
 		var d [wreck_record]byte
-		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(s.Position.X)))
-		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(s.Position.Y)))
-		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(s.Position.Z)))
+		offset := s.Position.Subtract(origin)
+		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(offset.X)))
+		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(offset.Y)))
+		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(offset.Z)))
 		quat := func(offset int, v float64) {
 			binary.LittleEndian.PutUint16(d[offset:], uint16(int16(clamp(v, -1, 1)*32767)))
 		}
@@ -2780,7 +2778,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 		d[33] = byte(clamp(w.burn[1], 0, 1) * 255)
 		derelicts = append(derelicts, d[:]...)
 	}
-	return map[string]any{"wrecks": derelicts, "cores": cores, "poses": poses}
+	return derelicts
 }
 
 func (i *instance) Events() []map[string]any {

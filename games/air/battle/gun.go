@@ -50,7 +50,7 @@ func Average(span, altitude float64) float64 {
 	return span * Muzzle / (l * (math.Expm1(span / l)))
 }
 
-// Pose is the shooter's muzzle state in world coordinates.
+// Pose is the shooter's muzzle state in the host's frame.
 type Pose struct {
 	Position flight.Vec3 // muzzle
 	Forward  flight.Vec3 // bore line, unit
@@ -58,6 +58,8 @@ type Pose struct {
 	Right    flight.Vec3 // unit
 	Velocity flight.Vec3 // the shooter's velocity rides on every round
 	Wind     flight.Vec3 // the air's velocity at the muzzle, which the volley flies through
+	Level    flight.Vec3 // the level up at the muzzle, which the volley falls along (zero: the frame's own y)
+	Altitude float64     // the muzzle's height above the sea
 }
 
 // ImpactPoints caps how many per-round strike positions one report carries.
@@ -75,6 +77,30 @@ type Round struct {
 	Age      float64
 	Wind     flight.Vec3 // the air it flies through, taken at the muzzle and every Sampled seconds after (Feel)
 	Felt     float64     // its age when it last took the wind
+	Up       flight.Vec3 // the level up at the muzzle: a round's whole flight lies within a few kilometres of it, where the sea's curve departs from that level by under a metre (zero: the frame's own y)
+	Sea      float64     // the sea along Up: a round's height is Position·Up less this
+}
+
+// level is the up a round falls along and the sea's place along it.
+func (r *Round) level() (flight.Vec3, float64) {
+	if r.Up == (flight.Vec3{}) {
+		return flight.Vec3{Y: 1}, 0
+	}
+	return r.Up, r.Sea
+}
+
+// Height is the round's height above the sea.
+func (r *Round) Height() float64 {
+	up, sea := r.level()
+	return r.Position.Dot(up) - sea
+}
+
+// Carry moves the round into another frame: m is the motion there.
+func (r *Round) Carry(m flight.Rigid) {
+	height := r.Height()
+	up, _ := r.level()
+	r.Position, r.Velocity, r.Wind, r.Up = m.Point(r.Position), m.Vector(r.Velocity), m.Vector(r.Wind), m.Vector(up)
+	r.Sea = r.Position.Dot(r.Up) - height
 }
 
 // Sampled is how often a round in flight takes the wind where it is. The wind
@@ -120,6 +146,10 @@ const Life = 4.0
 // deterministic Gaussian dispersion the instant model rolled.
 func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []Round {
 	born := make([]Round, 0, rounds)
+	up, sea := shooter.Level, 0.0
+	if up != (flight.Vec3{}) {
+		sea = shooter.Position.Dot(up) - shooter.Altitude
+	}
 	for r := 0; r < rounds; r++ {
 		round := uint64(r)
 		radius := dispersion * math.Sqrt(-2*math.Log(math.Max(roll(seed, slot, tick, round, 20), 1e-12)))
@@ -134,6 +164,8 @@ func Volley(shooter Pose, rounds int, seed uint64, slot uint64, tick uint64) []R
 			Born:     tick,
 			Index:    round,
 			Wind:     shooter.Wind,
+			Up:       up,
+			Sea:      sea,
 		})
 	}
 	return born
@@ -161,13 +193,8 @@ const Graze = 60.0
 // gates it before any per-part work: the step is one segment and the body is
 // one sphere, which is a dot product and a length against a few dozen capsule
 // sweeps.
-func Near(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, wrap float64) (float64, flight.Vec3, bool) {
-	relative := flight.Vec3{
-		X: flight.Shortest(position.X, r.Position.X, wrap),
-		Y: r.Position.Y - position.Y,
-		Z: flight.Shortest(position.Z, r.Position.Z, wrap),
-	}
-	origin := attitude.Unrotate(relative)
+func Near(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64) (float64, flight.Vec3, bool) {
+	origin := attitude.Unrotate(r.Position.Subtract(position))
 	step := r.Velocity.Subtract(velocity).Scale(dt)
 	span := step.Length()
 	if span < 1e-9 {
@@ -203,34 +230,30 @@ func Near(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.
 	return best, at, true
 }
 
-// Fly advances a round one step of dt: drag and gravity. Returns true once
-// the round is spent.
+// Fly advances a round one step of dt: drag and gravity, which pulls it down
+// the level up where it was fired. Returns true once the round is spent.
 func Fly(r *Round, dt float64) bool {
 	// Quadratic drag on the whole velocity through the air: the round flies
 	// through the air mass, and the air does not care which part of the speed
 	// was barrel and which was inherited from the shooter. The wind is the
 	// air's own motion, so the round slows toward it, not toward the sea.
+	up, sea := r.level()
 	through := r.Velocity.Subtract(r.Wind)
 	if speed := through.Length(); speed > 1 {
-		r.Velocity = r.Wind.Add(through.Scale(1 / (1 + speed*dt/stretched(r.Position.Y))))
+		r.Velocity = r.Wind.Add(through.Scale(1 / (1 + speed*dt/stretched(r.Position.Dot(up)-sea))))
 	}
-	r.Velocity.Y -= 9.8 * dt
+	r.Velocity = r.Velocity.Subtract(up.Scale(9.8 * dt))
 	r.Position = r.Position.Add(r.Velocity.Scale(dt))
 	r.Age += dt
-	return r.Age > Life || r.Position.Y < 0
+	return r.Age > Life || r.Position.Dot(up) < sea
 }
 
 // Strike tests one round's next step of dt against a body posed at position
 // with attitude - judged in the target's frame at THIS tick, which is what
 // makes a jink after the trigger a real defence. The impact point is in the
 // body frame.
-func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, wrap float64, seed uint64) (bool, []Event, flight.Vec3) {
-	relative := flight.Vec3{
-		X: flight.Shortest(position.X, r.Position.X, wrap),
-		Y: r.Position.Y - position.Y,
-		Z: flight.Shortest(position.Z, r.Position.Z, wrap),
-	}
-	origin := attitude.Unrotate(relative)
+func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity flight.Vec3, body *Body, dt float64, seed uint64) (bool, []Event, flight.Vec3) {
+	origin := attitude.Unrotate(r.Position.Subtract(position))
 	step := r.Velocity.Subtract(velocity).Scale(dt)
 	span := step.Length()
 	if span < 1e-9 {

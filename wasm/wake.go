@@ -55,7 +55,7 @@ func wake_reset(environment flight.Environment) {
 
 // meet hands a model the wake pieces near it on the shared clock.
 func meet(id int, m *flight.Model) {
-	m.Wake = wakes.Near(id, m.State.Position, clock, m.World.Sea, m.Environment.Wrap)
+	m.Wake = wakes.Near(id, m.Environment.Placement().Point(m.State.Position), clock, m.World.Sea) // the wakes are laid in the world frame
 }
 
 // lay records a model's mark on the shared clock.
@@ -82,13 +82,14 @@ func wake_shed(this js.Value, arguments []js.Value) any {
 	receive(arguments[1], shed)
 	frame := model.Airframe
 	mass := frame.Mass.Empty + frame.Mass.Fuel/2
+	home := model.Environment.Placement() // the poses are in the client's frame, the wakes in the world frame
 	for k := 0; k < count; k++ {
 		w := shed[k*pose : (k+1)*pose]
 		position := flight.Vec3{X: w[1], Y: w[2], Z: w[3]}
 		attitude := flight.Quat{W: w[4], X: w[5], Y: w[6], Z: w[7]}.Normalize()
 		velocity := flight.Vec3{X: w[8], Y: w[9], Z: w[10]}
-		density := flight.Atmosphere(position.Y, model.Environment).Density
-		wakes.Shed(remote+int(w[0]), clock, position, attitude, velocity, w[11]*mass*model.Gravity, frame.Reference.Span, density, flight.Vec3{})
+		density := flight.Atmosphere(model.Environment.Theatre().Altitude(position), model.Environment).Density
+		wakes.Shed(remote+int(w[0]), clock, home.Point(position), home.Attitude(attitude), home.Vector(velocity), w[11]*mass*model.Gravity, frame.Reference.Span, density, flight.Vec3{})
 	}
 	return ""
 }

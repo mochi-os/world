@@ -44,7 +44,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 	nearest := func(m *flight.Model) (float64, int) {
 		least, who := math.MaxFloat64, -1
 		for _, slot := range slots {
-			span := shortest(m.State.Position, i.aircraft[slot].model.State.Position, i.environment.Wrap).Length()
+			span := i.aircraft[slot].model.State.Position.Subtract(m.State.Position).Length()
 			if span < least {
 				least, who = span, slot
 			}
@@ -64,7 +64,7 @@ func TestSpawnClearsTheFight(t *testing.T) {
 		if span > 4*clearance {
 			t.Errorf("slot %d spawned %.0f m out: that is a transit back, not a re-entry", slot, span)
 		}
-		toward := shortest(m.State.Position, knot, i.environment.Wrap)
+		toward := knot.Subtract(m.State.Position)
 		toward.Y = 0
 		nose := m.State.Attitude.Rotate(flight.Vec3{X: 1})
 		if nose.Dot(toward.Normalize()) < 0.9 {
@@ -115,7 +115,7 @@ func TestSpawnSpreadsUnderCrowding(t *testing.T) {
 	i.enter(30, m, "", i.tank)
 	least := math.MaxFloat64
 	for _, slot := range slots {
-		if span := shortest(m.State.Position, i.aircraft[slot].model.State.Position, i.environment.Wrap).Length(); span < least {
+		if span := i.aircraft[slot].model.State.Position.Subtract(m.State.Position).Length(); span < least {
 			least = span
 		}
 	}

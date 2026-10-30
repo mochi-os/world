@@ -35,7 +35,7 @@ var travel = Muzzle * step
 func shot(offset flight.Vec3, direction flight.Vec3) (float64, flight.Vec3, bool) {
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe)}
 	round := &Round{Position: offset, Velocity: direction.Scale(Muzzle)}
-	return Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0)
+	return Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step)
 }
 
 // chase is a round closing from behind along the nose axis, which is the
@@ -123,7 +123,7 @@ func TestNearDeclinesRoundsNowhereNear(t *testing.T) {
 func TestNearIgnoresAStationaryRound(t *testing.T) {
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe)}
 	round := &Round{Position: flight.Vec3{Y: 20}}
-	if _, _, found := Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0); found {
+	if _, _, found := Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step); found {
 		t.Fatal("a round with no relative motion was measured")
 	}
 }
@@ -143,11 +143,11 @@ func TestNearFollowsTheTargetAttitude(t *testing.T) {
 	half := math.Pi / 4 // a quaternion carries half the angle: this is 90 degrees of roll
 	rolled := flight.Quat{W: math.Cos(half), X: math.Sin(half)}
 
-	_, flat, ok := Near(round, flight.Vec3{}, level, flight.Vec3{}, body, step, 0)
+	_, flat, ok := Near(round, flight.Vec3{}, level, flight.Vec3{}, body, step)
 	if !ok {
 		t.Fatal("the level reference shot was not measured")
 	}
-	_, banked, ok := Near(round, flight.Vec3{}, rolled, flight.Vec3{}, body, step, 0)
+	_, banked, ok := Near(round, flight.Vec3{}, rolled, flight.Vec3{}, body, step)
 	if !ok {
 		t.Fatal("the rolled shot was not measured")
 	}
@@ -172,8 +172,8 @@ func TestNearAgreesWithStrikeAboutWhatCounts(t *testing.T) {
 			Velocity: flight.Vec3{X: 1}.Scale(Muzzle),
 		}
 		copied := *round
-		hit, _, _ := Strike(&copied, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0, 1)
-		gap, _, found := Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0)
+		hit, _, _ := Strike(&copied, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step, 1)
+		gap, _, found := Near(round, flight.Vec3{}, flight.Quat{W: 1}, flight.Vec3{}, body, step)
 		if hit && found && gap > 1 {
 			t.Fatalf("at %.1f m Strike called a hit while Near reported %.2f m of clearance", height, gap)
 		}
@@ -233,11 +233,11 @@ func TestNearExplainsABurstThatLandsNothing(t *testing.T) {
 			alive := flying[:0]
 			for r := range flying {
 				round := &flying[r]
-				if hit, _, _ := Strike(round, where, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0, 1); hit {
+				if hit, _, _ := Strike(round, where, flight.Quat{W: 1}, flight.Vec3{}, body, step, 1); hit {
 					hits++
 					continue
 				}
-				if gap, spot, near := Near(round, where, flight.Quat{W: 1}, flight.Vec3{}, body, step, 0); near && gap < best {
+				if gap, spot, near := Near(round, where, flight.Quat{W: 1}, flight.Vec3{}, body, step); near && gap < best {
 					best, at = gap, spot
 				}
 				if !Fly(round, step) {

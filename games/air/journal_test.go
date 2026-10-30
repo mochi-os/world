@@ -20,13 +20,13 @@ import (
 // something to be wrong about - and hands every tick to watch.
 func skirmish(t *testing.T, journalled bool, seconds int, watch func(tick uint64, b *Bandit)) *Bandit {
 	t.Helper()
-	b := NewBandit("expert", 7, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 7, "", false, false, "guns", 0, false)
 	b.craft.brain.scripted = false // the journal is the arbiter's: the scripted doctrine re-plans nothing
 	if !journalled {
 		b.craft.brain.journal = nil
 	}
 	b.Spawn(flight.Vec3{X: 2500, Y: 4000}, flight.Vec3{X: -230})
-	environment := flight.Environment{Seed: 7, Wrap: 250000}
+	environment := flight.Environment{Seed: 7}
 	player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
 	player.State = flight.Level(player, flight.Vec3{Y: 4000}, flight.Vec3{X: 1}, 220, fuel)
 	words := make([]float64, flight.Size)

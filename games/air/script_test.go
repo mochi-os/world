@@ -189,9 +189,9 @@ func TestScriptPass(t *testing.T) {
 // fight, the gun, the break, the regain), not the one word "script" for the
 // whole fight, which would tell a debrief nothing.
 func TestScriptRecordsItsBranch(t *testing.T) {
-	b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, true)
+	b := NewBandit("expert", 1, "", false, true, "fox2", 0, true)
 	b.Spawn(flight.Vec3{X: -2750, Y: 4572}, flight.Vec3{X: 220})
-	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 	pm.State = flight.Level(pm, flight.Vec3{X: 2750, Y: 4572}, flight.Vec3{X: -1}, 220, fuel)
 	words := make([]float64, flight.Size)
 	seen := map[string]bool{}
@@ -249,8 +249,8 @@ func TestScriptFliesTheAir(t *testing.T) {
 		{"unloaded, under the floor", 0, through(floor-4, 4572), 4572, false, true, true},
 	}
 	for _, c := range cases {
-		b := NewBandit("expert", 1, 250000, "", false, true, "fox2", 0, true)
-		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: c.wind}, Wrap: 250000}
+		b := NewBandit("expert", 1, "", false, true, "fox2", 0, true)
+		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: c.wind}}
 		b.Air(air)
 		b.Spawn(flight.Vec3{Y: c.height}, flight.Vec3{X: c.airspeed})
 		pm := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})
@@ -310,12 +310,12 @@ type approach struct {
 // minute from running out, as a pass met in the middle of a fight can.
 func approached(t *testing.T, level string, seed uint64, entry, offset float64, committed bool, pilot string) approach {
 	t.Helper()
-	b := NewBandit(level, seed, 250000, "", false, true, "fox2", 0, true)
+	b := NewBandit(level, seed, "", false, true, "fox2", 0, true)
 	b.Spawn(flight.Vec3{X: -2750, Y: 4572}, flight.Vec3{X: entry})
 	if committed {
 		b.craft.brain.play, b.craft.brain.until = "press", 60*60 // the pass must still hand the fight back
 	}
-	env := flight.Environment{Seed: seed, Wrap: 250000}
+	env := flight.Environment{Seed: seed}
 	pm := flight.New(aircraft.Get("fa18c"), env, flight.World{Sea: sea})
 	pm.State = flight.Level(pm, flight.Vec3{X: 2750, Y: 4572, Z: offset}, flight.Vec3{X: -1}, 220, fuel)
 	words := make([]float64, flight.Size)
@@ -420,13 +420,13 @@ func approached(t *testing.T, level string, seed uint64, entry, offset float64, 
 // pulled rather than pushed 43 (50-142 m).
 func TestScriptClearsTheCrossing(t *testing.T) {
 	cross := func(level string, own, his, out, angle, dive, height float64) float64 {
-		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b := NewBandit(level, 1, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: height}, flight.Vec3{X: own})
 		b.craft.brain.routine.passed = true
 		r, d := angle*math.Pi/180, dive*math.Pi/180
 		heading := flight.Vec3{X: -math.Cos(r) * math.Cos(d), Y: -math.Sin(d), Z: math.Sin(r) * math.Cos(d)}
 		meet := flight.Vec3{X: own * out, Y: height}
-		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		pm.State = flight.Level(pm, meet.Subtract(heading.Scale(his*out)), heading, his, fuel)
 		pm.State.Velocity = heading.Scale(his)
 		words := make([]float64, flight.Size)
@@ -472,13 +472,13 @@ func TestScriptClearsTheHeadOn(t *testing.T) {
 		for _, out := range []float64{5.5, 7} {
 			for _, angle := range []float64{180, 170, 160} {
 				for _, dive := range []float64{-10, 0, 10} {
-					b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+					b := NewBandit(level, 1, "", false, false, "guns", 0, false)
 					b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 155})
 					b.craft.brain.routine.passed = true
 					r, d := angle*math.Pi/180, dive*math.Pi/180
 					heading := flight.Vec3{X: math.Cos(r) * math.Cos(d), Y: -math.Sin(d), Z: math.Sin(r) * math.Cos(d)}
 					meet := flight.Vec3{X: 155 * out, Y: 4500}
-					pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+					pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 					pm.State = flight.Level(pm, meet.Subtract(heading.Scale(145*out)), heading, 145, fuel)
 					pm.State.Velocity = heading.Scale(145)
 					words := make([]float64, flight.Size)
@@ -581,10 +581,10 @@ func TestEscapeKeepsHisHeight(t *testing.T) {
 // one does, down while his climb carries him up through its height.
 func TestScriptClearsAPursuerAway(t *testing.T) {
 	for _, level := range []string{"intermediate", "expert"} {
-		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b := NewBandit(level, 1, "", false, false, "guns", 0, false)
 		b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 80})
 		b.craft.brain.routine.passed = true
-		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		start := flight.Vec3{X: 900, Y: 1700}
 		pm.State = flight.Level(pm, start, b.State().Position.Subtract(start).Normalize(), 115, fuel)
 		words := make([]float64, flight.Size)
@@ -625,11 +625,11 @@ func TestScriptClearsAPursuerAway(t *testing.T) {
 // or more. Without the overtake reflex it passed through.
 func TestOvertakeClears(t *testing.T) {
 	for _, level := range []string{"intermediate", "expert", "superhuman"} {
-		b := NewBandit(level, 1, 250000, "", false, false, "guns", 0, false)
+		b := NewBandit(level, 1, "", false, false, "guns", 0, false)
 		b.craft.brain.scripted = false // the planner, as every server bot flies it
 		b.Spawn(flight.Vec3{Y: 4500}, flight.Vec3{X: 240})
 		b.craft.brain.routine.passed = true
-		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+		pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 		pm.State = flight.Level(pm, flight.Vec3{X: 1200, Y: 4500}, flight.Vec3{X: 1}, 110, fuel)
 		pm.State.Velocity = flight.Vec3{X: 110}
 		words := make([]float64, flight.Size)
@@ -653,10 +653,10 @@ func TestOvertakeClears(t *testing.T) {
 // height under 2,500 m, pinned the nose up and the gun off him. The water
 // belongs to the deck recovery, which takes the stick in a dive near it.
 func TestScriptLowFight(t *testing.T) {
-	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 2000}, flight.Vec3{X: 200})
 	b.craft.brain.routine.passed = true
-	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 	pm.State = flight.Level(pm, flight.Vec3{X: 600, Y: 2000}, flight.Vec3{X: 1}, 200, fuel)
 	words := make([]float64, flight.Size)
 	least := math.Inf(1)
@@ -671,7 +671,7 @@ func TestScriptLowFight(t *testing.T) {
 		t.Errorf("at 6,560 ft behind a jet dead ahead the stick never came below %.2f: something other than the fight law holds it", least)
 	}
 
-	low := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
+	low := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 	dive := flight.Vec3{X: math.Cos(0.5), Y: -math.Sin(0.5)}
 	low.Spawn(flight.Vec3{Y: 700}, dive.Scale(200))
 	low.craft.brain.routine.passed = true
@@ -700,7 +700,7 @@ func TestScriptLowFight(t *testing.T) {
 // pursues him inside 4 km and spends under 70 s of four minutes below 194 kt;
 // at full fighting alpha it cycled to the regain's floor and back for 93.
 func TestScriptStraight(t *testing.T) {
-	b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, false)
+	b := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: 200})
 	player := flight.Level(b.craft.model, flight.Vec3{X: 300, Y: 4572}, flight.Vec3{X: 1}, 200, 2500)
 	words := make([]float64, flight.Size)
@@ -721,9 +721,9 @@ func TestScriptStraight(t *testing.T) {
 		t.Errorf("a jet 300 m dead ahead: the trigger held %d frames of 240, the nose up to %.1f degrees off him after the first second", firing, worst)
 	}
 
-	c := NewBandit("expert", 9, 250000, "", false, false, "", 0, false)
+	c := NewBandit("expert", 9, "", false, false, "", 0, false)
 	c.Spawn(flight.Vec3{X: 2778, Y: altitude}, flight.Vec3{X: -220})
-	target := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9, Wrap: 250000}, flight.World{Sea: sea})
+	target := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9}, flight.World{Sea: sea})
 	target.State.Position, target.State.Velocity, target.State.Attitude = flight.Vec3{X: -2778, Y: altitude}, flight.Vec3{X: 170}, flight.Look(flight.Vec3{X: 1})
 	slow, pursued, farthest := 0, 0, 0.0
 	for tick := 0; tick < 60*240; tick++ {
@@ -751,10 +751,10 @@ func TestScriptStraight(t *testing.T) {
 // can see him, his nose on it, closing at closure m/s, firing or not: what it
 // flew, tick by tick, and in what power.
 func astern(level string, gap, closure float64, firing bool) (plays []string, lit []bool) {
-	b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
+	b := NewBandit(level, 1, "", false, true, "fox2", 0, false)
 	b.Spawn(flight.Vec3{Y: 3050}, flight.Vec3{X: 110})
 	b.craft.brain.routine.passed = true
-	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+	pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 	words := make([]float64, flight.Size)
 	for tick := 0; tick < 60*4; tick++ {
 		me := b.craft.model.State
@@ -800,14 +800,14 @@ func TestScriptHoldsThePursuer(t *testing.T) {
 func TestScriptRegainsNoseLow(t *testing.T) {
 	for _, level := range []string{"novice", "intermediate", "expert", "superhuman"} {
 		for _, start := range []struct{ height, climb, within float64 }{{3050, 0, 5}, {4570, 0, 5}, {4570, 30, 7.5}} {
-			b := NewBandit(level, 1, 250000, "", false, true, "fox2", 0, false)
+			b := NewBandit(level, 1, "", false, true, "fox2", 0, false)
 			speed := tuned(69) * math.Sqrt(1.225/flight.Atmosphere(start.height, flight.Environment{}).Density)
 			b.Spawn(flight.Vec3{Y: start.height}, flight.Vec3{X: speed})
 			c := start.climb * math.Pi / 180
 			b.craft.model.State.Velocity = flight.Vec3{X: speed * math.Cos(c), Y: speed * math.Sin(c)}
 			b.craft.model.State.Attitude = flight.Look(b.craft.model.State.Velocity.Normalize())
 			b.craft.brain.routine.passed = true
-			pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000}, flight.World{Sea: sea})
+			pm := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
 			words := make([]float64, flight.Size)
 			steepest, ended := 0.0, -1
 			for tick := 0; tick < 60*15 && ended < 0; tick++ {
@@ -896,8 +896,8 @@ func TestScriptChaseReadsTheAir(t *testing.T) {
 		his  float64 // his true airspeed, m/s; mine is 200
 		want bool
 	}{{210, true}, {190, false}} {
-		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: 10}, Wrap: 250000}
-		b := NewBandit("expert", 1, 250000, "", false, false, "guns", 0, true)
+		air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: 10}}
+		b := NewBandit("expert", 1, "", false, false, "guns", 0, true)
 		b.Air(air)
 		b.Spawn(flight.Vec3{X: -2000, Y: 4572}, flight.Vec3{X: 200})
 		pm := flight.New(aircraft.Get("fa18c"), air, flight.World{Sea: sea})

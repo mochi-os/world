@@ -165,8 +165,8 @@ func TestStaticThrust(t *testing.T) {
 type leveler struct{ integral float64 }
 
 func (l *leveler) pitch(m *Model, target float64) float64 {
-	want := clamp((target-m.State.Position.Y)*0.05, -15, 15)
-	err := want - m.State.Velocity.Y
+	want := clamp((target-m.Altitude())*0.05, -15, 15) // held above the sea, which falls away below a level line
+	err := want - m.State.Velocity.Dot(m.Up())
 	l.integral = clamp(l.integral+err*Dt*0.03, -1, 1)
 	return clamp(err*0.03+l.integral, -1, 1)
 }
@@ -174,7 +174,7 @@ func (l *leveler) pitch(m *Model, target float64) float64 {
 // bank is the current bank angle, positive right wing down.
 func bank(m *Model) float64 {
 	right := m.State.Attitude.Rotate(Vec3{Z: 1})
-	return -math.Asin(clamp(right.Y, -1, 1))
+	return -math.Asin(clamp(right.Dot(m.Up()), -1, 1))
 }
 
 // energy builds the constant-mass measurement jet.

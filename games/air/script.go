@@ -290,7 +290,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 					toward := from.Subtract(path.Scale(from.Dot(path)))
 					chased = b.prey.nose.Dot(from) > math.Cos(30*math.Pi/180) && seen.swing.Dot(toward) > 0
 				}
-				s.away = escape(miss, when, me, wind, me.Position.Y < now.Y, chased, wing)
+				s.away = escape(miss, when, me, wind, me.Position.Y < now.Y-tie, chased, wing)
 			}
 		}
 		if s.away.Length() > 0.5 {
@@ -661,7 +661,7 @@ func (i *instance) overtake(a *craft, b *brain) {
 		if miss, when := nearest(&seen, me, him.Position, flight.Vec3{}, wind, 3); when > 0.1 && when < 3 && miss.Length() < 1.2*bubble {
 			speed := flight.Equivalent(me.Velocity.Subtract(wind).Length(), me.Position.Y, a.model.Environment)
 			wing := math.Min(b.skill.pull, a.model.Airframe.Limit.Positive*math.Pow(speed/corner(a.model), 2))
-			s.away = escape(miss, when, me, wind, me.Position.Y < him.Position.Y, false, wing)
+			s.away = escape(miss, when, me, wind, me.Position.Y < him.Position.Y-tie, false, wing)
 		}
 	}
 	if s.away.Length() > 0.5 {
@@ -669,6 +669,14 @@ func (i *instance) overtake(a *craft, b *brain) {
 		b.g, b.shoot = b.skill.pull, false
 	}
 }
+
+// tie is how close two heights are to count as one. Two jets level with each
+// other read a few millimetres apart on the curved earth, by the lean of the
+// level and the wind's along it, and a choice hung on those millimetres would
+// turn on the weather rather than the geometry. Level, the run-in's line goes
+// under him and a close pass is cleared over him, the ways each fell when
+// they were first flown.
+const tie = 0.05 // m
 
 // escape is the way to clear a pass coming inside the bubble: the way the miss
 // already lies, or over him, or under when below, when the miss is too small
@@ -825,9 +833,9 @@ func (i *instance) approach(slot int, a *craft, spot, want flight.Vec3, span flo
 	// the heater jousts, still air then wind, went intermediate 41/23 46/18 -> 38/25
 	// 55/8, novice 2/62 7/57 -> 3/61 6/57.
 	stop := margin + 300*b.skill.delay
-	rise := 1.0
-	if me.Position.Y < spot.Y {
-		rise = -1
+	rise := -1.0
+	if me.Position.Y > spot.Y+tie {
+		rise = 1
 	}
 	// The line climbs, or dives, to the height of the pass: vertical off his
 	// level by the time we meet, at the closure we have, along the path through

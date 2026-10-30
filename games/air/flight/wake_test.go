@@ -35,30 +35,25 @@ func TestInducedLine(t *testing.T) {
 	line := Vortex{A: Vec3{X: -5000}, B: Vec3{X: 5000}, Circulation: 200, Core: 1, Reach: 50}
 	for _, r := range []float64{2, 10, 25} {
 		want := 200 / (2 * math.Pi) * r / (r*r + 1)
-		got := line.induced(Vec3{Z: r}, 0)
+		got := line.induced(Vec3{Z: r})
 		if math.Abs(-got.Y-want) > 0.02*want+1e-6 || math.Abs(got.X)+math.Abs(got.Z) > 1e-6 {
 			t.Errorf("r=%.0f m: induced %+.3f, want %.3f straight down (the right-hand rule about +x, on the +z side)", r, got, want)
 		}
 	}
 	peak, at := 0.0, 0.0
 	for r := 0.1; r < 5; r += 0.05 {
-		if s := line.induced(Vec3{Z: r}, 0).Length(); s > peak {
+		if s := line.induced(Vec3{Z: r}).Length(); s > peak {
 			peak, at = s, r
 		}
 	}
 	if math.Abs(at-1) > 0.1 {
 		t.Errorf("the speed peaks at %.2f m, not the 1 m core", at)
 	}
-	if axis := line.induced(Vec3{}, 0).Length(); axis > 1e-9 {
+	if axis := line.induced(Vec3{}).Length(); axis > 1e-9 {
 		t.Errorf("%.3g m/s on the axis: the core must bring it to zero", axis)
 	}
-	if far := line.induced(Vec3{Z: 51}, 0).Length(); far != 0 {
+	if far := line.induced(Vec3{Z: 51}).Length(); far != 0 {
 		t.Errorf("%.3g m/s past the reach", far)
-	}
-	// Across the seam of a wrapped world, the short way round.
-	wrapped := Vortex{A: Vec3{X: -5000, Z: 4995}, B: Vec3{X: 5000, Z: 4995}, Circulation: 200, Core: 1, Reach: 50}
-	if got := wrapped.induced(Vec3{Z: -4995}, 10000); math.Abs(got.Y+200/(2*math.Pi)*10/101) > 0.1 {
-		t.Errorf("across the seam: %+.3f", got)
 	}
 }
 
@@ -72,18 +67,18 @@ func TestPair(t *testing.T) {
 	circulation := hornet * gravity / (density * 150 * spacing)
 	sunk := circulation / (2 * math.Pi * spacing) * 10 // the pair ten seconds back has sunk this far
 	behind := Vec3{X: 150 * 10, Y: 3000 - sunk}
-	pieces := w.Near(2, behind, now, 0, 0)
+	pieces := w.Near(2, behind, now, 0)
 	if len(pieces) == 0 {
 		t.Fatal("no wake ten seconds behind a level jet")
 	}
-	if centre := Induced(behind, pieces, 0); centre.Y > -0.5*circulation/(math.Pi*spacing) {
+	if centre := Induced(behind, pieces, Identity); centre.Y > -0.5*circulation/(math.Pi*spacing) {
 		t.Errorf("between the vortices: %+.2f m/s, want a downwash near Γ/πb (%.2f)", centre.Y, circulation/(math.Pi*spacing))
 	}
 	outboard := behind.Add(Vec3{Z: spacing})
-	if up := Induced(outboard, w.Near(2, outboard, now, 0, 0), 0); up.Y <= 0.3 {
+	if up := Induced(outboard, w.Near(2, outboard, now, 0), Identity); up.Y <= 0.3 {
 		t.Errorf("outboard of the right vortex: %+.2f m/s, want an upwash", up.Y)
 	}
-	if calm := Induced(behind.Add(Vec3{Y: 200}), w.Near(2, behind.Add(Vec3{Y: 200}), now, 0, 0), 0); calm.Length() > 1e-9 {
+	if calm := Induced(behind.Add(Vec3{Y: 200}), w.Near(2, behind.Add(Vec3{Y: 200}), now, 0), Identity); calm.Length() > 1e-9 {
 		t.Errorf("200 m above the wake: %.3g m/s", calm.Length())
 	}
 }
@@ -149,14 +144,14 @@ func TestFresh(t *testing.T) {
 	var w Wakes
 	straight(&w, 1, 150, 3000, 10)
 	behind := Vec3{X: 150 * 9.5, Y: 3000}
-	if own := w.Near(1, behind, 10, 0, 0); len(own) != 0 {
+	if own := w.Near(1, behind, 10, 0); len(own) != 0 {
 		t.Errorf("met %d pieces of its own half-second-old wake", len(own))
 	}
-	if other := w.Near(2, behind, 10, 0, 0); len(other) == 0 {
+	if other := w.Near(2, behind, 10, 0); len(other) == 0 {
 		t.Error("another jet met none of that wake")
 	}
 	older := Vec3{X: 150 * 5, Y: 3000 - 3}
-	if own := w.Near(1, older, 10, 0, 0); len(own) == 0 {
+	if own := w.Near(1, older, 10, 0); len(own) == 0 {
 		t.Error("met none of its own five-second-old wake")
 	}
 }
@@ -170,10 +165,10 @@ func TestBreak(t *testing.T) {
 		w.Shed(1, time, Vec3{X: 20000 + 150*(time-5.2), Y: 3000}, Quat{W: 1}, Vec3{X: 150}, hornet*gravity, span, density, Vec3{})
 	}
 	across := Vec3{X: 10000, Y: 2995}
-	if pieces := w.Near(2, across, 10, 0, 0); len(pieces) != 0 {
+	if pieces := w.Near(2, across, 10, 0); len(pieces) != 0 {
 		t.Errorf("%d pieces span the jump", len(pieces))
 	}
-	if pieces := w.Near(2, Vec3{X: 20300, Y: 2995}, 10, 0, 0); len(pieces) == 0 {
+	if pieces := w.Near(2, Vec3{X: 20300, Y: 2995}, 10, 0); len(pieces) == 0 {
 		t.Error("the trail after the jump laid nothing")
 	}
 }
@@ -184,12 +179,12 @@ func TestNearest(t *testing.T) {
 	w := dense()
 	straight(&w, 3, 150, 90000, 40)
 	at := Vec3{X: 60 * 34, Y: 2985}
-	pieces := w.Near(2, at, 40, 0, 0)
+	pieces := w.Near(2, at, 40, 0)
 	if len(pieces) != wake_pieces {
 		t.Fatalf("%d pieces, want the cap of %d", len(pieces), wake_pieces)
 	}
 	for k := 1; k < len(pieces); k++ {
-		if distance(at, pieces[k].A.Add(pieces[k].B).Scale(0.5), 0) < distance(at, pieces[k-1].A.Add(pieces[k-1].B).Scale(0.5), 0)-1e-9 {
+		if distance(at, pieces[k].A.Add(pieces[k].B).Scale(0.5)) < distance(at, pieces[k-1].A.Add(pieces[k-1].B).Scale(0.5))-1e-9 {
 			t.Fatal("not nearest first")
 		}
 	}
@@ -332,12 +327,12 @@ func TestTurning(t *testing.T) {
 		t.Errorf("five seconds on the pair is %.1f m out of the circle and %.1f m down, want %.1f and %.1f", out, 3000-middle.Y, sinking*5*math.Sin(bank), sinking*5*math.Cos(bank))
 	}
 	on := at(0, radius)
-	if pieces := w.Near(1, on, 5, 0, 0); len(pieces) != 0 && Induced(on, pieces, 0).Length() > 1 {
-		t.Errorf("back on its own circle the jet met %.2f m/s of the wake that has moved out of it", Induced(on, pieces, 0).Length())
+	if pieces := w.Near(1, on, 5, 0); len(pieces) != 0 && Induced(on, pieces, Identity).Length() > 1 {
+		t.Errorf("back on its own circle the jet met %.2f m/s of the wake that has moved out of it", Induced(on, pieces, Identity).Length())
 	}
 	wider := at(0, radius+sinking*5*math.Sin(bank)).Subtract(Vec3{Y: sinking * 5 * math.Cos(bank)})
-	pieces := w.Near(1, wider, 5, 0, 0)
-	if swirl := Induced(wider, pieces, 0); len(pieces) == 0 || swirl.Length() < 3 {
+	pieces := w.Near(1, wider, 5, 0)
+	if swirl := Induced(wider, pieces, Identity); len(pieces) == 0 || swirl.Length() < 3 {
 		t.Errorf("on the wider circle, where its wake went, the jet met %d pieces inducing %.2f m/s", len(pieces), swirl.Length())
 	}
 }
@@ -349,7 +344,7 @@ func TestOrder(t *testing.T) {
 	straight(&backward, 4, 60, 2980, 40)
 	straight(&backward, 1, 60, 3000, 40)
 	at := Vec3{X: 60 * 34, Y: 2990}
-	a, b := forward.Near(2, at, 40, 0, 0), backward.Near(2, at, 40, 0, 0)
+	a, b := forward.Near(2, at, 40, 0), backward.Near(2, at, 40, 0)
 	if len(a) != len(b) {
 		t.Fatalf("%d pieces against %d", len(a), len(b))
 	}
@@ -358,12 +353,12 @@ func TestOrder(t *testing.T) {
 			t.Fatalf("piece %d differs with the trails laid in another order", k)
 		}
 	}
-	if Induced(at, a, 0) != Induced(at, b, 0) {
+	if Induced(at, a, Identity) != Induced(at, b, Identity) {
 		t.Fatal("the induced air differs with the trails laid in another order")
 	}
 	w := dense()
 	w.Forget(1)
-	for _, p := range w.Near(2, at, 40, 0, 0) {
+	for _, p := range w.Near(2, at, 40, 0) {
 		if p.A.Y > 2995 {
 			t.Fatal("a forgotten trail still lays pieces")
 		}
@@ -445,7 +440,7 @@ func TestCull(t *testing.T) {
 	for si := range m.Airframe.Surfaces {
 		for _, e := range m.Airframe.Surfaces[si].Elements {
 			at := s.Position.Add(s.Attitude.Rotate(e.Position.Subtract(m.center)))
-			want := s.Attitude.Unrotate(Induced(at, m.Wake, 0).Subtract(m.swirl))
+			want := s.Attitude.Unrotate(Induced(at, m.Wake, Identity).Subtract(m.swirl))
 			if got := m.swirls[k]; got.Subtract(want).Length() > 1e-12 {
 				t.Fatalf("element %d of surface %d meets %v, want %v from every piece", k, si, got, want)
 			}
@@ -464,7 +459,7 @@ func TestCull(t *testing.T) {
 // kept, so a busy machine does not decide it.
 func TestWakeBudget(t *testing.T) {
 	w := dense()
-	pieces := w.Near(2, Vec3{X: 60 * 34, Y: 2985}, 40, 0, 0)
+	pieces := w.Near(2, Vec3{X: 60 * 34, Y: 2985}, 40, 0)
 	if len(pieces) != wake_pieces {
 		t.Fatalf("%d pieces, want the full %d", len(pieces), wake_pieces)
 	}
@@ -530,8 +525,8 @@ func TestWakeSharesEachMoment(t *testing.T) {
 				}
 				phase := time*0.12 + float64(id) + 0.3
 				at := Vec3{X: 790 * math.Cos(phase), Y: 2990 + 40*float64(id), Z: 790 * math.Sin(phase)}
-				got := w.Near(id, at, time, sea, wrap)
-				want := everything(&w, id, at, time, sea, wrap)
+				got := w.Near(id, at, time, sea)
+				want := everything(&w, id, at, time, sea)
 				if !reflect.DeepEqual(got, want) {
 					t.Fatalf("wrap %.0f, t=%.2f s, jet %d: the shared wake is not every piece tested afresh (%d pieces against %d)", wrap, time, id, len(got), len(want))
 				}
@@ -544,31 +539,9 @@ func TestWakeSharesEachMoment(t *testing.T) {
 	}
 }
 
-// TestWakeRunsFollowTheWrap: a run's radius is measured in the world it is
-// asked about. A trail laid across a 1,100 m world's seam, its runs worked for
-// that world, would read a run's pieces closer together than they are in an
-// open one and skip it with a piece in reach.
-func TestWakeRunsFollowTheWrap(t *testing.T) {
-	var w Wakes
-	for k := 0; k <= 68; k++ {
-		time := float64(k) / 20
-		w.Shed(9, time, Vec3{X: 200 + 220*time, Y: 3000}, Look(Vec3{X: 1}), Vec3{X: 220}, 16000*9.81*3, 11.4, 0.9, Vec3{})
-	}
-	time, at := 68.0/20, Vec3{X: 860, Y: 2995}
-	w.Near(1, at, time, 0, 1100)
-	got := w.Near(1, at, time, 0, 0)
-	want := everything(&w, 1, at, time, 0, 0)
-	if len(want) == 0 {
-		t.Fatal("no piece in reach: the case is not built")
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("asked in an open world after a wrapped one, %d pieces against %d", len(got), len(want))
-	}
-}
-
 // everything is Near as it was before it shared or skipped anything: every
 // mark aged for this one asker, every piece of every trail tested.
-func everything(w *Wakes, id int, position Vec3, time float64, sea float64, wrap float64) []Vortex {
+func everything(w *Wakes, id int, position Vec3, time float64, sea float64) []Vortex {
 	type candidate struct {
 		vortex   Vortex
 		distance float64
@@ -604,7 +577,7 @@ func everything(w *Wakes, id int, position Vec3, time float64, sea float64, wrap
 			reach := wake_reach * (earlier.spacing + later.spacing) / 2
 			for _, piece := range []Vortex{{A: l0, B: l1, Circulation: strength, Core: core, Reach: reach}, {A: r0, B: r1, Circulation: -strength, Core: core, Reach: reach}} {
 				middle := piece.A.Add(piece.B).Scale(0.5)
-				d := distance(position, middle, wrap)
+				d := distance(position, middle)
 				if d > reach+piece.B.Subtract(piece.A).Length()/2 {
 					continue
 				}

@@ -35,20 +35,29 @@ func noise(seed uint64, index uint64) float64 {
 	return float64(mix(seed, index)>>11) / float64(1<<53)
 }
 
-// Wind is the air's own velocity at a world position and session time: the
-// whole field, without a carrier's burble. The weapons fly through it - a
-// missile, a shell, a flare and a falling wreck are carried by the air just as
-// the jets are, so a shot flies the same whichever way the wind blows.
+// Wind is the air's own velocity at a point of the environment's frame and a
+// session time, in that frame: the whole field, without a carrier's burble.
+// The weapons fly through it - a missile, a shell, a flare and a falling wreck
+// are carried by the air just as the jets are, so a shot flies the same
+// whichever way the wind blows.
 func Wind(position Vec3, time float64, env Environment) Vec3 {
-	return wind(position, time, env, nil)
+	theatre := env.Theatre()
+	place, level := theatre.Survey(position)
+	air := field(env.Placement().Point(position), place.Altitude, time, env, nil, Identity)
+	return Between(level, theatre).Vector(air)
 }
 
-// wind evaluates the total air velocity at a world position and sim time.
-func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
-	h := math.Max(position.Y, 2)
+// field is the air's velocity at a point, in the tangent frame under it (x
+// east, y up, z south): home is the point in Home, where the weather's pattern
+// is fixed so every host meets the same air, and height its altitude. The
+// carrier's burble is added when a carrier is given, place carrying the
+// caller's level frame to Home.
+func field(home Vec3, height float64, time float64, env Environment, carrier *Carrier, place Rigid) Vec3 {
+	h := math.Max(height, 2)
 
 	// Mean wind: power-law shear from the 10 m reference, Ekman veer, and a
-	// winds-aloft strengthening saturating at 10 km.
+	// winds-aloft strengthening saturating at 10 km. The match's wind is level
+	// wherever it blows: east and south, the same over the whole earth.
 	profile := math.Pow(h/10, shear) * (1 + aloft*math.Min(h/10000, 1))
 	turn := veer * math.Min(h/1000, 1)
 	sin, cos := math.Sin(turn), math.Cos(turn)
@@ -65,7 +74,7 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 		wavelength := 20000 + 30000*noise(env.Seed, 900+k)
 		angle := 2 * math.Pi * noise(env.Seed, 910+k)
 		dx, dz := math.Cos(angle), math.Sin(angle)
-		phase := 2 * math.Pi * (position.X*dx + position.Z*dz) / wavelength
+		phase := 2 * math.Pi * (home.X*dx + home.Z*dz) / wavelength
 		factor := 0.15 * strength * math.Sin(phase+2*math.Pi*noise(env.Seed, 920+k))
 		mean.X += dx * factor
 		mean.Z += dz * factor
@@ -73,7 +82,7 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 
 	// Cloud convection: extra gust intensity inside convective cells, and
 	// the thermal/sink structure beneath their bases (convection.go).
-	chop, draft := convection(position, env.Cloud)
+	chop, draft := convection(home.X, home.Z, height, env.Cloud)
 	mean.Y += draft
 
 	// Turbulence: a frozen field of sinusoids per axis, wavelengths log
@@ -101,7 +110,7 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 				angle := 2 * math.Pi * noise(env.Seed, i)
 				dx, dz := math.Cos(angle), math.Sin(angle)
 				speed := 0.5 * strength // frozen field drifts with half the mean
-				phase := 2*math.Pi*((position.X+speed*time)*dx+(position.Z+speed*time)*dz)/wavelength + 2*math.Pi*noise(env.Seed, 100+i)
+				phase := 2*math.Pi*((home.X+speed*time)*dx+(home.Z+speed*time)*dz)/wavelength + 2*math.Pi*noise(env.Seed, 100+i)
 				v := amplitude * math.Sin(phase)
 				switch axis {
 				case 0:
@@ -119,18 +128,17 @@ func wind(position Vec3, time float64, env Environment, carrier *Carrier) Vec3 {
 	// Carrier burble: a deficit plus downdraft pocket astern of the island,
 	// scaled by wind over deck. Deterministic, only near the boat.
 	if carrier != nil {
-		deck, heading := carrier.At(time)
-		dx := Shortest(deck.X, position.X, env.Wrap)
-		dz := Shortest(deck.Z, position.Z, env.Wrap)
-		forward := direction(heading)
-		behind := -(dx*forward.X + dz*forward.Z) // + when astern
-		lateral := math.Abs(dx*forward.Z - dz*forward.X)
-		height := position.Y - deck.Y
-		if behind > 0 && behind < burble_reach && lateral < 60 && height > -5 && height < 60 {
+		deck := carrier.local(home, time, Identity) // the point in the deck's own frame: x to the bow, y up, z to starboard
+		behind := -deck.X                           // + when astern
+		lateral := math.Abs(deck.Z)
+		if behind > 0 && behind < burble_reach && lateral < 60 && deck.Y > -5 && deck.Y < 60 {
+			_, attitude := carrier.Pose(time)
+			back := place.Inverse()
+			forward := back.Vector(attitude.Rotate(Vec3{X: 1}))
 			over := forward.Scale(-carrier.Way(time)).Subtract(mean).Length() // wind over deck
-			fade := (1 - behind/burble_reach) * (1 - lateral/60) * math.Exp(-height/25)
-			mean = mean.Add(forward.Scale(0.3 * over * fade)) // deficit along the deck wind
-			mean.Y -= 0.4 * over * fade                       // the sink in the groove
+			fade := (1 - behind/burble_reach) * (1 - lateral/60) * math.Exp(-deck.Y/25)
+			mean = mean.Add(forward.Scale(0.3 * over * fade))                                       // deficit along the deck wind
+			mean = mean.Subtract(back.Vector(attitude.Rotate(Vec3{Y: 1})).Scale(0.4 * over * fade)) // the sink in the groove
 		}
 	}
 	return mean

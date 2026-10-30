@@ -141,20 +141,6 @@ func TestChaffSingles(t *testing.T) {
 	}
 }
 
-// TestWrapFloor: a sub-arena wrap is rejected at creation — the parameter
-// that once hung the session goroutine keeps the default instead.
-func TestWrapFloor(t *testing.T) {
-	g := New()
-	made, err := g.Create(game.Session{Identifier: "wrap", Game: "air", Mode: "furball", Capacity: 4, Seed: 1,
-		Parameters: map[string]any{"wrap": 1e-9}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w := made.(*instance).environment.Wrap; w != 250000 {
-		t.Fatalf("hostile wrap accepted: %v", w)
-	}
-}
-
 // TestPairDiscipline holds the BOT's shoot-shoot-look rule: a pair may go
 // inside a second, and the third round then waits three seconds for the look.
 func TestPairDiscipline(t *testing.T) {

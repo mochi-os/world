@@ -48,7 +48,7 @@ var tumble = []float64{
 // of force at 13 m/s. A healthy jet turns under 7 rad/s, and no aerodynamic
 // force at this speed changes it by a metre a second in a 240th of a second.
 func TestTumbleStaysPhysical(t *testing.T) {
-	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 35, Wrap: 250000}, flight.World{Sea: 3})
+	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 35}, flight.World{Sea: 3})
 	m.State = flight.Decode(tumble)
 	m.Stores(0)
 	in := flight.Inputs{Pitch: -0.15006032667482405, Roll: 1, Throttle: 1, Reheat: 1}

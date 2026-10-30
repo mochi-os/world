@@ -739,6 +739,7 @@ type brain struct {
 	until     uint64          // tick that manoeuvre is re-judged
 	picked    uint64          // tick the manoeuvre was chosen: the abort clause may re-judge early, but never within a quarter second of the last rehearsal (at machine cadence the abort re-planned EVERY TICK of a knife fight — thousands of rollout steps per tick)
 	journal   *journal        // the decision journal (journal.go): nil costs nothing, and only the single-player harness allocates one
+	frame     flight.Frame    // the frame it thinks in, which everything it remembers is in (view.go); unset, the session's
 	demand    Demand          // the g asked for at each stage between the law and the stick, for the journal
 	shaped    bool            // polish() ran this decision and filled demand; a bypass that skips it reports its raw command instead
 	routine   routine         // the scripted doctrine's own state (script.go)
@@ -990,7 +991,8 @@ func (i *instance) trigger(slot int, a *craft, tick uint64) {
 	}
 }
 
-func (i *instance) think(slot int, a *craft, tick uint64) {
+// ponder is one tick of a bot's brain, in the frame it thinks in (view.go).
+func (i *instance) ponder(slot int, a *craft, tick uint64) {
 	b := a.brain
 	b.magazine = a.ammunition
 	if i.cheat.ammunition {

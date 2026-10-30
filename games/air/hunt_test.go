@@ -353,7 +353,7 @@ func TestHuntSeam(t *testing.T) {
 func TestNoBotJams(t *testing.T) {
 	// Driven through the real defensive path, not by restating the condition.
 	armed := func(level string, span float64, inbound bool) bool {
-		b := NewBandit(level, 1, 250000, "", false, true, "open", 0, false)
+		b := NewBandit(level, 1, "", false, true, "open", 0, false)
 		b.Spawn(flight.Vec3{X: span, Y: 8000}, flight.Vec3{X: -240})
 		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, fuel)
@@ -394,7 +394,7 @@ func TestNoBotJams(t *testing.T) {
 // burnthrough the lock starves to memory and drops; quiet, it holds.
 func TestBanditStarvesOnTheJammer(t *testing.T) {
 	held := func(loud bool) float64 { // seconds the lock held once the jammer began, up to eight
-		b := NewBandit("novice", 1, 250000, "", false, true, "open", 0, false)
+		b := NewBandit("novice", 1, "", false, true, "open", 0, false)
 		b.Spawn(flight.Vec3{X: 30000, Y: 8000}, flight.Vec3{X: -250})
 		player := flight.New(b.craft.model.Airframe, b.arena.environment, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 250, fuel)
@@ -444,7 +444,6 @@ func radar_pair(t *testing.T) (*instance, *craft, *craft, int) {
 	}
 	i := made.(*instance)
 	t.Cleanup(i.Close)
-	i.environment.Wrap = 0 // an unwrapped sky, as radar.test.ts has it: the cases reach past half the arena
 	var a, c *craft
 	slot := -1
 	for _, s := range i.slots() {
@@ -470,16 +469,24 @@ func park(c *craft, position flight.Vec3, velocity flight.Vec3) {
 	c.model.State.Position, c.model.State.Velocity = position, velocity
 }
 
+// curved is the point x metres east of Midway along the sea, y above it: a
+// jet that far off at that height on the curved earth.
+func curved(x, y float64) flight.Vec3 {
+	point, level := flight.Home.Sea(x, 0)
+	return point.Add(level.Rotate(flight.Vec3{Y: y}))
+}
+
 // TestRadarDetection holds the bot's radar to the pilot's: the cases are
-// radar.test.ts's, on the same numbers.
+// radar.test.ts's, on the same numbers, with every jet at its height above
+// the curved sea.
 func TestRadarDetection(t *testing.T) {
 	i, a, c, _ := radar_pair(t)
 	const nm = 1852.0
 	at := func(y, x float64) float64 {
-		park(c, flight.Vec3{X: x, Y: y}, flight.Vec3{Z: 250}) // on the beam
+		park(c, curved(x, y), flight.Vec3{Z: 250}) // on the beam
 		return i.detection(a, c)
 	}
-	park(c, flight.Vec3{X: 38 * nm, Y: 3000}, flight.Vec3{X: -272})
+	park(c, curved(38*nm, 3000), flight.Vec3{X: -272})
 	if d := i.detection(a, c); math.Abs(d-44*nm) > 1 {
 		t.Errorf("nose-on detection %.1f nm, want 44", d/nm)
 	}
@@ -487,23 +494,26 @@ func TestRadarDetection(t *testing.T) {
 		t.Errorf("beam detection %.1f nm, want 55", d/nm)
 	}
 	clear := at(3000, 15*nm)
-	if d := at(2999, 15*nm); math.Abs(d-clear) > 1e-6 {
+	// On the curved earth a jet due east is not quite on the beam of a
+	// southbound one, so the aspect moves the range by centimetres; the sea
+	// behind a target takes a third of it.
+	if d := at(2999, 15*nm); math.Abs(d-clear) > 1 {
 		t.Errorf("a metre below at 15 nm paid %.3f of its range: the sky is behind it", 1-d/clear)
 	}
-	if d, level := at(2900, 40*nm), at(3000, 40*nm); math.Abs(d-level) > 1e-6 {
+	if d, level := at(2900, 40*nm), at(3000, 40*nm); math.Abs(d-level) > 1 {
 		t.Errorf("a hundred metres below at 40 nm paid %.3f of its range: the sky is still behind it", 1-d/level)
 	}
 	if d := at(500, 15*nm); math.Abs(d-clear*0.65) > 1 {
 		t.Errorf("far below against the sea: %.1f nm, want %.1f", d/nm, clear*0.65/nm)
 	}
-	if d := at(3000, 60*nm); math.Abs(d-clear) > 1e-6 {
+	if d := at(3000, 60*nm); math.Abs(d-clear) > 1 {
 		t.Errorf("level at 60 nm paid %.3f of its range: the earth's curve is still above the horizon's dip", 1-d/clear)
 	}
 	low := flight.Vec3{Y: 300} // at 1,000 ft the horizon is 62 km off
-	if k := round.Clutter(low, flight.Vec3{X: 130000, Y: 300}, i.environment.Wrap); k <= 0.5 {
+	if k := round.Clutter(low, curved(130000, 300)); k <= 0.5 {
 		t.Errorf("a jet level with us at 130 km from 300 m: clutter %.2f, want the sea behind it", k)
 	}
-	if k := round.Clutter(low, flight.Vec3{X: 20000, Y: 300}, i.environment.Wrap); k != 0 {
+	if k := round.Clutter(low, curved(20000, 300)); k != 0 {
 		t.Errorf("a jet level with us at 20 km from 300 m: clutter %.2f, want the sky", k)
 	}
 	last := clear

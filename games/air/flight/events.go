@@ -53,7 +53,7 @@ func (m *Model) skidding(s *State, in Inputs) {
 	if !in.Brake || !in.Bypass || !s.Gear.Wow || s.Gear.Extension < 0.95 {
 		return
 	}
-	_, _, carried, found := m.World.surface(s.Position, s.Time, m.Environment.Wrap)
+	_, _, carried, found := m.World.surface(s.Position, s.Time, m.place)
 	if !found {
 		return
 	}
@@ -99,7 +99,7 @@ func (m *Model) touch(s *State) {
 	for leg, at := range points {
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
-		height, k, carried, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+		height, k, carried, found := m.World.surface(point, s.Time, m.place)
 		if !found || point.Y > height {
 			continue
 		}
@@ -141,11 +141,11 @@ func (m *Model) probes(s *State) {
 		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
-		if m.World.struck(point, s.Time, m.Environment.Wrap) {
+		if m.World.struck(point, s.Time, m.place) {
 			s.Gear.Contact = i // a building or a mast is solid at any speed
 			return
 		}
-		height, _, _, found := m.World.surface(point, s.Time, m.Environment.Wrap)
+		height, _, _, found := m.World.surface(point, s.Time, m.place)
 		if found && point.Y <= height {
 			// The probes judge contact at FLYING speed — that is what cartwheels
 			// an airframe. Below it (the wingtip dropping at the end of a belly
@@ -176,9 +176,9 @@ func (m *Model) catapult(s *State, in Inputs) {
 			// every shuttle, then re-arm — without the latch the crew would
 			// hook you straight back up on the spot you just left.
 			for i := range c.Catapults {
-				shuttle := c.world(c.Catapults[i].Position, s.Time)
-				dx := Shortest(nose.X, shuttle.X, m.Environment.Wrap)
-				dz := Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)
+				shuttle := c.world(c.Catapults[i].Position, s.Time, m.place)
+				dx := shuttle.X - nose.X
+				dz := shuttle.Z - nose.Z
 				if dx*dx+dz*dz < capture*capture {
 					return
 				}
@@ -192,15 +192,15 @@ func (m *Model) catapult(s *State, in Inputs) {
 		if in.Yaw > 0.5 || in.Yaw < -0.5 {
 			return // steering away is not asking to hook up
 		}
-		relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
+		relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.place))
 		if relative.Length() > 4 {
 			return
 		}
 		forward := s.Attitude.Rotate(Vec3{X: 1})
 		for i := range c.Catapults {
-			shuttle := c.world(c.Catapults[i].Position, s.Time)
-			dx := Shortest(nose.X, shuttle.X, m.Environment.Wrap)
-			dz := Shortest(nose.Z, shuttle.Z, m.Environment.Wrap)
+			shuttle := c.world(c.Catapults[i].Position, s.Time, m.place)
+			dx := shuttle.X - nose.X
+			dz := shuttle.Z - nose.Z
 			if dx*dx+dz*dz >= capture*capture {
 				continue
 			}
@@ -209,8 +209,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 			// shuttle. A 25° gate on proximity alone let the slot haul a crossing
 			// jet's nose sideways, which swung it into a 20° crab that mil power
 			// then rolled over (the holdback is a jackknife under thrust).
-			heading := c.heading(s.Time) + c.Catapults[i].Heading
-			track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+			track := c.track(c.Catapults[i].Heading, s.Time, m.place)
 			if math.Abs(dx*track.Z-dz*track.X) > lateral || forward.X*track.X+forward.Z*track.Z < aligned {
 				continue
 			}
@@ -222,8 +221,7 @@ func (m *Model) catapult(s *State, in Inputs) {
 	}
 	cat := &c.Catapults[s.Gear.Catapult]
 	if s.Gear.Stroke <= -3 {
-		heading := c.heading(s.Time) + cat.Heading
-		track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+		track := c.track(cat.Heading, s.Time, m.place)
 		forward := s.Attitude.Rotate(Vec3{X: 1})
 		swing := forward.X*track.Z - forward.Z*track.X
 		if (in.Yaw > 0.5 || in.Yaw < -0.5) && in.Throttle < 0.3 {
@@ -255,9 +253,8 @@ func (m *Model) catapult(s *State, in Inputs) {
 		}
 		return
 	}
-	heading := c.heading(s.Time) + cat.Heading
-	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
-	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
+	track := c.track(cat.Heading, s.Time, m.place)
+	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.place))
 	s.Gear.Stroke += math.Max(relative.Dot(track), 0) * m.Stride()
 	if s.Gear.Stroke >= cat.Stroke {
 		s.Gear.Catapult = -1
@@ -282,13 +279,13 @@ func (m *Model) wire(s *State, in Inputs) {
 		m.scrape, m.skip = false, 0 // a raised hook forgets the pass
 		return
 	}
-	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.Environment.Wrap))
+	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.place))
 	if relative.Length() < 15 { // taxiing over a wire does not catch
 		return
 	}
 	now := m.hook(s)
 	before := now.Subtract(s.Velocity.Scale(m.Stride())) // the swept path, derived — nothing stored
-	local := c.local(now, s.Time, m.Environment.Wrap)
+	local := c.local(now, s.Time, m.place)
 	touching := local.Y >= -1 && local.Y <= 0.15
 	// Hook skip: a FLAT arrival bounces the point over the wires instead of
 	// driving it through. Only a gentle DESCENT bounces; a climbing jet takes the
@@ -305,7 +302,7 @@ func (m *Model) wire(s *State, in Inputs) {
 	if !touching {
 		return // the wires sit centimetres proud of the deck: the tip must be SCRAPING, not passing overhead — the old 4 m band snagged wires in mid-air and yanked the jet down mid-flight (the scenario-9 topple)
 	}
-	previous := c.local(before, s.Time, m.Environment.Wrap)
+	previous := c.local(before, s.Time, m.place)
 	for i := range c.Wires {
 		w := &c.Wires[i]
 		if crossing(previous.X, previous.Z, local.X, local.Z, w.A.X, w.A.Z, w.B.X, w.B.Z) {

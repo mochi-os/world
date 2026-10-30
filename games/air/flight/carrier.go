@@ -45,16 +45,15 @@ func (m *Model) holdback(s *State, total *Forces) {
 		return
 	}
 	cat := &c.Catapults[s.Gear.Catapult]
-	shuttle := c.world(cat.Position, s.Time)
+	shuttle := c.world(cat.Position, s.Time, m.place)
 	nose := m.Airframe.Gear.Nose.Attach
 	point := s.Position.Add(s.Attitude.Rotate(nose.Subtract(m.center)))
 	pull := Vec3{
-		X: Shortest(point.X, shuttle.X, m.Environment.Wrap),
-		Z: Shortest(point.Z, shuttle.Z, m.Environment.Wrap),
+		X: shuttle.X - point.X,
+		Z: shuttle.Z - point.Z,
 	}
-	velocity := s.Velocity.Subtract(c.velocity(point, s.Time, m.Environment.Wrap))
-	heading := c.heading(s.Time) + cat.Heading
-	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+	velocity := s.Velocity.Subtract(c.velocity(point, s.Time, m.place))
+	track := c.track(cat.Heading, s.Time, m.place)
 	// The launch bar rides in the track SLOT: laterally stiff (the slot is
 	// mechanical), the along-track gather distance-scheduled. Alignment emerges by
 	// ROLLING into the line - yaw torque cannot turn a parked jet.
@@ -116,16 +115,15 @@ func (m *Model) stroke(s *State, total *Forces) {
 	if s.Gear.Stroke >= cat.Stroke {
 		return
 	}
-	heading := c.heading(s.Time) + cat.Heading
-	track := Vec3{X: math.Cos(heading), Z: -math.Sin(heading)}
+	track := c.track(cat.Heading, s.Time, m.place)
 	// The bar stays captive in the slot for the whole run: a lateral nose
 	// capture (force, not torque) pulls a crooked start onto the track line
 	// and the body trails straight within the first metres — and it is
 	// exactly zero for an aligned run, so a clean shot is untouched.
 	nose := m.Airframe.Gear.Nose.Attach
 	point := s.Position.Add(s.Attitude.Rotate(nose.Subtract(m.center)))
-	shuttleLine := c.world(cat.Position, s.Time)
-	off := Vec3{X: Shortest(point.X, shuttleLine.X, m.Environment.Wrap), Z: Shortest(point.Z, shuttleLine.Z, m.Environment.Wrap)}
+	shuttleLine := c.world(cat.Position, s.Time, m.place)
+	off := Vec3{X: shuttleLine.X - point.X, Z: shuttleLine.Z - point.Z}
 	cross := off.Subtract(track.Scale(off.X*track.X + off.Z*track.Z))
 	// Pure spring on the cross-track offset with the slot clearance as a deadband,
 	// so an aligned run takes zero force. No velocity term: it reacted to the
@@ -161,8 +159,8 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 		return
 	}
 	wire := &c.Wires[s.Gear.Wire]
-	a := c.world(wire.A, s.Time)
-	b := c.world(wire.B, s.Time)
+	a := c.world(wire.A, s.Time, m.place)
+	b := c.world(wire.B, s.Time, m.place)
 	tip := m.hook(s)
 	legA := a.Subtract(tip)
 	legB := b.Subtract(tip)
@@ -172,7 +170,7 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 		return
 	}
 	// Payout rate from the hook-tip velocity resolved along both legs.
-	velocity := s.Velocity.Subtract(c.velocity(tip, s.Time, m.Environment.Wrap))
+	velocity := s.Velocity.Subtract(c.velocity(tip, s.Time, m.place))
 	rate := -velocity.Dot(legA.Normalize()) - velocity.Dot(legB.Normalize())
 	// Weight setting, dialled per engagement: the retard scales with the energy a
 	// correctly-flown engagement carries at THIS gross mass, so runout and felt g

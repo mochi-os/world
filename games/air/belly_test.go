@@ -11,7 +11,7 @@ import (
 // TestBellyProbe: a gentle gear-up arrival slides out to a stop — a scrape,
 // not a crash (the project rule permits wheels, BELLY, and hook).
 func TestBellyProbe(t *testing.T) {
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1, Wrap: 250000},
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1},
 		flight.World{Fields: []flight.Field{{Height: 2, Strips: []flight.Strip{{A: flight.Vec3{X: -3000, Y: 2, Z: 0}, B: flight.Vec3{X: 3000, Y: 2, Z: 0}, Width: 60}}}}})
 	m.State.Position = flight.Vec3{Y: 8}
 	m.State.Velocity = flight.Vec3{X: 64, Y: -2}

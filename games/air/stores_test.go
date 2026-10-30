@@ -837,12 +837,12 @@ func TestSeparation(t *testing.T) {
 // and otherwise a 20-45 degree flank, inside the radar's scan - and opens far
 // enough apart that neither jet starts inside the other's Rmax.
 func TestOpening(t *testing.T) {
-	if Draw(7, 0) != Draw(7, 0) {
+	if Draw(7) != Draw(7) {
 		t.Fatal("one seed drew two openings: a match and its client would disagree")
 	}
 	hot, split := 0, 0
 	for seed := uint64(1); seed <= 300; seed++ {
-		o := Draw(seed, 0)
+		o := Draw(seed)
 		for _, h := range o.Altitude {
 			if h < 4572 || h > 10668 {
 				t.Fatalf("seed %d: block %.0f m outside 15,000-35,000 ft", seed, h)
@@ -888,9 +888,6 @@ func TestOpening(t *testing.T) {
 	if split < 150 {
 		t.Errorf("only %d of 300 starts split the blocks by more than 1,500 m", split)
 	}
-	if o := Draw(3, 150000); o.Apart > 0.45*150000 {
-		t.Errorf("apart %.0f m past the wrap's reach: across a 150 km wrap the pair would meet the short way round", o.Apart)
-	}
 	if h := headon(); h.Altitude != [2]float64{bvraltitude, bvraltitude} || h.Speed != bvrspeed || h.Flank != 0 || h.Apart != separation() {
 		t.Errorf("the pinned head-on start moved: %+v", h)
 	}
@@ -900,7 +897,7 @@ func TestOpening(t *testing.T) {
 // the classic head-on block when "opening": "head" pins it.
 func TestOpeningSpawn(t *testing.T) {
 	seed := uint64(11)
-	for Draw(seed, 0).Flank == 0 { // a flanked start, so the spawn's heading is tested off the line
+	for Draw(seed).Flank == 0 { // a flanked start, so the spawn's heading is tested off the line
 		seed++
 	}
 	joust := func(extra map[string]any) (*instance, [2]*flight.State) {
@@ -926,7 +923,7 @@ func TestOpeningSpawn(t *testing.T) {
 		return i, pair
 	}
 	i, pair := joust(nil)
-	o := Draw(i.environment.Seed, i.environment.Wrap)
+	o := Draw(i.environment.Seed)
 	if i.opening != o || i.apart != o.Apart {
 		t.Fatalf("the joust opened on %+v, apart %.0f; the seed draws %+v", i.opening, i.apart, o)
 	}

@@ -106,11 +106,13 @@ func smooth(low float64, high float64, v float64) float64 {
 }
 
 // convection returns the extra gust intensity (m/s) and the mean vertical
-// draft (m/s) the cloud layer contributes at a position.
-func convection(position Vec3, cloud Cloud) (float64, float64) {
+// draft (m/s) the cloud layer contributes at a point: x and z its place in
+// Home, where the cells are fixed, and height its altitude.
+func convection(x float64, z float64, height float64, cloud Cloud) (float64, float64) {
 	if cloud.Convective < 0.5 || cloud.Base <= 0 {
 		return 0, 0
 	}
+	position := Vec3{X: x, Y: height, Z: z}
 	strength := vigour(position.X, position.Z)
 	cell := smooth(cloud.Gate.Minimum, cloud.Gate.Maximum, strength)
 	tall := smooth(0.52, 0.68, strength) // the renderer's towering-cell ramp
