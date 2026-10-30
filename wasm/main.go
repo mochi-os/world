@@ -77,6 +77,7 @@ func main() {
 		"catalog":  guard(catalog),
 		"gust":     guard(gust),
 		"wind":     guard(wind),
+		"footing":  guard(footing),
 		"approach": guard(approach),
 		"cruise":   guard(cruise),
 		"climb":    guard(climb),
@@ -143,6 +144,20 @@ func wind(this js.Value, arguments []js.Value) any {
 		blown = flight.Wind(flight.Vec3{X: at[0], Y: at[1], Z: at[2]}, model.State.Time, model.Environment)
 	}
 	send([]float64{blown.X, blown.Y, blown.Z}, arguments[1])
+	return nil
+}
+
+// footing writes the velocity of the surface under a point, [x, y, z] in
+// and out, on the jet's clock: the deck's own on the carrier, which a jet
+// spotted there starts with. Nothing before a mission.
+func footing(this js.Value, arguments []js.Value) any {
+	var at [3]float64
+	receive(arguments[0], at[:])
+	var moving flight.Vec3
+	if model != nil {
+		moving = model.World.Footing(flight.Vec3{X: at[0], Y: at[1], Z: at[2]}, model.State.Time, model.Environment.Wrap)
+	}
+	send([]float64{moving.X, moving.Y, moving.Z}, arguments[1])
 	return nil
 }
 

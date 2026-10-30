@@ -69,6 +69,33 @@ func TestRest(t *testing.T) {
 	}
 }
 
+// TestFootingIsTheDecks: a point resting on the deck of a ship under way
+// moves as that spot of her deck does, through a turn too; the runway, the
+// sea and the air above the deck stand still.
+func TestFootingIsTheDecks(t *testing.T) {
+	w := harbor()
+	spot := Vec3{X: 43, Y: 2.5, Z: -0.6} // the catapult spot, the jet's origin above the deck
+	moving := func(at float64) Vec3 {    // that spot's own motion over the sea, measured from where she has it either side
+		ahead, behind := w.Carrier.world(spot, at+0.001), w.Carrier.world(spot, at-0.001)
+		return ahead.Subtract(behind).Scale(1 / 0.002)
+	}
+	w.Carrier.Heading, w.Carrier.Speed = 0.4, 2.6
+	if got, want := w.Footing(w.Carrier.world(spot, 30), 30, 0), moving(30); got.Subtract(want).Length() > 1e-6 {
+		t.Fatalf("on the deck of a ship steaming 2.6 m/s the footing is %v, the deck moves %v", got, want)
+	}
+	w.Carrier.Track = []Leg{{Start: 0, Position: Vec3{Y: 19}, Heading: 0.4, Speed: 15.4, Turn: 15.4 / 700}}
+	if got, want := w.Footing(w.Carrier.world(spot, 30), 30, 0), moving(30); got.Subtract(want).Length() > 1e-3 {
+		t.Fatalf("on the deck of a ship turning at 30 kt the footing is %v, the deck moves %v", got, want)
+	}
+	for name, p := range map[string]Vec3{
+		"the runway": {X: 0, Y: 4, Z: 8000}, "the sea": {X: 0, Y: 1, Z: 3000}, "the air over the deck": w.Carrier.world(spot, 30).Add(Vec3{Y: 500}),
+	} {
+		if got := w.Footing(p, 30, 0); got.Length() != 0 {
+			t.Errorf("%s moves at %v", name, got)
+		}
+	}
+}
+
 // TestTaxi: throttle rolls the jet, brakes stop it, the nosewheel steers.
 func TestTaxi(t *testing.T) {
 	m := aboard()

@@ -275,6 +275,16 @@ func (w *World) surface(p Vec3, t float64, wrap float64) (float64, int, Vec3, bo
 	return 0, 0, Vec3{}, false
 }
 
+// Footing is the velocity of the surface under a world point at time t, as
+// the gear meets it: the deck's own on the carrier, still on land, and none
+// at sea or in the air. A jet spotted on the deck of a ship under way starts
+// with it, or the deck runs out from under the wheels and the catapult
+// snatches the jet up to the ship's speed.
+func (w *World) Footing(p Vec3, t float64, wrap float64) Vec3 {
+	_, _, velocity, _ := w.surface(p, t, wrap)
+	return velocity
+}
+
 // struck reports whether a world point is inside a prism or a post, each
 // taken at its minimum image so a seam hides nothing - the carrier's island
 // among them, met where the ship is at time t.
