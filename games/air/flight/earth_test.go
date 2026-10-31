@@ -7,7 +7,9 @@
 package flight
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -277,5 +279,31 @@ func TestReframe(t *testing.T) {
 	m.Reframe(Home)
 	if m.State.Position.Subtract(before.Position).Length() > 1e-6 || m.State.Velocity.Subtract(before.Velocity).Length() > 1e-9 {
 		t.Errorf("back in the world frame the jet is at %v moving %v, was %v moving %v", m.State.Position, m.State.Velocity, before.Position, before.Velocity)
+	}
+}
+
+// Home is anchored at the point the Midway map is projected about
+// (apps/air/midway-prep/prep.py), so the map's fields, laid in Home, lie at
+// their true places: the client's map.json records that point, read here when
+// the app's repository sits beside this one.
+func TestHomeIsWhereTheMidwayMapIsProjected(t *testing.T) {
+	anchor := Home.Place(Vec3{})
+	latitude, longitude := anchor.Latitude/degree, anchor.Longitude/degree
+	if math.Abs(latitude-28.2334) > 1e-9 || math.Abs(longitude+177.3668) > 1e-9 {
+		t.Fatalf("Home is anchored at %.7f, %.7f, not the Midway map's origin 28.2334, -177.3668", latitude, longitude)
+	}
+	data, err := os.ReadFile("../../../../apps/air/web/public/maps/midway/map.json")
+	if err != nil {
+		t.Logf("the app's map.json is not beside this repository (%v): checked the constant alone", err)
+		return
+	}
+	var m struct {
+		Origin [2]float64 `json:"origin"`
+	}
+	if err := json.Unmarshal(data, &m); err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(m.Origin[0]-latitude) > 1e-9 || math.Abs(m.Origin[1]-longitude) > 1e-9 {
+		t.Errorf("Home is anchored at %.7f, %.7f, the client's map at %v", latitude, longitude, m.Origin)
 	}
 }

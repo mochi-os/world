@@ -35,13 +35,15 @@ var (
 	eccentric  = Flattening * (2 - Flattening) // first eccentricity squared
 	second     = eccentric / (1 - eccentric)   // second eccentricity squared
 	oblateness = Equator / pole                // the stretch along the axis that makes the ellipsoid a sphere of radius Equator
-	midway     = Tangent(28.2072*degree, -177.3735*degree)
+	midway     = Tangent(28.2334*degree, -177.3668*degree)
 	degree     = math.Pi / 180
 )
 
 // Home is the world frame, the one the server and the cores simulate in: the
-// tangent frame at Midway Atoll (28.2072° N, 177.3735° W), the map's real
-// position. The map, the carrier, the wakes and the weather are fixed in it.
+// tangent frame at the centre of Midway Atoll (28.2334° N, 177.3668° W), the
+// point the map is projected about (apps/air/midway-prep/prep.py), so the
+// map's fields lie at their true places. The map, the carrier, the wakes and
+// the weather are fixed in it.
 var Home = midway
 
 // Place is a geodetic position: latitude and longitude in radians, altitude
