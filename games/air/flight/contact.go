@@ -21,6 +21,7 @@ type World struct {
 	Carrier *Carrier // nil for pure-airfield sessions
 	Prisms  []Prism  // buildings, the carrier's island: solids the probes must not meet
 	Posts   []Post   // masts and lights
+	Land    *Land    `json:"-"` // the earth's land beyond the fields, soft ground at sea level (land.go); nil for none. Hosts load land.bin; it never rides the chart
 }
 
 // Prism is a building: a solid over its footprint polygon up to Top, from
@@ -277,8 +278,11 @@ func (w *World) top() float64 {
 }
 
 // surface finds the contact surface under a point: carrier deck, then paved
-// strips, then island ground, else none (open sea — the hosts treat water
-// impact as a crash, not a contact). Returns height, kind, and the surface's
+// strips, then island ground, then the earth's land at sea level, else none
+// (open sea — the hosts treat water impact as a crash, not a contact). The
+// land is judged by the point's own place and altitude, so it holds anywhere
+// on the earth, where the fields' heights are measured in Home's tangent
+// plane and hold only near Midway. Returns height, kind, and the surface's
 // own velocity (a parked jet rides the ship), in the caller's frame: place
 // carries it to Home, where the map and the ship are. The height is the
 // point's own height less its clearance above the surface, so a caller
@@ -321,6 +325,11 @@ func (w *World) surface(p Vec3, t float64, place Rigid) (float64, int, Vec3, boo
 		}
 		if len(field.Coast) > 2 && inside(q, field.Coast) {
 			return p.Y - (q.Y - field.Height), Soft, Vec3{}, true
+		}
+	}
+	if w.Land != nil {
+		if place := Home.Place(q); place.Altitude < Reach && w.Land.At(place.Latitude, place.Longitude) {
+			return p.Y - place.Altitude, Soft, Vec3{}, true
 		}
 	}
 	return 0, 0, Vec3{}, false
