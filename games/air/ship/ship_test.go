@@ -156,6 +156,85 @@ func TestVoyage(t *testing.T) {
 	}
 }
 
+// TestHold: a speed held, as single player's temporary select holds it, is
+// taken at once when asked for, never moving the ship at a time already
+// flown, and is then the speed of every straight run, gathered or shed after
+// her turns at her own rate; the turns still run at her top speed, and she
+// still works her area.
+func TestHold(t *testing.T) {
+	c, coasts := midway(t)
+	s := Plan(c, trade, coasts, 0)
+	const speed = 10.3 // 20 kt
+	before, _ := c.At(5)
+	if !s.Hold(c, 5, speed, true) || s.Speed != speed {
+		t.Fatalf("held from steerage way, the ship planned %.2f m/s", s.Speed)
+	}
+	if after, _ := c.At(5); after.Subtract(before).Length() > 1e-9 {
+		t.Fatalf("taking the speed at once moved her by %.3f m", after.Subtract(before).Length())
+	}
+	if way := c.Way(5); way != speed {
+		t.Fatalf("asked for at once, she made %.2f m/s, not the %.2f held", way, speed)
+	}
+	if s.Hold(c, 5, speed, true) {
+		t.Fatal("held again at the speed she has, the track changed")
+	}
+	last, _ := c.At(5)
+	way, turns := c.Way(5), 0
+	for tick := 6.0; tick < 4*3600; tick++ {
+		earlier := make([]flight.Vec3, 0, 8)
+		for back := -30.0; back <= Lead; back += 0.25 {
+			at, _ := c.At(tick + back)
+			earlier = append(earlier, at)
+		}
+		stepped := s.Step(c, tick, false)
+		held := s.Hold(c, tick, speed, false)
+		if stepped {
+			turns++
+			if held {
+				t.Fatalf("the speed was held at %.0f s over a manoeuvre just ordered", tick)
+			}
+		}
+		n := 0
+		for back := -30.0; back <= Lead; back += 0.25 {
+			if at, _ := c.At(tick + back); at.Subtract(earlier[n]).Length() > 1e-9 {
+				t.Fatalf("the change at %.0f s moved the ship at %.2f s by %.3f m", tick, tick+back, at.Subtract(earlier[n]).Length())
+			}
+			n++
+		}
+		if len(c.Track) > Kept {
+			t.Fatalf("the track holds %d legs", len(c.Track))
+		}
+		at, _ := c.At(tick)
+		if step := at.Subtract(last).Length(); step > Most+1e-6 {
+			t.Fatalf("the ship jumped %.1f m in the second to %.0f s", step, tick)
+		}
+		last = at
+		now := c.Way(tick)
+		if math.Abs(now-way) > Surge+1e-9 {
+			t.Fatalf("after her turns the ship's speed jumped from %.2f to %.2f m/s in the second to %.0f s", way, now, tick)
+		}
+		way = now
+		if now < speed-1e-9 {
+			t.Fatalf("at %.0f s the ship made %.2f m/s, below the %.2f held", tick, now, speed)
+		}
+		l := c.Track[0]
+		for _, leg := range c.Track {
+			if leg.Start <= tick {
+				l = leg
+			}
+		}
+		if l.Turn != 0 && l.Speed != Most {
+			t.Fatalf("at %.0f s the ship turned at %.2f m/s, not her top speed", tick, l.Speed)
+		}
+		if l.Turn == 0 && l.Change == 0 && tick >= l.Start+Lead+1 && l.Speed != speed {
+			t.Fatalf("at %.0f s the ship has steamed %.0f s at %.2f m/s on a straight, not the %.2f held", tick, tick-l.Start, l.Speed, speed)
+		}
+	}
+	if turns < 2 {
+		t.Fatalf("%d turns in four idle hours: holding a speed stopped the ship working her area", turns)
+	}
+}
+
 // TestPlanShiftsClear: the charted carrier's own racetrack runs onto Midway,
 // so the plan moves the station across the wind - no further than it must.
 func TestPlanShiftsClear(t *testing.T) {

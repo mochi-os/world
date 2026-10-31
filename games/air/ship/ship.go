@@ -193,6 +193,42 @@ func (s *Ship) turn(c *flight.Carrier, start float64, after float64) {
 	}
 }
 
+// Hold keeps the ship at a speed on her straight runs, from time t: her speed
+// into the wind becomes it, and on the straight she steams at t she takes it
+// at once if instant, as single player's speed select is resumed from, and
+// otherwise gathers or sheds way to it at Surge from Lead ahead. It reports
+// whether it changed the track. A manoeuvre ordered or under way runs its
+// course first, turning at her top speed, so a caller holding a speed calls
+// it again after each Step. Single player's temporary speed select drives it,
+// so her bow wave and wake can be seen at every speed; the steering itself
+// never does.
+func (s *Ship) Hold(c *flight.Carrier, t float64, speed float64, instant bool) bool {
+	s.Speed = speed
+	if len(c.Track) == 0 {
+		return false
+	}
+	last := c.Track[len(c.Track)-1]
+	if last.Start > t || math.Abs(last.Speed-speed) < 0.01 { // a manoeuvre always ends on a straight
+		return false
+	}
+	if instant {
+		at, heading := c.At(t)
+		c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: speed})
+	} else {
+		t += Lead
+		at, heading := c.At(t)
+		way := c.Way(t)
+		c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: way, Change: math.Copysign(Surge, speed-way)})
+		t += math.Abs(speed-way) / Surge
+		at, _ = c.At(t)
+		c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: speed})
+	}
+	if len(c.Track) > Kept {
+		c.Track = append([]flight.Leg(nil), c.Track[len(c.Track)-Kept:]...)
+	}
+	return true
+}
+
 // Needed reports whether anyone needs the deck at time t: an aircraft on it,
 // or one coming in to land - gear down within Approach of the ship. The
 // aircraft are in the world frame, where the ship sails.

@@ -21,6 +21,8 @@ import (
 var (
 	vessel  ship.Ship // the steering: planned here, or the server's heading into the wind
 	steered bool      // this core steers the ship: single player
+	held    float64   // the speed single player's temporary select holds her to, m/s; 0 leaves her to her plan
+	sudden  bool      // the select has just been changed: she takes its speed at once
 )
 
 func ship_exports() map[string]any {
@@ -28,6 +30,7 @@ func ship_exports() map[string]any {
 		"plan":    guard(plan),
 		"steer":   guard(steer),
 		"voyage":  guard(voyage),
+		"speed":   guard(speed),
 		"carrier": guard(carrier),
 		"deck":    guard(deck),
 	}
@@ -46,7 +49,7 @@ func plan(js.Value, []js.Value) any {
 		}
 	}
 	vessel = ship.Plan(model.World.Carrier, model.Environment.Wind, coasts, model.State.Time)
-	steered = true
+	steered, held, sudden = true, 0, false
 	return ""
 }
 
@@ -59,7 +62,35 @@ func steer(js.Value, []js.Value) any {
 	c, t := model.World.Carrier, model.State.Time
 	jet := model.State
 	jet.Position = model.Environment.Placement().Point(jet.Position) // the ship sails the world frame
-	return vessel.Step(c, t, ship.Needed(c, t, []flight.State{jet}))
+	changed := vessel.Step(c, t, ship.Needed(c, t, []flight.State{jet}))
+	if held > 0 {
+		place := model.Environment.Placement()
+		before := model.World.Footing(model.State.Position, t, place)
+		if vessel.Hold(c, t, held, sudden) {
+			changed = true
+			// A jet on her deck changes speed with her, or the deck jumps out from under it.
+			model.State.Velocity = model.State.Velocity.Add(model.World.Footing(model.State.Position, t, place).Subtract(before))
+		}
+		if last := c.Track[len(c.Track)-1]; last.Start <= t && last.Turn == 0 {
+			sudden = false // taken, or nothing to take; a manoeuvre under way runs its course first, and she takes it as that ends
+		}
+	}
+	return changed
+}
+
+// speed is single player's temporary speed select: given a speed in m/s, the
+// ship takes it at once on the next steer and holds it on her straight runs,
+// gathering way to it after her turns as she does; either way it
+// returns her speed into the wind, or -1 when this core does not steer her.
+func speed(this js.Value, arguments []js.Value) any {
+	if model == nil || model.World.Carrier == nil || !steered {
+		return -1.0
+	}
+	if len(arguments) > 0 && arguments[0].Type() == js.TypeNumber && arguments[0].Float() > 0 {
+		held, sudden = arguments[0].Float(), true
+		vessel.Speed = held
+	}
+	return vessel.Speed
 }
 
 // voyage takes a match's track from the server, as its welcome and its ship
