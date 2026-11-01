@@ -234,21 +234,35 @@ func (f Frame) Survey(p Vec3) (Place, Frame) {
 // Sea is the point of the sea straight down the frame's own up from (x, 0, z),
 // in the frame, and the rotation from the tangent frame there to this frame's
 // axes: how a ship placed by her chart position sits on the curved water.
-// Newton steps along the frame's up find sea level, until a step moves under
-// a tenth of a millimetre: one or two near the anchor, four at 5,000 km out,
-// where three left it 3 m off.
+// The ellipsoid straight down the frame's up is found in closed form, the
+// geoid's height above it there lifts the point onto the sea, and Newton
+// steps along the frame's up take it the rest of the way, until a step moves
+// under a tenth of a millimetre: the first already does near the anchor, and
+// at 5,000 km out a second.
 func (f Frame) Sea(x, z float64) (Vec3, Quat) {
-	at := Vec3{X: x, Z: z}
+	start := f.Centred(Vec3{X: x, Z: z})
+	c := Vec3{X: start.X, Y: start.Y, Z: start.Z * oblateness}
+	u := Vec3{X: f.up.X, Y: f.up.Y, Z: f.up.Z * oblateness}
+	a, b, k := u.Dot(u), c.Dot(u), c.Dot(c)-Equator*Equator
+	y := -k / (b + math.Sqrt(math.Max(b*b-a*k, 0))) // the root by the surface, written to keep its precision when it is small
+	e := start.Add(f.up.Scale(y))
+	normal := Vec3{X: e.X, Y: e.Y, Z: e.Z * oblateness * oblateness}.Normalize()
+	along := math.Max(normal.Dot(f.up), 0.1) // the height climbs this much for a metre up the frame's up
+	at := Vec3{X: x, Y: y + Geoid(math.Asin(normal.Z), math.Atan2(e.Y, e.X))/along, Z: z}
 	place := f.Place(at)
 	for step := 0; step < 8; step++ {
-		fall := place.Altitude / math.Max(f.Normal(place).Y, 0.1) // the height falls along the normal, the step runs along the frame's up
+		fall := place.Altitude / math.Max(f.Normal(place).Y, 0.1)
 		at.Y -= fall
-		place = f.Place(at)
 		if math.Abs(fall) < 1e-4 {
-			break
+			break // the place it stood at a tenth of a millimetre off lays the sea level enough
 		}
+		place = f.Place(at)
 	}
-	return at, Between(Tangent(place.Latitude, place.Longitude), f).Turn
+	sinλ, cosλ := math.Sincos(place.Longitude)
+	east := Vec3{X: -sinλ, Y: cosλ}
+	level := f.Normal(place)
+	east = Vec3{X: east.Dot(f.east), Y: east.Dot(f.up), Z: east.Dot(f.south)}
+	return at, columns(east, level, east.Cross(level))
 }
 
 // Up is the ellipsoid's normal at a point, in the frame's axes.

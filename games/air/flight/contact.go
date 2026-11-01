@@ -237,8 +237,25 @@ func (c *Carrier) Aboard(p Vec3, t float64, place Rigid) bool {
 // local transforms a point of the caller's frame into the carrier deck frame
 // at time t.
 func (c *Carrier) local(p Vec3, t float64, place Rigid) Vec3 {
+	return c.berth(t).local(p, place)
+}
+
+// berth is the ship where she stands at one instant, in the chart. Laying her
+// on the sea is the costly part of placing a point on her, so a host asking
+// about many points at one instant lays her once.
+type berth struct {
+	at       Vec3
+	attitude Quat
+}
+
+func (c *Carrier) berth(t float64) berth {
 	at, attitude := c.Pose(t)
-	return attitude.Unrotate(place.Point(p).Subtract(at))
+	return berth{at, attitude}
+}
+
+// local transforms a point of the caller's frame into her deck frame.
+func (b berth) local(p Vec3, place Rigid) Vec3 {
+	return b.attitude.Unrotate(place.Point(p).Subtract(b.at))
 }
 
 // world transforms a carrier-frame point to the caller's frame.
@@ -357,8 +374,24 @@ func (w *World) Footing(p Vec3, t float64, place Rigid) Vec3 {
 // height above the sea, which the carrier's deck frame measures from its own
 // deck.
 func (w *World) struck(p Vec3, t float64, place Rigid) bool {
-	if c := w.Carrier; c != nil && (len(c.Prisms) > 0 || len(c.Posts) > 0) {
-		local := c.local(p, t, place)
+	return w.hits(p, w.lay(t), place)
+}
+
+// lay is where the carrier stands at t for every point asked about then, nil
+// when she has no island or mast to strike.
+func (w *World) lay(t float64) *berth {
+	c := w.Carrier
+	if c == nil || len(c.Prisms) == 0 && len(c.Posts) == 0 {
+		return nil
+	}
+	b := c.berth(t)
+	return &b
+}
+
+// hits is struck with the ship laid where she stands at the instant.
+func (w *World) hits(p Vec3, ship *berth, place Rigid) bool {
+	if c := w.Carrier; ship != nil {
+		local := ship.local(p, place)
 		height := local.Y + c.Position.Y
 		for pi := range c.Prisms {
 			prism := &c.Prisms[pi]

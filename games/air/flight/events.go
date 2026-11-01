@@ -135,13 +135,14 @@ func (m *Model) touch(s *State) {
 func (m *Model) probes(s *State) {
 	s.Gear.Contact = -1
 	sliding := s.Gear.Extension < 0.95 && m.carried(s) // riding the belly (carried excludes slamming arrivals): contact while the belly bears the jet is grinding, not arriving
+	ship := m.World.lay(s.Time)                        // laid on the sea once for every probe
 	for i, at := range m.Airframe.Probes {
 		if sliding {
 			continue // every probe yields while the belly carries — the deep measured keel otherwise walks the nose probe onto the ground during an ordinary slide
 		}
 		body := at.Subtract(m.center)
 		point := s.Position.Add(s.Attitude.Rotate(body))
-		if m.World.struck(point, s.Time, m.place) {
+		if m.World.hits(point, ship, m.place) {
 			s.Gear.Contact = i // a building or a mast is solid at any speed
 			return
 		}

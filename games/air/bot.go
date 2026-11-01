@@ -816,11 +816,12 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 	if me.brain != nil {
 		cone = me.brain.skill.glare
 	}
-	mine, his := height(s.Position, i.environment), height(o.Position, i.environment)
-	if !i.night && his > mine && cone > 0 && direction.Dot(sunward(i.environment.Theatre(), i.environment.Charted())) > math.Cos(cone*math.Pi/180) {
+	if !i.night && cone > 0 && direction.Dot(sunward(i.environment.Theatre(), i.environment.Charted())) > math.Cos(cone*math.Pi/180) &&
+		height(o.Position, i.environment) > height(s.Position, i.environment) {
 		return false // up-sun: inside the cone this pilot cannot see into
 	}
 	if l, found := layers[i.sky]; found {
+		mine, his := height(s.Position, i.environment), height(o.Position, i.environment)
 		low, high := math.Min(mine, his), math.Max(mine, his)
 		if over := math.Min(high, l.top) - math.Max(low, l.base); over > 0 {
 			depth := over / math.Max(high-low, 1) * distance // LOS length inside the layer
