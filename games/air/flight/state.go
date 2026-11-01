@@ -36,7 +36,8 @@ type Inputs struct {
 	Held       float64 // internal wing fuel the INTR WING switch at INHIBIT holds out of the feed, kg (NATOPS 2.2.3.3): aboard and weighed, and not the engines' to burn; the host apportions the tanks, and the zero value holds none
 	Flap       float64 // flap switch: 0 = AUTO (the virtual schedule), 1 = HALF, 2 = FULL
 	Dump       bool    // fuel dump switch: burn() drains toward the bingo floor at the NATOPS rate while held on
-	Secure     [2]bool // per-engine fuel OFF (the fire drill and the runaway shutdown, NATOPS 15.1); clearing the switch relights
+	Secure     [2]bool // per-engine fuel OFF: the throttle at OFF, the fire drill and the runaway shutdown (NATOPS 15.1); clearing it relights a rotor turning fast enough
+	Crank      [2]bool // ENG CRANK (NATOPS 2.1.1.6): the APU's air turning an engine's rotor for a start; the host gates it on the APU running
 	Transfer   [2]int  // the EXT TANKS switches (NATOPS 2.2.4.1), [0] WING and [1] CTR: 0 NORM, -1 STOP, +1 ORIDE; the zero value is NORM, so a host that never sends them keeps the normal transfer
 	Eject      bool    // ejection handle: flight ignores it; the host judges
 	Fire       bool    // weapons flags ride the wire; flight ignores them
@@ -89,8 +90,9 @@ func (t Tanks) Total() float64 { return t.Wing + t.Centre }
 
 // EngineState is the achieved thrust condition of one engine.
 type EngineState struct {
-	Spool  float64 // 0..1 achieved dry-thrust fraction
-	Reheat float64 // 0..1 achieved reheat stage
+	Spool   float64 // 0..1 achieved dry-thrust fraction
+	Reheat  float64 // 0..1 achieved reheat stage
+	Rundown float64 // how far the rotor has run down below ground idle: 0 lit and at idle or above, 1 stopped; the zero value is a running engine
 }
 
 // Pair is a left/right actuator pair.

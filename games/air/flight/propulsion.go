@@ -36,6 +36,34 @@ const (
 	stop = 0.15
 )
 
+// The start and the run down below ground idle (#133). Fuel off, the core
+// winds down and its rotor then runs down to whatever turns it: nothing on the
+// ground, the airstream in flight, the starter on the APU's air with ENG CRANK
+// selected (NATOPS 7.4.3). Fuel on, the fire catches once the rotor turns at
+// about 15% N2, and the engine accelerates to ground idle in some 30 s; below
+// that it makes no thrust. Windmilling relights it above about 290 KEAS.
+const (
+	cranked    = 0.6   // the rundown the starter holds a rotor at: 40% of ground idle, about 26% N2
+	catches    = 0.75  // a rotor run down further than this does not light: about 16% N2
+	starter    = 6.0   // s, the starter's time constant on the rotor
+	accelerate = 30.0  // s, from light-off at a standstill to ground idle
+	unturned   = 15.0  // s, the time constant of a rotor running down with nothing turning it
+	windmill   = 600.0 // m/s of equivalent airspeed at which the airstream would turn a rotor to ground idle
+	extinct    = 0.01  // a core wound down below this spool has gone out
+)
+
+// turned is the rundown the rotor settles at with no fire in it: the
+// starter's, or the airstream's, whichever turns it faster.
+func (m *Model) turned(crank bool) float64 {
+	local := air(m.State.Position.Y, m.Environment)
+	speed := m.State.Velocity.Subtract(m.gust).Length() * math.Sqrt(local.Density/1.225)
+	rest := 1 - clamp(speed/windmill, 0, 0.45)
+	if crank {
+		rest = math.Min(rest, cranked)
+	}
+	return rest
+}
+
 // spool advances the engine states one step.
 func (m *Model) spool(in Inputs) {
 	throttle := idle + clamp(in.Throttle, 0, 1)*(1-idle)
@@ -49,7 +77,8 @@ func (m *Model) spool(in Inputs) {
 	if !m.State.Gear.Wow && !m.State.Retracted {
 		throttle = math.Max(throttle, stop)
 	}
-	if m.usable(in) <= 0 {
+	dry := m.usable(in) <= 0
+	if dry {
 		throttle = 0 // flameout: dry tanks wind the cores down and kill reheat
 	}
 	// The zero/negative-g feed limit (NATOPS: ten-second business): the oil
@@ -71,8 +100,27 @@ func (m *Model) spool(in Inputs) {
 			continue
 		}
 		target := throttle
-		if i < len(in.Secure) && in.Secure[i] {
-			target = 0 // secured: fuel off, the core winds down and reheat dies (NATOPS 15.1 — the fire drill); clearing the switch spools it back up
+		fuelled := !dry && !(i < len(in.Secure) && in.Secure[i]) // secured: fuel off, the core winds down and reheat dies (NATOPS 15.1 — the fire drill)
+		if !fuelled {
+			target = 0
+		}
+		crank := i < len(in.Crank) && in.Crank[i]
+		switch {
+		case fuelled && e.Rundown > 0 && e.Rundown <= catches:
+			// Lit and accelerating to idle: no thrust until it gets there.
+			e.Spool, e.Reheat = 0, 0
+			e.Rundown = math.Max(0, e.Rundown-m.Stride()/accelerate)
+			continue
+		case e.Rundown > 0 || (!fuelled && e.Spool < extinct):
+			// Out: the rotor runs down to, or is turned up to, what turns it.
+			e.Spool, e.Reheat = 0, 0
+			rest := m.turned(crank)
+			constant := unturned
+			if rest < e.Rundown {
+				constant = starter // turned faster than it is going
+			}
+			e.Rundown += (rest - e.Rundown) * m.Stride() / constant
+			continue
 		}
 		constant := spool_up
 		if target < e.Spool {

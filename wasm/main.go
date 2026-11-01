@@ -17,7 +17,7 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON),
+//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON, 262144/524288 ENG CRANK),
 //	6 sequence, 7 steps, 8 reheat, 9 pitch trim, 10 flap switch, 11 roll trim,
 //	12/13 the EXT TANKS switches, WING and CTR (-1 STOP, 0 NORM, +1 ORIDE),
 //	14 nosewheel steering (-1 off, 0 LOW, +1 HI)
@@ -350,6 +350,7 @@ func controls() (flight.Inputs, int) {
 		Held:       input[15],        // wing fuel held at INHIBIT, kg
 		Dump:       flags&1 != 0,     // bit 1 reclaimed from the retired boolean reheat (the SP wasm ships with its client, so no cross-version wire exists)
 		Secure:     [2]bool{flags&256 != 0, flags&512 != 0},
+		Crank:      [2]bool{flags&262144 != 0, flags&524288 != 0}, // ENG CRANK L or R, while the APU's air turns it
 		Transfer:   [2]int{int(input[12]), int(input[13])},
 		Steering:   position(input[14]),
 		Fire:       flags&1024 != 0, // the trigger while rounds leave: the client gates it on its own magazine, the core kicks back

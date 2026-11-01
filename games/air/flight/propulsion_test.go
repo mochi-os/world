@@ -36,7 +36,9 @@ func TestDump(t *testing.T) {
 
 // TestSecure: the per-engine cutoff (NATOPS 15.1) winds one core down while
 // the other keeps its power, the asymmetric thrust yaws the jet toward the
-// dead engine, and clearing the switch relights it.
+// dead engine, and clearing the switch relights it: at 200 m/s the airstream
+// windmills the rotor fast enough to light, and it is back at power within
+// half a minute, the airstart's time rather than a spool's.
 func TestSecure(t *testing.T) {
 	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.5)
@@ -55,11 +57,101 @@ func TestSecure(t *testing.T) {
 	if math.Abs(m.State.Fcs.Rudder) < 0.5*math.Pi/180 {
 		t.Fatalf("asymmetric thrust must load the rudder: %.2f°", m.State.Fcs.Rudder*180/math.Pi)
 	}
-	for i := 0; i < 240*10; i++ {
+	for i := 0; i < 240*30; i++ {
 		m.Step(Inputs{Throttle: 1})
 	}
 	if left := m.State.Engine[0].Spool; left < 0.9 {
 		t.Fatalf("clearing the switch must relight: spool %.2f", left)
+	}
+}
+
+// still is a jet at rest with both engines stopped, its rotors still: the
+// cold and dark start (#133). The engines are stepped alone, so it stays at
+// rest however long they turn.
+func still() *Model {
+	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m.State.Fuel = 3000
+	m.State.Gear.Wow = true
+	m.State.Velocity = Vec3{}
+	for i := range m.State.Engine {
+		m.State.Engine[i] = EngineState{Rundown: 1}
+	}
+	return m
+}
+
+// motor steps the engines alone for seconds.
+func motor(m *Model, in Inputs, seconds float64) {
+	for t := 0.0; t < seconds; t += m.Stride() {
+		m.spool(in)
+	}
+}
+
+// TestColdStart: the NATOPS start (7.4.3). A stopped engine with fuel to it
+// and no starter does not light; ENG CRANK turns its rotor on the APU's air to
+// about a quarter of idle; the throttle moved from OFF lights it, and it
+// reaches ground idle half a minute later, with no thrust until then. The other
+// engine stays stopped. Shut down, the rotor runs down to a standstill.
+func TestColdStart(t *testing.T) {
+	m := still()
+	stopped, crank := [2]bool{true, true}, [2]bool{false, true}
+	motor(m, Inputs{Secure: [2]bool{false, false}}, 30)
+	if e := m.State.Engine[1]; e.Rundown < 0.99 || e.Spool != 0 {
+		t.Fatalf("fuel alone must not light a stopped engine: rundown %.2f spool %.3f", e.Rundown, e.Spool)
+	}
+	motor(m, Inputs{Secure: stopped, Crank: crank}, 20)
+	if e := m.State.Engine[1]; math.Abs(e.Rundown-cranked) > 0.02 || e.Spool != 0 {
+		t.Fatalf("the starter must turn the rotor to about a quarter of idle with no thrust: rundown %.2f spool %.3f", e.Rundown, e.Spool)
+	}
+	if e := m.State.Engine[0]; e.Rundown < 0.99 {
+		t.Fatalf("the engine not cranked must stay stopped: rundown %.2f", e.Rundown)
+	}
+	right := [2]bool{true, false}
+	lit := 0.0
+	for ; lit < 60 && m.State.Engine[1].Rundown > 0; lit += m.Stride() {
+		m.spool(Inputs{Secure: right, Crank: crank})
+		if m.State.Engine[1].Spool != 0 {
+			t.Fatalf("an engine below idle makes no thrust: spool %.3f at %.1f s", m.State.Engine[1].Spool, lit)
+		}
+	}
+	if lit < 12 || lit > 25 {
+		t.Fatalf("from the throttle at IDLE the engine must reach idle in about 18 s from the crank's speed: %.1f s", lit)
+	}
+	motor(m, Inputs{Secure: right}, 5)
+	if !m.pumped() || m.State.Engine[0].Spool != 0 || m.State.Engine[1].Spool < 0.03 {
+		t.Fatalf("the started engine turns, powering HYD 2, and the other does not: spools %.3f %.3f", m.State.Engine[0].Spool, m.State.Engine[1].Spool)
+	}
+	motor(m, Inputs{Secure: stopped}, 60)
+	if e := m.State.Engine[1]; e.Rundown < 0.95 || e.Spool != 0 {
+		t.Fatalf("shut down, the rotor runs down to a standstill: rundown %.2f spool %.3f", e.Rundown, e.Spool)
+	}
+}
+
+// TestWindmill: in flight the airstream turns a shut-down rotor. Fast enough,
+// it relights with the fuel on; slow, it needs the starter.
+func TestWindmill(t *testing.T) {
+	for _, c := range []struct {
+		speed float64
+		light bool
+	}{{200, true}, {90, false}} {
+		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, c.speed, 3000)
+		motor(m, Inputs{Throttle: 0.5, Secure: [2]bool{true, true}}, 60)
+		motor(m, Inputs{Throttle: 0.5}, 40)
+		if lit := m.State.Engine[0].Rundown == 0; lit != c.light {
+			t.Fatalf("at %.0f m/s the windmilling engine relit %v, want %v (rundown %.2f)", c.speed, lit, c.light, m.State.Engine[0].Rundown)
+		}
+	}
+}
+
+// TestRundownEncodes: the rundown rides the encoded state, appended last.
+func TestRundownEncodes(t *testing.T) {
+	m := still()
+	m.State.Engine[1].Rundown = 0.37
+	out := make([]float64, Size)
+	m.State.Encode(out)
+	back := Decode(out)
+	if back.Engine[0].Rundown != 1 || back.Engine[1].Rundown != 0.37 {
+		t.Fatalf("rundown lost in the encoding: %v %v", back.Engine[0].Rundown, back.Engine[1].Rundown)
 	}
 }
 
