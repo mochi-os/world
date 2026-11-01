@@ -132,7 +132,7 @@ func TestVoyage(t *testing.T) {
 			}
 			way = c.Way(tick)
 			p := position(at)
-			if p < -Reach-Radius-2*Most || p > Reach+Overrun+Gather+Radius+2*Most {
+			if p < -Reach-Radius-Ease-2*Most || p > Reach+Overrun+Gather+Radius+Ease+2*Most {
 				t.Fatalf("at %.0f s the ship is %.0f m along its area, past its ends", tick, p)
 			}
 			lowest, highest = math.Min(lowest, p), math.Max(highest, p)
@@ -250,7 +250,7 @@ func TestPlanShiftsClear(t *testing.T) {
 	nearest := func(station flight.Vec3, side float64) float64 {
 		least := math.Inf(1)
 		for k := 0.0; k <= 2; k++ {
-			for f := -Reach - Radius; f <= Reach+Overrun+Gather+Radius; f += 250 {
+			for f := -Reach - Radius - Ease; f <= Reach+Overrun+Gather+Radius+Ease; f += 250 {
 				least = land.distance(station.Add(direction(s.Into).Scale(f)).Add(port.Scale(side*Radius*k)), least)
 			}
 		}
@@ -297,7 +297,7 @@ func TestCalledBack(t *testing.T) {
 	if !s.Step(c, tick, true) {
 		t.Fatal("a jet needing the deck did not turn the ship back")
 	}
-	back := Lead + math.Pi/Most*Radius + (Most-s.Speed)/Surge // the half turn at speed, then way shed to the recovery's
+	back := Lead + math.Pi/Most*Radius + Swing + (Most-s.Speed)/Surge // the half turn at speed, eased on and off, then way shed to the recovery's
 	if !s.Closed(c, tick+back-1) {
 		t.Fatal("the deck opened before the turn back was done")
 	}
@@ -309,6 +309,65 @@ func TestCalledBack(t *testing.T) {
 	}
 	if _, heading := c.At(tick + back + 1); math.Abs(angle(heading-s.Into)) > 1e-6 {
 		t.Fatalf("after the turn back the ship heads %.3f, not into the wind at %.3f", heading, s.Into)
+	}
+}
+
+// TestTurnsEase: her rate of turn comes on and goes off in steps, never all at
+// once: a step in it jolts the deck under a jet sideways by the step times its
+// distance from her pivot, a metre a second at a catapult when the whole turn
+// came on at once. She still turns through exactly the half circle, out on the
+// reciprocal about two radii across, in Swing more than the circle itself.
+func TestTurnsEase(t *testing.T) {
+	c, coasts := midway(t)
+	s := Plan(c, trade, coasts, 0)
+	tick := 0.0
+	for ; tick < 10000 && !s.Step(c, tick, false); tick++ {
+	}
+	if tick >= 10000 {
+		t.Fatal("the idle ship never turned")
+	}
+	rate := Most / Radius
+	before := 0.0
+	var first, last flight.Leg
+	turning := 0
+	for _, leg := range c.Track {
+		if leg.Start < tick {
+			continue
+		}
+		if step := math.Abs(leg.Turn - before); step > rate/Notches+1e-12 {
+			t.Fatalf("at %.0f s her rate of turn steps by %.4f rad/s, more than a %d-th of her full %.4f: %.2f m/s across the deck 160 m from her pivot", leg.Start, step, Notches, rate, step*160)
+		}
+		before = leg.Turn
+		if leg.Turn != 0 {
+			if turning == 0 {
+				first = leg
+			}
+			last = leg
+			turning++
+		}
+	}
+	if turning != 2*Notches+1 {
+		t.Fatalf("%d legs of turn, want %d eased on, her full rate and %d eased off", turning, Notches, Notches)
+	}
+	if math.Abs(first.Turn) >= rate/Notches || math.Abs(last.Turn) >= rate/Notches {
+		t.Fatalf("her turn starts at %.4f and ends at %.4f rad/s, not from and to a fraction of a step", first.Turn, last.Turn)
+	}
+	end := c.Track[len(c.Track)-1]
+	for _, leg := range c.Track {
+		if leg.Start > last.Start && leg.Turn == 0 {
+			end = leg
+			break
+		}
+	}
+	if took := end.Start - first.Start; math.Abs(took-(math.Pi/Most*Radius+Swing)) > 1e-6 {
+		t.Fatalf("the turn took %.1f s, want the half circle's %.1f and Swing", took, math.Pi/Most*Radius)
+	}
+	if off := math.Abs(angle(end.Heading - first.Heading - s.Side*math.Pi)); off > 1e-9 {
+		t.Fatalf("she came out %.2e rad off the reciprocal of her heading in", off)
+	}
+	across := direction(first.Heading + s.Side*math.Pi/2)
+	if gone := end.Position.Subtract(first.Position); math.Abs(gone.X*across.X+gone.Z*across.Z-2*Radius) > 0.02*2*Radius {
+		t.Fatalf("she came out %.0f m across the wind, not about two radii", gone.X*across.X+gone.Z*across.Z)
 	}
 }
 

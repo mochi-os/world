@@ -20,19 +20,25 @@ import (
 )
 
 const (
-	Over     = 14.4    // m/s: the wind over the deck the ship steams for (28 kt)
-	Least    = 2.6     // m/s: steerage way (5 kt), however strong the wind
-	Most     = 15.4    // m/s: 30 kt, its top speed, into the wind or back across the area
-	Radius   = 700.0   // m: its turning circle's radius
-	Surge    = 0.1     // m/s²: how fast it gathers or sheds way, about two minutes from steerage way to its top speed
-	Reach    = 15000.0 // m: its operating area runs this far up and down the wind from its station
-	Overrun  = 6000.0  // m: this far past the area's upwind end the deck closes and the ship turns, recovery or not
-	Clear    = 10000.0 // m: the closest its track comes to any coast
-	Approach = 25000.0 // m: an aircraft this close with its gear down is coming in to land
-	Window   = 300.0   // s: the least open deck a turn back into the wind must leave before the area's end
-	Lead     = 1.0     // s: a turn is ordered this far ahead, so every client has it before it starts
-	Kept     = 6       // legs of track kept: a manoeuvre's four, and enough behind them for prediction replay
+	Over     = 14.4          // m/s: the wind over the deck the ship steams for (28 kt)
+	Least    = 2.6           // m/s: steerage way (5 kt), however strong the wind
+	Most     = 15.4          // m/s: 30 kt, its top speed, into the wind or back across the area
+	Radius   = 700.0         // m: its turning circle's radius
+	Surge    = 0.1           // m/s²: how fast it gathers or sheds way, about two minutes from steerage way to its top speed
+	Reach    = 15000.0       // m: its operating area runs this far up and down the wind from its station
+	Overrun  = 6000.0        // m: this far past the area's upwind end the deck closes and the ship turns, recovery or not
+	Clear    = 10000.0       // m: the closest its track comes to any coast
+	Approach = 25000.0       // m: an aircraft this close with its gear down is coming in to land
+	Window   = 300.0         // s: the least open deck a turn back into the wind must leave before the area's end
+	Lead     = 1.0           // s: a turn is ordered this far ahead, so every client has it before it starts
+	Swing    = 24.0          // s: how long she takes to come to her full rate of turn, and to come off it
+	Notches  = 6             // the steps her rate of turn is laid in over Swing (see turn)
+	Kept     = 3*Notches + 6 // legs of track kept: a manoeuvre's (way gathered, its turn eased on and off, way shed, the straight out of it) and, behind them, the last one's easing off and full rate, which a client may still be replaying when a jet calls her straight back
 )
+
+// Ease is how much further along her area her turn carries her for being eased
+// on and off rather than put on at once.
+const Ease = Swing * Most / 2
 
 // Ship is a carrier's steering: the station its area is centred on, the
 // heading into the wind it works along, the speed that gives the wind over
@@ -72,7 +78,7 @@ func Plan(c *flight.Carrier, wind flight.Vec3, coasts [][]flight.Vec3, start flo
 		least := math.Inf(1)
 		for k := 0.0; k <= 2; k++ {
 			offset := port.Scale(side * Radius * k)
-			for f := -Reach - Radius; f <= Reach+Overrun+Gather+Radius; f += 250 {
+			for f := -Reach - Radius - Ease; f <= Reach+Overrun+Gather+Radius+Ease; f += 250 {
 				least = land.distance(station.Add(along.Scale(f)).Add(offset), math.Min(least, math.Max(floor, Clear)))
 				if least < floor {
 					return least
@@ -168,8 +174,15 @@ const Gather = (Most*Most - Least*Least) / (2 * Surge)
 
 // turn orders a manoeuvre from time start: way gathered to the ship's top
 // speed on the straight it is on - it is clear of the deck's work - a half
-// circle on Side, and way shed to the speed given on the straight out of it.
-// The ship's speed never jumps: a jet parked on the deck rides it all.
+// turn on Side, and way shed to the speed given on the straight out of it.
+// The ship's speed never jumps, and nor does her rate of turn: it comes on
+// over Swing, as her rudder and her swing take hold, and goes off the same
+// way, in Notches steps. Put on at once, the deck under a jet a ship's length
+// from her pivot jumped a metre a second sideways and threw it across its
+// catapult; each step is a sixth of that. Her full rate is held for as much
+// less as turns her through the half circle exactly, so she comes out on the
+// reciprocal of the heading she went in on, about two of her turning
+// circle's radii across the wind.
 func (s *Ship) turn(c *flight.Carrier, start float64, after float64) {
 	t := start
 	at, heading := c.At(t)
@@ -178,9 +191,19 @@ func (s *Ship) turn(c *flight.Carrier, start float64, after float64) {
 		t += (Most - way) / Surge
 		at, heading = c.At(t)
 	}
-	c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: Most, Turn: s.Side * Most / Radius})
-	t += math.Pi / Most * Radius
+	rate := s.Side * Most / Radius
+	ease := func(from, to float64) {
+		for k := 0; k < Notches; k++ {
+			c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: Most, Turn: from + (to-from)*(float64(k)+0.5)/Notches})
+			t += Swing / Notches
+			at, heading = c.At(t)
+		}
+	}
+	ease(0, rate)
+	c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: Most, Turn: rate})
+	t += math.Pi/Most*Radius - Swing
 	at, heading = c.At(t)
+	ease(rate, 0)
 	heading = angle(heading)
 	if after < Most {
 		c.Track = append(c.Track, flight.Leg{Start: t, Position: at, Heading: heading, Speed: Most, Change: -Surge})

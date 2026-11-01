@@ -118,10 +118,11 @@ func TestMatchSteers(t *testing.T) {
 		if turned == nil {
 			continue
 		}
-		// Way gathered from the recovery's speed, the half turn, and on at
-		// the top speed: the first of them a second ahead.
+		// Way gathered from the recovery's speed, the half turn eased on and
+		// off, and on at the top speed: the first of them a second ahead.
 		legs := turned["ship"].(map[string]any)["track"].([][]float64)
-		if len(c.Track) != 4 || len(legs) != 4 || c.Track[1].Change != ship.Surge || c.Track[1].Start != now+ship.Lead || c.Track[2].Turn == 0 || c.Track[3].Speed != ship.Most {
+		n := 2*ship.Notches + 4
+		if len(c.Track) != n || len(legs) != n || c.Track[1].Change != ship.Surge || c.Track[1].Start != now+ship.Lead || c.Track[2].Turn == 0 || c.Track[n-1].Turn != 0 || c.Track[n-1].Speed != ship.Most {
 			t.Fatalf("the turn at the area's end: track %+v, sent %v", c.Track, legs)
 		}
 	}

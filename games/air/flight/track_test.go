@@ -273,6 +273,41 @@ func TestCatapultUnderWay(t *testing.T) {
 	t.Fatal("the catapult never released")
 }
 
+// TestHeldThroughTheTurn: a jet held on a catapult, unfired, turns with a ship
+// in her 30 kt turn and stays on the catapult's line, at the bow and at the
+// waist alike: only the turn's own sideways pull, on a tail that scrubs on
+// the mains, sets it a little off. The squaring couple damped the jet's own
+// yaw rate, which fought the deck's rotation, and held it a degree and more
+// behind its line (2.6 degrees in the browser, its tail 0.28 m across).
+func TestHeldThroughTheTurn(t *testing.T) {
+	for _, cat := range []Catapult{
+		{Position: Vec3{X: 48, Z: -0.6}, Heading: 0.028, Stroke: 85, Speed: 88},                      // the bow
+		{Position: Vec3{X: -46.61, Z: -17.08}, Heading: 4.03 * math.Pi / 180, Stroke: 85, Speed: 88}, // the waist, aft and off her centre line
+	} {
+		m := aboard()
+		c := m.World.Carrier
+		c.Catapults = []Catapult{cat}
+		rate := 15.4 / 700
+		c.Track = []Leg{{Position: c.Position, Speed: 15.4, Turn: rate}}
+		back := cat.Position.Subtract(Vec3{X: 5.3 * math.Cos(cat.Heading), Z: -5.3 * math.Sin(cat.Heading)})
+		park(m, back.X, back.Z)
+		m.State.Attitude = Quat{W: math.Cos(cat.Heading / 2), Y: math.Sin(cat.Heading / 2)}
+		m.State.Velocity = c.velocity(m.State.Position, 0, Identity)
+		m.State.Omega = Vec3{Y: rate}
+		for i := 0; i < 240*60; i++ {
+			m.Step(Inputs{Gear: true})
+		}
+		if m.State.Gear.Catapult != 0 {
+			t.Fatalf("did not stay attached under way at %.0f m: %d", cat.Position.X, m.State.Gear.Catapult)
+		}
+		nose := m.State.Attitude.Rotate(Vec3{X: 1})
+		off := math.Remainder(math.Atan2(-nose.Z, nose.X)-heading(c, m.State.Time)-cat.Heading, 2*math.Pi) * 180 / math.Pi
+		if math.Abs(off) > 0.8 {
+			t.Fatalf("a minute into the turn the jet held at %.0f m is %.2f° off its catapult's line", cat.Position.X, off)
+		}
+	}
+}
+
 // TestTrimsKeepTheClock: Level and Approach lay a jet down on the clock it
 // already has, so a respawn meets the carrier where the match has it.
 func TestTrimsKeepTheClock(t *testing.T) {

@@ -100,8 +100,11 @@ func (m *Model) holdback(s *State, total *Forces) {
 	// pre-aligned spawns). Strong enough to overwhelm tire grip by design. The
 	// FIRE decision lives in events (the once-per-step state pass) - force
 	// functions run on trial integrator substates and a Stroke mutation here
-	// is silently discarded.
-	total.Moment = total.Moment.Add(Vec3{Y: -swing * 2.4e6}.Subtract(Vec3{Y: s.Omega.Y * 3.3e6}))
+	// is silently discarded. Its damping is on the jet's yaw rate against the
+	// deck's: on the jet's own it fought a turning ship's rotation, and the jet
+	// lagged its track by 1.7 degrees in a 30 kt turn, swinging its tail 0.2 m
+	// across the deck.
+	total.Moment = total.Moment.Add(Vec3{Y: -swing * 2.4e6}.Subtract(Vec3{Y: (s.Omega.Y - c.leg(s.Time).Turn) * 3.3e6}))
 }
 
 // stroke is the catapult throw: a constant force along the track while the
