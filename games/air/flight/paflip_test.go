@@ -15,7 +15,7 @@ import (
 // deck wing-leveler must live on the deck alone - airborne it snaps the jet
 // toward wings-level the moment the law flips, mid-bank in the turn to final.
 func TestPAFlip(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 120, Fighter.Mass.Fuel*0.4)
 	m.State.Attitude = m.State.Attitude.Multiply(Axis(Vec3{X: 1}, -45*math.Pi/180))
 	in := Inputs{Gear: true, Throttle: 0.25, Pitch: 0.25}

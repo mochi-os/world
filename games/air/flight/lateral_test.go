@@ -20,7 +20,7 @@ import (
 // is, so the wind meets it as sideslip.
 func approachJet(t *testing.T, breeze Vec3) (*Model, float64) {
 	t.Helper()
-	m := New(Fighter, Environment{Seed: 1, Wind: breeze}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1, Wind: breeze}, World{Sea: 0})
 	state, throttle := Approach(m, Vec3{Y: 300}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
 	state.Velocity = state.Velocity.Subtract(wind(state.Position, 0, m.Environment, nil))
 	m.State = state
@@ -128,7 +128,7 @@ func TestApproachCrosswind(t *testing.T) {
 // pointing off the centreline, and the arrest has to keep it on the angle.
 func TestCrosswindTrap(t *testing.T) {
 	const wind = 4 // m/s across the deck (~8 kt); hands-off, no lineup corrections
-	m := New(Fighter, Environment{Wind: Vec3{Z: wind}}, harbor())
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Wind: Vec3{Z: wind}}, harbor())
 	ground := Vec3{X: 59, Y: -3.4}
 	relative := ground.Subtract(Vec3{Z: wind})
 	forward := Vec3{X: relative.X, Z: relative.Z}.Normalize()

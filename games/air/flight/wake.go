@@ -17,7 +17,7 @@
 // to the moment asked for, and returns the pieces close enough to matter. The
 // host hands them to Model.Wake before each step. The model's own freshest
 // wake is left out: the aerodynamics already carries it as the downwash.
-// Every mark and piece is in the world frame, Home, wherever the host works.
+// Every mark and piece is in the chart (Wakes.Chart), wherever the host works.
 
 package flight
 
@@ -68,7 +68,7 @@ func (v Vortex) induced(p Vec3) Vec3 {
 	return cross.Scale(factor * fade)
 }
 
-// distance is how far p, in Home, lies from the piece's line: what its taper
+// distance is how far p, in the chart, lies from the piece's line: what its taper
 // reads.
 func (v Vortex) distance(p Vec3) float64 {
 	first, second := p.Subtract(v.A), p.Subtract(v.B)
@@ -84,7 +84,7 @@ func (v Vortex) distance(p Vec3) float64 {
 func (m *Model) Swirl() Vec3 { return m.swirl }
 
 // Induced is the air velocity the pieces induce at p, m/s: p and the result
-// in the caller's frame, which place carries to Home, where the pieces are.
+// in the caller's frame, which place carries to the chart, where the pieces are.
 func Induced(p Vec3, vortices []Vortex, place Rigid) Vec3 {
 	q := place.Point(p)
 	var sum Vec3
@@ -102,7 +102,7 @@ type mark struct {
 	left, right Vec3
 	sink        Vec3    // unit, opposite the lift
 	air         Vec3    // the air's velocity where they were shed, m/s
-	up          Vec3    // the level up where they were shed, Home: what the sea's floor is measured along
+	up          Vec3    // the level up where they were shed, in the chart: what the sea's floor is measured along
 	height      float64 // the altitude they were shed at, m
 	circulation float64
 	spacing     float64
@@ -166,6 +166,17 @@ type Wakes struct {
 	owners []int // the trails' aircraft, ascending: walked in this order, never the map's, so every host sums the same pieces in the same order
 	// Turbulence, σ m/s, shortens every wake's life: the eddies tear the pair apart.
 	Turbulence float64
+	// Chart is the frame the marks are laid in (Environment.Chart): the zero
+	// Frame is Midway. Record keeps it the model's.
+	Chart Frame
+}
+
+// charted is the frame the marks are laid in.
+func (w *Wakes) charted() Frame {
+	if w.Chart.Set() {
+		return w.Chart
+	}
+	return Midway
 }
 
 // Record lays a mark for aircraft id from its model, no more often than every
@@ -177,6 +188,7 @@ func (w *Wakes) Record(id int, time float64, m *Model) {
 	}
 	lift := s.Fcs.Normal * m.Mass() * m.Gravity
 	home := m.Environment.Placement()
+	w.Chart = m.Environment.Charted()
 	density := air(m.Environment.Theatre().Altitude(s.Position), m.Environment).Density
 	w.Shed(id, time, home.Point(s.Position), home.Attitude(s.Attitude), home.Vector(s.Velocity), lift, m.Airframe.Reference.Span, density, home.Vector(m.gust.Subtract(m.swirl)))
 }
@@ -190,7 +202,7 @@ func (w *Wakes) latest(id int) *mark {
 }
 
 // Shed lays a mark from the explicit state of an aircraft the host knows only
-// by its pose, in Home: position, attitude, velocity over the ground, the lift
+// by its pose, in the chart: position, attitude, velocity over the ground, the lift
 // it carries (N, negative under a push), its span (m), the air's density there
 // and the air's own velocity.
 func (w *Wakes) Shed(id int, time float64, position Vec3, attitude Quat, velocity Vec3, lift float64, span float64, density float64, air Vec3) {
@@ -224,9 +236,10 @@ func (w *Wakes) Shed(id int, time float64, position Vec3, attitude Quat, velocit
 		sink = up // a pushed jet's pair moves away from its lift, which points down
 	}
 	half := attitude.Rotate(Vec3{Z: 1}).Scale(spacing / 2)
-	place := Home.Place(position)
+	chart := w.charted()
+	place := chart.Place(position)
 	next := mark{time: time, left: position.Subtract(half), right: position.Add(half), sink: sink, air: air,
-		up: Home.Normal(place), height: place.Altitude, circulation: circulation, spacing: spacing}
+		up: chart.Normal(place), height: place.Altitude, circulation: circulation, spacing: spacing}
 	if n := len(t.marks); n > 0 {
 		prior := t.marks[n-1]
 		middle := prior.left.Add(prior.right).Scale(0.5)
@@ -312,7 +325,7 @@ func (w *Wakes) aged(k mark, time float64, sea float64) (left Vec3, right Vec3, 
 // Near is the wake aircraft id meets at position and time: every piece of
 // every trail within reach, aged to time, nearest first and no more than
 // wake_pieces of them. Its own wake counts once it is wake_fresh seconds old.
-// position is in Home, and sea the height the pairs level off above.
+// position is in the chart, and sea the height the pairs level off above.
 func (w *Wakes) Near(id int, position Vec3, time float64, sea float64) []Vortex {
 	type candidate struct {
 		vortex   Vortex

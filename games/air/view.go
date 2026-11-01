@@ -4,15 +4,16 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The brain reads +Y as up and a jet's y as its height above the sea, which
-// is true in the tangent frame of the ellipsoid under it and nowhere else on
-// the curved earth: 15 km from a frame's anchor its up leans 2.4
-// milliradians and the sea lies 18 m below its y = 0. So a bot thinks in a
-// frame laid near it. Near Midway that is the world frame itself, where the
-// match is simulated; farther out it is the tangent frame at the centre of
-// the patch of the earth the bot is in, a fifth of a degree of latitude and
-// of longitude across, so the bots fighting together share one and the
-// session carries its state into it once for them all.
+// The brain reads +Y as up and its own y as its height above the sea, which
+// is true in the tangent frame under it and nowhere else on the curved earth:
+// 15 km from a frame's anchor its up leans 2.4 milliradians and the sea lies
+// 18 m below its y = 0. The session keeps its state Earth-centred, where y is
+// up nowhere, so a bot always thinks in a frame of its own laid on the sea
+// under it, and laid again under it once it has flown a kilometre from that
+// frame's anchor. Its view is the same wherever on the earth the fight is:
+// a frame shared on a fixed grid would read the sea and up differently for a
+// fight moved to another place, by where the fight fell in the grid. Another
+// jet's height it asks of the earth model (height).
 //
 // While a bot thinks in a frame of its own, every aircraft, chaff bloom and
 // missile it can read is carried into that frame and carried back after,
@@ -29,21 +30,52 @@ import (
 	"world/games/air/flight"
 )
 
-const (
-	vicinity = 15000.0             // m: a bot this close to the session frame's anchor thinks in it
-	patch    = 0.2 * math.Pi / 180 // rad of latitude and of longitude: the patches the earth is laid in farther out
-)
+// reach is how far a bot flies from the anchor of the frame it thinks in, m,
+// before the frame is laid again under it: a kilometre out the sea lies 8 cm
+// under the frame's level and its up leans 0.16 milliradians.
+const reach = 1000
 
-// outlook is the frame a bot at this position thinks in.
-func (i *instance) outlook(position flight.Vec3) flight.Frame {
-	theatre := i.environment.Theatre()
-	if position.X*position.X+position.Z*position.Z < vicinity*vicinity && position.Y > -1000 {
-		return theatre // the far side of the earth reads small x and z too, a whole diameter below
+// outlook is the frame a bot thinks in: the one it thought in last, while it
+// is within reach of that frame's anchor, and otherwise the level frame on
+// the sea under it. A drone, which remembers nothing, thinks in the frame
+// under it each tick.
+func (i *instance) outlook(a *craft) flight.Frame {
+	frame := i.environment.Theatre()
+	position := a.model.State.Position
+	if b := a.brain; b != nil && b.frame.Tangent() {
+		if p := flight.Between(frame, b.frame).Point(position); math.Hypot(p.X, p.Z) <= reach {
+			return b.frame
+		}
 	}
-	place := theatre.Place(position)
-	latitude := (math.Floor(place.Latitude/patch) + 0.5) * patch
-	longitude := (math.Floor(place.Longitude/patch) + 0.5) * patch
-	return flight.Tangent(latitude, longitude)
+	place := frame.Place(position)
+	return flight.Tangent(place.Latitude, place.Longitude)
+}
+
+// height is a point's height above the sea, from the earth model at the
+// point. In the frame a bot thinks in its own y is its height to about a
+// decimetre, the curve's 8 cm a kilometre out and the geoid's slope, but
+// another jet's is not: the sea falls away under the frame's level as the
+// square of the distance, so a jet 5 km off stands 2 m higher than its y says
+// and one 20 km off 31 m.
+func height(p flight.Vec3, air flight.Environment) float64 { return air.Theatre().Altitude(p) }
+
+// minds runs every living bot's turn in slot order - its brain, or a drone's
+// wander - each in the frame it thinks in. The session is carried from one
+// bot's frame straight into the next's, and back to its own after the last.
+func (i *instance) minds(tick uint64) {
+	home := i.environment.Theatre()
+	for _, slot := range i.slots() {
+		a := i.aircraft[slot]
+		if !a.bot || !a.alive {
+			continue
+		}
+		if a.brain != nil {
+			i.visit(a, home, func() { i.ponder(slot, a, tick) }) // the fighting brain (bot.go)
+		} else {
+			i.visit(a, home, func() { weave(slot, a, tick) }) // drones keep the original wander
+		}
+	}
+	i.carry(home)
 }
 
 // think runs one bot's brain in the frame it thinks in.
@@ -51,28 +83,31 @@ func (i *instance) think(slot int, a *craft, tick uint64) {
 	i.within(a, func() { i.ponder(slot, a, tick) })
 }
 
-// within runs a bot's turn - its brain, or a drone's wander - in the frame
-// it thinks in, carrying the session's state there and back.
+// within runs a bot's turn in the frame it thinks in, carrying the session's
+// state there and back.
 func (i *instance) within(a *craft, turn func()) {
-	theatre := i.environment.Theatre()
-	frame := i.outlook(a.model.State.Position)
+	home := i.environment.Theatre()
+	i.visit(a, home, turn)
+	i.carry(home)
+}
+
+// visit runs a bot's turn in the frame it thinks in, carrying the session
+// there if it is not there already and leaving it there. home is the
+// session's own frame, where a brain that has never thought remembers.
+func (i *instance) visit(a *craft, home flight.Frame, turn func()) {
+	frame := i.outlook(a)
 	if b := a.brain; b != nil {
 		was := b.frame
 		if !was.Set() {
-			was = theatre
+			was = home
 		}
 		if !was.Same(frame) {
 			b.rebase(flight.Between(was, frame))
 		}
 		b.frame = frame
 	}
-	if frame.Same(theatre) {
-		turn()
-		return
-	}
 	i.carry(frame)
 	turn()
-	i.carry(theatre)
 }
 
 // carry moves everything a brain can read into a frame: every aircraft's
@@ -84,9 +119,10 @@ func (i *instance) carry(frame flight.Frame) {
 	if r.Plain() {
 		return
 	}
+	place := flight.Environment{Frame: frame, Chart: i.environment.Chart}.Placement() // every model reads the session's chart
 	for _, c := range i.aircraft {
 		if c.model != nil {
-			c.model.Reframe(frame)
+			c.model.Carry(r, frame, place)
 		}
 		if c.cloud != (flight.Vec3{}) {
 			c.cloud = r.Point(c.cloud)
@@ -108,7 +144,7 @@ func (i *instance) carry(frame flight.Frame) {
 // reframe moves the whole session into another frame for good: every model,
 // missile, round, wreck and bloom, the environment, and the memory of every
 // brain that thought in the old frame. Single player's arena follows the
-// client's frame with it; the server's stays in the world frame.
+// client's frame with it; the server's stays Earth-centred.
 func (i *instance) reframe(frame flight.Frame) {
 	was := i.environment.Theatre()
 	r := flight.Between(was, frame)

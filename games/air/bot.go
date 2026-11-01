@@ -512,9 +512,23 @@ var layers = map[string]layer{
 	"low_stratus":  {base: 152, top: 460, cover: 0.85},
 }
 
-// glare is the sun direction, fixed for merge fairness — mirrors TOD in
-// engine.ts (the moon takes the same slot at night, but glare only blinds by day).
+// glare is the sun by day as the day's moment saw it from Midway, 60 degrees
+// up due south (moon.ts OBSERVER, 28.2072 N 177.3735 W, and TOD in engine.ts;
+// the moon takes the same slot at night, but glare only blinds by day).
 var glare = flight.Vec3{Y: 0.866, Z: 0.5}
+
+// daylight is that sun in the axes of Midway's chart. The moments belong to
+// the chart they were seen from: a session charted elsewhere sees its day's
+// sun over its own chart as Midway's stands over Midway.
+var daylight = flight.Between(flight.Tangent(28.2072*math.Pi/180, -177.3735*math.Pi/180), flight.Midway).Vector(glare)
+
+// sunward is the day's sun in a frame, for a session charted in chart. At the
+// moment's one instant the sun lies the same way from everywhere on the earth,
+// so a jet far from the chart sees it where it really stood there, lower in
+// the sky or set, and not 60 degrees up due south.
+func sunward(frame, chart flight.Frame) flight.Vec3 {
+	return flight.Between(chart, frame).Vector(daylight)
+}
 
 // track is the last-seen picture of one contact. Perception latency lives
 // here: the track refreshes no faster than the skill's delay, so a rookie
@@ -802,11 +816,12 @@ func (i *instance) visible(me, other *craft, tick uint64) bool {
 	if me.brain != nil {
 		cone = me.brain.skill.glare
 	}
-	if !i.night && o.Position.Y > s.Position.Y && cone > 0 && direction.Dot(glare) > math.Cos(cone*math.Pi/180) {
+	mine, his := height(s.Position, i.environment), height(o.Position, i.environment)
+	if !i.night && his > mine && cone > 0 && direction.Dot(sunward(i.environment.Theatre(), i.environment.Charted())) > math.Cos(cone*math.Pi/180) {
 		return false // up-sun: inside the cone this pilot cannot see into
 	}
 	if l, found := layers[i.sky]; found {
-		low, high := math.Min(s.Position.Y, o.Position.Y), math.Max(s.Position.Y, o.Position.Y)
+		low, high := math.Min(mine, his), math.Max(mine, his)
 		if over := math.Min(high, l.top) - math.Max(low, l.base); over > 0 {
 			depth := over / math.Max(high-low, 1) * distance // LOS length inside the layer
 			block := l.cover * clamp(depth/300, 0, 1)
@@ -1821,7 +1836,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 	closure := me.Velocity.Subtract(prey.velocity).Dot(direction)
 	mine := me.Position.Y + speed*speed/19.62
 	his := prey.velocity.Subtract(prey.blown).Length() // his true airspeed
-	theirs := prey.position.Y + his*his/19.62
+	theirs := height(prey.position, a.model.Environment) + his*his/19.62
 
 	menace, gap := i.pursuer(b, me, known)
 	i.flinch(slot, a, tick, menace, gap)
@@ -2075,7 +2090,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// is ordinary offense once the hold expires and his nose falls off.
 		if b.skill.library >= 4 && span > b.tactics.rope.near && span < b.tactics.rope.far {
 			through := foe.velocity.Subtract(foe.blown).Length() // his true airspeed: energy goes with the air, as mine does
-			foes := foe.position.Y + through*through/19.62
+			foes := height(foe.position, a.model.Environment) + through*through/19.62
 			on := foe.velocity.Subtract(foe.blown).Normalize().Dot(at.Scale(-1))
 			if mine > foes+b.tactics.rope.edge && on < b.tactics.rope.nose {
 				b.mode = "rope"
@@ -2250,7 +2265,7 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// run-in toward the up-sun station — his own glare model blinds him
 		// to anything within ~5° of the disc, and we built that model.
 		if b.skill.library >= 4 && !i.night && distance > 1500 {
-			station := spot.Add(glare.Scale(distance * 0.2))
+			station := spot.Add(sunward(a.model.Environment.Theatre(), a.model.Environment.Charted()).Scale(distance * 0.2))
 			toward, _ := i.bearing(me.Position, station)
 			if toward.Dot(airflow(me, a.model.Environment).Normalize()) > 0.75 { // nearly free, never a detour — the first cut drifted every approach into a delay
 				b.aim = toward
@@ -2432,7 +2447,14 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 		// angle is a quarter-circle, not a 12-second, 4 km turnaround — without
 		// it every merge is one-pass-haul-ass forever and nobody ever guns.
 		if closure > 0 && distance < math.Max(b.tactics.lead.floor, closure*b.tactics.lead.closure) {
-			pass := math.Copysign(1, airflow(me, a.model.Environment).Normalize().Cross(direction).Y) // his passing side
+			// His passing side. A jet within a milliradian of dead ahead, a metre
+			// at the 800 m of a lead turn, passes on the side an exact tie gives,
+			// so the turn never hangs on the last bits of the arithmetic, which
+			// fall differently wherever on the earth it is done.
+			pass := 1.0
+			if airflow(me, a.model.Environment).Normalize().Cross(direction).Y < -1e-3 {
+				pass = -1
+			}
 			// The game plan (tier 3+): TWO-circle (rate fight — turn toward his
 			// side, fight at corner in burner) with the energy to rate; ONE-
 			// circle (radius fight — turn across the pass, slow and tight,
@@ -2636,7 +2658,7 @@ func (i *instance) flinch(slot int, a *craft, tick uint64, menace int, gap float
 	// His aim error ON ME, the mirror of pipper(): bore against my led
 	// future position with his rounds' real average speed.
 	closure := his.Velocity.Subtract(me.Velocity).Dot(line.Scale(1 / span))
-	transit := span / math.Max(battle.Average(span, his.Position.Y)+closure, 200)
+	transit := span / math.Max(battle.Average(span, height(his.Position, a.model.Environment))+closure, 200)
 	future := me.Position.Add(me.Velocity.Scale(transit)).
 		Subtract(his.Velocity.Scale(transit)).
 		Add(flight.Vec3{Y: 4.9 * transit * transit})
@@ -2833,7 +2855,7 @@ func (i *instance) polish(slot int, a *craft, tick uint64, speed, pace float64, 
 		// husband: when a cold pursuit is not gaining and he is not above me,
 		// shallow the line below his plane and spend altitude as closure. The
 		// climb lid and deck floor (guard()) still bound the line.
-		if cold && b.nearing < 20 && me.Position.Y > b.prey.position.Y-50 &&
+		if cold && b.nearing < 20 && me.Position.Y > height(b.prey.position, a.model.Environment)-50 &&
 			(b.mode == "saddle" || b.mode == "press" || b.mode == "lag" || b.mode == "screw") {
 			drop := clamp((20-b.nearing)*0.012, 0, 0.25)
 			b.aim = flight.Vec3{X: b.aim.X, Y: b.aim.Y - drop, Z: b.aim.Z}.Normalize()

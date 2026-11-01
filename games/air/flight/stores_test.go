@@ -56,7 +56,7 @@ func TestCatalog(t *testing.T) {
 // detaching clamps to the remaining capacity, and re-asserting an unchanged
 // mask changes nothing.
 func TestTankFill(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	if m.State.External.Total() != 0 {
 		t.Fatalf("bare jet spawned with %f kg external", m.State.External.Total())
 	}
@@ -87,7 +87,7 @@ func TestTankFill(t *testing.T) {
 // them, so internal holds level; internal only falls once the externals are
 // dry.
 func TestBurnOrder(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.Stores(Fighter.Default | mask(t, "pylon5", "tank5"))
 	m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel) // internal full: the transfer only keeps it there
 	m.State.External = Tanks{Centre: 5}                                   // nearly dry, so the crossover happens inside the test
@@ -114,7 +114,7 @@ func TestBurnOrder(t *testing.T) {
 func TestHeldFuel(t *testing.T) {
 	const held = 500.0
 	fly := func(hold float64) *Model {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, 220, held+4)
 		in := Inputs{Throttle: 1, Held: hold}
 		for tick := 0; tick < 240*20; tick++ {
@@ -144,7 +144,7 @@ func TestHeldFuel(t *testing.T) {
 	}
 
 	// More held than is aboard is all of it, and the tank never reads negative.
-	over := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	over := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	over.State = Level(over, Vec3{Y: 6000}, Vec3{X: 1}, 220, 300)
 	for tick := 0; tick < 240; tick++ {
 		over.Step(Inputs{Throttle: 1, Held: 900})
@@ -155,7 +155,7 @@ func TestHeldFuel(t *testing.T) {
 
 	// Reheat lights on fuel the engines can reach, not on what the wings hold.
 	lit := func(hold float64) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, 220, held)
 		m.State.Engine[0].Spool, m.State.Engine[1].Spool = 1, 1
 		for tick := 0; tick < 60; tick++ {
@@ -170,7 +170,7 @@ func TestHeldFuel(t *testing.T) {
 	// The feed tank at FUEL LO opens a STOPped tank's transfer: with the wings
 	// holding fuel it is low that much sooner.
 	moved := func(hold float64) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.Stores(Fighter.Default | mask(t, "pylon5", "tank5"))
 		m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 200, caution+200)
 		m.State.External = Tanks{Centre: 400}
@@ -187,7 +187,7 @@ func TestHeldFuel(t *testing.T) {
 // TestTankWeigh: a mounted tank carries dry mass plus its fuel share, and a
 // single wing tank pulls the CG laterally toward its station.
 func TestTankWeigh(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Fuel = 2000
 	m.weigh()
 	bare := m.mass
@@ -212,7 +212,7 @@ func TestTankWeigh(t *testing.T) {
 // summed hardware, and inertia about the roll axis grows with the outboard
 // rounds — the loaded jet must feel heavier in roll.
 func TestTwinWeigh(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Fuel = 2000
 	m.weigh()
 	clean := m.inertia[0][0]
@@ -257,7 +257,7 @@ func TestExternalEncode(t *testing.T) {
 // TestTankJettisonShare: a PART-FULL tank departs with its proportional share
 // of the external fuel (#42) - exact, because attached tanks drain in step.
 func TestTankJettisonShare(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	all := Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")
 	m.Stores(all)
 	if m.State.External != (Tanks{Wing: 2020, Centre: 1010}) {
@@ -294,7 +294,7 @@ func TestTransferSwitches(t *testing.T) {
 	all := Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")
 	type result struct{ internal, wing, centre float64 }
 	run := func(in Inputs, wow bool, fuel float64, external Tanks) result {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.Stores(all)
 		m.State.Fuel, m.State.External, m.State.Gear.Wow = fuel, external, wow
 		for i := 0; i < 240; i++ { // one second at 2 kg/s of burn

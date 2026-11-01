@@ -19,7 +19,7 @@ import (
 // the law delivers what the stick asks.
 
 func configured(kt float64, flap float64) (*Model, Inputs) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 250}, Vec3{X: 1}, kt*knot, Fighter.Mass.Fuel*0.5)
 	m.State.Gear.Extension = 1
 	in := Inputs{Gear: true, Flap: flap, Throttle: lever(m.State.Engine[0].Spool)}
@@ -79,7 +79,7 @@ func TestPlacardRecorded(t *testing.T) {
 // modest checked pull must actually break the sink — the squared stick made
 // 0.35 stick command ~1 degree of alpha and the jet flew into the ground.
 func TestFlareEffectiveness(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	state, throttle := Approach(m, Vec3{Y: 20}, Vec3{X: 1}, -3.0*math.Pi/180, Fighter.Mass.Fuel*0.4)
 	state.Gear.Extension = 1
 	m.State = state

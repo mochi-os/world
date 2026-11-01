@@ -11,7 +11,7 @@ import (
 	"testing"
 )
 
-func calm() *Model { return New(Fighter, Environment{}, World{}) }
+func calm() *Model { return New(Fighter, Environment{Frame: scene, Chart: scene}, World{}) }
 
 // polar evaluates aircraft lift and drag coefficients at a body alpha with
 // a held symmetric stabilator.
@@ -163,7 +163,7 @@ func TestShortPeriod(t *testing.T) {
 // airframe flown - the same values the loop computed every step before - and
 // works them out again for a swapped airframe.
 func TestElementConstants(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Position = Vec3{Y: 3000}
 	m.State.Velocity = Vec3{X: 200}
 	m.Step(Inputs{Throttle: 0.8})

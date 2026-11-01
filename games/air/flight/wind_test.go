@@ -12,7 +12,7 @@ import (
 )
 
 func breeze() Environment {
-	return Environment{Seed: 7, Wind: Vec3{X: 6, Z: 3}, Turbulence: 1.5}
+	return Environment{Frame: scene, Chart: scene, Seed: 7, Wind: Vec3{X: 6, Z: 3}, Turbulence: 1.5}
 }
 
 // TestWindDeterminism: identical (seed, position, time) gives identical wind.
@@ -78,7 +78,7 @@ func TestWindVariation(t *testing.T) {
 func TestBurble(t *testing.T) {
 	env := breeze()
 	env.Turbulence = 0
-	boat := &Carrier{Position: Vec3{Y: 19}, Heading: 0, Speed: 0}
+	boat := &Carrier{Chart: scene, Position: Vec3{Y: 19}, Heading: 0, Speed: 0}
 	env.Wind = Vec3{X: -10} // wind down the deck axis
 	groove := Vec3{X: -300, Y: 25}
 	clean := Vec3{X: -3000, Y: 25}

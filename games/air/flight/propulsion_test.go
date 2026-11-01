@@ -14,7 +14,7 @@ import (
 // TestDump: the DUMP switch drains internal fuel at the NATOPS rate
 // (2.2.7: 600-1,000 lb/min) and terminates on its own at the bingo floor.
 func TestDump(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, 3000)
 	throttle := m.State.Engine[0].Spool
 	start := m.State.Fuel
@@ -40,7 +40,7 @@ func TestDump(t *testing.T) {
 // windmills the rotor fast enough to light, and it is back at power within
 // half a minute, the airstart's time rather than a spool's.
 func TestSecure(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.5)
 	for i := 0; i < 240*10; i++ {
 		m.Step(Inputs{Throttle: 1, Secure: [2]bool{true, false}})
@@ -69,7 +69,7 @@ func TestSecure(t *testing.T) {
 // cold and dark start (#133). The engines are stepped alone, so it stays at
 // rest however long they turn.
 func still() *Model {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Fuel = 3000
 	m.State.Gear.Wow = true
 	m.State.Velocity = Vec3{}
@@ -133,7 +133,7 @@ func TestWindmill(t *testing.T) {
 		speed float64
 		light bool
 	}{{200, true}, {90, false}} {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, c.speed, 3000)
 		motor(m, Inputs{Throttle: 0.5, Secure: [2]bool{true, true}}, 60)
 		motor(m, Inputs{Throttle: 0.5}, 40)
@@ -164,7 +164,7 @@ func TestRundownEncodes(t *testing.T) {
 // 20 s later. At a 15% stop it was still at 188 kt, and the demonstration
 // pilot turned final 3 km astern.
 func TestIdleThrust(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	engine := &m.Airframe.Engines[0]
 	military, _ := output(EngineState{Spool: 1}, engine, 1.225, 0)
 	share := func(spool float64) float64 {
@@ -189,7 +189,7 @@ func TestIdleThrust(t *testing.T) {
 // reach ground idle, until the throttles come off it or the jet lands.
 func TestIdleStop(t *testing.T) {
 	fresh := func(wow bool, g float64) *Model {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State.Fuel = 3000
 		m.State.Gear.Wow = wow
 		m.State.Fcs.Normal = g

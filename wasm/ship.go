@@ -61,7 +61,7 @@ func steer(js.Value, []js.Value) any {
 	}
 	c, t := model.World.Carrier, model.State.Time
 	jet := model.State
-	jet.Position = model.Environment.Placement().Point(jet.Position) // the ship sails the world frame
+	jet.Position = model.Environment.Placement().Point(jet.Position) // the ship sails the chart
 	changed := vessel.Step(c, t, ship.Needed(c, t, []flight.State{jet}))
 	if held > 0 {
 		place := model.Environment.Placement()

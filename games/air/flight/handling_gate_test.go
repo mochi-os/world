@@ -18,7 +18,7 @@ import (
 // luck, is what keeps a clean pull flyable.
 func TestDepartureBoundary(t *testing.T) {
 	cell := func(name string, gear bool, flap, kcas float64) {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kcas/1.94384, 3000)
 		if gear {
 			m.State.Gear.Extension = 1
@@ -54,7 +54,7 @@ func TestDepartureBoundary(t *testing.T) {
 	// in-close-waveoff accident regime the flight-1 crash actually lived in
 	// (#97): gear down, FULL flap, pattern speeds, adverse yaw.
 	crossed := func(name string, gear bool, flap, kcas float64) (float64, float64) {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kcas/1.94384, 3000)
 		if gear {
 			m.State.Gear.Extension = 1
@@ -106,7 +106,7 @@ func TestDepartureBoundary(t *testing.T) {
 // glideslope, full burner and a climb command; how much altitude the go-around
 // consumes before the climb is established.
 func TestWaveoff(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	state, _ := Approach(m, Vec3{Y: 60}, Vec3{X: 1}, -3.5*math.Pi/180, Fighter.Mass.Fuel*0.4)
 	state.Gear.Extension = 1
 	m.State = state
@@ -181,7 +181,7 @@ func TestBleed(t *testing.T) {
 // human input reaches, not missing lateral damping.
 func TestRollTracking(t *testing.T) {
 	ring := func(kt, gain float64) (int, bool) {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kt/1.94384, 2500)
 		const tau = 0.30
 		lag := make([]float64, int(tau/Dt))

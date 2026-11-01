@@ -55,7 +55,7 @@ const (
 	// Revisit when a map with real relief lands. The tell is a bot holding a level
 	// break straight into rising ground - the floor will read its height above the
 	// SEA and be perfectly happy.
-	sea      = 3      // world y at which flight ends
+	sea      = 3      // m above sea level at which flight ends
 	speed    = 220    // spawn airspeed
 	fuel     = 4900.0 // default spawn fuel load, kg: full internal (~10,800 lb), the same load the client's presets and the multiplayer creator default to since 2026-08-18 — the session may choose otherwise. Was 2,722 kg (6,000 lb) until then; every doctrine baseline recorded before that date was measured on the lighter jet
 	pause    = 5.0    // seconds from death to respawn (air mode)
@@ -90,10 +90,22 @@ var separation = sync.OnceValue(func() float64 {
 	ladder := round.Ladder(
 		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
-		flight.Environment{}, 0,
+		stage, 0,
 	)
 	return ladder.Max + commit
 })
+
+// setting is the frames a new session is laid in: the one it keeps its state
+// in, Earth's own (the zero Frame) on the server, and the one its map is
+// charted in, Midway's (the zero Frame). The package's tests lay their
+// sessions in a scene instead, which they can put anywhere on the earth
+// (scene_test.go).
+var setting struct{ Frame, Chart flight.Frame }
+
+// stage is where a match's opening is judged: the tangent frame its geometry
+// is laid in (Opening.state, the spawns' ring), the chart's, where matches
+// open.
+var stage = flight.Environment{Frame: flight.Midway}
 
 // Opening is a BVR joust's start (#46), drawn from a seed so the world server
 // and the browser's core draw the same one: each jet's block between 15,000
@@ -132,7 +144,7 @@ func Draw(seed uint64) Opening {
 	for pass := 0; pass < 4; pass++ {
 		reach := 0.0
 		for slot := 0; slot < 2; slot++ {
-			reach = math.Max(reach, round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), flight.Environment{}, 0).Max)
+			reach = math.Max(reach, round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), stage, 0).Max)
 		}
 		o.Apart = reach + commit
 	}
@@ -223,9 +235,12 @@ func (f *Air) Create(session game.Session) (game.Instance, error) {
 		mode:        mode,
 		weapons:     weapons,
 		missiles:    weapons != "guns",
-		environment: flight.Environment{Seed: session.Seed, Wind: trades},
+		environment: flight.Environment{Frame: setting.Frame, Chart: setting.Chart, Seed: session.Seed, Wind: trades},
 		aircraft:    map[int]*craft{},
 		chart:       chart,
+	}
+	if chart.world.Carrier != nil {
+		chart.world.Carrier.Chart = i.environment.Chart // her track is charted where the map is
 	}
 	if mode == "teams" {
 		i.score = map[string]int{"red": 0, "blue": 0}
@@ -720,9 +735,44 @@ func (i *instance) spawn(slot int, m *flight.Model, team string, tank float64) {
 		}
 		angle = base + (math.Mod(float64(slot)*2.399963, 2)-1)*math.Pi/3
 	}
-	position := flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring}
-	inward := flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)}
+	r := i.opened()
+	position := r.Point(flight.Vec3{X: math.Cos(angle) * ring, Y: altitude, Z: math.Sin(angle) * ring})
+	inward := r.Vector(flight.Vec3{X: -math.Cos(angle), Y: 0, Z: -math.Sin(angle)})
 	m.State = flight.Level(m, position, inward, speed, tank)
+}
+
+// opened is the motion from the frame a match opens in - the chart's, round
+// the anchor its map is laid about - to the session's: the spawns' ring, the
+// team walls and the joust's line are drawn there, level, y up.
+func (i *instance) opened() flight.Rigid {
+	return flight.Between(i.environment.Charted(), i.environment.Theatre())
+}
+
+// fight is the level frame under the living jets' centre of mass, but slot's,
+// as motions to it from the session's frame and back, and the centre in it:
+// where a re-entry is laid, level, y up, however far the fight has drifted.
+// None found when no other jet is alive.
+func (i *instance) fight(slot int) (into, back flight.Rigid, centre flight.Vec3, found bool) {
+	// slots(), not a bare range: floating-point addition is not associative,
+	// so a randomised map order would move the spawn - and the whole fight
+	// after it - between runs (#133).
+	count := 0
+	for _, other := range i.slots() {
+		b := i.aircraft[other]
+		if other == slot || b == nil || !b.alive || b.model == nil {
+			continue
+		}
+		centre = centre.Add(b.model.State.Position)
+		count++
+	}
+	if count == 0 {
+		return flight.Identity, flight.Identity, flight.Vec3{}, false
+	}
+	centre = centre.Scale(1 / float64(count))
+	theatre := i.environment.Theatre()
+	level := theatre.Level(centre)
+	into = flight.Between(theatre, level)
+	return into, into.Inverse(), into.Point(centre), true
 }
 
 // enter places a jet ARRIVING at a fight already under way - a player joining
@@ -752,23 +802,12 @@ func (i *instance) enter(slot int, m *flight.Model, team string, tank float64) {
 // fight, so a life begins with a look and a turn in, never in a pipper. An
 // empty room has nothing to clear and the caller's merge ring stands.
 func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
-	// slots(), not a bare range, and for the same reason bvr() uses it (#133):
-	// floating-point addition is not associative, so a randomised map order
-	// would move the spawn - and the whole fight after it - between runs.
-	centre, count := flight.Vec3{}, 0
-	for _, other := range i.slots() {
-		b := i.aircraft[other]
-		if other == slot || b == nil || !b.alive || b.model == nil {
-			continue
-		}
-		centre = centre.Add(b.model.State.Position)
-		count++
-	}
-	if count == 0 {
+	_, back, centre, found := i.fight(slot)
+	if !found {
 		return flight.Vec3{}, flight.Vec3{}, false
 	}
-	centre = centre.Scale(1 / float64(count))
-	nearest := func(at flight.Vec3) float64 {
+	nearest := func(local flight.Vec3) float64 {
+		at := back.Point(local)
 		least := math.MaxFloat64
 		for _, other := range i.slots() {
 			b := i.aircraft[other]
@@ -802,7 +841,7 @@ func (i *instance) clearing(slot int) (flight.Vec3, flight.Vec3, bool) {
 	if facing.Length() < 1 {
 		facing = flight.Vec3{X: 1}
 	}
-	return best, facing.Normalize(), true
+	return back.Point(best), back.Vector(facing.Normalize()), true
 }
 
 // bvr places a spawn for the separated match shapes (#32) and reports
@@ -823,38 +862,27 @@ func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) boo
 		across := flight.Vec3{X: -inward.Z, Z: inward.X}
 		position := flight.Vec3{X: math.Cos(base) * radius, Y: bvraltitude, Z: math.Sin(base) * radius}
 		position = position.Add(across.Scale(float64((slot%9)-4) * 500)) // line abreast, not a queue
-		m.State = flight.Level(m, position, inward, bvrspeed, tank)
+		r := i.opened()
+		m.State = flight.Level(m, r.Point(position), r.Vector(inward), bvrspeed, tank)
 		return true
 	}
 	if i.mode == "joust" {
 		spawn := i.opening.state(slot, i.apart)
-		m.State = flight.Level(m, spawn.Position, spawn.Velocity.Normalize(), i.opening.Speed, tank)
+		r := i.opened()
+		m.State = flight.Level(m, r.Point(spawn.Position), r.Vector(spawn.Velocity.Normalize()), i.opening.Speed, tank)
 		return true
 	}
-	// slots(), not a bare range: this is the sum the spaced respawn point is
-	// derived from, and floating-point addition is not associative, so a
-	// randomised map order moves the spawn bit-for-bit between otherwise
-	// identical runs -- and the whole subsequent fight with it. Measured before
-	// the fix: eight respawns into one developed 20-bot fight produced eight
-	// different positions. Every other ordered traversal already went through
-	// slots(); this one was missed (#133).
-	centre, count := flight.Vec3{}, 0
-	for _, other := range i.slots() {
-		b := i.aircraft[other]
-		if other == slot || b == nil || !b.alive || b.model == nil {
-			continue
-		}
-		centre = centre.Add(b.model.State.Position)
-		count++
-	}
-	if count == 0 {
+	// The spaced respawn point is derived from the fight's centre of mass,
+	// summed in slot order (fight): measured before that, eight respawns into
+	// one developed 20-bot fight produced eight different positions (#133).
+	_, back, centre, found := i.fight(slot)
+	if !found {
 		return false // an empty room: the merge ring is fine
 	}
-	centre = centre.Scale(1 / float64(count))
 	angle := float64(slot) * 2.399963 // golden-angle bearings: re-entries spread, never queue up a lane
 	away := flight.Vec3{X: math.Cos(angle), Z: math.Sin(angle)}
 	position := flight.Vec3{X: centre.X + away.X*radius, Y: bvraltitude, Z: centre.Z + away.Z*radius}
-	m.State = flight.Level(m, position, away.Scale(-1), bvrspeed, tank)
+	m.State = flight.Level(m, back.Point(position), back.Vector(away.Scale(-1)), bvrspeed, tank)
 	return true
 }
 
@@ -1244,15 +1272,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	if i.mode == "joust" && !i.started {
 		return // waiting room: no physics until the opponent arrives (the lone jet hangs frozen at the ring; Join starts the match and merges both fresh)
 	}
-	for _, slot := range i.slots() {
-		if a := i.aircraft[slot]; a.bot && a.alive {
-			if a.brain != nil {
-				i.think(slot, a, tick) // the fighting brain (bot.go)
-			} else {
-				i.within(a, func() { weave(slot, a, tick) }) // drones keep the original wander
-			}
-		}
-	}
+	i.minds(tick)
 	// Jammer radiation truth (#31): armed AND painted — a hostile STT
 	// holding this craft, or an active radar round hunting it. The armed
 	// state is the pilot's standing decision; whether it radiates right now
@@ -1353,7 +1373,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		// Air-start rule: any surface contact — water, a crash probe, even a
 		// gentle touch — is a kill until multiplayer deck operations land.
 		state := &a.model.State
-		if state.Position.Y <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
+		if a.model.Altitude() <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
 			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
 		}
 	}
@@ -1472,7 +1492,7 @@ func (i *instance) drift(dt float64) {
 			w.model.Step(flight.Inputs{Throttle: w.throttle, Reheat: w.reheat, Lean: w.lean})
 		}
 		state := &w.model.State
-		if w.life <= 0 || state.Position.Y <= sea || state.Gear.Contact >= 0 {
+		if w.life <= 0 || w.model.Altitude() <= sea || state.Gear.Contact >= 0 {
 			i.events = append(i.events, map[string]any{
 				"kind":     "splash",
 				"position": []float64{state.Position.X, state.Position.Y, state.Position.Z},
@@ -1814,7 +1834,7 @@ func departure(a *craft) flight.Vec3 {
 	speed := s.Velocity.Subtract(wind).Length()
 	order := stores_amraams(a.loadout)
 	if next := len(order) - a.amraams; next >= 0 && next < len(order) && stores_eject(a.loadout, order[next]) {
-		return nose.Scale(speed + 15).Add(flight.Vec3{Y: -8}).Add(wind)
+		return nose.Scale(speed + 15).Add(a.model.Up().Scale(-8)).Add(wind) // the rack throws it down, the level down where the jet is
 	}
 	return rail(nose, speed).Add(wind)
 }
@@ -1972,7 +1992,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 		alive, _, _ := m.radar.Advance(dt, nil, nil) // a VISUAL shot with nothing in its field: it flies on, seeing nothing
 		m.position, m.velocity = m.radar.Position, m.radar.Velocity
 		m.life = m.radar.Life
-		return alive && m.position.Y > 0
+		return alive && i.environment.Theatre().Altitude(m.position) > 0
 	}
 	var support, truth *round.Target
 	if target.alive {
@@ -2029,7 +2049,7 @@ func (i *instance) fly_radar(m *missile, dt float64, tick uint64) bool {
 		}
 		return false
 	}
-	return alive && m.position.Y > 0
+	return alive && i.environment.Theatre().Altitude(m.position) > 0
 }
 
 // pursue advances every missile: pure pursuit toward the target, graded
@@ -2094,7 +2114,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 				// the whole point of the M's counter-countermeasures.
 				decoy *= math.Pow(0.5, float64(m.rejected))
 				if battle.Roll(i.environment.Seed, m.number, tick) < decoy {
-					m.lure = seen.Add(flight.Vec3{Y: -30})
+					m.lure = seen.Add(i.environment.Theatre().Up(seen).Scale(-30))
 					m.blind = flare_blind
 					tracking = false
 					m.sight, _ = i.bearing(m.position, m.lure) // the seeker is ON the flare now: re-reference the track, or the aim-point swap reads as an LOS-rate spike and breaks the lock at the seduction instant
@@ -2155,8 +2175,8 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			mark = &aim
 		} else if m.blind > 0 {
 			m.blind -= dt
-			lured = flight.Wind(m.lure, clock, i.environment)             // the flare hangs in the air
-			m.lure = m.lure.Add(lured.Add(flight.Vec3{Y: -45}).Scale(dt)) // flares fall, and drift with the wind
+			lured = flight.Wind(m.lure, clock, i.environment)                                       // the flare hangs in the air
+			m.lure = m.lure.Add(lured.Add(i.environment.Theatre().Up(m.lure).Scale(-45)).Scale(dt)) // flares fall, and drift with the wind
 			aim = m.lure
 			mark = &aim
 			if m.blind <= 0 {
@@ -2246,7 +2266,7 @@ func (i *instance) pursue(dt float64, tick uint64) {
 			m.velocity = wind.Add(through.Scale(math.Max(speed-missile_dragk*speed*speed*dt, 60) / math.Max(speed, 1e-6)))
 		}
 		m.position = m.position.Add(m.velocity.Scale(dt))
-		if m.position.Y <= 0 {
+		if i.environment.Theatre().Altitude(m.position) <= 0 {
 			continue // splashed
 		}
 		alive = append(alive, m)

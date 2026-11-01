@@ -15,7 +15,7 @@ import (
 // checked against independently computed references (subsonic at altitude,
 // the supersonic Rayleigh branch, and the sea-level identity CAS = TAS).
 func TestCas(t *testing.T) {
-	m := New(Fighter, Environment{}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: 0})
 	cas := func(tas, altitude float64) float64 {
 		m.State.Position = Vec3{Y: altitude}
 		m.State.Velocity = Vec3{X: tas}

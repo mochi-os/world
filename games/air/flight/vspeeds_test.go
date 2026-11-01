@@ -36,11 +36,11 @@ var vspeedAlts = []struct {
 
 func vsKnots(tas float64) float64 { return tas * 1.943844 }
 func vsBoth(tas, alt float64) string {
-	return fmt.Sprintf("%3.0f KCAS/%3.0f KTAS", vsKnots(calibrated(tas, alt, Environment{})), vsKnots(tas))
+	return fmt.Sprintf("%3.0f KCAS/%3.0f KTAS", vsKnots(calibrated(tas, alt, Environment{Frame: scene, Chart: scene})), vsKnots(tas))
 }
 
 func vsJet(fuel, alt, speed float64, gear bool) *Model {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Position = Vec3{Y: alt}
 	m.State.Velocity = Vec3{X: speed}
 	m.State.Attitude = Look(Vec3{X: 1})
@@ -59,8 +59,8 @@ func vsJet(fuel, alt, speed float64, gear bool) *Model {
 // altitude - the operational stall under the carefree FCS. The entry is trimmed
 // analytically so no spawn transient trips the sink detector. Returns TAS.
 func vsStall(fuel, alt float64, gear bool) float64 {
-	rho := air(alt, Environment{}).Density
-	probe := New(Fighter, Environment{}, World{}) // weigh the flown configuration instead of guessing empty+fuel: stores mass counts
+	rho := air(alt, Environment{Frame: scene, Chart: scene}).Density
+	probe := New(Fighter, Environment{Frame: scene, Chart: scene}, World{}) // weigh the flown configuration instead of guessing empty+fuel: stores mass counts
 	probe.State.Fuel = fuel
 	probe.weigh()
 	gross := probe.mass
@@ -106,7 +106,7 @@ func vsStall(fuel, alt float64, gear bool) float64 {
 // show what leaving the switch up costs.
 func vsRotate(fuel float64, flap float64) (float64, float64) {
 	world := World{Sea: 0, Fields: []Field{{Height: 0, Strips: []Strip{{A: Vec3{X: -200}, B: Vec3{X: 4000}, Width: 60}}}}}
-	m := New(Fighter, Environment{Seed: 1}, world)
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, world)
 	m.State.Position = Vec3{Y: 2.6}
 	m.State.Velocity = Vec3{X: 0.5}
 	m.State.Attitude = Look(Vec3{X: 1})
@@ -140,7 +140,7 @@ func vsRotate(fuel float64, flap float64) (float64, float64) {
 // for the dynamic measurement below.
 func vsClimbTrim(m *Model, fuel, alt, v float64, engines float64, reheat bool) (float64, float64) {
 	w := (10700 + fuel) * 9.81
-	local := air(alt, Environment{})
+	local := air(alt, Environment{Frame: scene, Chart: scene})
 	lift := func(alpha float64) float64 {
 		trial := m.State
 		trial.Velocity = Vec3{X: v}
@@ -284,7 +284,7 @@ func vsGlide(fuel, alt, stall float64) (float64, float64) {
 	m.State.Damage.Engine[0] = 1
 	m.State.Damage.Engine[1] = 1
 	c := m.Airframe.Control
-	local := air(alt, Environment{})
+	local := air(alt, Environment{Frame: scene, Chart: scene})
 	weight := (10700 + fuel) * 9.81
 	glide := func(v float64) float64 {
 		q := 0.5 * local.Density * v * v
@@ -364,12 +364,12 @@ func vsVmc(fuel, alt, stall float64) float64 {
 	yaw := func(v, rudder float64) float64 {
 		trial := m.State
 		trial.Velocity = Vec3{X: v}
-		rho := air(alt, Environment{}).Density
+		rho := air(alt, Environment{Frame: scene, Chart: scene}).Density
 		trial.Attitude = Axis(Vec3{Z: 1}, clamp(2*(10700+fuel)*9.81/(rho*v*v*37.16)/4.7+0.01, 0, 0.3))
 		trial.Engine[0] = EngineState{Spool: 1, Reheat: 1}
 		trial.Engine[1] = EngineState{Spool: 1, Reheat: 1} // dead via damage, not spool: the worst-case book asymmetry
 		trial.Fcs.Rudder = rudder
-		local := air(alt, Environment{})
+		local := air(alt, Environment{Frame: scene, Chart: scene})
 		return m.forces(&trial, Inputs{}, local).Moment.Y
 	}
 	throw := m.Airframe.Control.Throw.Rudder
@@ -400,7 +400,7 @@ func vsApproach(fuel, alt float64) float64 {
 	gamma := 3 * math.Pi / 180
 	m := vsJet(fuel, alt, 75, true)
 	c := m.Airframe.Control
-	local := air(alt, Environment{})
+	local := air(alt, Environment{Frame: scene, Chart: scene})
 	weight := (10700 + fuel) * 9.81
 	normal := func(v float64) float64 {
 		q := 0.5 * local.Density * v * v
@@ -446,7 +446,7 @@ func vsApproach(fuel, alt float64) float64 {
 func vsVh(fuel, alt float64) float64 {
 	m := vsJet(fuel, alt, 200, false)
 	c := m.Airframe.Control
-	local := air(alt, Environment{})
+	local := air(alt, Environment{Frame: scene, Chart: scene})
 	weight := (10700 + fuel) * 9.81
 	excess := func(v float64) float64 {
 		q := 0.5 * local.Density * v * v
@@ -721,7 +721,7 @@ func TestVSpeeds(t *testing.T) {
 			vx, gx, vy, ry := vsClimbSweep(w.fuel, at.m, vs1, 2, false)
 			fmt.Printf("Vx   best angle (MIL):       %s  (+%.1f deg)\n", vsBoth(vx, at.m), gx)
 			fmt.Printf("Vy   best rate  (MIL):       %s  (%+.0f fpm)\n", vsBoth(vy, at.m), ry*196.85)
-			sigma := air(at.m, Environment{}).Density / air(0, Environment{}).Density
+			sigma := air(at.m, Environment{Frame: scene, Chart: scene}).Density / air(0, Environment{Frame: scene, Chart: scene}).Density
 			if 2*78700*sigma >= weight {
 				fmt.Printf("Vx   best angle (AB):        vertical — T/W %.2f here: any speed above stall sustains 90 deg\n", 2*78700*sigma/weight)
 			} else {
@@ -739,7 +739,7 @@ func TestVSpeeds(t *testing.T) {
 			glide, slope := vsGlide(w.fuel, at.m, vs1)
 			fmt.Printf("best glide (engines out):    %s  (%.1f deg, L/D %.1f)\n", vsBoth(glide, at.m), slope*180/math.Pi, 1/math.Tan(-slope))
 			vh := vsVh(w.fuel, at.m)
-			fmt.Printf("Vh   maximum level (AB):     %s  (M %.2f)\n", vsBoth(vh, at.m), vh/air(at.m, Environment{}).Sound)
+			fmt.Printf("Vh   maximum level (AB):     %s  (M %.2f)\n", vsBoth(vh, at.m), vh/air(at.m, Environment{Frame: scene, Chart: scene}).Sound)
 			if vmc := vsVmc(w.fuel, at.m, vs1); vmc > 0 {
 				fmt.Printf("Vmc  minimum control (AB):   %s\n", vsBoth(vmc, at.m))
 			} else {
@@ -772,8 +772,8 @@ func TestRotateFlap(t *testing.T) {
 		{"heavy", heavyFuel},
 	} {
 		rotate, liftoff := vsRotate(w.fuel, 1)
-		rotateKcas := vsKnots(calibrated(rotate, 0, Environment{}))
-		liftoffKcas := vsKnots(calibrated(liftoff, 0, Environment{}))
+		rotateKcas := vsKnots(calibrated(rotate, 0, Environment{Frame: scene, Chart: scene}))
+		liftoffKcas := vsKnots(calibrated(liftoff, 0, Environment{Frame: scene, Chart: scene}))
 		t.Logf("%s (%.0f kg): flap HALF Vr %.0f KCAS, liftoff %.0f", w.label, 10700+w.fuel, rotateKcas, liftoffKcas)
 		if liftoffKcas < 105 || liftoffKcas > 132 {
 			t.Errorf("%s: minimum liftoff %.0f KCAS at flap HALF — outside 105-132; the 140-knot rotate hint no longer carries margin", w.label, liftoffKcas)

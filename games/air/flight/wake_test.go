@@ -131,7 +131,7 @@ func TestDecay(t *testing.T) {
 	if math.Abs(drifted.X-(k.left.X+50)) > 1e-6 {
 		t.Errorf("drifted %.1f m with a 5 m/s wind over 10 s", drifted.X-k.left.X)
 	}
-	rough := Wakes{Turbulence: 3}
+	rough := Wakes{Chart: scene, Turbulence: 3}
 	if shorter := rough.life(k.circulation, k.spacing); shorter >= life {
 		t.Errorf("turbulence left the life at %.1f s (calm %.1f)", shorter, life)
 	}
@@ -207,7 +207,7 @@ func dense() Wakes {
 // cruise holds a jet level at 150 m/s for seconds with the given wake pieces,
 // and reports, step by step, its load factor and roll rate, and its final speed.
 func cruise(pieces []Vortex, start Vec3, seconds float64) (loads []float64, rolls []float64, speed float64) {
-	m := New(Fighter, Environment{}, World{Sea: -1000})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
 	m.State = Level(m, start, Vec3{X: 1}, 150, 3000)
 	in := Inputs{Throttle: m.State.Engine[0].Spool}
 	for i := 0; i < int(seconds*240); i++ {
@@ -340,7 +340,7 @@ func TestTurning(t *testing.T) {
 // TestOrder: the pieces come out the same, in the same order, whatever order
 // the trails were first laid in - every host sums the same air.
 func TestOrder(t *testing.T) {
-	forward, backward := dense(), Wakes{}
+	forward, backward := dense(), Wakes{Chart: scene}
 	straight(&backward, 4, 60, 2980, 40)
 	straight(&backward, 1, 60, 3000, 40)
 	at := Vec3{X: 60 * 34, Y: 2990}
@@ -374,7 +374,7 @@ func TestPassOne(t *testing.T) {
 	circulation := hornet * gravity / (density * 150 * spacing)
 	under := []Vortex{{A: Vec3{X: -2000, Y: 3000, Z: -span / 2}, B: Vec3{X: 2000, Y: 3000, Z: -span / 2}, Circulation: -circulation, Core: 0.8, Reach: 50}}
 	lifted := func(pieces []Vortex) *Model {
-		m := New(Fighter, Environment{}, World{Sea: -1000})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 150, 3000)
 		m.Wake = pieces
 		m.Step(Inputs{Throttle: m.State.Engine[0].Spool})
@@ -404,13 +404,13 @@ func TestPassOne(t *testing.T) {
 // TestRecord: a flying model's own mark carries the lift it is making, in the
 // right sense.
 func TestRecord(t *testing.T) {
-	m := New(Fighter, Environment{}, World{Sea: -1000})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 150, 3000)
 	m.Step(Inputs{Throttle: m.State.Engine[0].Spool})
 	var w Wakes
 	w.Record(1, 0, m)
 	k := w.trails[1].marks[0]
-	want := m.Mass() * gravity / (air(3000, Environment{}).Density * m.State.Velocity.Length() * math.Pi / 4 * Fighter.Reference.Span)
+	want := m.Mass() * gravity / (air(3000, Environment{Frame: scene, Chart: scene}).Density * m.State.Velocity.Length() * math.Pi / 4 * Fighter.Reference.Span)
 	if math.Abs(k.circulation-want) > 0.15*want {
 		t.Errorf("circulation %.1f, want about %.1f at one g", k.circulation, want)
 	}
@@ -419,7 +419,7 @@ func TestRecord(t *testing.T) {
 // TestCull: leaving out the pieces that cannot reach the airframe changes
 // nothing any element meets, and does leave them out.
 func TestCull(t *testing.T) {
-	m := New(Fighter, Environment{}, World{Sea: -1000})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 150, 3000)
 	piece := func(aside float64) Vortex {
 		return Vortex{A: Vec3{X: -30, Y: 3001, Z: aside}, B: Vec3{X: 30, Y: 3001, Z: aside}, Circulation: 120, Core: 0.8, Reach: 45}
@@ -464,7 +464,7 @@ func TestWakeBudget(t *testing.T) {
 		t.Fatalf("%d pieces, want the full %d", len(pieces), wake_pieces)
 	}
 	step := func(wake []Vortex) int64 {
-		m := New(Fighter, Environment{Turbulence: 1}, World{})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Turbulence: 1}, World{})
 		m.State = Level(m, Vec3{X: 60 * 34, Y: 2985}, Vec3{X: 1}, 150, 3000)
 		in := Inputs{Throttle: 0.9}
 		start := m.State

@@ -21,7 +21,7 @@ func TestAtmosphere(t *testing.T) {
 		{20000, 0.088035, 5474.9, 216.65, 295.07},
 	}
 	for _, c := range cases {
-		a := air(c.altitude, Environment{})
+		a := air(c.altitude, Environment{Frame: scene, Chart: scene})
 		check := func(name string, got, want float64) {
 			if math.Abs(got-want)/want > 0.001 {
 				t.Fatalf("%s at %.0f m: got %f, want %f", name, c.altitude, got, want)
@@ -36,12 +36,12 @@ func TestAtmosphere(t *testing.T) {
 
 // TestAtmosphereOffsets: a hot day thins the air; low pressure thins it too.
 func TestAtmosphereOffsets(t *testing.T) {
-	standard := air(0, Environment{})
-	hot := air(0, Environment{Temperature: 15})
+	standard := air(0, Environment{Frame: scene, Chart: scene})
+	hot := air(0, Environment{Frame: scene, Chart: scene, Temperature: 15})
 	if hot.Density >= standard.Density {
 		t.Fatalf("hot day should cut density: %f vs %f", hot.Density, standard.Density)
 	}
-	low := air(0, Environment{Pressure: 98000})
+	low := air(0, Environment{Frame: scene, Chart: scene, Pressure: 98000})
 	if low.Density >= standard.Density {
 		t.Fatalf("low pressure should cut density: %f vs %f", low.Density, standard.Density)
 	}
@@ -55,7 +55,7 @@ func TestAtmosphereOffsets(t *testing.T) {
 // with the nose through a taxi circle (#44): into wind it shows the wind,
 // downwind near zero, crosswind little.
 func TestPitotReadsTheNose(t *testing.T) {
-	m := New(Fighter, Environment{Wind: Vec3{X: -12}, Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Wind: Vec3{X: -12}, Seed: 1}, World{Sea: 0})
 	m.State.Position.Y = 20
 	m.gust = wind(m.State.Position, 0, m.Environment, nil)
 	face := func(x, z float64) float64 {
@@ -80,7 +80,7 @@ func TestPitotReadsTheNose(t *testing.T) {
 // reads the full airspeed — fight-regime AoA must not sag the indication —
 // while far off-axis flow (the deck tailwind) still reads nothing.
 func TestPitotRecoveryCone(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Position.Y = 2000
 	at := func(alpha float64) float64 {
 		m.State.Attitude = Look(Vec3{X: 1})

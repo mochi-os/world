@@ -16,7 +16,7 @@ const foot = 0.3048
 
 // cruiser is a clean jet with a fuel load, kg, for the cruise figures.
 func cruiser(fuel float64) *Model {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State.Fuel = fuel
 	return m
 }
@@ -281,7 +281,7 @@ func TestClimbAgreesWithFlight(t *testing.T) {
 		if math.Abs(flown/rate-1) > 0.03 {
 			t.Errorf("%.0f ft: Climb's %.1f m/s against %.1f m/s of excess power flown at %.1f m/s", feet, rate, flown, speed)
 		}
-		sound := air(altitude, Environment{Seed: 1}).Sound
+		sound := air(altitude, Environment{Frame: scene, Chart: scene, Seed: 1}).Sound
 		for _, off := range []float64{-0.05, 0.05} {
 			if other := surplus(cruiser(3629), altitude, speed+off*sound); other >= flown {
 				t.Errorf("%.0f ft: %+.2f Mach off the best speed gained %.1f m/s, at it %.1f", feet, off, other, flown)

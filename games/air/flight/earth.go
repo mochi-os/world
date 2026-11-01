@@ -4,19 +4,23 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
-// The WGS84 ellipsoid, and the frames the simulation works in. The earth does
-// not turn (a fighter's Coriolis acceleration is about 0.4% of g, and the pilot
-// flies it out without noticing), and sea level is the ellipsoid itself: the
-// geoid's departure from it, up to about 100 m, changes only over thousands of
-// kilometres, where no pilot can see it.
+// The WGS84 ellipsoid, the geoid, and the frames the simulation works in. The
+// earth does not turn (a fighter's Coriolis acceleration is about 0.4% of g,
+// and the pilot flies it out without noticing). Sea level is the geoid, mean
+// sea level (geoid.go, EGM2008), which stands up to about 107 m off the
+// ellipsoid: every altitude is a height above it, as an altimeter's is and as
+// the world's elevation data are.
 //
-// A frame is a tangent frame of the ellipsoid: its origin on the ellipsoid at
-// an anchor, x east, y up along the ellipsoid's normal, z south - the axes the
-// game has always used. Every frame is Cartesian, so a straight line, a
-// distance and an angle between two points are exact in any of them, however
-// far apart the points are; only "up" and "level" belong to one place. The
-// world frame (Home) is the frame at Midway, the map's own position, extended
-// over the whole earth: near Midway it is the flat world the game once flew in.
+// The world is Earth-centred (Earth): state is kept and exchanged as
+// Earth-centred, Earth-fixed coordinates, so no place is built into them. A
+// tangent frame is laid at an anchor: its origin at sea level there, x east,
+// y up along the ellipsoid's normal, z south - the axes the game has always
+// used. Every frame is Cartesian, so a straight line, a distance and an angle
+// between two points are exact in any of them, however far apart the points
+// are; only "up" and "level" belong to one place. So nothing reads altitude or
+// up from a frame's axes: whatever needs a horizon works in the tangent frame
+// under itself, as a jet's step and a missile's do. Midway is data: the
+// anchor its map is charted about (Midway), not the origin of the world.
 
 package flight
 
@@ -35,23 +39,54 @@ var (
 	eccentric  = Flattening * (2 - Flattening) // first eccentricity squared
 	second     = eccentric / (1 - eccentric)   // second eccentricity squared
 	oblateness = Equator / pole                // the stretch along the axis that makes the ellipsoid a sphere of radius Equator
-	midway     = Tangent(28.2334*degree, -177.3668*degree)
 	degree     = math.Pi / 180
 )
 
-// Home is the world frame, the one the server and the cores simulate in: the
-// tangent frame at the centre of Midway Atoll (28.2334° N, 177.3668° W), the
-// point the map is projected about (apps/air/midway-prep/prep.py), so the
-// map's fields lie at their true places. The map, the carrier, the wakes and
-// the weather are fixed in it.
-var Home = midway
+// Earth is the world frame: Earth-centred, Earth-fixed coordinates, x through
+// the equator at Greenwich, y through the equator at 90 E, z through the north
+// pole. The server keeps its state in it, the wire carries it, and an
+// environment that names no frame is in it.
+var Earth = Frame{origin: Vec3{}, east: Vec3{X: 1}, up: Vec3{Y: 1}, south: Vec3{Z: 1}, turn: Quat{W: 1}, centre: true}
+
+// Midway is the tangent frame at the centre of Midway Atoll (28.2334° N,
+// 177.3668° W), the point its map is projected about
+// (apps/air/midway-prep/prep.py): the frame the map, the carrier's track, the
+// wakes and the weather's pattern are charted in unless an environment names
+// another (Environment.Chart).
+var Midway = Tangent(28.2334*degree, -177.3668*degree)
 
 // Place is a geodetic position: latitude and longitude in radians, altitude
-// in metres above the ellipsoid.
+// in metres above sea level (the geoid).
 type Place struct {
 	Latitude  float64
 	Longitude float64
 	Altitude  float64
+}
+
+// Geoid is the height of mean sea level above the ellipsoid at a latitude and
+// longitude, radians: EGM2008 at whole degrees (geoid.go), bilinear between.
+func Geoid(latitude, longitude float64) float64 {
+	if math.IsNaN(latitude) || math.IsNaN(longitude) || math.IsInf(latitude, 0) || math.IsInf(longitude, 0) {
+		return 0 // a place that is not one: a diverged state reads the ellipsoid, and the host's checks catch it
+	}
+	row := (math.Pi/2 - latitude) / degree // 0 at 90 N
+	column := math.Mod(longitude/degree+180, 360)
+	if column < 0 {
+		column += 360
+	}
+	row = clamp(row, 0, 180)
+	r, c := math.Floor(row), math.Floor(column)
+	if r >= 180 {
+		r = 179
+	}
+	if c >= 360 {
+		c = 359
+	}
+	u, v := row-r, column-c
+	i := int(r)*361 + int(c)
+	a, b := float64(geoid[i]), float64(geoid[i+1])
+	d, e := float64(geoid[i+361]), float64(geoid[i+362])
+	return ((a*(1-v)+b*v)*(1-u) + (d*(1-v)+e*v)*u) / 10
 }
 
 // Centred is the earth-centred, earth-fixed position of a place: x through the
@@ -59,10 +94,11 @@ type Place struct {
 func Centred(p Place) Vec3 {
 	sin, cos := math.Sincos(p.Latitude)
 	normal := Equator / math.Sqrt(1-eccentric*sin*sin) // prime vertical radius of curvature
+	h := p.Altitude + Geoid(p.Latitude, p.Longitude)   // above the ellipsoid
 	return Vec3{
-		X: (normal + p.Altitude) * cos * math.Cos(p.Longitude),
-		Y: (normal + p.Altitude) * cos * math.Sin(p.Longitude),
-		Z: (normal*(1-eccentric) + p.Altitude) * sin,
+		X: (normal + h) * cos * math.Cos(p.Longitude),
+		Y: (normal + h) * cos * math.Sin(p.Longitude),
+		Z: (normal*(1-eccentric) + h) * sin,
 	}
 }
 
@@ -84,23 +120,26 @@ func Geodetic(e Vec3) Place {
 	u := math.Hypot(p-eccentric*root, z)
 	v := math.Sqrt((p-eccentric*root)*(p-eccentric*root) + (1-eccentric)*z*z)
 	lift := b * b * z / (a * v)
+	latitude, longitude := math.Atan2(z+second*lift, p), math.Atan2(e.Y, e.X)
 	return Place{
-		Latitude:  math.Atan2(z+second*lift, p),
-		Longitude: math.Atan2(e.Y, e.X),
-		Altitude:  u * (1 - b*b/(a*v)),
+		Latitude:  latitude,
+		Longitude: longitude,
+		Altitude:  u*(1-b*b/(a*v)) - Geoid(latitude, longitude),
 	}
 }
 
-// Frame is the tangent frame of the ellipsoid at an anchor: origin on the
-// ellipsoid, x east, y up along its normal, z south.
+// Frame is a Cartesian frame of the earth: Earth itself, or the tangent frame
+// at an anchor, origin at sea level there, x east, y up along the ellipsoid's
+// normal, z south.
 type Frame struct {
-	Latitude  float64 // the anchor, radians
+	Latitude  float64 // the anchor, radians (a tangent frame's)
 	Longitude float64
 	origin    Vec3 // the anchor, earth-centred
 	east      Vec3 // the axes, earth-centred
 	up        Vec3
 	south     Vec3
 	turn      Quat // frame to earth-centred
+	centre    bool // Earth: its origin the earth's centre, its axes the earth's own
 }
 
 // Tangent is the frame anchored at a latitude and longitude, radians.
@@ -147,13 +186,16 @@ func columns(a, b, c Vec3) Quat {
 	return q.Normalize()
 }
 
-// Set reports whether the frame was built by Tangent: the zero Frame is none.
+// Set reports whether the frame is one: the zero Frame is none.
 func (f Frame) Set() bool { return f.up != (Vec3{}) }
 
-// Same reports whether two frames are anchored at the same place.
+// Same reports whether two frames are one: the same origin and axes.
 func (f Frame) Same(o Frame) bool {
-	return f.Latitude == o.Latitude && f.Longitude == o.Longitude
+	return f.centre == o.centre && f.origin == o.origin && f.turn == o.turn
 }
+
+// Tangent reports whether the frame is a tangent frame, laid at an anchor.
+func (f Frame) Tangent() bool { return f.Set() && !f.centre }
 
 // Centred is the earth-centred position of a point given in the frame.
 func (f Frame) Centred(p Vec3) Vec3 {
@@ -172,7 +214,7 @@ func (f Frame) Place(p Vec3) Place { return Geodetic(f.Centred(p)) }
 // Position is the frame's coordinates of a place.
 func (f Frame) Position(p Place) Vec3 { return f.Local(Centred(p)) }
 
-// Altitude is a point's height above the ellipsoid, metres.
+// Altitude is a point's height above sea level, metres.
 func (f Frame) Altitude(p Vec3) float64 { return f.Place(p).Altitude }
 
 // Level is the tangent frame under a point given in this frame: its own up,
@@ -189,29 +231,24 @@ func (f Frame) Survey(p Vec3) (Place, Frame) {
 	return place, Tangent(place.Latitude, place.Longitude)
 }
 
-// Sea is the point of the sea (the ellipsoid) straight down the frame's own up
-// from (x, 0, z), in the frame, and the rotation from the tangent frame there
-// to this frame's axes: how a ship placed by its chart position sits on the
-// curved water. Closed form, no trigonometry: stretched along the axis the
-// ellipsoid is a sphere, and the line meets it at a root of a quadratic.
+// Sea is the point of the sea straight down the frame's own up from (x, 0, z),
+// in the frame, and the rotation from the tangent frame there to this frame's
+// axes: how a ship placed by her chart position sits on the curved water.
+// Newton steps along the frame's up find sea level, until a step moves under
+// a tenth of a millimetre: one or two near the anchor, four at 5,000 km out,
+// where three left it 3 m off.
 func (f Frame) Sea(x, z float64) (Vec3, Quat) {
-	start := f.origin.Add(f.east.Scale(x)).Add(f.south.Scale(z))
-	c := Vec3{X: start.X, Y: start.Y, Z: start.Z * oblateness}
-	u := Vec3{X: f.up.X, Y: f.up.Y, Z: f.up.Z * oblateness}
-	a, b, k := u.Dot(u), c.Dot(u), c.Dot(c)-Equator*Equator
-	y := -k / (b + math.Sqrt(math.Max(b*b-a*k, 0))) // the root by the surface, written to keep its precision when it is small
-	e := start.Add(f.up.Scale(y))
-	normal := Vec3{X: e.X, Y: e.Y, Z: e.Z * oblateness * oblateness}.Normalize()
-	east := Vec3{X: -normal.Y, Y: normal.X}
-	if east.Length() < 1e-12 {
-		east = f.east // at a pole east is anything level: the frame's own serves
+	at := Vec3{X: x, Z: z}
+	place := f.Place(at)
+	for step := 0; step < 8; step++ {
+		fall := place.Altitude / math.Max(f.Normal(place).Y, 0.1) // the height falls along the normal, the step runs along the frame's up
+		at.Y -= fall
+		place = f.Place(at)
+		if math.Abs(fall) < 1e-4 {
+			break
+		}
 	}
-	east = east.Normalize()
-	south := east.Cross(normal)
-	axes := columns(Vec3{X: east.Dot(f.east), Y: east.Dot(f.up), Z: east.Dot(f.south)},
-		Vec3{X: normal.Dot(f.east), Y: normal.Dot(f.up), Z: normal.Dot(f.south)},
-		Vec3{X: south.Dot(f.east), Y: south.Dot(f.up), Z: south.Dot(f.south)})
-	return Vec3{X: x, Y: y, Z: z}, axes
+	return at, Between(Tangent(place.Latitude, place.Longitude), f).Turn
 }
 
 // Up is the ellipsoid's normal at a point, in the frame's axes.
@@ -312,20 +349,26 @@ func (f Frame) Clear(a, b Vec3) bool {
 	return near.Dot(near) >= Equator*Equator
 }
 
-// Theatre is the frame an environment's coordinates are in: the world frame
-// unless a host has set another.
+// Theatre is the frame an environment's coordinates are in: Earth unless a
+// host has set another.
 func (e Environment) Theatre() Frame {
 	if e.Frame.Set() {
 		return e.Frame
 	}
-	return Home
+	return Earth
 }
 
-// Placement is the motion from the environment's frame to the world frame,
-// where the map, the carrier, the wakes and the weather are fixed.
-func (e Environment) Placement() Rigid {
-	if !e.Frame.Set() || e.Frame.Same(Home) {
-		return Identity
+// Charted is the frame the environment's map is charted in, where the
+// carrier's track, the wakes and the weather's pattern are fixed too: Midway
+// unless a host has set another.
+func (e Environment) Charted() Frame {
+	if e.Chart.Set() {
+		return e.Chart
 	}
-	return Between(e.Frame, Home)
+	return Midway
+}
+
+// Placement is the motion from the environment's frame to its chart.
+func (e Environment) Placement() Rigid {
+	return Between(e.Theatre(), e.Charted())
 }

@@ -15,7 +15,7 @@ import (
 // trigger held or not, and reports the speed lost and the pitch attitude it
 // ends at, degrees.
 func kicked(air *Airframe, fire bool, seconds float64) (lost float64, pitch float64) {
-	m := New(air, Environment{}, World{})
+	m := New(air, Environment{Frame: scene, Chart: scene}, World{})
 	m.State = Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 180, 2500)
 	throttle := m.State.Engine[0].Spool
 	start := m.State.Velocity.Length()
@@ -31,7 +31,7 @@ func kicked(air *Airframe, fire bool, seconds float64) (lost float64, pitch floa
 // the CG turns it into a nose-up moment. Trigger up, or a gun whose kick is
 // not modelled, and nothing is added.
 func TestRecoilForce(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State = Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 180, 2500)
 	gun := Fighter.Gun
 	if gun.Recoil < 16000 || gun.Recoil > 18000 || gun.Position.X < 6 || gun.Position.Y <= 0 {
@@ -53,7 +53,7 @@ func TestRecoilForce(t *testing.T) {
 	}
 	unarmed := *Fighter
 	unarmed.Gun.Recoil = 0
-	u := New(&unarmed, Environment{}, World{})
+	u := New(&unarmed, Environment{Frame: scene, Chart: scene}, World{})
 	u.State = m.State
 	var none Forces
 	u.recoil(Inputs{Fire: true}, &none)
@@ -67,7 +67,7 @@ func TestRecoilForce(t *testing.T) {
 // trigger up, and the nose sits a fraction of a degree higher: the moment is
 // real, and the FCS holds it to a bobble rather than a pitch-up.
 func TestRecoilKick(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State = Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 180, 2500)
 	m.Step(Inputs{Throttle: m.State.Engine[0].Spool})
 	want := Fighter.Gun.Recoil / m.mass * 2

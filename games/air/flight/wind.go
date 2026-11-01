@@ -48,10 +48,10 @@ func Wind(position Vec3, time float64, env Environment) Vec3 {
 }
 
 // field is the air's velocity at a point, in the tangent frame under it (x
-// east, y up, z south): home is the point in Home, where the weather's pattern
+// east, y up, z south): home is the point in the chart, where the weather's pattern
 // is fixed so every host meets the same air, and height its altitude. The
 // carrier's burble is added when a carrier is given, place carrying the
-// caller's level frame to Home.
+// caller's level frame to the chart.
 func field(home Vec3, height float64, time float64, env Environment, carrier *Carrier, place Rigid) Vec3 {
 	h := math.Max(height, 2)
 

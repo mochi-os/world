@@ -16,7 +16,7 @@ import (
 func harbor() World {
 	deck := []Vec3{{X: -165, Z: -22}, {X: -165, Z: 22}, {X: 165, Z: 22}, {X: 165, Z: -22}}
 	return World{
-		Carrier: &Carrier{
+		Carrier: &Carrier{Chart: scene,
 			Position: Vec3{Y: 19},
 			Deck:     deck,
 			Catapults: []Catapult{
@@ -46,7 +46,7 @@ func park(m *Model, x float64, z float64) {
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 }
 
-func aboard() *Model { return New(Fighter, Environment{}, harbor()) }
+func aboard() *Model { return New(Fighter, Environment{Frame: scene, Chart: scene}, harbor()) }
 
 // TestRest: sixty seconds parked on deck with the brakes held — no drift,
 // no bounce, no NaN. (Brakes are required: flight idle makes real thrust.)
@@ -75,9 +75,9 @@ func TestRest(t *testing.T) {
 func TestFootingIsTheDecks(t *testing.T) {
 	w := harbor()
 	spot := Vec3{X: 43, Y: 2.5, Z: -0.6} // the catapult spot, the jet's origin above the deck
-	moving := func(at float64) Vec3 {    // that spot's own motion over the sea, measured from where she has it either side
-		ahead, behind := w.Carrier.world(spot, at+0.001, Identity), w.Carrier.world(spot, at-0.001, Identity)
-		return ahead.Subtract(behind).Scale(1 / 0.002)
+	moving := func(at float64) Vec3 {    // that spot's own motion over the sea, measured from where she has it either side: 10 ms, so the nanometres the sea's place is found to stay below the micrometre a second asked of it
+		ahead, behind := w.Carrier.world(spot, at+0.01, Identity), w.Carrier.world(spot, at-0.01, Identity)
+		return ahead.Subtract(behind).Scale(1 / 0.02)
 	}
 	w.Carrier.Heading, w.Carrier.Speed = 0.4, 2.6
 	if got, want := w.Footing(w.Carrier.world(spot, 30, Identity), 30, Identity), moving(30); got.Subtract(want).Length() > 1e-6 {

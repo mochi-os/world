@@ -166,7 +166,7 @@ func TestHighYoyoOnThreat(t *testing.T) {
 	// him, him crossing at 90 degrees (a beam) or running away (a tail chase).
 	build := func(his flight.Vec3) *moment {
 		me := &flight.State{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 250}, Attitude: flight.Look(flight.Vec3{X: 1})}
-		m := &moment{me: me, prey: flight.Vec3{X: 800, Y: 3000}, velocity: his, pace: 180, pull: 7.5}
+		m := &moment{me: me, prey: flight.Vec3{X: 800, Y: 3000}, velocity: his, pace: 180, pull: 7.5, air: flight.Environment{Frame: scene, Chart: scene}}
 		m.derive()
 		return m
 	}

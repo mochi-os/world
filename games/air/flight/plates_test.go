@@ -35,7 +35,7 @@ func dragOf(m *Model, shape func(*Model)) float64 {
 // plate was the first (a pilot caught the gear having no drag at all), and
 // the probe, hook, stores, and a dead windmilling engine follow the pattern.
 func TestPlates(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State.Fuel = 2500
 	dynamic := 0.5 * air(2000, m.Environment).Density * 150 * 150
 	clean := dragOf(m, func(*Model) {})
@@ -63,7 +63,7 @@ func TestPlates(t *testing.T) {
 // TestWindmillYaws: a dead LEFT engine's plate sits at -Z, so its drag must
 // yaw the nose toward the failure — the single-engine handling cue.
 func TestWindmillYaws(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State.Fuel = 2500
 	s := &m.State
 	s.Position = Vec3{Y: 2000}
@@ -85,7 +85,7 @@ func TestWindmillYaws(t *testing.T) {
 // TestStoresWeigh: the wingtip missiles carry real mass — attached they add
 // it symmetrically; firing ONE shifts the CG toward the remaining tip.
 func TestStoresWeigh(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State.Fuel = 2500
 	m.Stores(0)
 	m.weigh()

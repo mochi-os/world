@@ -60,7 +60,7 @@ func pull(m *Model, in Inputs, stick float64, seconds float64) pullResult {
 }
 
 func cell(t *testing.T, label string, gear bool, flap float64, kt float64) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	fuel := Fighter.Mass.Fuel * 0.5
 	m.State = Level(m, Vec3{Y: 250}, Vec3{X: 1}, kt*knot, fuel)
 	if gear {
@@ -93,7 +93,7 @@ func TestNatopsMeasure(t *testing.T) {
 
 	t.Logf("=== B1: on-speed approach, hands off (Approach solver = the NATOPS trim) ===")
 	{
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		fuel := Fighter.Mass.Fuel * 0.4
 		state, throttle := Approach(m, Vec3{Y: 200}, Vec3{X: 1}, -3.5*math.Pi/180, fuel)
 		state.Gear.Extension = 1
@@ -120,7 +120,7 @@ func TestNatopsMeasure(t *testing.T) {
 
 	t.Logf("=== B3: runway flare — approach trim at 20 m, +0.35 stick for 2.5 s ===")
 	{
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		fuel := Fighter.Mass.Fuel * 0.4
 		state, throttle := Approach(m, Vec3{Y: 20}, Vec3{X: 1}, -3.0*math.Pi/180, fuel)
 		state.Gear.Extension = 1
@@ -133,7 +133,7 @@ func TestNatopsMeasure(t *testing.T) {
 
 	t.Logf("=== B4: catapult flyaway — end of stroke, hands off at MIL ===")
 	{
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		fuel := Fighter.Mass.Fuel * 0.6
 		m.State = Level(m, Vec3{Y: 20}, Vec3{X: 1}, 80, fuel)
 		m.State.Gear.Extension = 1
@@ -152,7 +152,7 @@ func TestNatopsMeasure(t *testing.T) {
 
 	t.Logf("=== B5: rotation regime — 140 kt in ground effect, half flap, aft stick 0.5 ===")
 	{
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		fuel := Fighter.Mass.Fuel * 0.6
 		m.State = Level(m, Vec3{Y: 3}, Vec3{X: 1}, 140*knot, fuel)
 		m.State.Gear.Extension = 1
@@ -164,7 +164,7 @@ func TestNatopsMeasure(t *testing.T) {
 
 	t.Logf("=== B6: the break — 350 kt clean, 80° bank, full aft ===")
 	{
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		fuel := Fighter.Mass.Fuel * 0.5
 		m.State = Level(m, Vec3{Y: 250}, Vec3{X: 1}, 350*knot, fuel)
 		in := Inputs{Throttle: lever(m.State.Engine[0].Spool)}

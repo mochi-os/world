@@ -106,11 +106,20 @@ func TestSceneryStrike(t *testing.T) {
 		t.Errorf("nose on the mast at %.0f,%.0f: alive", mast.Position.X, mast.Position.Z)
 	}
 
-	i = build(t, "furball", nil, 1)
-	a = i.aircraft[0]
-	posed(a, flight.Vec3{X: -20000, Y: 2, Z: -20000}, 0, 100)
-	i.Step(1, nil)
-	if a.alive {
-		t.Errorf("at two metres over open sea: alive")
+	// Over open sea 28 km out the sea lies 63 m under the frame's level: the
+	// jet dies two metres above the sea, and lives two metres above that level.
+	frame := i.environment.Theatre()
+	open, _ := frame.Sea(-20000, -20000)
+	for _, c := range []struct {
+		at    flight.Vec3
+		alive bool
+	}{{open.Add(frame.Up(open).Scale(2)), false}, {flight.Vec3{X: -20000, Y: 2, Z: -20000}, true}} {
+		i = build(t, "furball", nil, 1)
+		a = i.aircraft[0]
+		posed(a, c.at, 0, 100)
+		i.Step(1, nil)
+		if a.alive != c.alive {
+			t.Errorf("%.0f m over open sea, %.0f m over the frame's level: alive %v, want %v", frame.Altitude(c.at), c.at.Y, a.alive, c.alive)
+		}
 	}
 }

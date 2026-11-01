@@ -34,7 +34,8 @@ type Environment struct {
 	Turbulence  float64 // gust intensity σ, m/s (0 = calm)
 	Temperature float64 // sea-level offset from ISA, K (Midway climatology ≈ +9)
 	Pressure    float64 // sea-level pressure, Pa (0 = ISA standard 101325)
-	Frame       Frame   `json:"-"` // the frame the match's coordinates are in (earth.go); the zero Frame is the world frame, Home. A host sets it; it never travels
+	Frame       Frame   `json:"-"` // the frame the match's coordinates are in (earth.go); the zero Frame is the world frame, Earth. A host sets it; it never travels
+	Chart       Frame   `json:"-"` // the frame the map is charted in, and the wakes and the weather's pattern are fixed in (earth.go); the zero Frame is Midway. A host sets it; it never travels
 	Cloud       Cloud   // convective cloud layer (zero = clear/stratiform/smooth)
 	Cheat       struct {
 		Fuel bool // mission cheat: the tank never depletes — burn() leaves State.Fuel exactly where the spawn set it, so mass stays constant and the same flag drives the server and the client's wasm core identically

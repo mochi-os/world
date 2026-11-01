@@ -28,7 +28,7 @@ func TestDiveRecovery(t *testing.T) {
 
 			// A player far away and level: nothing to fight, so the only thing
 			// under test is whether the jet gets its nose up before the water.
-			env := flight.Environment{Seed: 5}
+			env := flight.Environment{Frame: scene, Chart: scene, Seed: 5}
 			pm := flight.New(aircraft.Get("fa18c"), env, flight.World{Sea: sea})
 			pm.State = flight.Level(pm, flight.Vec3{X: 9000, Y: 4000}, flight.Vec3{X: -1}, 220, fuel)
 			words := make([]float64, flight.Size)

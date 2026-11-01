@@ -18,7 +18,7 @@ import (
 )
 
 func model() *flight.Model {
-	m := flight.New(Airframe, flight.Environment{}, flight.World{})
+	m := flight.New(Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{})
 	m.State.Fuel = 2450 // half internal
 	return m
 }
@@ -49,7 +49,7 @@ func TestHold(t *testing.T) {
 // 35,000 ft in full afterburner, held level by a small pitch loop. The C
 // must be markedly quicker than the F here (its documented edge).
 func TestAccelerate(t *testing.T) {
-	m := flight.New(Airframe, flight.Environment{}, flight.World{})
+	m := flight.New(Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{})
 	altitude := 10668.0
 	sound := flight.Atmosphere(altitude, m.Environment).Sound
 	m.State = flight.Level(m, flight.Vec3{Y: altitude}, flight.Vec3{X: 1}, 0.8*sound, 2450)
@@ -108,14 +108,14 @@ func TestStall(t *testing.T) {
 // TestDeck: rests on a deck with brakes held, then a full-burner cat shot
 // releases at flying speed — the C's gear and hook geometry work the boat.
 func TestDeck(t *testing.T) {
-	world := flight.World{Carrier: &flight.Carrier{
+	world := flight.World{Carrier: &flight.Carrier{Chart: scene,
 		Position: flight.Vec3{Y: 19},
 		Deck:     []flight.Vec3{{X: -165, Z: -22}, {X: -165, Z: 22}, {X: 165, Z: 22}, {X: 165, Z: -22}},
 		Catapults: []flight.Catapult{
 			{Position: flight.Vec3{X: 48, Z: -0.6}, Heading: 0.028, Stroke: 85, Speed: 88},
 		},
 	}}
-	m := flight.New(Airframe, flight.Environment{}, world)
+	m := flight.New(Airframe, flight.Environment{Frame: scene, Chart: scene}, world)
 	m.State.Fuel = 2450
 	m.State.Position = flight.Vec3{X: 48 - Airframe.Gear.Nose.Attach.X, Y: 19 - Airframe.Gear.Nose.Attach.Y, Z: -0.6}
 	m.State.Attitude = flight.Axis(flight.Vec3{Y: 1}, -0.028)

@@ -14,7 +14,7 @@ import (
 // boarding is the drag area the speed brake adds at an extension, m², from
 // the aero pass alone at trimmed level flight.
 func boarding(extension float64) float64 {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(1000, m.Environment)
 	base := Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 180, 2500)
 	v := base.Velocity.Length()
@@ -46,7 +46,7 @@ func TestBrakeDrag(t *testing.T) {
 // TM-110216: 60/2.5 deg/s no-load; NATOPS: 3 s maximum), not the second it
 // used to.
 func TestBrakeTravel(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State = Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 180, 2500)
 	throttle := m.State.Engine[0].Spool
 	reached := -1.0
@@ -88,7 +88,7 @@ func TestBrakeOnDeck(t *testing.T) {
 	}
 	// Airborne in the landing configuration below the law's handover, the
 	// board retracts whatever the switch says.
-	a := New(Fighter, Environment{}, World{})
+	a := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	a.State = Level(a, Vec3{Y: 300}, Vec3{X: 1}, 60, 2500)
 	throttle := a.State.Engine[0].Spool
 	for i := 0; i < 240*4; i++ {

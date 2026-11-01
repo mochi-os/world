@@ -55,7 +55,7 @@ type Strip struct {
 // island, all in the carrier frame. The pose is a pure function of sim time
 // so prediction replay reproduces the deck exactly; every host gives its
 // aircraft the session's clock (State.Time), so all of them meet the ship in
-// the same place. Its track is charted in the world frame, Home: the ship
+// the same place. Its track is charted (Chart, Midway's unless a host says): the ship
 // sails where the chart puts it, on the curved sea (Pose).
 type Carrier struct {
 	Position  Vec3    // deck reference at Time 0 (Y = deck height above the sea, which the ship keeps)
@@ -67,6 +67,15 @@ type Carrier struct {
 	Wires     []Wire
 	Prisms    []Prism // the island's solids: outline in the carrier frame, Top a world height
 	Posts     []Post  // its mast: position in the carrier frame
+	Chart     Frame   `json:"-"` // the frame her track is charted in (Environment.Chart); the zero Frame is Midway
+}
+
+// charted is the frame her track is charted in.
+func (c *Carrier) charted() Frame {
+	if c.Chart.Set() {
+		return c.Chart
+	}
+	return Midway
 }
 
 // Leg is one stretch of the ship's track: from Start (session time, s) the
@@ -137,16 +146,16 @@ func (c *Carrier) At(t float64) (Vec3, float64) {
 }
 
 // Pose is the ship's deck reference point and its attitude (the carrier frame
-// to Home) at time t: the track's chart position carried straight down onto
-// the curved sea, the deck at its height above the water there, level on it,
+// to the chart) at time t: the track's chart position carried straight down
+// onto the sea, the deck at its height above the water there, level on it,
 // and the bow on its heading.
 func (c *Carrier) Pose(t float64) (Vec3, Quat) {
 	at, heading := c.At(t)
-	sea, level := Home.Sea(at.X, at.Z)
+	sea, level := c.charted().Sea(at.X, at.Z)
 	up := level.Rotate(Vec3{Y: 1})
 	// The bow points the way the chart moves her, laid level on the water:
-	// her heading counts in Home's axes, which lean a little against the
-	// level ones away from Midway.
+	// her heading counts in the chart's axes, which lean a little against the
+	// level ones away from its anchor.
 	bow := direction(heading)
 	bow = bow.Subtract(up.Scale(bow.Dot(up)))
 	return sea.Add(up.Scale(c.Position.Y)), Basis(bow, up)
@@ -154,7 +163,7 @@ func (c *Carrier) Pose(t float64) (Vec3, Quat) {
 
 // track is the unit level direction, in the caller's frame, of a heading
 // relative to the ship's bow: a catapult's line. place carries the caller's
-// frame to Home.
+// frame to the chart.
 func (c *Carrier) track(relative float64, t float64, place Rigid) Vec3 {
 	_, attitude := c.Pose(t)
 	d := place.Inverse().Vector(attitude.Rotate(direction(relative)))
@@ -188,7 +197,7 @@ func (c *Carrier) Known() float64 {
 }
 
 // velocity is the deck's own velocity at a point at time t, in the caller's
-// frame (place carries it to Home): the reference point's along the bow, plus
+// frame (place carries it to the chart): the reference point's along the bow, plus
 // the turn's sweep about it.
 func (c *Carrier) velocity(p Vec3, t float64, place Rigid) Vec3 {
 	l := c.leg(t)
@@ -201,6 +210,12 @@ func (c *Carrier) velocity(p Vec3, t float64, place Rigid) Vec3 {
 	// stands its height up the normal, which tips forward as she goes.
 	along := direction(heading).Scale(c.Way(t))
 	v := Vec3{X: along.X, Y: -(up.X*along.X + up.Z*along.Z) / up.Y, Z: along.Z}
+	// The sea is the geoid, which rises and falls under her along her way.
+	if way := along.Length(); way > 0 {
+		chart, step := c.charted(), along.Scale(0.5/way)
+		ahead, behind := chart.Place(at.Add(step)), chart.Place(at.Subtract(step))
+		v = v.Add(up.Scale((Geoid(ahead.Latitude, ahead.Longitude) - Geoid(behind.Latitude, behind.Longitude)) * way))
+	}
 	spin := up.Scale(l.Turn).Add(up.Cross(v).Scale(1 / curve)) // her turn about her up, and the curve the sea carries her round
 	v = v.Add(spin.Cross(up.Scale(c.Position.Y)))
 	return place.Inverse().Vector(v.Add(spin.Cross(place.Point(p).Subtract(at))))
@@ -213,7 +228,7 @@ const curve = 6371008.8
 
 // Aboard reports whether a point is on the carrier's deck at time t: over the
 // deck's outline, and within a few metres of its height. place carries the
-// caller's frame to Home.
+// caller's frame to the chart.
 func (c *Carrier) Aboard(p Vec3, t float64, place Rigid) bool {
 	local := c.local(p, t, place)
 	return local.Y > -2 && local.Y < 8 && inside(local, c.Deck)
@@ -280,7 +295,7 @@ func (w *World) top() float64 {
 // strips, then island ground, else none (open sea — the hosts treat water
 // impact as a crash, not a contact). Returns height, kind, and the surface's
 // own velocity (a parked jet rides the ship), in the caller's frame: place
-// carries it to Home, where the map and the ship are. The height is the
+// carries it to the chart, where the map and the ship are. The height is the
 // point's own height less its clearance above the surface, so a caller
 // working level under itself reads the surface beneath it.
 func (w *World) surface(p Vec3, t float64, place Rigid) (float64, int, Vec3, bool) {
@@ -299,7 +314,7 @@ func (w *World) surface(p Vec3, t float64, place Rigid) (float64, int, Vec3, boo
 			}
 		}
 	}
-	q := place.Point(p) // the point in Home, where the map is charted
+	q := place.Point(p) // the point in the chart, where the map is
 	for fi := range w.Fields {
 		field := &w.Fields[fi]
 		for si := range field.Strips {
@@ -330,7 +345,7 @@ func (w *World) surface(p Vec3, t float64, place Rigid) (float64, int, Vec3, boo
 // meets it: the deck's own on the carrier, still on land, and none at sea or
 // in the air. A jet spotted on the deck of a ship under way starts with it,
 // or the deck runs out from under the wheels and the catapult snatches the
-// jet up to the ship's speed. place carries the caller's frame to Home.
+// jet up to the ship's speed. place carries the caller's frame to the chart.
 func (w *World) Footing(p Vec3, t float64, place Rigid) Vec3 {
 	_, _, velocity, _ := w.surface(p, t, place)
 	return velocity
@@ -338,7 +353,7 @@ func (w *World) Footing(p Vec3, t float64, place Rigid) Vec3 {
 
 // struck reports whether a point of the caller's frame is inside a prism or a
 // post - the carrier's island among them, met where the ship is at time t.
-// place carries the point to Home, where the map is charted; a top is a
+// place carries the point to the chart, where the map is; a top is a
 // height above the sea, which the carrier's deck frame measures from its own
 // deck.
 func (w *World) struck(p Vec3, t float64, place Rigid) bool {

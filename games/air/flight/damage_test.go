@@ -19,7 +19,7 @@ import (
 
 func cruising(t *testing.T) *flight.Model {
 	t.Helper()
-	m := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: 0})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{Sea: 0})
 	m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 180, fa18c.Airframe.Mass.Fuel*0.7)
 	return m
 }
@@ -182,7 +182,7 @@ func TestEngineLossSlows(t *testing.T) {
 // damage keeps the wings level so the same governor serves both cases.
 func stalls(t *testing.T, wound func(*flight.Model)) float64 {
 	t.Helper()
-	m := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: 0})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{Sea: 0})
 	m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 145, fa18c.Airframe.Mass.Fuel*0.5)
 	wound(m)
 	altitude := m.State.Position.Y
@@ -282,7 +282,7 @@ func TestLossLightens(t *testing.T) {
 // runway builds a jet standing (or descending onto) a paved strip.
 func runway(sink float64, speed float64) *flight.Model {
 	world := flight.World{Sea: -10, Fields: []flight.Field{{Height: 0, Strips: []flight.Strip{{A: flight.Vec3{X: -2000}, B: flight.Vec3{X: 4000}, Width: 60}}}}}
-	m := flight.New(fa18c.Airframe, flight.Environment{}, world)
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, world)
 	m.State.Position = flight.Vec3{Y: 3} // wheels a hand's breadth off the pavement: the fall must not add sink the test didn't ask for
 	m.State.Velocity = flight.Vec3{X: speed, Y: -sink}
 	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -412,7 +412,7 @@ func TestEngineLossSavesFuel(t *testing.T) {
 // speed — while a normal pattern extension costs nothing.
 func TestGearOverspeed(t *testing.T) {
 	harm := func(speed float64) float64 {
-		m := flight.New(fa18c.Airframe, flight.Environment{Seed: 1}, flight.World{Sea: 0})
+		m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 1000}, flight.Vec3{X: 1}, speed, fa18c.Airframe.Mass.Fuel*0.5)
 		// NOT Direct: the FCS holds the attitude, so the speed only falls. In
 		// Direct the nose drops at idle and the dive accelerates the jet back
@@ -487,7 +487,7 @@ func TestUnprotectedBraking(t *testing.T) {
 	belly.State.Position.Y = 1.4 // the keel a hand's breadth off the pavement
 	// A deck steaming at 20 m/s under a jet rolling 85 kt across it: 124 kt over
 	// the sea, but the wheels turn at the deck's speed, not the world's.
-	boat := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: -10, Carrier: &flight.Carrier{
+	boat := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{Sea: -10, Carrier: &flight.Carrier{Chart: scene,
 		Position: flight.Vec3{Y: 19}, Speed: 20,
 		Deck: []flight.Vec3{{X: -165, Z: -22}, {X: -165, Z: 22}, {X: 165, Z: 22}, {X: 165, Z: -22}},
 	}})
@@ -516,7 +516,7 @@ func TestUnprotectedBraking(t *testing.T) {
 // 2.10.1.6).
 func TestGearHydraulics(t *testing.T) {
 	airborne := func(engine int) *flight.Model {
-		m := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{Sea: -10})
+		m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{Sea: -10})
 		m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 120, 3000)
 		if engine >= 0 {
 			m.State.Damage.Engine[engine] = 1

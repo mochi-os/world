@@ -33,7 +33,7 @@ func TestAsternProbe(t *testing.T) {
 		burning := 0
 		const runs = 300
 		for seed := uint64(1); seed <= runs; seed++ {
-			m := flight.New(fa18c.Airframe, flight.Environment{Seed: seed}, flight.World{Sea: 0})
+			m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: seed}, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 180, fa18c.Airframe.Mass.Fuel*0.7)
 			body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
 			// Attitude identity: the body frame IS the world frame, so the probe
@@ -93,7 +93,7 @@ func TestStationBurst(t *testing.T) {
 		return nil
 	}
 	for _, direct := range []bool{true, false} {
-		m := flight.New(fa18c.Airframe, flight.Environment{Seed: 11}, flight.World{Sea: 0})
+		m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: 11}, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 180, fa18c.Airframe.Mass.Fuel*0.7)
 		body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
 		aft := find(body, func(p *Part) bool { return p.Engine >= 0 })

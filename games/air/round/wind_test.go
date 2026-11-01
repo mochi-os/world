@@ -15,7 +15,7 @@ import (
 
 // gale is a strong wind along +X, about 30 kt at the surface and 80 kt at
 // 6,000 m, where these shots are taken.
-var gale = flight.Environment{Seed: 1, Wind: flight.Vec3{X: 15}}
+var gale = flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: flight.Vec3{X: 15}}
 
 // duel is a shot at 6,000 m: the shooter flying along line at 0.9 Mach through
 // the air, the target `apart` metres along line flying `way` (a unit vector)
@@ -80,7 +80,7 @@ func TestShotFliesTheAir(t *testing.T) {
 		{"crossing downwind", south, east, 25000},
 		{"crossing upwind", south, west, 25000},
 	} {
-		still, _ := shoot(flight.Environment{Seed: 1}, s.line, s.way, s.apart)
+		still, _ := shoot(flight.Environment{Frame: scene, Chart: scene, Seed: 1}, s.line, s.way, s.apart)
 		seconds, mach := shoot(gale, s.line, s.way, s.apart)
 		t.Logf("%s: %.2f s to the fuse at Mach %.2f (still air %.2f s)", s.name, seconds, mach, still)
 		if still < 0 || seconds < 0 || math.Abs(seconds-still) > 0.5 {
@@ -99,8 +99,8 @@ func TestLadderFliesTheAir(t *testing.T) {
 		{"tail chase downwind", east, east, 20000},
 		{"tail chase upwind", west, west, 20000},
 	} {
-		shooter, target := duel(flight.Environment{Seed: 1}, s.line, s.way, s.apart)
-		still := Ladder(shooter, target, flight.Environment{Seed: 1}, 0)
+		shooter, target := duel(flight.Environment{Frame: scene, Chart: scene, Seed: 1}, s.line, s.way, s.apart)
+		still := Ladder(shooter, target, flight.Environment{Frame: scene, Chart: scene, Seed: 1}, 0)
 		shooter, target = duel(gale, s.line, s.way, s.apart)
 		zone := Ladder(shooter, target, gale, 0)
 		t.Logf("%s: aero %.0f max %.0f escape %.0f (still %.0f %.0f %.0f)", s.name, zone.Aero, zone.Max, zone.Escape, still.Aero, still.Max, still.Escape)
@@ -163,7 +163,7 @@ func TestLethalFliesTheAir(t *testing.T) {
 		}
 		return low
 	}
-	still := edge(flight.Environment{Seed: 1}, east)
+	still := edge(flight.Environment{Frame: scene, Chart: scene, Seed: 1}, east)
 	for _, line := range []flight.Vec3{east, west} {
 		got := edge(gale, line)
 		t.Logf("%v: credible out to %.0f m (still air %.0f m)", line, got, still)
@@ -189,7 +189,7 @@ func TestLeadThroughTheAir(t *testing.T) {
 		m.Step(dt, &target, nil)
 		return m.Velocity.Subtract(before).Scale(1 / dt)
 	}
-	still, blown := turn(flight.Environment{Seed: 1}), turn(gale)
+	still, blown := turn(flight.Environment{Frame: scene, Chart: scene, Seed: 1}), turn(gale)
 	t.Logf("the first turn across the line: %.1f m/s² in a crosswind, %.1f in still air", blown.X, still.X)
 	if still.X < 5 || math.Abs(blown.X-still.X) > 0.1*still.X {
 		t.Fatalf("crossing a %.0f m/s wind the round turns at %.1f m/s² toward the target's way, in still air %.1f", flight.Wind(flight.Vec3{Y: 6000}, 0, gale).X, blown.X, still.X)

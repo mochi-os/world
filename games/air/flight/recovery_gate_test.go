@@ -32,7 +32,7 @@ func TestPitchRecovery(t *testing.T) {
 	// entry drives the jet to a target alpha, then commands full forward stick
 	// and reports how long the recovery took and what the stabilator gave.
 	entry := func(kcas, want, bank float64) (float64, float64, float64, float64) {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 6000}, Vec3{X: 1}, kcas/1.94384, 3000)
 		in := Inputs{Throttle: 1}
 		for i := 0; i < 240*2; i++ {

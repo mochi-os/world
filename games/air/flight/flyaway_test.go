@@ -33,7 +33,7 @@ func shoot(t *testing.T, fuel float64, stroke float64, clean bool) flyaway {
 	t.Helper()
 	world := harbor()
 	world.Carrier.Catapults[0].Stroke = stroke
-	m := New(Fighter, Environment{Wind: Vec3{X: -12.9}}, world)
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Wind: Vec3{X: -12.9}}, world)
 	park(m, 42.7, -0.6)
 	var mask uint64
 	for i, store := range m.Airframe.Stores {

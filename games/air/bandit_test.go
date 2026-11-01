@@ -36,7 +36,7 @@ func TestBanditSpawnTrimmed(t *testing.T) {
 // player's core had the trade wind, so each joust began with the pilot about
 // 53 kt faster or slower by the coin flip that picked his end.
 func TestBanditFliesThePlayersAir(t *testing.T) {
-	air := flight.Environment{Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}}
+	air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: flight.Vec3{X: -12.1, Z: 4.4}}
 	for _, east := range []float64{1, -1} {
 		b := NewBandit("expert", 7, "", false, true, "fox2", 0, true)
 		b.Air(air)
@@ -65,7 +65,7 @@ func TestBanditBvr(t *testing.T) {
 	}
 	b.Spawn(flight.Vec3{X: 25000, Y: 6096}, flight.Vec3{X: -272})
 
-	environment := flight.Environment{Seed: 3}
+	environment := flight.Environment{Frame: scene, Chart: scene, Seed: 3}
 	player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
 	player.State = flight.Level(player, flight.Vec3{X: 0, Y: 6096}, flight.Vec3{X: 1}, 272, fuel)
 	words := make([]float64, flight.Size)
@@ -166,7 +166,7 @@ func TestBanditJoustHold(t *testing.T) {
 			b.craft.model.Airframe = &quiet
 		}
 		b.Spawn(flight.Vec3{X: 2778, Y: 4572}, flight.Vec3{X: -220})
-		player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: seed}, flight.World{Sea: sea})
+		player := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: seed}, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{X: -2778, Y: 4572}, flight.Vec3{X: 1}, 220, fuel)
 		words := make([]float64, flight.Size)
 		// behind is the rule in the test's own terms: from lies behind the line

@@ -18,14 +18,14 @@ import (
 // km away in the world frame, where Midway's y leans 18 degrees off the
 // round's up: the round flies level under itself, wherever it is.
 func TestShotAnywhere(t *testing.T) {
-	far, level := flight.Home.Sea(2000000, -500000)
+	far, level := scene.Sea(2000000, -500000)
 	place := func(p flight.Vec3) flight.Vec3 { return far.Add(level.Rotate(p)) }
 	for _, s := range []struct {
 		name      string
 		line, way flight.Vec3
 		apart     float64
 	}{{"head-on", east, west, 30000}, {"beam", east, south, 25000}} {
-		calm := flight.Environment{Seed: 1}
+		calm := flight.Environment{Frame: scene, Chart: scene, Seed: 1}
 		home, mach := shoot(calm, s.line, s.way, s.apart)
 		shooter, target := duel(calm, s.line, s.way, s.apart)
 		shooter.Position, shooter.Velocity = place(shooter.Position), level.Rotate(shooter.Velocity)

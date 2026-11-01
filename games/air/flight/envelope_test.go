@@ -17,7 +17,7 @@ import (
 func settle(t *testing.T, fuel float64) (float64, float64) {
 	bestVy, bestSpeed, bestAlpha := 1e9, 0.0, 0.0
 	for throttle := 0.20; throttle <= 0.64; throttle += 0.01 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, fuel)
 		sumVy, sumSpeed, sumAlpha, n := 0.0, 0.0, 0.0, 0
 		for i := 0; i < 240*90; i++ {
@@ -144,7 +144,7 @@ func TestFlyawayProfile(t *testing.T) {
 // TestStaticThrust: two F404-GE-402s at military power, sea level, static —
 // the airframe should accelerate at roughly thrust/mass minus rolling drag.
 func TestStaticThrust(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 200, 2500)
 	for i := 0; i < 240*8; i++ {
 		m.Step(Inputs{Throttle: 1})
@@ -179,7 +179,7 @@ func bank(m *Model) float64 {
 
 // energy builds the constant-mass measurement jet.
 func energy() *Model {
-	environment := Environment{Seed: 1}
+	environment := Environment{Frame: scene, Chart: scene, Seed: 1}
 	environment.Cheat.Fuel = true
 	return New(Fighter, environment, World{Sea: 0})
 }
@@ -359,7 +359,7 @@ func TestPullProbe(t *testing.T) {
 // TestPull: full aft stick at 450 KCAS must PEG the limiter - >=7.3 g within
 // 2.5 s, still pegged at 4 s, never past 7.65 (the overstress ledger is 7.5).
 func TestPull(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 450/1.94384*1.015, 2500)
 	peak, when := 0.0, 0.0
 	for i := 0; i < 240*4; i++ {
@@ -445,7 +445,7 @@ func TestLift(t *testing.T) {
 // neighbourhood without diving through it or winding into deep negative
 // stall, and the negative-alpha protection must hold.
 func TestPush(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, 400/1.94384*1.015, 2500)
 	least, alpha := 1.0, 0.0
 	for i := 0; i < 240*4; i++ {

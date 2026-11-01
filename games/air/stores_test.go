@@ -303,7 +303,7 @@ func TestInboardHeaters(t *testing.T) {
 // onto its last prediction until its own seeker wakes. That is the crank.
 func TestFox3Server(t *testing.T) {
 	build := func() (*instance, *craft, *craft) {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
@@ -366,7 +366,7 @@ func TestFox3Server(t *testing.T) {
 // closest approach, sixty such shots fused fifty-six times and killed nothing.
 func TestFox3Kill(t *testing.T) {
 	for _, aspect := range []float64{0, 90, 180} { // degrees: coming at the shooter, crossing, going away
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 7000}, flight.Vec3{X: 1}, 260, 2500)
@@ -398,7 +398,7 @@ func TestFox3Kill(t *testing.T) {
 // same beam with the sky behind it does not.
 func TestFox3Notch(t *testing.T) {
 	stale := func(height float64) float64 {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
@@ -437,7 +437,7 @@ func TestFox3Notch(t *testing.T) {
 // one press is one round and a held button is not a stream. This is the
 // path from a client's key to a round in the air.
 func TestFox3Trigger(t *testing.T) {
-	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true, started: true}
 	for _, slot := range []int{0, 1} {
 		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
@@ -484,7 +484,7 @@ func TestFox3Trigger(t *testing.T) {
 // does. Without the flag and without a lock there is still no shot.
 func TestFox3Visual(t *testing.T) {
 	build := func(count int) (*instance, *craft) {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true, started: true}
 		for slot := 0; slot < count; slot++ {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)
@@ -554,7 +554,7 @@ func TestFox3Visual(t *testing.T) {
 // wiring too.
 func TestChaffServer(t *testing.T) {
 	fly := func(dispensing bool, height float64) float64 {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true, started: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
@@ -627,7 +627,7 @@ func TestChaffServer(t *testing.T) {
 // beam-and-chaff defence that saves a quiet defender.
 func TestJammerServer(t *testing.T) {
 	build := func() (*instance, *craft, *craft) {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true, started: true}
 		for _, slot := range []int{0, 1} {
 			m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 280, 2500)
@@ -762,7 +762,7 @@ func TestJammerServer(t *testing.T) {
 // of the round single player flies, and fox3 fired a third round, the flight
 // path plus 30 m/s along the nose, that matched neither.
 func TestAmraamAlongTheNose(t *testing.T) {
-	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true}
+	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true}
 	for _, slot := range []int{0, 1} {
 		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 7000}, flight.Vec3{X: 1}, 250, 2500)
@@ -781,7 +781,7 @@ func TestAmraamAlongTheNose(t *testing.T) {
 	target.model.State.Position, target.model.State.Velocity = flight.Vec3{X: 30000, Y: 7000}, flight.Vec3{X: -250}
 	shooter.emitter, shooter.lock = 2, 1
 	him := round.Target{Position: target.model.State.Position, Velocity: target.model.State.Velocity}
-	honest := round.Ladder(fired(shooter), him, flight.Environment{}, 0)
+	honest := round.Ladder(fired(shooter), him, flight.Environment{Frame: scene, Chart: scene}, 0)
 	for k, want := range []struct {
 		station string
 		launch  flight.Vec3
@@ -802,7 +802,7 @@ func TestAmraamAlongTheNose(t *testing.T) {
 			t.Errorf("%s: the DLZ was drawn for a round leaving at %+v, and fox3 fired one at %+v", want.station, drawn, launched)
 		}
 	}
-	path := round.Ladder(round.Target{Position: shooter.model.State.Position, Velocity: shooter.model.State.Velocity}, him, flight.Environment{}, 0)
+	path := round.Ladder(round.Target{Position: shooter.model.State.Position, Velocity: shooter.model.State.Velocity}, him, flight.Environment{Frame: scene, Chart: scene}, 0)
 	if honest.Escape < path.Escape+5000 {
 		t.Errorf("the no-escape range barely moved off the flight path (%.0f m against %.0f m): the control is not a control", honest.Escape, path.Escape)
 	}
@@ -816,7 +816,7 @@ func TestSeparation(t *testing.T) {
 	ladder := round.Ladder(
 		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
 		round.Target{Position: flight.Vec3{X: 60000, Y: bvraltitude}, Velocity: flight.Vec3{X: -bvrspeed}},
-		flight.Environment{}, 0,
+		flight.Environment{Frame: scene, Chart: scene}, 0,
 	)
 	apart := separation()
 	if apart != ladder.Max+commit {
@@ -877,7 +877,7 @@ func TestOpening(t *testing.T) {
 			split++
 		}
 		for slot := 0; slot < 2; slot++ {
-			if reach := round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), flight.Environment{}, 0).Max; o.Apart < reach+commit-1 {
+			if reach := round.Ladder(o.shooter(slot, o.Apart), o.state(1-slot, o.Apart), flight.Environment{Frame: scene, Chart: scene}, 0).Max; o.Apart < reach+commit-1 {
 				t.Fatalf("seed %d: slot %d's Rmax %.0f m plus the commit buffer reaches past the %.0f m apart", seed, slot, reach, o.Apart)
 			}
 		}
@@ -1125,7 +1125,7 @@ func TestPromote(t *testing.T) {
 // burning is a two-jet arena for the store-fire tests: slot 0 carries the
 // given stations, slot 1 flies 20 km ahead of it, outside every seeker.
 func burning(stations map[string]any) (*instance, *craft) {
-	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, missiles: true, started: true}
+	i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, missiles: true, started: true}
 	for _, slot := range []int{0, 1} {
 		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 8000}, flight.Vec3{X: 1}, 260, 2500)

@@ -136,7 +136,7 @@ func TestSunGlareByTier(t *testing.T) {
 	// An observer at 3,000 m flying toward the sun, and a target 3 km away at
 	// an angle from the sun's direction, turned toward the east.
 	look := func(tier string, night bool, angle float64, mind bool) bool {
-		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Seed: 1}, night: night}
+		i := &instance{aircraft: map[int]*craft{}, environment: flight.Environment{Frame: scene, Chart: scene, Seed: 1}, night: night}
 		m := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 		m.State = flight.Level(m, flight.Vec3{Y: 3000}, flight.Vec3{Z: 1}, 200, 2500)
 		me := &craft{model: m, alive: true}
@@ -144,7 +144,9 @@ func TestSunGlareByTier(t *testing.T) {
 			me.brain = &brain{skill: skills[tier]}
 		}
 		r := angle * math.Pi / 180
-		toward := glare.Scale(math.Cos(r)).Add(flight.Vec3{X: 1}.Scale(math.Sin(r))) // glare is a unit vector and X is square to it
+		sun := sunward(scene, scene)
+		east := flight.Vec3{X: 1}.Subtract(sun.Scale(sun.X)).Normalize() // square to the sun, toward the east
+		toward := sun.Scale(math.Cos(r)).Add(east.Scale(math.Sin(r)))
 		n := flight.New(aircraft.Get("fa18c"), i.environment, flight.World{Sea: 0})
 		n.State = flight.Level(n, m.State.Position.Add(toward.Scale(3000)), flight.Vec3{X: 1}, 200, 2500)
 		other := &craft{model: n, alive: true}

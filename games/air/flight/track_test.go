@@ -29,7 +29,7 @@ func voyage(c *Carrier, speed float64, turn float64) {
 // pose's own rate of change at any deck point, and local and world are each
 // other's inverse at every time.
 func TestTrackPose(t *testing.T) {
-	c := &Carrier{Position: Vec3{X: 120, Y: 19, Z: -40}}
+	c := &Carrier{Chart: scene, Position: Vec3{X: 120, Y: 19, Z: -40}}
 	voyage(c, 15, 30)
 	rate := 15.0 / 700
 	end := 30 + math.Pi/rate
@@ -71,7 +71,7 @@ func TestTrackPose(t *testing.T) {
 	}
 	// Gathering way on a straight: the speed climbs at Change and holds once the
 	// next leg takes over, the pose and the velocity continuous throughout.
-	surge := &Carrier{Position: Vec3{Y: 19}}
+	surge := &Carrier{Chart: scene, Position: Vec3{Y: 19}}
 	surge.Track = []Leg{{Start: 10, Position: surge.Position, Heading: 0.7, Speed: 2.6, Change: 0.1}}
 	end = 10 + (15.4-2.6)/0.1
 	at, heading := surge.At(end)
@@ -94,7 +94,7 @@ func TestTrackPose(t *testing.T) {
 		}
 	}
 	// Without a track the ship holds its Position, Heading and Speed, as before.
-	plain := &Carrier{Position: Vec3{X: 5, Y: 19, Z: 7}, Heading: 0.4, Speed: 3}
+	plain := &Carrier{Chart: scene, Position: Vec3{X: 5, Y: 19, Z: 7}, Heading: 0.4, Speed: 3}
 	if at, heading := plain.At(10); at.Subtract(Vec3{X: 5 + 30*math.Cos(0.4), Y: 19, Z: 7 - 30*math.Sin(0.4)}).Length() > 1e-9 || heading != 0.4 {
 		t.Fatalf("a carrier without a track at %v %.3f", at, heading)
 	}
@@ -179,7 +179,7 @@ func TestIslandRidesTheShip(t *testing.T) {
 // first leg's start, moving on as the steering drops old legs; a ship with no
 // track has held her course from any time.
 func TestKnownIsTheTracksFirstStart(t *testing.T) {
-	c := &Carrier{Position: Vec3{Y: 19}, Heading: 0.4, Speed: 2.6}
+	c := &Carrier{Chart: scene, Position: Vec3{Y: 19}, Heading: 0.4, Speed: 2.6}
 	if known := c.Known(); !math.IsInf(known, -1) {
 		t.Fatalf("a ship without a track is known from %v, want -Inf", known)
 	}
@@ -311,7 +311,7 @@ func TestHeldThroughTheTurn(t *testing.T) {
 // TestTrimsKeepTheClock: Level and Approach lay a jet down on the clock it
 // already has, so a respawn meets the carrier where the match has it.
 func TestTrimsKeepTheClock(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	m.State.Time = 1234.5
 	if s := Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 150, 2500); s.Time != 1234.5 {
 		t.Fatalf("Level reset the clock to %.1f", s.Time)

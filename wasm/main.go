@@ -164,14 +164,15 @@ func footing(this js.Value, arguments []js.Value) any {
 
 // theatre is the frame the client works in, which every position crossing
 // this boundary is in: the tangent frame at an anchor near its jet, which it
-// moves as the jet flies on (reframe). The world frame until it says.
-var theatre = flight.Home
+// moves as the jet flies on (reframe). Midway's, where every mission starts,
+// until it says.
+var theatre = flight.Midway
 
 // reframe moves everything this core holds into the client's new frame,
 // anchored at [latitude, longitude] in radians: the jet, the missiles and
 // gun rounds in flight, the wreckage, and the single-player bandit with its
 // arena and memories. The map, the carrier's track and the wakes stay in the
-// world frame, where the core reaches them through the frame it is in.
+// chart, where the core reaches them through the frame it is in.
 func reframe(this js.Value, arguments []js.Value) any {
 	frame := flight.Tangent(arguments[0].Float(), arguments[1].Float())
 	r := flight.Between(theatre, frame)

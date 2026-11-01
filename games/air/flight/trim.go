@@ -411,7 +411,7 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	return s, throttle
 }
 
-// under is a point's altitude, its place in Home (where the weather is
+// under is a point's altitude, its place in the chart (where the weather is
 // fixed) and the motion from the tangent frame under it back to the model's
 // environment frame: what a trim worked level under a spawn needs.
 func (m *Model) under(position Vec3) (float64, Vec3, Rigid) {

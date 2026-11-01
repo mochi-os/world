@@ -25,7 +25,7 @@ func TestArrivalAgainstRange(t *testing.T) {
 		direction := c.targetP.Subtract(c.shooterP).Normalize()
 		band := ""
 		for r := 400.0; r <= 3000; r += 200 {
-			if reaches(shooter, target, direction, c.swing, flight.Environment{}, 0, r, true) {
+			if reaches(shooter, target, direction, c.swing, flight.Environment{Frame: scene, Chart: scene}, 0, r, true) {
 				band += "#"
 			} else {
 				band += "."
@@ -34,7 +34,7 @@ func TestArrivalAgainstRange(t *testing.T) {
 		t.Logf("%s (fired at %.0f m)", c.name, c.fired)
 		t.Logf("   400 m -> 3000 m in 200 m steps, # arrives: %s", band)
 		t.Logf("   at the range actually fired from (%.0f m): arrives %v",
-			c.fired, reaches(shooter, target, direction, c.swing, flight.Environment{}, 0, c.fired, true))
+			c.fired, reaches(shooter, target, direction, c.swing, flight.Environment{Frame: scene, Chart: scene}, 0, c.fired, true))
 	}
 }
 
@@ -52,7 +52,7 @@ func TestLadderAtRecordedShots(t *testing.T) {
 				sw    flight.Vec3
 			}{{"straight", flight.Vec3{}}, {"real 6.5g", c.swing}} {
 				z := Heat(round.Target{Position: c.shooterP, Velocity: c.shooterV},
-					round.Target{Position: c.targetP, Velocity: c.targetV}, turn.sw, lit, flight.Environment{}, 0)
+					round.Target{Position: c.targetP, Velocity: c.targetV}, turn.sw, lit, flight.Environment{Frame: scene, Chart: scene}, 0)
 				t.Logf("%s lit=%.0f %-9s aspect %.0f deg | min %4.0f escape %5.0f max %5.0f | fired at %.0f: endorsed %v",
 					c.name, lit, turn.label, aspect, z.Minimum, z.Escape, z.Max, c.fired,
 					c.fired > z.Minimum && c.fired <= z.Escape)
@@ -72,8 +72,8 @@ func TestLadderByAspect(t *testing.T) {
 			Position: flight.Vec3{X: 1600, Y: 4500},
 			Velocity: flight.Vec3{X: 270 * math.Cos(rad), Z: 270 * math.Sin(rad)},
 		}
-		cold := Heat(shooter, target, flight.Vec3{}, 0, flight.Environment{}, 0)
-		lit := Heat(shooter, target, flight.Vec3{}, 1, flight.Environment{}, 0)
+		cold := Heat(shooter, target, flight.Vec3{}, 0, flight.Environment{Frame: scene, Chart: scene}, 0)
+		lit := Heat(shooter, target, flight.Vec3{}, 1, flight.Environment{Frame: scene, Chart: scene}, 0)
 		t.Logf("aspect %3.0f deg | cold: min %4.0f escape %5.0f max %5.0f | lit: min %4.0f escape %5.0f max %5.0f",
 			aspect, cold.Minimum, cold.Escape, cold.Max, lit.Minimum, lit.Escape, lit.Max)
 	}

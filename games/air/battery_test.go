@@ -41,6 +41,8 @@ import (
 //	AIR_GRAVITY=1 make test-doctrine-quick
 //	AIR_SPAN_HIGH=8 make test-doctrine-quick
 func TestMain(m *testing.M) {
+	setting.Frame, setting.Chart = scene, scene // every session a test makes is laid in the scene (scene_test.go)
+	stage.Frame = scene
 	for _, knob := range []string{"gravity", "span.high", "span.pitch", "span.climb", "span.beam"} {
 		if value, err := strconv.ParseFloat(os.Getenv("AIR_"+strings.ToUpper(strings.ReplaceAll(knob, ".", "_"))), 64); err == nil {
 			amend(&doctrine, knob, value)

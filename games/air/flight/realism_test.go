@@ -25,7 +25,7 @@ func TestTrim(t *testing.T) {
 	// accelerates), so the trimmed jet is judged against an untrimmed twin
 	// flying the identical profile — the trim is the only difference.
 	settled := func(trim bool) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 800}, Vec3{X: 1}, 75, Fighter.Mass.Fuel*0.4)
 		in := Inputs{Gear: true, Flap: 2, Throttle: 0.30} // approach power: a hair downhill, so the runaway climb never pins the flyaway-attitude cap both twins would share
 		total := 0.0
@@ -45,7 +45,7 @@ func TestTrim(t *testing.T) {
 		t.Fatalf("PA nose-up trim raised alpha only %.2f° over the untrimmed twin", rise)
 	}
 
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.4)
 	in := Inputs{Throttle: 0.7}
 	for tick := 0; tick < 240*8; tick++ {
@@ -74,7 +74,7 @@ func TestTrim(t *testing.T) {
 // would take HALF (the clean-up climb).
 func TestFlapSelect(t *testing.T) {
 	droop := func(flap float64, raise bool) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 800}, Vec3{X: 1}, 75, Fighter.Mass.Fuel*0.4)
 		in := Inputs{Gear: true, Throttle: 0.42, Flap: flap}
 		for tick := 0; tick < 240*5; tick++ {
@@ -109,7 +109,7 @@ func TestFlapSelect(t *testing.T) {
 // Positive·(Reference/mass), not at the placard.
 func TestWeightSchedule(t *testing.T) {
 	pull := func(fuel float64) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 250, fuel)
 		in := Inputs{Throttle: 1, Reheat: 1}
 		for tick := 0; tick < 240*2; tick++ {
@@ -151,7 +151,7 @@ func TestWeightSchedule(t *testing.T) {
 // reaches the placard, and the paddle switch's limit loses the schedule too.
 func TestRevertedLimiter(t *testing.T) {
 	pull := func(reverted bool) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)
 		in := Inputs{Throttle: 1, Reheat: 1, Reverted: reverted}
 		for tick := 0; tick < 240*2; tick++ {
@@ -173,7 +173,7 @@ func TestRevertedLimiter(t *testing.T) {
 	if reverted-scheduled < 0.25 {
 		t.Fatalf("reverted %.2f g vs scheduled %.2f g: the limiter kept its weight schedule", reverted, scheduled)
 	}
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 2000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)
 	if m.mass <= Fighter.Limit.Reference {
 		t.Fatalf("full tanks weigh %.0f kg, under the placard's %.0f: nothing here is scheduled", m.mass, Fighter.Limit.Reference)
@@ -196,7 +196,7 @@ func TestRevertedLimiter(t *testing.T) {
 // TestStarve: the zero/negative-g feed limit. A sustained push past ten
 // seconds rolls the cores back to idle; recovered positive g relights them.
 func TestStarve(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 7000}, Vec3{X: 1}, 220, Fighter.Mass.Fuel*0.5)
 	in := Inputs{Throttle: 1}
 	for tick := 0; tick < 240*2; tick++ {
@@ -247,7 +247,7 @@ func TestSkip(t *testing.T) {
 // TestBuffet: the shake channel is silent in cruise, present in slow trimmed
 // flight riding the LEX, and strong in a hard pull.
 func TestBuffet(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 220, Fighter.Mass.Fuel*0.5)
 	in := Inputs{Throttle: 0.7}
 	for tick := 0; tick < 240*4; tick++ {
@@ -273,7 +273,7 @@ func TestBuffet(t *testing.T) {
 // then hands to the hold. A few degrees of coast is physics, not a defect.
 func TestRelease(t *testing.T) {
 	coast := func(kt float64) (float64, int) {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 4000}, Vec3{X: 1}, kt*0.5144, Fighter.Mass.Fuel*0.5)
 		in := Inputs{Throttle: 1}
 		for i := 0; i < 240*3; i++ {
@@ -326,7 +326,7 @@ func TestRelease(t *testing.T) {
 // alpha datum — back out.
 func TestLean(t *testing.T) {
 	banked := func(lean bool) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.4)
 		in := Inputs{Throttle: 0.7}
 		for tick := 0; tick < 240*6; tick++ {
@@ -345,7 +345,7 @@ func TestLean(t *testing.T) {
 		t.Fatalf("three seconds of roll trim moved the bank only %.1f° over the untrimmed twin", math.Abs(leaned-level))
 	}
 
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel*0.4)
 	m.State.Fcs.Datum = 0.03
 	m.State.Fcs.Bank = 0.04

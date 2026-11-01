@@ -33,7 +33,7 @@ func flown(m *Model, position Vec3, speed float64) int {
 // from the ground to its top; the crash probes meet them at any speed, and
 // clear them by flying over or beside.
 func TestObstacles(t *testing.T) {
-	m := New(Fighter, Environment{}, built())
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, built())
 	if flown(m, Vec3{X: 1000, Y: 20, Z: 1000}, 150) < 0 {
 		t.Errorf("through the hangar at 150 m/s: no contact")
 	}

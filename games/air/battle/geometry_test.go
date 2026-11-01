@@ -40,7 +40,7 @@ func TestPartsShared(t *testing.T) {
 // rather than a crash.
 func TestPartsReadOnly(t *testing.T) {
 	before := append([]Part(nil), Parts(fa18c.Airframe)...)
-	m := flight.New(fa18c.Airframe, flight.Environment{}, flight.World{})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene}, flight.World{})
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe),
 		Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
 	_ = body

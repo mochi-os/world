@@ -78,7 +78,7 @@ func TestMenaceBeatenDefence(t *testing.T) {
 		bandit.Spawn(flight.Vec3{Y: 5000}, flight.Vec3{X: 220})
 		bandit.craft.brain.routine.passed = true // the fight: a joust's hold keeps every round on the rail through the run-in
 
-		environment := flight.Environment{Seed: 1}
+		environment := flight.Environment{Frame: scene, Chart: scene, Seed: 1}
 		player := flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea})
 		player.State = flight.Level(player, flight.Vec3{X: 2000, Y: 5000}, flight.Vec3{X: -1}, 220, fuel)
 		words := make([]float64, flight.Size)

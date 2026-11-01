@@ -69,7 +69,7 @@ func TestDebrisRidesTheWind(t *testing.T) {
 // TestRoundFeelsTheWind: a round takes the wind where it is every Sampled
 // seconds of its flight, and in between flies the air it last took.
 func TestRoundFeelsTheWind(t *testing.T) {
-	trades := flight.Environment{Seed: 7, Wind: flight.Vec3{X: -12.1, Z: 4.4}}
+	trades := flight.Environment{Frame: scene, Chart: scene, Seed: 7, Wind: flight.Vec3{X: -12.1, Z: 4.4}}
 	r := Round{Position: flight.Vec3{Y: 3000}, Velocity: flight.Vec3{X: 1000}, Wind: breeze}
 	r.Age = Sampled / 2
 	r.Feel(trades, 10)
@@ -88,7 +88,7 @@ func TestRoundFeelsTheWind(t *testing.T) {
 // that takes the wind it meets every step, over the two kilometres a gun
 // reaches. Kept on the muzzle's air it strays metres.
 func TestSteepShotFeelsTheWind(t *testing.T) {
-	trades := flight.Environment{Seed: 7, Wind: flight.Vec3{X: -12.9 * math.Sin(70*math.Pi/180), Z: 12.9 * math.Cos(70*math.Pi/180)}}
+	trades := flight.Environment{Frame: scene, Chart: scene, Seed: 7, Wind: flight.Vec3{X: -12.9 * math.Sin(70*math.Pi/180), Z: 12.9 * math.Cos(70*math.Pi/180)}}
 	at := flight.Vec3{Y: 1200}
 	bore := flight.Vec3{X: math.Cos(-0.6), Y: math.Sin(-0.6)} // 34 degrees down into the lowest kilometre, where the wind veers and slows the most
 	w := flight.Wind(at, 0, trades)

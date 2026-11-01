@@ -29,7 +29,7 @@ func slipped(base State, deg float64) State {
 // that scatter - the fins at their published area and the forebody's
 // sideslip cross-section are what put it there.
 func TestSideslipDerivatives(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(1000, m.Environment)
 	base := Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 130, 2500)
 	S, b := m.Airframe.Reference.Area, m.Airframe.Reference.Span
@@ -93,8 +93,8 @@ func TestSweptWing(t *testing.T) {
 	}
 	a.Body = nil
 	a.Stores = nil
-	wings := New(&a, Environment{}, World{})
-	whole := New(Fighter, Environment{}, World{})
+	wings := New(&a, Environment{Frame: scene, Chart: scene}, World{})
+	whole := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(1000, whole.Environment)
 	fast := scheduled(whole, Level(whole, Vec3{Y: 1000}, Vec3{X: 1}, 175, 2500))
 	slow := scheduled(whole, Level(whole, Vec3{Y: 1000}, Vec3{X: 1}, 130, 2500))
@@ -128,7 +128,7 @@ func TestSweptWing(t *testing.T) {
 // percent. The pins are the unswept model's values, clean with the slats out
 // at 134 m/s and 6,000 m.
 func TestSweptFrames(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(6000, m.Environment)
 	v := 134.0
 	q := 0.5 * local.Density * v * v
@@ -154,7 +154,7 @@ func TestSweptFrames(t *testing.T) {
 // the fins' side force gone by 16 degrees, and the weathercock went negative
 // with the jet spiralling off hands-off in the on-speed settle.
 func TestApproachWeathercock(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(400, m.Environment)
 	base := Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, 2500)
 	q := 0.5 * local.Density * 72 * 72
@@ -179,7 +179,7 @@ func TestApproachWeathercock(t *testing.T) {
 // gated rather than set. At 130 m/s trimmed, 10 deg of sideslip is a quarter
 // to two-fifths more drag, 5 deg a twentieth, and the rise is monotonic.
 func TestSideslipDrag(t *testing.T) {
-	m := New(Fighter, Environment{}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(1000, m.Environment)
 	base := Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 130, 2500)
 	drag := func(deg float64) float64 {
@@ -216,7 +216,7 @@ func TestFinPolar(t *testing.T) {
 	}
 	a.Body = nil
 	a.Stores = nil
-	m := New(&a, Environment{}, World{})
+	m := New(&a, Environment{Frame: scene, Chart: scene}, World{})
 	local := Atmosphere(1000, m.Environment)
 	area := 0.0
 	for _, s := range a.Surfaces {
@@ -253,7 +253,7 @@ func TestFinPolar(t *testing.T) {
 // ends the twenty seconds with more specific energy.
 func TestSideslipPedal(t *testing.T) {
 	energy := func(pedal float64) (float64, float64) {
-		m := New(Fighter, Environment{}, World{})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 		m.State = Level(m, Vec3{Y: 1000}, Vec3{X: 1}, 130, 2500)
 		throttle := m.State.Engine[0].Spool
 		sum, n := 0.0, 0

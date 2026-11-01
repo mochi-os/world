@@ -23,7 +23,7 @@ func block() *Airframe {
 // TestParabola: with no aero forces a thrown body follows the closed-form
 // ballistic arc.
 func TestParabola(t *testing.T) {
-	m := New(block(), Environment{}, World{})
+	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	m.State.Velocity = Vec3{X: 100, Y: 50}
 	steps := 240 * 4 // four seconds
 	for i := 0; i < steps; i++ {
@@ -46,7 +46,7 @@ func TestParabola(t *testing.T) {
 // TestMomentum: with zero applied moment, world-frame angular momentum is
 // conserved even while the body tumbles.
 func TestMomentum(t *testing.T) {
-	m := New(block(), Environment{}, World{})
+	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	m.Gravity = 0
 	m.State.Omega = Vec3{X: 1.0, Y: 0.3, Z: 2.0}
 	m.weigh()
@@ -64,7 +64,7 @@ func TestMomentum(t *testing.T) {
 // 600 between 200 and 1000) is unstable and must flip, proving the inertia
 // coupling terms are right.
 func TestDzhanibekov(t *testing.T) {
-	m := New(block(), Environment{}, World{})
+	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	m.Gravity = 0
 	m.State.Omega = Vec3{X: 0.001, Y: 0.001, Z: 3.0} // intermediate axis + tiny perturbation
 	flipped := false
@@ -78,7 +78,7 @@ func TestDzhanibekov(t *testing.T) {
 		t.Fatal("no Dzhanibekov flip: inertia coupling is wrong")
 	}
 	// A stable-axis spin (largest moment, y) must NOT flip.
-	m = New(block(), Environment{}, World{})
+	m = New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	m.Gravity = 0
 	m.State.Omega = Vec3{X: 0.001, Y: 3.0, Z: 0.001}
 	for i := 0; i < 240*120; i++ {
@@ -91,7 +91,7 @@ func TestDzhanibekov(t *testing.T) {
 
 // TestHold: a no-force, no-gravity, no-rotation run holds state constant.
 func TestHold(t *testing.T) {
-	m := New(block(), Environment{}, World{})
+	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	m.Gravity = 0
 	m.State.Position = Vec3{X: 5000, Y: 3000, Z: -2000}
 	m.State.Velocity = Vec3{}
@@ -116,7 +116,7 @@ func TestFuelShift(t *testing.T) {
 	a.Mass.Fuel = 500
 	a.Center = Vec3{X: 1}
 	a.Tank = Vec3{X: -2}
-	m := New(a, Environment{}, World{})
+	m := New(a, Environment{Frame: scene, Chart: scene}, World{})
 	m.weigh()
 	if math.Abs(m.mass-1500) > 1e-9 {
 		t.Fatalf("mass %f", m.mass)
@@ -131,7 +131,7 @@ func TestFuelShift(t *testing.T) {
 
 // TestAllocations: the hot path must not allocate.
 func TestAllocations(t *testing.T) {
-	m := New(block(), Environment{}, World{})
+	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})
 	in := Inputs{Throttle: 0.8, Pitch: 0.2}
 	if avg := testing.AllocsPerRun(1000, func() { m.Step(in) }); avg != 0 {
 		t.Fatalf("Step allocates: %f allocations per run", avg)
@@ -148,7 +148,7 @@ func TestEngineGuard(t *testing.T) {
 	}()
 	a := block()
 	a.Engines = make([]Engine, 5)
-	New(a, Environment{}, World{})
+	New(a, Environment{Frame: scene, Chart: scene}, World{})
 }
 
 // TestStoreGuard: a catalogue past the attach mask's reach must fail loudly at
@@ -161,7 +161,7 @@ func TestStoreGuard(t *testing.T) {
 		defer func() { refused = recover() != nil }()
 		a := block()
 		a.Stores = make([]Store, count)
-		New(a, Environment{}, World{})
+		New(a, Environment{Frame: scene, Chart: scene}, World{})
 		return
 	}
 	if refused(Attachments) {
@@ -205,7 +205,7 @@ func TestStoreMaskRoundTrips(t *testing.T) {
 func TestIntervalCompression(t *testing.T) {
 	type sample struct{ position, nose, up Vec3 }
 	fly := func(h float64, speed, height float64, inputs func(float64) Inputs) []sample {
-		m := New(Fighter, Environment{}, World{})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{})
 		m.Interval = h
 		m.State = Level(m, Vec3{Y: height}, Vec3{X: 1}, speed, 3000)
 		out := []sample{}

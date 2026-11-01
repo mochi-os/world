@@ -20,7 +20,7 @@ import (
 // seen in the boundary region plus the number of law changes.
 func cross(t *testing.T, start float64, throttle float64, stick float64, flapFrom float64, flapTo float64, switchAt func(speed float64) bool, until func(speed float64) bool) (worstQ float64, worstNz float64, flips int) {
 	t.Helper()
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 600}, Vec3{X: 1}, start, 2000)
 	for i := 0; i < 240*8; i++ { // settle into the starting law's trim
 		m.Step(Inputs{Throttle: 0.55, Gear: true, Flap: flapFrom})
@@ -96,7 +96,7 @@ func TestLawBoundaryDeceleration(t *testing.T) {
 // the speed wobbles about the OLD 130 m/s gate, with the switch untouched the
 // law must never move. The name stays for the history it pins.
 func TestLawHysteresis(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	// Low, where TAS ≈ CAS (the law gates are calibrated airspeed), with the
 	// leveler holding altitude: the alpha law owns no flight path, and a
 	// neutral-stick run dove into the sea and blew through the exit gate.
@@ -153,7 +153,7 @@ func TestGearCycle(t *testing.T) {
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+			m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 			m.State = Level(m, Vec3{Y: 600}, Vec3{X: 1}, c.speed, 2000)
 			for i := 0; i < 240*8; i++ { // settle with the stick already displaced, so the cycle is the only change
 				m.Step(Inputs{Throttle: 0.6, Pitch: 0.12, Gear: c.from})
@@ -184,7 +184,7 @@ func TestGearCycle(t *testing.T) {
 		// up mid-climb, and the PA-to-UA flip arriving as the jet passes 180
 		// KCAS clean — the loaded PA integral crosses both the transit and the
 		// law flip. The original defect snapped 23 deg/s at this seam.
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 60}, Vec3{X: 1}, 90, 3000)
 		m.halfleg = true
 		for i := 0; i < 240*6; i++ { // full-power climb establishing, gear down
@@ -223,7 +223,7 @@ func TestGearCycle(t *testing.T) {
 func TestApproachPowerHold(t *testing.T) {
 	const onspeed, least, most = 8.1, 0.12, 1.0
 	const gainError, gainRate = 0.16, 0.6
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 1200}, Vec3{X: 1}, 100, 2000)
 	for i := 0; i < 240*8; i++ {
 		m.Step(Inputs{Throttle: 0.55, Gear: true})
@@ -266,7 +266,7 @@ func TestApproachPowerHold(t *testing.T) {
 // open-loop alpha alone climbed away, and a 16° pitch cap that hid it left
 // the jet climbing 5,000 fpm.
 func TestPatternHold(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 500}, Vec3{X: 1}, 110, 2500)
 	climbed, sank, worst, balloon := 0.0, 0.0, 0.0, 0.0
 	for i := 0; i < 240*70; i++ {
@@ -313,7 +313,7 @@ func TestPatternHold(t *testing.T) {
 // that descent.
 func TestHandsWaveoff(t *testing.T) {
 	for _, flap := range []float64{1, 2} {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		s, throttle := Approach(m, Vec3{Y: 150}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
 		m.State = s
 		for i := 0; i < 240*3; i++ {
@@ -339,7 +339,7 @@ func TestHandsWaveoff(t *testing.T) {
 // FLAP switch position". The band either side of it keeps a speed held on the
 // line from flipping the law back and forth.
 func TestAutoMode(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 100}, Vec3{X: 1}, 110, 2500)
 	fly := func(speed float64) bool {
 		m.State.Velocity = m.State.Velocity.Normalize().Scale(speed)
@@ -369,7 +369,7 @@ func TestAutoMode(t *testing.T) {
 // low pass pitched up on its own.
 func TestLowPass(t *testing.T) {
 	for _, speed := range []float64{120, 200} {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 100}, Vec3{X: 1}, speed, 2500)
 		start := math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1))
 		rise := 0.0
@@ -388,7 +388,7 @@ func TestLowPass(t *testing.T) {
 // approach band the law is AoA-referenced - the datum stays at on-speed and
 // power flies the path; the residual ripple is the alpha loop on the phugoid.
 func TestBallDatum(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	s, throttle := Approach(m, Vec3{Y: 400}, Vec3{X: 1}, -3.5*math.Pi/180, 2500)
 	m.State = s
 	onspeed := m.Airframe.Control.Onspeed * 180 / math.Pi

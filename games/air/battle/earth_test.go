@@ -28,7 +28,7 @@ func TestRoundsFallLevel(t *testing.T) {
 		}
 		return altitude - r.Height(), r.Velocity.Length()
 	}
-	far, level := flight.Home.Sea(2000000, -500000)
+	far, level := scene.Sea(2000000, -500000)
 	up := level.Rotate(flight.Vec3{Y: 1})
 	homeDrop, homeSpeed := flown(flight.Vec3{Y: 3000}, flight.Quat{W: 1}, flight.Vec3{Y: 1}, 3000)
 	farDrop, farSpeed := flown(far.Add(up.Scale(3000)), level, up, 3000)

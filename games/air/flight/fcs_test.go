@@ -149,7 +149,7 @@ func TestProSpin(t *testing.T) {
 // TestRudderAlphaSchedule: pedal authority GROWS with alpha (#45, NATOPS
 // 2.8.2.8) - half throw low, full available high.
 func TestRudderAlphaSchedule(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	var f FcsState
 	deflect := func(alpha float64) float64 {
 		f = FcsState{}
@@ -170,7 +170,7 @@ func TestRudderAlphaSchedule(t *testing.T) {
 // measured identical to stick alone at every alpha.
 func TestPedalRollsAtHighAlpha(t *testing.T) {
 	differential := func(alpha, pedal float64) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 90, Fighter.Mass.Fuel*0.5)
 		// Pitch the nose up so the flow arrives alpha below it.
 		m.State.Attitude = Axis(Vec3{Z: 1}, alpha).Multiply(m.State.Attitude)
@@ -196,7 +196,7 @@ func TestPedalRollsAtHighAlpha(t *testing.T) {
 // a g through the differential stabilator.
 func TestRollingReduction(t *testing.T) {
 	peak := func(roll float64) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 300, Fighter.Mass.Fuel*0.7)
 		top := 0.0
 		for i := 0; i < 240*4; i++ { // 4 s of full aft stick
@@ -220,7 +220,7 @@ func TestRollingReduction(t *testing.T) {
 // gross weight (NATOPS 11.1.7: "fixed at negative 3 g's for all gross
 // weights") — only the positive side does.
 func TestNegativeFloorFixed(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel)                        // full internal...
 	m.Stores(Fighter.Default | mask(t, "pylon3", "tank3", "pylon5", "tank5", "pylon7", "tank7")) // ...plus three tanks: heavy enough that a weight-scaled floor would stop at -2.4
 	least := 1.0
@@ -318,7 +318,7 @@ func TestRestCalmHalfFlap(t *testing.T) {
 func TestRollLimitTanks(t *testing.T) {
 	reverted := false
 	peak := func(names ...string) float64 {
-		m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 200, Fighter.Mass.Fuel)
 		if len(names) > 0 {
 			m.Stores(Fighter.Default | mask(t, names...))
@@ -371,7 +371,7 @@ func TestRollTaperHighAlpha(t *testing.T) {
 // does not prevent (NATOPS 11.1.8.1). The jet must wander in yaw and pitch with
 // the airspeed gone, and still fly away - bounded, not a spin.
 func TestBallisticDeparture(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 250, Fighter.Mass.Fuel*0.5)
 	for i := 0; i < 240*3; i++ { // pull hard toward the vertical
 		m.Step(Inputs{Pitch: 1, Throttle: 1, Reheat: 1})

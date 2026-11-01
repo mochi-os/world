@@ -66,10 +66,10 @@ type Model struct {
 
 	// Wake is the pieces of other aircraft's wakes - and of this one's own,
 	// once it is old enough - that the host hands the model before each step
-	// (Wakes.Near), in Home. Empty flies clean air.
+	// (Wakes.Near), in the chart. Empty flies clean air.
 	Wake []Vortex
 
-	// place carries the frame the model is working in to Home, where the map,
+	// place carries the frame the model is working in to the chart, where the map,
 	// the carrier, the wakes and the weather are fixed: during a step the
 	// tangent frame under the jet, between steps the environment's frame.
 	place    Rigid
@@ -287,12 +287,19 @@ func (m *Model) Up() Vec3 {
 // flew in and the frame its environment names, so a host can work with it
 // somewhere else on the earth and every accessor still reads true.
 func (m *Model) Reframe(to Frame) {
-	r := Between(m.Environment.Theatre(), to)
+	m.Carry(Between(m.Environment.Theatre(), to), to, Environment{Frame: to, Chart: m.Environment.Chart}.Placement())
+}
+
+// Carry is Reframe for a host moving many models from one frame into
+// another, with the work they share done once: r is the motion from the
+// frame the model is in to the frame to, and place the placement of the
+// model's chart in to (Environment.Placement).
+func (m *Model) Carry(r Rigid, to Frame, place Rigid) {
 	s := &m.State
 	s.Position, s.Velocity, s.Attitude = r.Point(s.Position), r.Vector(s.Velocity), r.Attitude(s.Attitude)
 	m.gust, m.swirl = r.Vector(m.gust), r.Vector(m.swirl)
 	m.Environment.Frame = to
-	m.place = m.Environment.Placement()
+	m.place = place
 }
 
 // stir adds the wake the host handed the model to this step's air: the swirl

@@ -228,7 +228,7 @@ var plays = []play{
 		// could go flat or DOWN, and against a sinking slow target "300 m
 		// below him in burner" was a dive that never ended - 528 kt mean and
 		// a 120-second fight nobody won.
-		rise := m.me.Position.Y - m.prey.Y
+		rise := m.me.Position.Y - height(m.prey, m.air)
 		speed := m.equivalent()
 		climbing := m.me.Velocity.Y > 0 || rise <= 0
 		// Stop pulling when the FLOAT will top out where the yo-yo wants it,
@@ -304,7 +304,7 @@ var plays = []play{
 		// The pitch-back (#250): bank altitude off an energy-dead opponent, then pull
 		// through onto him. Staged on STATE, not time, so one law carries both phases
 		// and the rollout can fly it whole - hence the long horizon.
-		rise := m.me.Position.Y - m.prey.Y
+		rise := m.me.Position.Y - height(m.prey, m.air)
 		speed := m.equivalent()
 		if rise < 600 && speed > m.pace*0.75 {
 			f := m.flat()
@@ -508,7 +508,7 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 		// conversion the moment it feels slow. It must not hold against the two
 		// signals that cannot wait: an attacker arriving, and an opponent beaten.
 		urgent := (threatened && b.intent != "deny") ||
-			(b.skill.library >= 3 && b.intent != "finish" && (flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), prey.position.Y, air) < tuned(170) && distance < 2200 || b.promise > 0.6))
+			(b.skill.library >= 3 && b.intent != "finish" && (flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), height(prey.position, air), air) < tuned(170) && distance < 2200 || b.promise > 0.6))
 		if !urgent {
 			return
 		}
@@ -520,8 +520,9 @@ func (b *brain) judge(me *flight.State, prey *track, tick uint64, distance float
 	speed := airspeed(me, air) // true: energy
 	mine := speed*speed/2 + 9.81*me.Position.Y
 	him := prey.velocity.Subtract(prey.blown).Length()
-	his := him*him/2 + 9.81*prey.position.Y
-	slow := flight.Equivalent(him, prey.position.Y, air) < tuned(170) && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
+	above := height(prey.position, air)
+	his := him*him/2 + 9.81*above
+	slow := flight.Equivalent(him, above, air) < tuned(170) && distance < 2200 && mine > his*1.2 && me.Position.Y > 600
 	// FINISH on OPPORTUNITY: a line whose rehearsal spends most of its instants ON
 	// the gun solution is a saddle held, not hoped for. It claims on PARITY rather
 	// than the `slow` claim's fifth of energy - a held solution is spent in
@@ -640,7 +641,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// Its weight is a skill: the novice chases the nose and ignores it.
 	mine := speed*speed/2 + 9.81*s.Position.Y
 	him := hisV.Subtract(blown).Length()
-	his := him*him/2 + 9.81*hisP.Y
+	his := him*him/2 + 9.81*height(hisP, air)
 	scale := pace * speed / math.Max(equivalent, 1) // the corner as a true airspeed here: the energy scale
 	edge := clamp((mine-his)/(scale*scale/2), -1, 1)
 	// The circle truth (#248): where I sit relative to HIS turn circle.
@@ -676,7 +677,7 @@ func appraise(s *flight.State, hisP, hisV flight.Vec3, pace float64, w posture, 
 	// fight and spends without regret once someone is on the six, so taxing
 	// the escape dive is wrong exactly where escaping matters (it inverted
 	// the wide heater ladder before this gate).
-	height := clamp((s.Position.Y-hisP.Y)/400, -1, 1) * near * clamp(1-2*threat, 0, 1)
+	height := clamp((s.Position.Y-height(hisP, air))/400, -1, 1) * near * clamp(1-2*threat, 0, 1)
 	// The range term is deliberately shallow: every geometry term dies by 2.5 km,
 	// so beyond that this gradient is nearly the whole scorer and steepening it
 	// reweights the merge and gun bands too. Pulling a distant bot back wants a
@@ -987,7 +988,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 			b.audit = map[string]int{}
 		}
 		speed := equivalent(a.model)
-		above := prey.position.Y - me.Position.Y
+		above := height(prey.position, a.model.Environment) - me.Position.Y
 		diving := -prey.velocity.Subtract(prey.blown).Dot(direction) > 120 && distance < 2500 // his dive through the air: the wind carries a perch at me without his attacking
 		if diving && above > 250 {
 			b.dove = tick // he attacked from above: the perch is a THREAT, not a bystander
@@ -1015,7 +1016,7 @@ func (i *instance) duel(slot int, a *craft, tick uint64, prey *track, direction 
 		// free kills (0/12) and inverted the BVR top rung. An opponent who
 		// has never attacked from his perch is a target, not a threat.
 		if b.regained == 0 && holds && !diving && menace < 0 && b.promise < 0.4 && b.intent != "finish" &&
-			flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), prey.position.Y, a.model.Environment) < tuned(200) && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
+			flight.Equivalent(prey.velocity.Subtract(prey.blown).Length(), height(prey.position, a.model.Environment), a.model.Environment) < tuned(200) && b.dove != 0 && tick-b.dove < 2400 && me.Position.Y > 600 {
 			b.audit["calm"]++
 			if b.ceded != 0 && tick-b.ceded > 300 {
 				b.audit["enter"]++

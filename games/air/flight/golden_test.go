@@ -51,7 +51,7 @@ func script(step int) Inputs {
 
 // trace flies the script and samples every quarter second.
 func trace() []string {
-	m := New(Fighter, Environment{Seed: 11, Wind: Vec3{X: 5, Z: 2}, Turbulence: 1}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 11, Wind: Vec3{X: 5, Z: 2}, Turbulence: 1}, World{})
 	m.State.Position = Vec3{Y: 3000}
 	m.State.Velocity = Vec3{X: 200}
 	m.State.Attitude = Axis(Vec3{Z: 1}, 0.05)
@@ -152,7 +152,7 @@ func TestGoldenDeck(t *testing.T) {
 // TestBudget: the step must stay inside the real-time budget with a wide
 // ceiling so CI noise cannot flake it (target ≤30 µs native; ceiling ×5).
 func TestBudget(t *testing.T) {
-	m := New(Fighter, Environment{Turbulence: 1}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Turbulence: 1}, World{})
 	m.State.Position = Vec3{Y: 3000}
 	m.State.Velocity = Vec3{X: 200}
 	in := Inputs{Throttle: 0.9, Pitch: 0.3, Roll: 0.2}
@@ -169,7 +169,7 @@ func TestBudget(t *testing.T) {
 }
 
 func BenchmarkStep(b *testing.B) {
-	m := New(Fighter, Environment{Turbulence: 1}, World{})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Turbulence: 1}, World{})
 	m.State.Position = Vec3{Y: 3000}
 	m.State.Velocity = Vec3{X: 200}
 	in := Inputs{Throttle: 0.9, Pitch: 0.3, Roll: 0.2}

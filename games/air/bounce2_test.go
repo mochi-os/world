@@ -11,7 +11,7 @@ import (
 // The FIXED harness semantics: freeze until first contact, release instantly.
 // Measure the honest post-release skip: does the jet leave the ground, how high?
 func TestBounce2(t *testing.T) {
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1},
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1},
 		flight.World{Fields: []flight.Field{{Height: 0, Strips: []flight.Strip{{A: flight.Vec3{X: -4000}, B: flight.Vec3{X: 4000}, Width: 60}}}}})
 	m.State.Position = flight.Vec3{Y: 6}
 	m.State.Velocity = flight.Vec3{X: 69.95, Y: -2.5}

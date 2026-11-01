@@ -16,7 +16,7 @@ import (
 )
 
 func target() (*Body, *flight.Model) {
-	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 7}, flight.World{Sea: 0})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: 7}, flight.World{Sea: 0})
 	m.State = flight.Level(m, flight.Vec3{Y: 2000}, flight.Vec3{X: 1}, 180, fa18c.Airframe.Mass.Fuel*0.7)
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
 	return body, m
@@ -388,7 +388,7 @@ func TestJinkDefeatsTheBullet(t *testing.T) {
 // where the round actually hit (#217). Body-frame points, so "on the airframe"
 // means within a part's capsule radius of that part's axis.
 func TestVolleyImpactsLandOnTheAirframe(t *testing.T) {
-	m := flight.New(fa18c.Airframe, flight.Environment{Seed: 7}, flight.World{Sea: 0})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: 7}, flight.World{Sea: 0})
 	m.State.Position = flight.Vec3{Y: 3000}
 	m.State.Velocity = flight.Vec3{X: 200}
 	body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe), Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}
@@ -556,7 +556,7 @@ func TestShellDepth(t *testing.T) {
 // TestShellLife: damage does not decay with speed, so Life is a cost cap, not a
 // lethality one - it must not cut a shell off inside gunnery ranges.
 func TestShellLife(t *testing.T) {
-	environment := flight.Environment{Seed: 1}
+	environment := flight.Environment{Frame: scene, Chart: scene, Seed: 1}
 	_ = environment
 	// How far a round gets before Life expires, from a jet at a fighting speed.
 	round := Round{Position: flight.Vec3{Y: 4000}, Velocity: flight.Vec3{X: Muzzle + 240}}

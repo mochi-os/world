@@ -19,7 +19,7 @@ type pioResult struct {
 // pioRun flies the tracking task: trim level, then track a step of stepDeg.
 // gear selects the PA configuration (approach tracking at approach speeds).
 func pioRun(kt, gain, stepDeg float64, gear bool) pioResult {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	fuel := 3000.0
 	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, kt/1.94384, fuel)
 	const dt = 1.0 / 240

@@ -41,7 +41,7 @@ func NewBandit(level string, seed uint64, sky string, night bool, missiles bool,
 			weapons = "guns"
 		}
 	}
-	environment := flight.Environment{Seed: seed}
+	environment := flight.Environment{Frame: setting.Frame, Chart: setting.Chart, Seed: seed}
 	mirror := &craft{player: game.Player{Name: "player", Slot: 0}, kind: "fa18c",
 		model: flight.New(aircraft.Get("fa18c"), environment, flight.World{Sea: sea}), alive: true, flared: 1e9}
 	mirror.arm()

@@ -22,7 +22,7 @@ func TestOneCirclePoint(t *testing.T) {
 	fmt.Println("entering level at each speed, full aft stick, max burner, 10,000 ft")
 	fmt.Println("   kt |  peak rate | min radius  | peak alpha | turned in 3 s | turned in 6 s | kt after 6 s")
 	for _, kt := range []float64{150, 200, 250, 300, 350, 400, 450, 500} {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = flight.Vec3{Y: 10000 / 3.281}
 		m.State.Velocity = flight.Vec3{X: kt / 1.944}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})

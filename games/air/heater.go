@@ -211,6 +211,10 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 	}
 	m.sight = virtual.Position.Subtract(m.position).Normalize()
 	closest := math.MaxFloat64
+	// A tangent frame's level stands above the sea for a hundred kilometres
+	// round its anchor, the earth falling away under it faster than the geoid
+	// can rise, so the earth model is asked only of a round that low.
+	level := environment.Theatre().Tangent()
 	for m.life > 0 {
 		m.life -= dt
 		m.flew += dt
@@ -274,8 +278,8 @@ func reaches(shooter round.Target, target round.Target, direction flight.Vec3, s
 			m.velocity = m.velocity.Add(m.velocity.Subtract(wind).Normalize().Scale(missile_thrust * dt))
 		}
 		m.position = m.position.Add(m.velocity.Scale(dt))
-		if m.position.Y <= 0 {
-			return false
+		if (!level || m.position.Y <= 50) && height(m.position, environment) <= 0 {
+			return false // in the sea
 		}
 		if speed := air.Length(); speed > 1 {
 			heading := air.Scale(1 / speed)

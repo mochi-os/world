@@ -15,7 +15,7 @@ import (
 // flap - the configuration follows the virtual flap switch (HALF until 180 KCAS
 // clean). The observable is alpha pegging the HUD's 10° cage.
 func TestFlapsAuto(t *testing.T) {
-	m := New(Fighter, Environment{Seed: 1}, World{Sea: 0})
+	m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
 	m.State = Level(m, Vec3{Y: 300}, Vec3{X: 1}, 82, Fighter.Mass.Fuel*0.6)
 	m.halfleg = true // the deck latch: this test picks the takeoff leg up already airborne (#86: the law follows the flap switch, and the latch is the deck's selection)
 	in := Inputs{Gear: true, Throttle: 1, Reheat: 1, Pitch: 0.1}

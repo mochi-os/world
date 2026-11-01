@@ -85,7 +85,7 @@ type seat struct {
 
 func joustPair(a, b *seat, split, closing float64, seconds int) (float64, float64) {
 	build := func(at, facing flight.Vec3, speed float64) *flight.Model {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = at
 		m.State.Velocity = facing.Normalize().Scale(speed)
 		m.State.Attitude = flight.Look(facing.Normalize())

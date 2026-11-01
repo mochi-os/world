@@ -163,7 +163,7 @@ func TestHeatFliesTheAir(t *testing.T) {
 		angle     bool // bisect the bearing off the nose (degrees) at 1,500 m, not the range
 	}
 	edge := func(wind flight.Vec3, g geometry) float64 {
-		environment := flight.Environment{Seed: 1, Wind: wind}
+		environment := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: wind}
 		shooter := round.Target{Position: flight.Vec3{Y: 3000}}
 		shooter.Velocity = launcher(&flight.State{Position: shooter.Position, Velocity: east.Scale(250).Add(flight.Wind(shooter.Position, 0, environment)), Attitude: flight.Look(east)}, environment).Velocity
 		good := func(trial float64) bool {
@@ -205,8 +205,8 @@ func TestHeatFliesTheAir(t *testing.T) {
 	}
 }
 
-// TestFlareDrifts: a seduced heater chases a flare that falls through the air
-// and drifts with the wind.
+// TestFlareDrifts: a seduced heater chases a flare that falls through the air,
+// down the level under it, and drifts with the wind.
 func TestFlareDrifts(t *testing.T) {
 	place, velocity := aim(900, 0, 0, 200)
 	i, _, m := missileRange(t, place, velocity)
@@ -214,7 +214,7 @@ func TestFlareDrifts(t *testing.T) {
 	m.blind, m.lure = 1, place.Add(flight.Vec3{Y: -30})
 	was := m.lure
 	i.pursue(1.0/60, 600)
-	want := was.Add(flight.Wind(was, 10, i.environment).Add(flight.Vec3{Y: -45}).Scale(1.0 / 60))
+	want := was.Add(flight.Wind(was, 10, i.environment).Add(i.environment.Theatre().Up(was).Scale(-45)).Scale(1.0 / 60))
 	if m.lure.Subtract(want).Length() > 1e-9 {
 		t.Fatalf("the flare moved to %v, where the wind carries a falling flare %v", m.lure, want)
 	}
@@ -336,7 +336,7 @@ func TestHuntZoneInTheAir(t *testing.T) {
 	}
 	target := round.Target{Position: me.model.State.Position, Velocity: me.model.State.Velocity}
 	want := round.Ladder(fired(a), target, a.model.Environment, a.model.State.Time)
-	still := round.Ladder(fired(a), target, flight.Environment{}, a.model.State.Time)
+	still := round.Ladder(fired(a), target, flight.Environment{Frame: scene, Chart: scene}, a.model.State.Time)
 	if b.zone != want || math.Abs(still.Max-want.Max) < 0.01*want.Max {
 		t.Fatalf("the bot's zone %+v, the round's in the match's air %+v, in still air %+v", b.zone, want, still)
 	}
@@ -347,7 +347,7 @@ func TestHuntZoneInTheAir(t *testing.T) {
 // not along his track over the sea, which a crosswind swings off his nose.
 func TestSeekerAspectThroughTheAir(t *testing.T) {
 	zone := func(wind flight.Vec3) round.Zone {
-		environment := flight.Environment{Seed: 1, Wind: wind}
+		environment := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: wind}
 		shooter := round.Target{Position: flight.Vec3{Y: 3000}}
 		target := round.Target{Position: flight.Vec3{X: 2000, Y: 3000}}
 		shooter.Velocity = flight.Vec3{X: 250}.Add(flight.Wind(shooter.Position, 0, environment))
@@ -449,7 +449,7 @@ func TestHeaterStepsThroughTheAir(t *testing.T) {
 		t.Logf("%s: %.4f m/s off, flying %v/%v, broken %v/%v", s.name, blown.Subtract(still).Length(), flying, flies, breaking, broke)
 		if off := blown.Subtract(still).Length(); off > 0.01 || flies != flying || broke != breaking {
 			t.Errorf("%s: in a %.0f m/s wind the tick leaves it %.4f m/s through the air off still air's, flying %v (still %v), lock broken %v (still %v)",
-				s.name, flight.Wind(flight.Vec3{Y: 3000}, 10, flight.Environment{Seed: 3, Wind: s.wind}).Length(), off, flying, flies, breaking, broke)
+				s.name, flight.Wind(flight.Vec3{Y: 3000}, 10, flight.Environment{Frame: scene, Chart: scene, Seed: 3, Wind: s.wind}).Length(), off, flying, flies, breaking, broke)
 		}
 	}
 }
@@ -542,8 +542,9 @@ func TestHeaterLureIsWhereTheJetWas(t *testing.T) {
 		} // a tick on which the flare takes the seeker
 		target.model.State.Position = start.Add(crossing.Scale(dt)) // the jets have stepped
 		i.pursue(dt, tick)
-		lure := start.Add(flight.Vec3{Y: -30})
-		want := lure.Add(flight.Wind(lure, float64(tick)/60, i.environment).Add(flight.Vec3{Y: -45}).Scale(dt))
+		frame := i.environment.Theatre()
+		lure := start.Add(frame.Up(start).Scale(-30)) // below him, down the level under him
+		want := lure.Add(flight.Wind(lure, float64(tick)/60, i.environment).Add(frame.Up(lure).Scale(-45)).Scale(dt))
 		if m.blind <= 0 {
 			t.Errorf("in a wind %v the flare never took the seeker", wind)
 		} else if off := m.lure.Subtract(want).Length(); off > 1e-6 {
@@ -699,7 +700,7 @@ func TestSearchHoldsItsCourse(t *testing.T) {
 // a third from 1,500 to 7,500 m; a speed the doctrine was tuned at as a true
 // airspeed means at the reference height what it meant there.
 func TestBrainSpeeds(t *testing.T) {
-	gust := flight.Environment{Seed: 1, Wind: flight.Vec3{X: 15}}
+	gust := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: flight.Vec3{X: 15}}
 	m := flight.New(aircraft.Get("fa18c"), gust, flight.World{Sea: sea})
 	m.State = flight.Level(m, flight.Vec3{Y: reference}, flight.Vec3{X: 1}, 200, 3000)
 	if speed := airspeed(&m.State, gust); math.Abs(speed-200) > 1e-6 || m.State.Velocity.Length() < 230 {
@@ -711,7 +712,7 @@ func TestBrainSpeeds(t *testing.T) {
 	if mo := (moment{me: &m.State, wind: flight.Wind(m.State.Position, m.State.Time, gust), air: gust}); mo.airspeed() != airspeed(&m.State, gust) || mo.equivalent() != equivalent(m) {
 		t.Fatalf("a play reads %.2f m/s true and %.2f equivalent, the brain %.2f and %.2f", mo.airspeed(), mo.equivalent(), airspeed(&m.State, gust), equivalent(m))
 	}
-	if got, want := tuned(150), flight.Equivalent(150, reference, flight.Environment{}); got != want || tuned(-40) != -tuned(40) {
+	if got, want := tuned(150), flight.Equivalent(150, reference, flight.Environment{Frame: scene, Chart: scene}); got != want || tuned(-40) != -tuned(40) {
 		t.Fatalf("tuned(150) is %.3f, the reference height reads %.3f; tuned(-40) %.3f", got, want, tuned(-40))
 	}
 	low, high := *m, *m
@@ -784,11 +785,11 @@ func TestTheCircleDriftsWithTheAir(t *testing.T) {
 		me := still.centre.Add(flight.Vec3{X: 600, Z: -200}) // inside his circle, where standing counts
 		score := func(wind flight.Vec3, ring orbit) (float64, float64) {
 			s := flight.State{Position: me.Add(wind.Scale(later)), Velocity: flight.Vec3{X: 220}.Add(wind), Attitude: flight.Quat{W: 1}, Time: later}
-			return appraise(&s, him.Add(wind.Scale(later)), hisV.Add(wind), 160, stances[""], &sk, ring, &tactic, wind, wind, flight.Environment{})
+			return appraise(&s, him.Add(wind.Scale(later)), hisV.Add(wind), 160, stances[""], &sk, ring, &tactic, wind, wind, flight.Environment{Frame: scene, Chart: scene})
 		}
 		a, b := score(flight.Vec3{}, still)
 		c, d := score(blown, carried)
-		if math.Abs(a-c) > 1e-9 || math.Abs(b-d) > 1e-9 {
+		if math.Abs(a-c) > 1e-4 || math.Abs(b-d) > 1e-4 { // the jets carried 150 m along the frame's level stand millimetres higher on the curved earth
 			t.Errorf("%.1f s on, standing against his circle scores %.6f / %.6f in still air and %.6f / %.6f in the wind", later, a, b, c, d)
 		}
 	}
@@ -808,7 +809,7 @@ func TestTheLagPointRidesHisCircle(t *testing.T) {
 	for _, later := range []float64{2, 3.5, 6} {
 		lag := func(wind flight.Vec3, ring orbit) flight.Vec3 {
 			me := flight.State{Position: flight.Vec3{X: -600, Y: 4000}.Add(wind.Scale(later)), Velocity: flight.Vec3{X: 220}.Add(wind), Attitude: flight.Quat{W: 1}, Time: later}
-			m := moment{me: &me, prey: flight.Vec3{X: 300, Y: 4000, Z: 120}.Add(wind.Scale(later)), velocity: turn(0.6).Add(wind), ring: ring, pace: 160, pull: 7, wind: wind, blown: wind}
+			m := moment{me: &me, prey: flight.Vec3{X: 300, Y: 4000, Z: 120}.Add(wind.Scale(later)), velocity: turn(0.6).Add(wind), ring: ring, pace: 160, pull: 7, wind: wind, blown: wind, air: flight.Environment{Frame: scene, Chart: scene}}
 			m.derive()
 			return m.lag()
 		}
@@ -1050,7 +1051,7 @@ func TestGlideThroughTheAir(t *testing.T) {
 	for _, blown := range []flight.Vec3{{X: 30}, {Z: 30}} {
 		for _, aim := range []flight.Vec3{{X: 1}, flight.Axis(flight.Vec3{Y: 1}, 25*math.Pi/180).Rotate(flight.Vec3{X: 1})} {
 			fly := func(wind flight.Vec3) *flight.Model {
-				m := flight.New(aircraft.Get("fa18c"), flight.Environment{}, flight.World{Sea: sea})
+				m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene}, flight.World{Sea: sea})
 				m.State = flight.Level(m, flight.Vec3{Y: reference}, flight.Vec3{X: 1}, 180, 3000)
 				m.State.Velocity = m.State.Velocity.Add(wind)
 				for k := 0; k < 240; k++ {
@@ -1089,7 +1090,7 @@ func TestPlaysReadTheAir(t *testing.T) {
 							heading := flight.Axis(flight.Vec3{Y: 1}, heading*math.Pi/180).Rotate(flight.Vec3{X: 1})
 							read := func(wind flight.Vec3) (order, flight.Vec3) {
 								me := flight.State{Position: flight.Vec3{Y: height}, Velocity: flight.Vec3{X: mine}.Add(wind), Attitude: flight.Quat{W: 1}}
-								m := moment{me: &me, prey: flight.Vec3{X: distance, Y: height + 100}, velocity: heading.Scale(his).Add(wind), pace: 160, pull: 7, wind: wind, blown: wind}
+								m := moment{me: &me, prey: flight.Vec3{X: distance, Y: height + 100}, velocity: heading.Scale(his).Add(wind), pace: 160, pull: 7, wind: wind, blown: wind, air: flight.Environment{Frame: scene, Chart: scene}}
 								m.derive()
 								return p.law(&m), m.lag()
 							}
@@ -1135,7 +1136,7 @@ func TestAppraiseReadsTheAir(t *testing.T) {
 					for _, distance := range []float64{400, 900, 2500, -400, -900} { // ahead of me, or behind
 						score := func(wind flight.Vec3) (float64, float64) {
 							s := flight.State{Position: flight.Vec3{Y: height}, Velocity: flight.Vec3{X: mine}.Add(wind), Attitude: flight.Quat{W: 1}}
-							return appraise(&s, flight.Vec3{X: distance, Y: height + 300}, flight.Vec3{X: his}.Add(wind), 160, stances[""], &sk, orbit{}, &tactic, wind, wind, flight.Environment{})
+							return appraise(&s, flight.Vec3{X: distance, Y: height + 300}, flight.Vec3{X: his}.Add(wind), 160, stances[""], &sk, orbit{}, &tactic, wind, wind, flight.Environment{Frame: scene, Chart: scene})
 						}
 						a, b := score(flight.Vec3{})
 						c, d := score(blown)
@@ -1149,9 +1150,9 @@ func TestAppraiseReadsTheAir(t *testing.T) {
 	}
 	for _, slow := range []float64{90, 110, 130} {
 		score := func(height float64) float64 {
-			actual := slow * math.Sqrt(1.225/flight.Atmosphere(height, flight.Environment{}).Density)
+			actual := slow * math.Sqrt(1.225/flight.Atmosphere(height, flight.Environment{Frame: scene, Chart: scene}).Density)
 			s := flight.State{Position: flight.Vec3{Y: height}, Velocity: flight.Vec3{X: actual}, Attitude: flight.Quat{W: 1}}
-			a, _ := appraise(&s, flight.Vec3{Y: height + 2000}, flight.Vec3{X: 300}, 160, stances[""], &sk, orbit{}, &tactic, flight.Vec3{}, flight.Vec3{}, flight.Environment{})
+			a, _ := appraise(&s, flight.Vec3{Y: height + 2000}, flight.Vec3{X: 300}, 160, stances[""], &sk, orbit{}, &tactic, flight.Vec3{}, flight.Vec3{}, flight.Environment{Frame: scene, Chart: scene})
 			return a
 		}
 		if low, high := score(1500), score(7500); math.Abs(low-high) > 1e-9 {
@@ -1370,9 +1371,11 @@ func TestDefenceReadsTheAir(t *testing.T) {
 		for tick := uint64(0); tick < 30; tick++ {
 			place(expert, drone)
 			s := &drone.model.State
+			i.recall(expert.brain)
 			expert.brain.known[98] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, drone.model.Environment)}
 			i.Step(tick, nil)
 		}
+		i.recall(expert.brain) // its aim, in the session's frame
 		if expert.brain.jink > 0 {
 			return expert.brain.mode + ", jinking", expert.brain.aim
 		}
@@ -1709,9 +1712,11 @@ func TestOffenceReadsTheAir(t *testing.T) {
 		for tick := uint64(0); tick < 30; tick++ {
 			place(expert, drone)
 			s := &drone.model.State
+			i.recall(expert.brain)
 			expert.brain.known[98] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, drone.model.Environment)}
 			i.Step(tick, nil)
 		}
+		i.recall(expert.brain) // what it remembers, in the session's frame
 		return expert.brain
 	}
 	down := trades.Scale(1 / trades.Length())
@@ -1848,6 +1853,7 @@ func TestSandwichReadsHisHeading(t *testing.T) {
 			aloft(mate, station, along.Scale(220))
 			aloft(blue1, base.Add(along.Scale(1800)).Subtract(side.Scale(400)), turned(along, -30).Scale(220)) // nearer, minding its own business
 			aloft(blue2, station.Subtract(along.Scale(1200)), turned(along, off).Scale(240))                   // astern of the mate, his nose off the line to it
+			i.recall(expert.brain)
 			for _, c := range []*craft{blue1, blue2} {
 				s := &c.model.State
 				expert.brain.known[c.player.Slot] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, c.model.Environment)}
@@ -1890,7 +1896,7 @@ type choice struct {
 // few ticks old has him where his speed over the ground has since taken him.
 // fighting puts the fight, not the run-in, in hand from the tick given.
 func scripted(still bool, level string, missiles bool, ticks int, height float64, mine, his, offset flight.Vec3, bank, turn, push float64, fighting bool, from int) choice {
-	air := flight.Environment{Seed: 1, Wind: trades}
+	air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: trades}
 	if still {
 		air.Wind = flight.Vec3{}
 	}
@@ -2119,7 +2125,7 @@ func TestOvertakeClearsOnItsWing(t *testing.T) {
 	telling := 0
 	for name, wind := range map[string]flight.Vec3{"still air": {}, "a headwind": trades, "a tailwind": trades.Scale(-1)} {
 		for equivalent := 100.0; equivalent <= 130; equivalent += 5 {
-			air := flight.Environment{Seed: 1, Wind: wind}
+			air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: wind}
 			bandit := NewBandit("expert", 1, "", false, true, "fox2", 0, false)
 			bandit.Air(air)
 			i, a := bandit.arena, bandit.craft
@@ -2172,7 +2178,7 @@ func TestScriptHidesOnItsHeading(t *testing.T) {
 	down := trades.Scale(1 / trades.Length())
 	across := down.Cross(flight.Vec3{Y: 1})
 	lit := func(still bool, along flight.Vec3, span, stale float64) float64 {
-		air := flight.Environment{Seed: 1, Wind: trades}
+		air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}
@@ -2216,7 +2222,7 @@ func TestOvertakeReadsHisHeading(t *testing.T) {
 	down := trades.Scale(1 / trades.Length())
 	across := down.Cross(flight.Vec3{Y: 1})
 	cleared := func(still bool, along flight.Vec3, abeam float64) (bool, flight.Vec3) {
-		air := flight.Environment{Seed: 1, Wind: trades}
+		air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}
@@ -2319,18 +2325,18 @@ func TestNotchCrabsThroughTheAir(t *testing.T) {
 func TestOwnPathReadsTheAir(t *testing.T) {
 	path := flight.Vec3{X: 200}
 	for _, surface := range []flight.Vec3{{Z: 12}, {X: -9, Z: -10}} {
-		air := flight.Environment{Wind: surface}
+		air := flight.Environment{Frame: scene, Chart: scene, Wind: surface}
 		at := flight.Vec3{Y: 4000}
 		blown := flight.Wind(at, 0, air) // the field's own wind where I fly: shear and veer aloft
 		calm := flight.State{Position: at, Velocity: path, Attitude: flight.Look(path)}
 		carried := flight.State{Position: at, Velocity: path.Add(blown), Attitude: flight.Look(path)}
 		var b brain
-		if a, c := b.commit(&calm, flight.Environment{}, 0.6), b.commit(&carried, air, 0.6); a.Subtract(c).Length() > 1e-9 {
+		if a, c := b.commit(&calm, flight.Environment{Frame: scene, Chart: scene}, 0.6), b.commit(&carried, air, 0.6); a.Subtract(c).Length() > 1e-9 {
 			t.Errorf("in a wind %v the lead turn aims %v, in still air %v", blown, c, a)
 		}
 		for _, offset := range []flight.Vec3{{X: 900, Z: 300}, {X: 900, Z: -300}, {X: -400, Z: 50}} {
 			moment := func(s *flight.State, wind flight.Vec3) moment {
-				m := moment{me: s, prey: s.Position.Add(offset), velocity: flight.Vec3{X: -150}.Add(wind), pace: 160, pull: 7, wind: wind, blown: wind}
+				m := moment{me: s, prey: s.Position.Add(offset), velocity: flight.Vec3{X: -150}.Add(wind), pace: 160, pull: 7, wind: wind, blown: wind, air: flight.Environment{Frame: scene, Chart: scene}}
 				m.derive()
 				return m
 			}
@@ -2395,9 +2401,11 @@ func TestRebuildReadsTheAir(t *testing.T) {
 			flown(me, base.Y, 80, across) // well under 0.55 of the corner
 			aloft(him, base.Add(across.Scale(-2500)), across.Scale(-200))
 			s := &him.model.State
+			i.recall(me.brain)
 			me.brain.known[other] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, him.model.Environment)}
 			i.Step(tick, nil)
 		}
+		i.recall(me.brain) // its aim, in the session's frame
 		return me.brain.mode, me.brain.aim
 	}
 	for _, teamless := range []bool{false, true} {
@@ -2466,6 +2474,7 @@ func TestMergeReadsTheAir(t *testing.T) {
 			aloft(expert, base, across.Scale(220))
 			aloft(drone, base.Add(across.Scale(800)).Add(side.Scale(aside)), across.Scale(-220)) // inside the lead turn's two seconds of closure
 			s := &drone.model.State
+			i.recall(expert.brain)
 			expert.brain.known[98] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, drone.model.Environment)}
 			i.Step(tick, nil)
 		}
@@ -2540,9 +2549,11 @@ func TestGlareReadsTheAir(t *testing.T) {
 			aloft(expert, base, flight.Axis(flight.Vec3{Y: 1}, off*math.Pi/180).Rotate(across).Scale(220))
 			aloft(drone, base.Add(across.Scale(1800)), across.Scale(200))
 			s := &drone.model.State
+			i.recall(expert.brain)
 			expert.brain.known[98] = &track{when: tick, position: s.Position, velocity: s.Velocity, blown: flight.Wind(s.Position, s.Time, drone.model.Environment)}
 			i.Step(tick, nil)
 		}
+		i.recall(expert.brain) // its aim, in the session's frame
 		return expert.brain.mode, expert.brain.aim
 	}
 	drifted := map[bool]int{}
@@ -2575,7 +2586,7 @@ func TestGlareReadsTheAir(t *testing.T) {
 func TestBreakReadsTheAir(t *testing.T) {
 	across := trades.Cross(flight.Vec3{Y: 1}).Normalize()
 	beam := func(still bool, degrees float64) flight.Vec3 {
-		air := flight.Environment{Seed: 1, Wind: trades}
+		air := flight.Environment{Frame: scene, Chart: scene, Seed: 1, Wind: trades}
 		if still {
 			air.Wind = flight.Vec3{}
 		}

@@ -24,7 +24,7 @@ import (
 // whether damage is felt. A clean jet and a wounded one diverge here or the
 // damage is bookkeeping.
 func fly(damage flight.DamageState, seed uint64) (float64, float64) {
-	m := flight.New(fa18c.Airframe, flight.Environment{Seed: seed}, flight.World{Sea: 0})
+	m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: seed}, flight.World{Sea: 0})
 	m.State = flight.Level(m, flight.Vec3{Y: 3000}, flight.Vec3{X: 1}, 200, fa18c.Airframe.Mass.Fuel*0.7)
 	m.State.Damage = damage.Copy()
 	stick := 0.0
@@ -58,7 +58,7 @@ func TestBurstProbe(t *testing.T) {
 		var worst flight.DamageState
 		worstSum := -1.0
 		for seed := uint64(1); seed <= runs; seed++ {
-			m := flight.New(fa18c.Airframe, flight.Environment{Seed: seed}, flight.World{Sea: 0})
+			m := flight.New(fa18c.Airframe, flight.Environment{Frame: scene, Chart: scene, Seed: seed}, flight.World{Sea: 0})
 			m.State = flight.Level(m, flight.Vec3{Y: 3000}, flight.Vec3{X: 1}, 200, fa18c.Airframe.Mass.Fuel*0.7)
 			body := &Body{Airframe: fa18c.Airframe, Parts: Parts(fa18c.Airframe),
 				Damage: &m.State.Damage, Condition: &Condition{Damager: -1}}

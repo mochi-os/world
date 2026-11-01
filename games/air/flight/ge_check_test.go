@@ -12,7 +12,7 @@ import (
 func TestElevatedFieldCushion(t *testing.T) {
 	flare := func(elevation float64) (float64, float64) {
 		world := World{Sea: 0, Fields: []Field{{Height: elevation, Strips: []Strip{{A: Vec3{X: -3000, Z: 0}, B: Vec3{X: 3000, Z: 0}, Width: 60}}}}}
-		m := New(Fighter, Environment{}, world)
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, world)
 		m.State.Position = Vec3{X: -400, Y: elevation + 8}
 		m.State.Velocity = Vec3{X: 69, Y: -3}
 		m.State.Attitude = Axis(Vec3{Z: 1}, 8.1*math.Pi/180)
@@ -34,7 +34,7 @@ func TestElevatedFieldCushion(t *testing.T) {
 	// ANY reference scheme and the only variable left is the thinner air.
 	{
 		world := World{Sea: 500, Fields: []Field{{Height: 500, Strips: []Strip{{A: Vec3{X: -3000, Z: 0}, B: Vec3{X: 3000, Z: 0}, Width: 60}}}}}
-		m := New(Fighter, Environment{}, world)
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, world)
 		m.State.Position = Vec3{X: -400, Y: 508}
 		m.State.Velocity = Vec3{X: 69, Y: -3}
 		m.State.Attitude = Axis(Vec3{Z: 1}, 8.1*math.Pi/180)

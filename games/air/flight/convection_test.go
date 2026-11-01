@@ -89,7 +89,7 @@ func TestStratiformSmooth(t *testing.T) {
 
 func TestWindCloudIntegration(t *testing.T) {
 	core, _, _, _ := strongest(t)
-	env := Environment{Seed: 7}
+	env := Environment{Frame: scene, Chart: scene, Seed: 7}
 	calm := wind(Vec3{X: core.X, Y: 1200, Z: core.Z}, 30, env, nil)
 	env.Cloud = trades
 	stormy := wind(Vec3{X: core.X, Y: 1200, Z: core.Z}, 30, env, nil)

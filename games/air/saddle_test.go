@@ -104,7 +104,7 @@ func TestDuelSaddleFinish(t *testing.T) {
 	i, expert, prey := duellist(t, "drone")
 	base := flight.Vec3{X: 0, Y: 4000, Z: 0}
 	slow := flight.Vec3{X: 100} // 194 kt: under 0.55 of corner at this height
-	if gate, speed := 0.55*corner(expert.model), flight.Equivalent(slow.X, base.Y, flight.Environment{}); speed >= gate {
+	if gate, speed := 0.55*corner(expert.model), flight.Equivalent(slow.X, base.Y, flight.Environment{Frame: scene, Chart: scene}); speed >= gate {
 		t.Fatalf("the twin must sit under the reflex's gate: %.0f m/s equivalent against %.0f", speed, gate)
 	}
 	fired, starved := false, false

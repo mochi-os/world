@@ -951,6 +951,7 @@ func TestTeamsHoldFire(t *testing.T) {
 		aloft(mate, base.Add(flight.Vec3{X: 300, Z: lateral}), forward)
 		aloft(blue1, base.Add(flight.Vec3{X: 500}), forward)
 		b := expert.brain
+		i.recall(b)
 		slot := expert.player.Slot
 		b.decided = 1000 // skip decide: the rigged fire state must survive
 		b.prey = &track{when: 1000, position: blue1.model.State.Position, velocity: blue1.model.State.Velocity}
@@ -1274,6 +1275,7 @@ func TestBotPress(t *testing.T) {
 		aloft(expert, base, forward)
 		aloft(prey, base.Add(flight.Vec3{X: 400, Z: 35}), forward)
 		b := expert.brain
+		i.recall(b)
 		b.decided = 1000 // skip decide: the rigged state must survive
 		b.shoot = true
 		b.prey = &track{when: 1000, position: prey.model.State.Position, velocity: prey.model.State.Velocity}
@@ -1724,7 +1726,7 @@ func TestBotSpiral(t *testing.T) {
 // flier, closes, and eventually pulls the trigger; nothing crashes into the sea.
 func TestBandit(t *testing.T) {
 	b := NewBandit("expert", 9, "", false, false, "", 0, false) // guns-only, like the client joust
-	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9}, flight.World{Sea: sea})
+	spawn := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 9}, flight.World{Sea: sea})
 	spawn.State.Position = flight.Vec3{X: 2778, Y: altitude}
 	spawn.State.Velocity = flight.Vec3{X: -220}
 	spawn.State.Attitude = flight.Look(flight.Vec3{X: -1})
@@ -1733,7 +1735,7 @@ func TestBandit(t *testing.T) {
 	b.place(words)
 
 	// The player: straight and level away from the bandit — a towed target.
-	player := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 9}, flight.World{Sea: sea})
+	player := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 9}, flight.World{Sea: sea})
 	player.State.Position = flight.Vec3{X: -2778, Y: altitude}
 	player.State.Velocity = flight.Vec3{X: 170}
 	player.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -1997,7 +1999,7 @@ func TestMissileEnergy(t *testing.T) {
 // 3,000 kg load is minutes of burner, not a free button.
 func TestFuelBurn(t *testing.T) {
 	rate := func(reheat float64) float64 {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = flight.Vec3{Y: 300}
 		m.State.Velocity = flight.Vec3{X: 180}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -2804,7 +2806,7 @@ func TestBreakup(t *testing.T) {
 		if event == nil || event["cause"] != "breakup" {
 			t.Fatalf("%s: no break-up kill in the events: %v", injury.name, i.events)
 		}
-		if at := event["position"].([]float64); at[0] != was.X || at[1] != was.Y || at[2] != was.Z {
+		if at := event["position"].([]float64); (flight.Vec3{X: at[0], Y: at[1], Z: at[2]}).Subtract(was).Length() > 1e-6 { // the bots' frames carry the session there and back each tick, to the last bit or so
 			t.Errorf("%s: the break-up is at %v, want where the jet was whole, %v", injury.name, at, was)
 		}
 		if p := i.aircraft[victim].model.State.Position; math.IsNaN(p.Length()) {

@@ -13,7 +13,7 @@ import (
 // measure specific excess power over a settled window, bisect n.
 func sustained(speed, altitude float64) (float64, float64) {
 	measure := func(n float64) float64 {
-		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+		m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 		m.State.Position = flight.Vec3{Y: altitude}
 		m.State.Velocity = flight.Vec3{X: speed}
 		m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -93,7 +93,7 @@ func TestAcceleration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("a long acceleration run")
 	}
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 	m.State.Position = flight.Vec3{Y: 1500}
 	m.State.Velocity = flight.Vec3{X: 300 / 1.944}
 	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -125,7 +125,7 @@ func TestClimb(t *testing.T) {
 	if testing.Short() {
 		t.Skip("an energy-rate measurement")
 	}
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 	m.State.Position = flight.Vec3{Y: 1000}
 	m.State.Velocity = flight.Vec3{X: 180} // ~350 kt: near best climb speed
 	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -158,7 +158,7 @@ func TestClimb(t *testing.T) {
 // TestRoll: full lateral stick at combat speed — the Hornet rolls
 // ~180-220 deg/s; the FCS commands 3.8 rad/s tempered by speed and alpha.
 func TestRoll(t *testing.T) {
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 	m.State.Position = flight.Vec3{Y: 1500}
 	m.State.Velocity = flight.Vec3{X: 180}
 	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
@@ -185,7 +185,7 @@ func TestTopSpeed(t *testing.T) {
 	if testing.Short() {
 		t.Skip("a long acceleration run")
 	}
-	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Seed: 1}, flight.World{Sea: sea})
+	m := flight.New(aircraft.Get("fa18c"), flight.Environment{Frame: scene, Chart: scene, Seed: 1}, flight.World{Sea: sea})
 	m.State.Position = flight.Vec3{Y: 1500}
 	m.State.Velocity = flight.Vec3{X: 250}
 	m.State.Attitude = flight.Look(flight.Vec3{X: 1})
