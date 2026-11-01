@@ -28,12 +28,19 @@ const (
 // few percent of military thrust, so a parked jet creeps and needs brakes.
 // stop is the inflight IDLE stop's (NATOPS 2.1.1.7.2): with weight off the
 // wheels the throttles rest on it, for a higher idle and a shorter
-// acceleration to MIL. The client reads N2 as 65% + 34% of the core
-// fraction, so these are about 66% and 70%, against NATOPS 4.1.1.1's ground
-// idle of 63 to 70% and flight idle of 68 to 73%.
+// acceleration to MIL. Dry thrust is the core fraction of military, so these
+// are 6% and 9% of it. No idle thrust is published for the F404; the F100 in
+// the same class idles at about 6% of military on the ground and 8% in
+// flight (900 and 1,200 of 14,590 lbf), and a jet's thrust rises about as
+// rpm^3.4 (FAA Airplane Flying Handbook ch. 16: 90 to 100% adds as much as
+// the whole at 70%), a fifth more across the F404's 66 to 70% N2. At a stop
+// of 15% the jet at idle in the landing configuration lost barely 1.3 kt a
+// second, and could not be on speed by the abeam. The client reads N2 as
+// 65% + 34% of the core fraction, so these are 67% and 68%, inside NATOPS
+// 4.1.1.1's ground idle of 63 to 70% and flight idle of 68 to 73%.
 const (
-	idle = 0.04
-	stop = 0.15
+	idle = 0.06
+	stop = 0.09
 )
 
 // The start and the run down below ground idle (#133). Fuel off, the core

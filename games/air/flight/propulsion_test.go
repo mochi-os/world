@@ -155,6 +155,34 @@ func TestRundownEncodes(t *testing.T) {
 	}
 }
 
+// TestIdleThrust: idle makes what the class's idle makes. No figure is
+// published for the F404; the F100 idles at about 6% of military thrust on
+// the ground and 8% in flight, and thrust rising about as rpm^3.4 puts the
+// F404's flight idle a fifth above its ground idle. And at the flight idle
+// stop a jet in the landing configuration sheds speed fast enough to be on
+// speed by the Case I abeam: rolled out of the break at 214 kt, below 170 kt
+// 20 s later. At a 15% stop it was still at 188 kt, and the demonstration
+// pilot turned final 3 km astern.
+func TestIdleThrust(t *testing.T) {
+	m := New(Fighter, Environment{}, World{})
+	engine := &m.Airframe.Engines[0]
+	military, _ := output(EngineState{Spool: 1}, engine, 1.225, 0)
+	share := func(spool float64) float64 {
+		dry, _ := output(EngineState{Spool: spool}, engine, 1.225, 0)
+		return dry / military
+	}
+	if ground, flight := share(idle), share(stop); ground < 0.05 || ground > 0.07 || flight < 0.07 || flight > 0.10 || flight/ground < 1.1 || flight/ground > 1.6 {
+		t.Fatalf("idle %.1f%% of military thrust on the ground and %.1f%% in flight, want about 6%% and 8%%", 100*ground, 100*flight)
+	}
+	m.State = Level(m, Vec3{Y: 245}, Vec3{X: 1}, 214*0.514444, 2041)
+	for i := 0; i < 240*20; i++ {
+		m.Step(Inputs{Gear: true, Hook: true, Flap: 2})
+	}
+	if speed := m.State.Velocity.Length() / 0.514444; speed > 170 {
+		t.Fatalf("dirty at the flight idle stop, 214 kt fell only to %.0f kt in 20 s", speed)
+	}
+}
+
 // TestIdleStop: the inflight IDLE stop (NATOPS 2.1.1.7.2). With weight off the
 // wheels the throttles rest on it - a higher idle than the ground's and a
 // shorter run to MIL. Pulled to it at 5 g or more it retracts and the cores

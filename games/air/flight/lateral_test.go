@@ -141,7 +141,7 @@ func TestCrosswindTrap(t *testing.T) {
 	m.State.Engine[1] = EngineState{Spool: 0.7}
 	caught, drift := false, 0.0
 	for i := 0; i < 240*10; i++ {
-		throttle := 0.42
+		throttle := lever(0.443) // the pass's power, 44% of military, whatever the idle floor the lever commands through
 		if caught {
 			throttle = 0
 		}

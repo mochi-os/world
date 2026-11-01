@@ -342,15 +342,15 @@ func TestBlownTyreVeers(t *testing.T) {
 
 // TestCollapsedLegSettles: a folded main drops its corner onto the belly
 // skids — the jet leans and rests instead of exploding through the runway.
-// The metre it falls is flown at flight idle (the inflight IDLE stop), so it
-// arrives with a little more push than ground idle gives and takes eight
-// seconds to rest.
+// The pilot holds the brakes, as on any stop: unbraked, ground idle's 6% of
+// military thrust walks a jet along on its other wheels, as it creeps a
+// parked one (TestRest holds them too).
 func TestCollapsedLegSettles(t *testing.T) {
 	m := runway(0, 0)
 	m.State.Position.Y = 1
 	m.State.Damage.Gear[1] = 1 // left main folded
 	for i := 0; i < 240*8; i++ {
-		m.Step(flight.Inputs{Gear: true})
+		m.Step(flight.Inputs{Gear: true, Brake: true})
 	}
 	right := m.State.Attitude.Rotate(flight.Vec3{Z: 1})
 	bank := math.Atan2(right.Y, m.State.Attitude.Rotate(flight.Vec3{Y: 1}).Y) * 180 / math.Pi

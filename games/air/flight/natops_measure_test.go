@@ -25,7 +25,7 @@ import (
 // hand.
 const knot = 0.514444
 
-func lever(spool float64) float64 { return clamp((spool-0.04)/0.96, 0, 1) }
+func lever(spool float64) float64 { return clamp((spool-idle)/(1-idle), 0, 1) } // the lever that commands a core fraction, through the idle floor
 
 type pullResult struct {
 	alpha, nz, rate, stab float64
