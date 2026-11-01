@@ -227,24 +227,30 @@ func TestTwinWeigh(t *testing.T) {
 }
 
 // TestExternalEncode: the external groups, the spin recovery latch and the
-// inflight IDLE stop's latch survive the encode round trip at the appended
-// tail words.
+// inflight IDLE stop's latch survive the encode round trip at the words they
+// were appended at, and each engine's rundown below idle at the four after
+// them, the state's last.
 func TestExternalEncode(t *testing.T) {
 	s := State{Fuel: 1234, External: Tanks{Wing: 987.5, Centre: 321.25}, Retracted: true}
 	s.Fcs.Recovery = true
+	s.Engine[0].Rundown, s.Engine[1].Rundown = 0.25, 1
 	out := make([]float64, Size)
 	s.Encode(out)
 	back := Decode(out)
-	if back.External != s.External || back.Fuel != 1234 || !back.Fcs.Recovery || !back.Retracted {
-		t.Fatalf("round trip lost state: fuel %f external %+v recovery %v retracted %v", back.Fuel, back.External, back.Fcs.Recovery, back.Retracted)
+	if back.External != s.External || back.Fuel != 1234 || !back.Fcs.Recovery || !back.Retracted || back.Engine[0].Rundown != 0.25 || back.Engine[1].Rundown != 1 {
+		t.Fatalf("round trip lost state: fuel %f external %+v recovery %v retracted %v rundown %v %v", back.Fuel, back.External, back.Fcs.Recovery, back.Retracted, back.Engine[0].Rundown, back.Engine[1].Rundown)
 	}
-	if out[Size-4] != 987.5 || out[Size-3] != 321.25 || out[Size-2] != 1 || out[Size-1] != 1 {
-		t.Fatalf("tail words %v, want the wing and centre fuel, the spin latch, then the idle stop's last", out[Size-4:])
+	tail := 57 + Elements + Channels + 8
+	if out[tail] != 987.5 || out[tail+1] != 321.25 || out[tail+2] != 1 || out[tail+3] != 1 {
+		t.Fatalf("tail words %v, want the wing and centre fuel, the spin latch, then the idle stop's", out[tail:tail+4])
+	}
+	if out[Size-4] != 0.25 || out[Size-3] != 1 || out[Size-2] != 0 || out[Size-1] != 0 {
+		t.Fatalf("last words %v, want each engine's rundown", out[Size-4:])
 	}
 	s.Retracted = false
 	s.Encode(out)
-	if out[Size-1] != 0 || Decode(out).Retracted {
-		t.Fatalf("the idle stop's latch read %v when clear", out[Size-1])
+	if out[tail+3] != 0 || Decode(out).Retracted {
+		t.Fatalf("the idle stop's latch read %v when clear", out[tail+3])
 	}
 }
 

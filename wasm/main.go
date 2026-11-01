@@ -83,7 +83,6 @@ func main() {
 		"cruise":   guard(cruise),
 		"climb":    guard(climb),
 		"clear":    guard(clear),
-		"land":     guard(shore),
 	}
 	for name, export := range battles() {
 		exports[name] = export
@@ -213,35 +212,12 @@ func initialize(this js.Value, arguments []js.Value) any {
 		return "unknown aircraft"
 	}
 	payload.Environment.Frame = theatre // the client's positions are in its own frame
-	payload.World.Land = earth          // never in the payload: loaded once by land
 	model = flight.New(airframe, payload.Environment, payload.World)
 	model.Interval = pace
 	rings = [ring]slot{}
 	wake_reset(payload.Environment)
 	debris_reset()
 	vessel, steered = ship.Ship{}, false // a new mission's ship: planned, or taken from the server, afresh
-	return ""
-}
-
-// earth is the land the client loaded (land), which every model it builds
-// flies against: soft ground at sea level wherever the outline says land, the
-// same file the world server embeds. nil until loaded: sea everywhere.
-var earth *flight.Land
-
-// shore reads the land file, a JS Uint8Array of land.bin, for every model
-// built after it; the model already flying takes it at once. Returns an error
-// string, or "" on success.
-func shore(this js.Value, arguments []js.Value) any {
-	data := make([]byte, arguments[0].Get("length").Int())
-	js.CopyBytesToGo(data, arguments[0])
-	land, err := flight.Outline(data)
-	if err != nil {
-		return err.Error()
-	}
-	earth = land
-	if model != nil {
-		model.World.Land = land
-	}
 	return ""
 }
 
