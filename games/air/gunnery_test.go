@@ -317,20 +317,15 @@ func TestLadderDuel(t *testing.T) {
 			// - and TestLadderDuel stayed green, because 2-1 is not an inversion
 			// and 111.9 s clears the floor. Nothing read the third number.
 			//
-			// The allowances are each arm's measured baseline plus room, not an
-			// ideal: guns expert-v-intermediate sits at 12 of 16 and that IS this pairing
-			// (the expert converts four; #42 item 1 carries why, and it is a
-			// precision problem rather than an arbitration one). The superhuman
-			// arm sits at 4, so its line is where the refuted shape's 13 is
-			// caught with margin either side.
+			// The guns arms are judged over 48 seeds, in TestGunLadderWide. They
+			// leave most fights undecided, superhuman v expert about ten in
+			// sixteen, and at sixteen seeds that count moves by two on seed
+			// luck: a line close enough to catch the refuted shape flipped on
+			// any change to the flight core. The missile arms finish nearly
+			// every fight, and sixteen seeds hold their line, each arm's
+			// measured baseline plus room.
 			stale := 6 // missiles: both arms measured 1 of 16
-			if !missiles {
-				stale = 9 // guns superhuman v expert: measured 4
-				if strong == "expert" {
-					stale = 14 // guns expert v intermediate: measured 12
-				}
-			}
-			if draws > stale {
+			if missiles && draws > stale {
 				t.Errorf("%s: %s v %s left %d of 16 undecided against an allowance of %d: the pairing has stopped finishing fights",
 					arm, strong, weak, draws, stale)
 			}

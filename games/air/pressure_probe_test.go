@@ -229,7 +229,8 @@ func TestPromiseProbe(t *testing.T) {
 // TestGunLadderWide is TestLadderDuel's guns arm over 48 seeds instead of 16:
 // with nine to twelve no-results in sixteen, that arm turns on four to seven
 // decisive fights and moves by two on seed luck alone, which is not enough to
-// judge a doctrine change by. This is the wider sample for that judgement.
+// judge a doctrine change by. This is the wider sample for that judgement, and
+// the guns arms' decisiveness gate.
 func TestGunLadderWide(t *testing.T) {
 	wide(t)
 	for _, pair := range [][2]string{{"expert", "intermediate"}, {"superhuman", "expert"}} {
@@ -280,6 +281,18 @@ func TestGunLadderWide(t *testing.T) {
 		// At sixteen seeds an inversion passed unseen.
 		if losses > wins+3 {
 			t.Errorf("wide guns: %s lost to %s %d-%d over 48 seeds: the ladder is inverted", strong, weak, losses, wins)
+		}
+		// DECISIVENESS (#42), on the sample that can judge it: each pairing's
+		// measured no-result count plus two deviations of a count at that
+		// rate, so seed luck stays inside the line and a regime crosses it.
+		// The refuted range gate's thirteen in sixteen is 39 in 48. Measured
+		// at fb03856.
+		stale := 30 // expert v intermediate: measured 23, deviation 3.5
+		if strong == "superhuman" {
+			stale = 35 // superhuman v expert: measured 28, deviation 3.4
+		}
+		if draws > stale {
+			t.Errorf("wide guns: %s v %s left %d of 48 undecided against an allowance of %d: the pairing has stopped finishing fights", strong, weak, draws, stale)
 		}
 	}
 }
