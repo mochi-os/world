@@ -17,6 +17,7 @@ import (
 
 	"world/game"
 	"world/games/air/aircraft"
+	"world/games/air/battle"
 	"world/games/air/flight"
 )
 
@@ -2104,6 +2105,71 @@ func TestDecoy(t *testing.T) {
 	}
 	if len(seduced) >= 6 {
 		t.Fatal("every missile seduced: rear-aspect flares against the 9M should not be certain")
+	}
+}
+
+// decoyed stages a 9M on its last moment on a burnt-out flare at lure, the
+// target placed and flying as given, on a tick on which its second look comes
+// up good. The jets have not yet stepped.
+func decoyed(t *testing.T, place, velocity, lure flight.Vec3) (*instance, *craft, *missile, uint64) {
+	t.Helper()
+	i, target, m := missileRange(t, place, velocity)
+	target.flared = 1e9
+	target.condition.Damager = -1
+	m.blind, m.lure, m.window = 0.5/60, lure, false
+	m.sight, _ = i.bearing(m.position, lure)
+	tick := uint64(600)
+	for battle.Roll(i.environment.Seed, m.number, tick, 53) >= flare_reject {
+		tick++
+	}
+	return i, target, m, tick
+}
+
+// TestDecoySecondLookHolds: a seeker coming off a burnt-out flare that finds
+// the jet again inside its gimbal holds him from that tick and flies on to the
+// fuse. The swap from the flare to him is not a turn of the sight line.
+func TestDecoySecondLookHolds(t *testing.T) {
+	i, target, m, tick := decoyed(t, flight.Vec3{X: 1500, Y: 3000, Z: 150}, flight.Vec3{X: 200}, flight.Vec3{X: 1100, Y: 2850, Z: -100})
+	dt := 1.0 / 60
+	for step := uint64(0); step < 15*60 && len(i.flying) > 0; step++ {
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		i.pursue(dt, tick+step)
+		if step == 0 && m.rejected == 0 {
+			t.Fatal("the second look did not take him back")
+		}
+		if len(i.flying) > 0 && m.loose {
+			t.Fatalf("the seeker took him back and lost him %.2f s later", float64(step)*dt)
+		}
+	}
+	if target.condition.Damager != 0 {
+		t.Fatal("the round held him and never arrived")
+	}
+}
+
+// TestDecoySecondLookGivesUp: a coasting round that takes back a jet it can
+// no longer catch gives up on that tick, as one that had tracked him all along
+// does.
+func TestDecoySecondLookGivesUp(t *testing.T) {
+	dt := 1.0 / 60
+	for _, decoy := range []bool{false, true} {
+		i, target, m, tick := decoyed(t, flight.Vec3{X: 800, Y: 3000}, flight.Vec3{X: 200}, flight.Vec3{X: 600, Y: 2900, Z: -80})
+		clock := float64(tick) / 60
+		target.model.State.Velocity = flight.Vec3{X: 200}.Add(flight.Wind(target.model.State.Position, clock, i.environment))
+		m.velocity = flight.Vec3{X: 225}.Add(flight.Wind(m.position, clock, i.environment))
+		m.burn, m.flew = 0, 2
+		if !decoy {
+			m.blind = 0
+			m.sight, _ = i.bearing(m.position, target.model.State.Position)
+		}
+		target.model.State.Position = target.model.State.Position.Add(target.model.State.Velocity.Scale(dt))
+		i.pursue(dt, tick)
+		if decoy && m.rejected == 0 {
+			t.Fatal("the second look did not take him back")
+		}
+		if len(i.flying) != 0 {
+			t.Errorf("a coasting round only 25 m/s faster than the jet it has (decoyed first %v) flew on", decoy)
+		}
+		i.Close()
 	}
 }
 

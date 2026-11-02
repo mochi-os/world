@@ -620,6 +620,9 @@ func TestHeaterSecondLookAtTheGimbalsEdge(t *testing.T) {
 		if took := m.rejected > 0; took != s.want {
 			t.Errorf("%s: the seeker took the jet back %v", s.name, took)
 		}
+		if s.want && m.loose {
+			t.Errorf("%s: the seeker took the jet back and lost him on the same tick", s.name)
+		}
 		i.Close()
 	}
 }

@@ -2194,6 +2194,11 @@ func (i *instance) pursue(dt float64, tick uint64) {
 						m.loose, m.blind, m.window = false, 0, false
 						m.sight = sight
 						m.rejected++
+						// The rest of this tick looks at him, not the burnt-out
+						// flare: the seeker below would read the swap from the
+						// flare to him as a sight line rate far over its
+						// ceiling and break the lock it has just taken.
+						tracking, aim = true, seen
 					}
 				}
 			}
