@@ -39,6 +39,8 @@ type routine struct {
 	away      flight.Vec3 // the way a pass inside the bubble is being cleared, latched until the range opens; zero while none is
 	running   int         // ticks he has been running away from me: faster, not turning, the range opening beyond 600 m
 	chasing   bool        // pursuing him, from three seconds of his running until he is inside gun range or turns
+	behind    int         // ticks I have been in his rear quarter beyond 600 m while he flew straight, whatever his speed
+	trailing  bool        // in the rear quarter of a jet flying straight: the power holds the closure, from the chase or three seconds there until he turns or I leave it
 }
 
 // drive flies the scripted doctrine for one tick, from what decide() last saw.
@@ -278,7 +280,12 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 			case !fast:
 				ahead, room = 3, 1.2*bubble // the overtake alone: a gun held from 300 m astern of him is a gun attack, not a pass
 			}
-			if miss, when := nearest(&seen, me, now, own, wind, math.Max(ahead, 5)); when > 0.1 && when < ahead && miss.Length() < room {
+			// On the trail the look takes a miss at its own end as well: a
+			// closure from astern on his line meets him at the end of every
+			// look, so the guard waited until three seconds from him, and
+			// behind a jet slowing faster than the boards slow it went by at
+			// 25 m (TestScriptTrailClearsAJetThatSlows).
+			if miss, when := nearest(&seen, me, now, own, wind, math.Max(ahead, 5)); when > 0.1 && (when < ahead || s.trailing) && miss.Length() < room {
 				// Chased: his nose within 30 degrees of me and his turn carrying
 				// it toward me. A jet crossing on a straight line to the meeting
 				// point has its nose on me too, and does not follow.
@@ -313,6 +320,16 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// floor on the push changed nothing. Held only while he ran, rather than
 	// to gun range or his turn, a novice fight went by at 94 m in its deck
 	// recovery: 2 of 256 with a close approach after the merge against 1.
+	//
+	// The chase points the track at him, not the nose. Measured from the nose,
+	// as the gun's aim is, the aim sat the alpha below the nose, past `fine`
+	// the near-nose blend never came in, and the pull sized by the angle held
+	// the alpha that made it: behind a jet 20 m/s faster flying straight away
+	// (TestScriptKillsTheDuck) the expert flew 150-168 m/s at 15-22 degrees for
+	// 190 s in full burner while the range opened from 4.5 km to 12.3, and on
+	// four seeds of eight never fired. From the track the pull holds a g and
+	// the burner buys the speed. Its power, from the chase or three seconds in
+	// his rear quarter until he turns, is trail's.
 	steady := !breaking && !gunning && !clearing && span > 600 && bending(&seen) <= 15
 	if steady && seen.velocity.Subtract(seen.blown).Length() > speed && now.Subtract(me.Position).Dot(seen.velocity.Subtract(me.Velocity)) > 0 {
 		s.running++
@@ -320,7 +337,25 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 		s.running = 0
 	}
 	s.chasing = steady && (s.chasing || s.running >= 180) // held until he is inside gun range or turns
-	pursuing := s.chasing
+
+	// Behind him, a stern conversion: within 45 degrees of his tail, by his
+	// heading through the air. Behind his 3/9 line alone took a beam, where
+	// turning in closed the range at 59 m/s while he outran it, and the trail
+	// pulled the boards at 113 kt.
+	quarter := false
+	if line, heading := now.Subtract(me.Position), seen.velocity.Subtract(seen.blown); line.Length() > 1 && heading.Length() > 1 {
+		quarter = line.Normalize().Dot(heading.Normalize()) > math.Cos(45*math.Pi/180)
+	}
+	if steady && quarter {
+		s.behind++
+	} else {
+		s.behind = 0
+	}
+	// Trailing him short of the gun, the chase's law flies the approach as
+	// well: the fight law aims by the nose, and behind a jet slower than it
+	// the expert rode 100-330 m above his line and came onto the gun at 820 m
+	// porpoising, its alpha 9-20 degrees, until it had bled to 145 m/s.
+	pursuing := s.chasing || s.trailing && !gunning
 	// THE JINK: his gun lining up on me, read by flinch() at the tier's own
 	// cadence and cue, gets the planner's guns defence, the jet loaded where its
 	// lift already points, or ninety degrees off it every second window so the
@@ -360,7 +395,12 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// 0.3 or to none: 31/0 and 32/0, then 28/4 and 31/1, against unwarned
 	// slicing at 35 degrees, where the novice read 30/2 and 26/6 (32 fights,
 	// still air and wind). A jet that never points is beaten flat as well.
-	angle := math.Acos(clamp(want.Dot(axis), -1, 1)) * 180 / math.Pi
+	bore, normal := axis, up // what the aim is measured from: the nose, which the gun points
+	if pursuing {
+		bore = me.Velocity.Normalize() // the chase points the track at him, not the nose: see THE CHASE
+		normal = up.Subtract(bore.Scale(up.Dot(bore))).Normalize()
+	}
+	angle := math.Acos(clamp(want.Dot(bore), -1, 1)) * 180 / math.Pi
 	riding := m.Alpha() * 180 / math.Pi
 	// The lift vector onto him, wherever he sits round the nose, and the pull
 	// sized by how far off he is; inside 1.5 km the fighting alpha is held
@@ -388,11 +428,11 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	roll := 0.0
 	lift := flight.Vec3{}
-	if aside := want.Subtract(axis.Scale(want.Dot(axis))); aside.Length() > 1e-6 {
+	if aside := want.Subtract(bore.Scale(want.Dot(bore))); aside.Length() > 1e-6 {
 		lift = aside.Normalize().Scale(w)
 	}
 	if w < 1 {
-		if sky := (flight.Vec3{Y: 1}).Subtract(axis.Scale(axis.Y)); sky.Length() > 1e-6 {
+		if sky := (flight.Vec3{Y: 1}).Subtract(bore.Scale(bore.Y)); sky.Length() > 1e-6 {
 			lift = lift.Add(sky.Normalize().Scale(1 - w))
 		}
 	}
@@ -404,7 +444,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	goal := clamp(angle/180*math.Pi*3, 0, 1) * b.skill.alpha
 	if w < 1 {
 		one := riding * math.Max(up.Y, 0) / math.Max(m.Nz(), 0.5) // the alpha that holds a g in the plane of the wings
-		offset := math.Atan2(want.Dot(up), want.Dot(axis)) * 180 / math.Pi
+		offset := math.Atan2(want.Dot(normal), want.Dot(bore)) * 180 / math.Pi
 		goal = goal*w + (one+2*offset)*(1-w)
 	}
 	if pursuing {
@@ -499,10 +539,45 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// deck recovery above, sized on the dive. The circle fights flown at 4,900
 	// ft read the same with the floor and without it, crashes into the water
 	// included.
-	fire := gunning && b.squeeze(m, tick)
+	// Trailing him, the trigger waits for `hold`: the wager fired from 800 m,
+	// where the rounds spread five times as thin as at the stand, and in five
+	// of TestScriptKillsTheDuck's 24 fights spent the magazine without coming
+	// inside 500 m, the duck alive.
+	fire := gunning && (!s.trailing || span < hold) && b.squeeze(m, tick)
 	b.play, b.rolled = s.branch, roll
 	b.demand.Stick = pitch
-	return flight.Inputs{Pitch: pitch, Roll: roll, Throttle: 1, Reheat: i.reheat(b, me, span, equivalent, wind, tick), Fire: fire}
+	throttle, reheat, brake := 1.0, i.reheat(b, me, span, equivalent, wind, tick), 0.0
+	s.trailing = (s.trailing || s.chasing || s.behind >= 180) && !breaking && !clearing && !jinking && bending(&seen) <= 15 && quarter
+	if s.trailing && !s.regaining {
+		closure := me.Velocity.Subtract(seen.velocity).Dot(now.Subtract(me.Position).Normalize())
+		throttle, reheat, brake = trail(span, closure, equivalent > tuned(n.band))
+	}
+	return flight.Inputs{Pitch: pitch, Roll: roll, Throttle: throttle, Reheat: reheat, Speedbrake: brake, Fire: fire}
+}
+
+// trail is the power in the rear quarter of a jet flying straight: the
+// closure that one steady deceleration spends by the stand, idle and the
+// boards above it and the burner well below it, so the jet arrives at the
+// gun's range with the overtake gone and sits there. The chase needs a hundred
+// metres a second and more to catch a jet that ran, and carried into the gun
+// in full burner it tripped the guard against flying into him at 470-790 m:
+// from 180 m/s in TestScriptKillsTheDuck six seeds of eight lived, and two
+// came inside the bubble. The jet slows badly: at 15,000 ft idle and the boards take 2 m/s2
+// off it at 640 kt, 1 at 500 and 0.75 at 430, so the closure falls on a little
+// under the slowest of those. The boards come out only above the regain's
+// band.
+func trail(span, closure float64, fast bool) (throttle, reheat, brake float64) {
+	const slowing = 0.6 // m/s2
+	want := math.Copysign(math.Sqrt(2*slowing*math.Abs(span-stand)), span-stand)
+	want = clamp(want, -20, 150)
+	throttle = clamp(0.5+(want-closure)*0.1, 0, 1)
+	if closure < want-15 {
+		throttle, reheat = 1, 1
+	}
+	if fast {
+		brake = clamp((closure-want)/5, 0, 1)
+	}
+	return throttle, reheat, brake
 }
 
 // reheat is the fight's burner: COLD, military power, inside the heater span
@@ -669,6 +744,13 @@ func (i *instance) overtake(a *craft, b *brain) {
 		b.g, b.shoot = b.skill.pull, false
 	}
 }
+
+// Trailing a jet, the gun's range: the stand the power holds, and the range
+// inside which the trigger is free while closing on it.
+const (
+	stand = 350.0 // m
+	hold  = 450.0 // m
+)
 
 // tie is how close two heights are to count as one. Two jets level with each
 // other read apart by the lean of the level and the wind along it, a few
