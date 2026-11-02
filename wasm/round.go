@@ -21,7 +21,8 @@
 // target's jammer is radiating: home-on-jam). Output words:
 // 0 alive, 1 phase, 2-4 position, 5-7 velocity, 8 estimate range,
 // 9 stale seconds, 10 time, 11 life, 12 fused (against the truth),
-// 13 Mach, 14 closest approach so far.
+// 13 Mach, 14 closest approach so far, 15-17 where the target stood as the
+// warhead fired (the burst is read against him there; zero unless fused).
 //
 // round_ladder input words: 0-2 shooter position, 3-5 shooter velocity,
 // 6-8 target position, 9-11 target velocity, 12 still (1 judges the
@@ -52,7 +53,7 @@ var flying [32]*round.Model
 var quiver []float64 // round buffer scratch
 
 func rounds() map[string]any {
-	quiver = make([]float64, 17)
+	quiver = make([]float64, 18)
 	return map[string]any{
 		"round_launch":   guard(round_launch),
 		"round_step":     guard(round_step),
@@ -124,7 +125,7 @@ func round_step(this js.Value, arguments []js.Value) any {
 	}
 	m.Beacon = quiver[16] > 0.5 && truth != nil
 	alive, fired, burst := m.Advance(quiver[1], support, truth)
-	out := quiver[:15]
+	out := quiver[:18]
 	out[0] = 0
 	if alive {
 		out[0] = 1
@@ -143,6 +144,9 @@ func round_step(this js.Value, arguments []js.Value) any {
 		// the slice, which is the blast's origin — not the frame's sampled
 		// position, which at Mach 2.5 is tens of metres away.
 		out[2], out[3], out[4] = burst.X, burst.Y, burst.Z
+		out[15], out[16], out[17] = m.Struck.X, m.Struck.Y, m.Struck.Z
+	} else {
+		out[15], out[16], out[17] = 0, 0, 0
 	}
 	out[13] = m.Mach()
 	out[14] = m.Least
