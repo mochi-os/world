@@ -575,7 +575,8 @@ func everything(w *Wakes, id int, position Vec3, time float64, sea float64) []Vo
 			}
 			strength, core := (g0+g1)/2, (c0+c1)/2
 			reach := wake_reach * (earlier.spacing + later.spacing) / 2
-			for _, piece := range []Vortex{{A: l0, B: l1, Circulation: strength, Core: core, Reach: reach}, {A: r0, B: r1, Circulation: -strength, Core: core, Reach: reach}} {
+			drift := earlier.air.Add(later.air).Scale(0.5)
+			for _, piece := range []Vortex{{A: l0, B: l1, Circulation: strength, Core: core, Reach: reach, Drift: drift}, {A: r0, B: r1, Circulation: -strength, Core: core, Reach: reach, Drift: drift}} {
 				middle := piece.A.Add(piece.B).Scale(0.5)
 				d := distance(position, middle)
 				if d > reach+piece.B.Subtract(piece.A).Length()/2 {
@@ -590,4 +591,71 @@ func everything(w *Wakes, id int, position Vec3, time float64, sea float64) []Vo
 		out[k] = found[k].vortex
 	}
 	return out
+}
+
+// TestNearDrifts: the pieces Near hands over carry the air their marks were
+// shed in, so the model can move them on through a tick's substeps.
+func TestNearDrifts(t *testing.T) {
+	var w Wakes
+	air := Vec3{X: -12, Z: 31}
+	for time := 0.0; time <= 6+1e-9; time += wake_interval {
+		w.Shed(1, time, Vec3{X: 150 * time, Y: 3000}, Quat{W: 1}, Vec3{X: 150}, hornet*gravity, span, density, air)
+	}
+	pieces := w.Near(2, Vec3{X: 880, Y: 3000}, 6, -1000) // at the trail's fresh end, which the air has not yet carried away
+	if len(pieces) == 0 {
+		t.Fatal("no pieces near the trail")
+	}
+	for _, p := range pieces {
+		if p.Drift.Subtract(air).Length() > 1e-9 {
+			t.Fatalf("a piece drifts %v in air of %v", p.Drift, air)
+		}
+	}
+}
+
+// TestMeetCarriesTheWakeOn: a wake met once a tick and flown through four
+// substeps stirs each substep's air as the same pieces met afresh at every
+// substep, standing where the air has carried them by then. Held where they
+// stood at the tick's start, a pair drifting at the trades' 31 m/s sits up to
+// 0.39 m from where the air has it by the last substep, and the swirl differs.
+func TestMeetCarriesTheWakeOn(t *testing.T) {
+	spacing := math.Pi / 4 * span
+	circulation := hornet * gravity / (density * 150 * spacing)
+	drift := Vec3{X: -31}
+	at := func(shift float64) []Vortex {
+		pair := []Vortex{
+			{A: Vec3{X: 12, Y: 3001, Z: 500}, B: Vec3{X: 12, Y: 3001, Z: -500}, Circulation: circulation, Core: 0.8, Reach: 50, Drift: drift},
+			{A: Vec3{X: 12 + spacing, Y: 3001, Z: 500}, B: Vec3{X: 12 + spacing, Y: 3001, Z: -500}, Circulation: -circulation, Core: 0.8, Reach: 50, Drift: drift},
+		}
+		for i := range pair { // placed by hand, not by the drift under test
+			pair[i].A = pair[i].A.Add(Vec3{X: drift.X * shift})
+			pair[i].B = pair[i].B.Add(Vec3{X: drift.X * shift})
+		}
+		return pair
+	}
+	jet := func() *Model {
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
+		m.State = Level(m, Vec3{Y: 3000}, Vec3{X: 1}, 150, 3000)
+		return m
+	}
+	ticked, fresh := jet(), jet()
+	in := Inputs{Throttle: ticked.State.Engine[0].Spool}
+	stride, start := ticked.Stride(), ticked.State.Time
+	most, scale := 0.0, 0.0
+	for k := 0; k < 48; k++ {
+		if k%4 == 0 {
+			ticked.Meet(at(float64(k) * stride)) // the host's tick
+		}
+		fresh.Meet(at(fresh.State.Time - start)) // every substep, exactly where the air has them
+		ticked.Step(in)
+		fresh.Step(in)
+		most = math.Max(most, ticked.swirl.Subtract(fresh.swirl).Length())
+		scale = math.Max(scale, fresh.swirl.Length())
+	}
+	t.Logf("swirl up to %.2f m/s; met once a tick it differs by at most %.2g m/s", scale, most)
+	if scale < 1 {
+		t.Fatalf("the jet never met the pair: swirl at most %.3f m/s", scale)
+	}
+	if most > 1e-9*scale {
+		t.Errorf("met once a tick the swirl differs by %.3g m/s from the pair met afresh each substep", most)
+	}
 }

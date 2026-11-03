@@ -15,7 +15,8 @@
 //
 // Wakes keeps each aircraft's recent track; Near lays the pair from it, aged
 // to the moment asked for, and returns the pieces close enough to matter. The
-// host hands them to Model.Wake before each step. The model's own freshest
+// host hands them to the model through Model.Meet, once a tick, and the model
+// moves each on with the air it drifts in through the tick's substeps. The model's own freshest
 // wake is left out: the aerodynamics already carries it as the downwash.
 // Every mark and piece is in the chart (Wakes.Chart), wherever the host works.
 
@@ -36,13 +37,22 @@ const (
 )
 
 // Vortex is one straight piece of a trailing vortex, from A to B: its
-// circulation in m²/s, right-handed about A to B; its core radius, m; and its
-// reach, m, beyond which it induces nothing.
+// circulation in m²/s, right-handed about A to B; its core radius, m; its
+// reach, m, beyond which it induces nothing; and the air it drifts in, m/s, in
+// the chart, which carries it on between the moments a host hands it over.
 type Vortex struct {
 	A, B        Vec3
 	Circulation float64
 	Core        float64
 	Reach       float64
+	Drift       Vec3
+}
+
+// drifted is the piece the air has carried on for elapsed seconds.
+func (v Vortex) drifted(elapsed float64) Vortex {
+	shift := v.Drift.Scale(elapsed)
+	v.A, v.B = v.A.Add(shift), v.B.Add(shift)
+	return v
 }
 
 // induced is the air velocity one piece induces at p: the Biot–Savart law
@@ -403,9 +413,13 @@ func (w *Wakes) stand(t *trail, time float64, sea float64) ([]piece, []run) {
 		skip := later.broken || p0.circulation == 0 || p1.circulation == 0
 		strength, core := (p0.circulation+p1.circulation)/2, (p0.core+p1.core)/2
 		reach := wake_reach * (earlier.spacing + later.spacing) / 2
+		// The air the piece drifts in, between its two marks'. Its sink, a
+		// metre or two a second and stopped where a pair levels off over the
+		// sea, moves it a few centimetres in a tick and is left to the next.
+		drift := earlier.air.Add(later.air).Scale(0.5)
 		// The left vortex turns with the lift's circulation along the track,
 		// the right against it: downwash between them, upwash outboard.
-		for _, v := range []Vortex{{A: p0.left, B: p1.left, Circulation: strength, Core: core, Reach: reach}, {A: p0.right, B: p1.right, Circulation: -strength, Core: core, Reach: reach}} {
+		for _, v := range []Vortex{{A: p0.left, B: p1.left, Circulation: strength, Core: core, Reach: reach, Drift: drift}, {A: p0.right, B: p1.right, Circulation: -strength, Core: core, Reach: reach, Drift: drift}} {
 			t.pieces = append(t.pieces, piece{vortex: v, middle: v.A.Add(v.B).Scale(0.5), bound: reach + v.B.Subtract(v.A).Length()/2, time: later.time, skip: skip})
 		}
 	}

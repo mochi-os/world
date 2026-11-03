@@ -1399,7 +1399,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		fed := a.trigger(i.free())
 		// The wake is fetched here, on the tick goroutine: Near fills a cache
 		// shared by every jet's lookup.
-		a.model.Wake = i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea)
+		a.model.Meet(i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea))
 		// The tick's start, where a jet that breaks up during it is laid to rest.
 		batch = append(batch, stepping{slot: slot, craft: a, fed: fed, whole: a.model.State})
 		if !batched {

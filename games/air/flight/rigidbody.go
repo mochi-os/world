@@ -65,9 +65,11 @@ type Model struct {
 	stores   uint64  // attached-station bitmask (bit i = Airframe.Stores[i]); New arms everything
 
 	// Wake is the pieces of other aircraft's wakes - and of this one's own,
-	// once it is old enough - that the host hands the model before each step
+	// once it is old enough - that the host hands the model through Meet
 	// (Wakes.Near), in the chart. Empty flies clean air.
 	Wake []Vortex
+	met  float64  // State.Time when the host handed over Wake: each piece is moved on with its air from here
+	held []Vortex // the wake as the air has carried it to this step
 
 	// place carries the frame the model is working in to the chart, where the map,
 	// the carrier, the wakes and the weather are fixed: during a step the
@@ -302,6 +304,15 @@ func (m *Model) Carry(r Rigid, to Frame, place Rigid) {
 	m.place = place
 }
 
+// Meet hands the model the wake pieces near it, as they stand now (Wakes.Near).
+// A host meets once a tick and steps several times: each piece is moved on with
+// the air it drifts in for the time flown since, so the substeps fly through
+// the wake where the air has carried it rather than where it stood at the
+// tick's start.
+func (m *Model) Meet(wake []Vortex) {
+	m.Wake, m.met = wake, m.State.Time
+}
+
 // stir adds the wake the host handed the model to this step's air: the swirl
 // at the CG joins the gust, so alpha, sideslip, Mach and the engines all read
 // it, and every element keeps what it meets beyond that, so a vortex under one
@@ -313,7 +324,15 @@ func (m *Model) stir() {
 		return
 	}
 	s := &m.State
-	m.swirl = Induced(s.Position, m.Wake, m.place)
+	wake := m.Wake
+	if elapsed := s.Time - m.met; elapsed != 0 {
+		m.held = m.held[:0]
+		for _, v := range m.Wake {
+			m.held = append(m.held, v.drifted(elapsed))
+		}
+		wake = m.held
+	}
+	m.swirl = Induced(s.Position, wake, m.place)
 	m.gust = m.gust.Add(m.swirl)
 	// A piece whose line passes further from the CG than its reach and the
 	// airframe's own size tapers to nothing along the whole airframe, so the
@@ -325,7 +344,7 @@ func (m *Model) stir() {
 		}
 	}
 	m.near = m.near[:0]
-	for _, v := range m.Wake {
+	for _, v := range wake {
 		if v.distance(m.place.Point(s.Position)) < v.Reach+extent {
 			m.near = append(m.near, v)
 		}
