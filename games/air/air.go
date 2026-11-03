@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"runtime"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -1313,6 +1314,56 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			i.wakes.Record(slot, clock, a.model)
 		}
 	}
+	// Each live jet is stepped in a batch with the others (step), then judged
+	// here in slot order, as the serial loop judged it.
+	judge := func(s stepping) {
+		slot, a := s.slot, s.craft
+		if !intact(&a.model.State) {
+			// The model has flown the jet somewhere no airframe goes. A state that
+			// is not a number never meets the sea or a round, so it lived on as a
+			// ghost the match could never decide; one merely past the airframe is
+			// a jet that would have come apart. Either way it has broken up: back
+			// to where it was whole, so the kill has a place, and dead.
+			a.model.State = s.whole
+			i.fell(slot, credit(a), "breakup", -1)
+			return
+		}
+		// The damage cascade: fires feed or starve on the throttle, fuel
+		// fires run their fuse, weakened wings shed under g.
+		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, a.latest.Secure, 60, i.environment.Seed, uint64(slot), tick) {
+			i.raise(slot, event)
+		}
+		if a.alive && a.condition.Killed {
+			i.down(slot, a, "pilot")
+			return
+		}
+		if !a.alive {
+			return // the cascade exploded this aircraft
+		}
+		// Air-start rule: any surface contact — water, a crash probe, even a
+		// gentle touch — is a kill until multiplayer deck operations land.
+		state := &a.model.State
+		if a.model.Altitude() <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
+			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
+		}
+	}
+	// A tick with fewer jets than step_parallel steps and judges each as it
+	// comes, one after another; a larger one batches them to step in parallel.
+	live := 0
+	for _, slot := range i.slots() {
+		if a := i.aircraft[slot]; a.alive && a.model != nil {
+			live++
+		}
+	}
+	batched := live >= step_parallel
+	batch := make([]stepping, 0, len(i.aircraft))
+	flush := func() {
+		step(batch)
+		for _, s := range batch {
+			judge(s)
+		}
+		batch = batch[:0]
+	}
 	for _, slot := range i.slots() {
 		a := i.aircraft[slot]
 		a.flared += dt
@@ -1324,6 +1375,9 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			}
 			a.wait -= dt
 			if a.wait <= 0 {
+				// A respawn reads the other jets' positions, so every jet
+				// before it has stepped and been judged first, as in slot order.
+				flush()
 				if a.model == nil { // the previous airframe left as a wreck
 					_, respawned := aircraft.Grant(a.kind) // kind is data, so Grant: Get's nil would panic in flight.New
 					a.model = flight.New(respawned, i.environment, i.chart.world)
@@ -1343,40 +1397,16 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 			continue
 		}
 		fed := a.trigger(i.free())
-		whole := a.model.State // this tick's start, where a jet that breaks up during it is laid to rest
+		// The wake is fetched here, on the tick goroutine: Near fills a cache
+		// shared by every jet's lookup.
 		a.model.Wake = i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea)
-		for substep := 0; substep < 4; substep++ {
-			a.model.Step(fed) // 4 × Dt (1/240) per 60 Hz tick
-		}
-		if !intact(&a.model.State) {
-			// The model has flown the jet somewhere no airframe goes. A state that
-			// is not a number never meets the sea or a round, so it lived on as a
-			// ghost the match could never decide; one merely past the airframe is
-			// a jet that would have come apart. Either way it has broken up: back
-			// to where it was whole, so the kill has a place, and dead.
-			a.model.State = whole
-			i.fell(slot, credit(a), "breakup", -1)
-			continue
-		}
-		// The damage cascade: fires feed or starve on the throttle, fuel
-		// fires run their fuse, weakened wings shed under g.
-		for _, event := range battle.Advance(&a.body, a.model, a.latest.Throttle, a.latest.Secure, 60, i.environment.Seed, uint64(slot), tick) {
-			i.raise(slot, event)
-		}
-		if a.alive && a.condition.Killed {
-			i.down(slot, a, "pilot")
-			continue
-		}
-		if !a.alive {
-			continue // the cascade exploded this aircraft
-		}
-		// Air-start rule: any surface contact — water, a crash probe, even a
-		// gentle touch — is a kill until multiplayer deck operations land.
-		state := &a.model.State
-		if a.model.Altitude() <= sea || state.Gear.Touch.Occurred || state.Gear.Contact >= 0 {
-			i.kill(slot, credit(a)) // whoever wrecked the jet gets the splash
+		// The tick's start, where a jet that breaks up during it is laid to rest.
+		batch = append(batch, stepping{slot: slot, craft: a, fed: fed, whole: a.model.State})
+		if !batched {
+			flush()
 		}
 	}
+	flush()
 	i.midair(dt)
 	i.merge()
 	i.guns(dt, tick)
@@ -1384,6 +1414,94 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	i.pursue(dt, tick)
 	i.scatter(dt, tick)
 	i.drift(dt)
+}
+
+// stepping is one live jet's flight for a tick: its inputs, and where it was
+// whole at the tick's start.
+type stepping struct {
+	slot  int
+	craft *craft
+	fed   flight.Inputs
+	whole flight.State
+}
+
+// step_parallel is the fewest jets stepped in parallel: below it the handoff
+// costs more than it saves. A variable so a test can fly the same match both
+// ways.
+var step_parallel = 8
+
+// steppers bounds the helpers stepping jets across every session on the
+// server, so a flood of large matches shares the cores rather than each
+// spawning its own. The tick goroutine always steps too, so no session waits
+// on another's.
+var steppers = make(chan struct{}, runtime.NumCPU())
+
+// step flies each jet in batch for one tick: four substeps of 1/240 s. A
+// large batch is stepped in parallel - within a tick a jet's steps read only
+// its own model, its wake (fetched before) and the shared world, airframe and
+// environment, which nothing changes while it flies; every check that reads
+// or changes another jet runs after, in judge. A 99-bot match stepped one jet
+// after another overran the 60 Hz tick. A panic in a helper is raised again
+// here, on the tick goroutine, where the session's guard meets it as it
+// would a serial step's.
+func step(batch []stepping) {
+	fly := func(s *stepping) {
+		for substep := 0; substep < 4; substep++ {
+			s.craft.model.Step(s.fed)
+		}
+	}
+	if len(batch) < step_parallel {
+		for k := range batch {
+			fly(&batch[k])
+		}
+		return
+	}
+	var next atomic.Int64
+	work := func() {
+		for {
+			k := int(next.Add(1)) - 1
+			if k >= len(batch) {
+				return
+			}
+			fly(&batch[k])
+		}
+	}
+	var group sync.WaitGroup
+	var mutex sync.Mutex
+	var failure any
+	// A panic anywhere is kept until every jet has stopped stepping: re-raised
+	// sooner, the session would tick again while helpers still fly its jets.
+	guarded := func() {
+		defer func() {
+			if r := recover(); r != nil {
+				mutex.Lock()
+				if failure == nil {
+					failure = r
+				}
+				mutex.Unlock()
+			}
+		}()
+		work()
+	}
+helpers:
+	for n := 1; n < len(batch); n++ {
+		select {
+		case steppers <- struct{}{}:
+		default:
+			break helpers // every helper is busy: the tick goroutine steps the rest
+		}
+		group.Add(1)
+		go func() {
+			defer group.Done()
+			defer func() { <-steppers }()
+			guarded()
+		}()
+	}
+	guarded()
+	group.Wait()
+	if failure != nil {
+		panic(failure)
+	}
 }
 
 // scatter meets every kill's wreckage against the jets flying through it

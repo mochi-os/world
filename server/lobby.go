@@ -7,6 +7,8 @@
 package main
 
 import (
+	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -113,7 +115,57 @@ type mapper interface {
 	Map(name string) ([]byte, bool)
 }
 
-// lobby_map serves one map's geometry: GET /maps/<name>.
+// lobby_chart is a map as the lobby serves it: its file, and the file gzipped.
+type lobby_chart struct {
+	raw        []byte
+	compressed []byte
+}
+
+// lobby_charts holds each map served, by name. The maps are embedded and never
+// change, so each is read and compressed once; a join used to fetch 128 KB of
+// geometry that gzips to 20 KB, on the join's critical path.
+var lobby_charts sync.Map
+
+// lobby_chart_get is the named map from the first game that carries it, or nil.
+func lobby_chart_get(name string) *lobby_chart {
+	if held, ok := lobby_charts.Load(name); ok {
+		return held.(*lobby_chart)
+	}
+	for _, g := range games {
+		m, ok := g.(mapper)
+		if !ok {
+			continue
+		}
+		body, found := m.Map(name)
+		if !found {
+			continue
+		}
+		var packed bytes.Buffer
+		z, _ := gzip.NewWriterLevel(&packed, gzip.BestCompression)
+		z.Write(body)
+		z.Close()
+		c := &lobby_chart{raw: body, compressed: packed.Bytes()}
+		held, _ := lobby_charts.LoadOrStore(name, c)
+		return held.(*lobby_chart)
+	}
+	return nil
+}
+
+// lobby_gzip reports whether the request accepts a gzipped body.
+func lobby_gzip(r *http.Request) bool {
+	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
+		coding, parameters, _ := strings.Cut(strings.TrimSpace(part), ";")
+		if !strings.EqualFold(strings.TrimSpace(coding), "gzip") {
+			continue
+		}
+		parameters = strings.ReplaceAll(strings.TrimSpace(parameters), " ", "")
+		return parameters != "q=0" && parameters != "q=0.0" && parameters != "q=0.00" && parameters != "q=0.000"
+	}
+	return false
+}
+
+// lobby_map serves one map's geometry: GET /maps/<name>, gzipped when the
+// request accepts it.
 func lobby_map(w http.ResponseWriter, r *http.Request) {
 	if lobby_cors(w, r) {
 		return
@@ -122,19 +174,22 @@ func lobby_map(w http.ResponseWriter, r *http.Request) {
 		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
 		return
 	}
-	name := strings.TrimPrefix(r.URL.Path, "/maps/")
-	for _, g := range games {
-		if m, ok := g.(mapper); ok {
-			if body, found := m.Map(name); found {
-				w.Header().Set("Content-Type", "application/json")
-				w.Header().Set("Cache-Control", "public, max-age=3600")
-				w.WriteHeader(http.StatusOK)
-				w.Write(body)
-				return
-			}
-		}
+	c := lobby_chart_get(strings.TrimPrefix(r.URL.Path, "/maps/"))
+	if c == nil {
+		lobby_respond(w, http.StatusNotFound, map[string]any{"error": "map"})
+		return
 	}
-	lobby_respond(w, http.StatusNotFound, map[string]any{"error": "map"})
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	w.Header().Set("Vary", "Accept-Encoding")
+	body := c.raw
+	if lobby_gzip(r) {
+		w.Header().Set("Content-Encoding", "gzip")
+		body = c.compressed
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	w.Write(body)
 }
 
 func lobby_respond(w http.ResponseWriter, status int, body map[string]any) {
