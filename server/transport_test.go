@@ -228,9 +228,25 @@ func TestAir(t *testing.T) {
 	if len(positions) < 2 {
 		t.Fatal("no snapshots with our aircraft")
 	}
-	dx := positions[1][0] - positions[0][0]
-	dz := positions[1][2] - positions[0][2]
-	if dx*dx+dz*dz < 1 {
+	// The core's positions are earth-centred: level flight runs across the
+	// line from the earth's centre, so measure the move with its part along
+	// that line taken out, whichever axes the theatre's point leans on
+	moved := make([]float64, 3)
+	radius, along := 0.0, 0.0
+	for i := range moved {
+		moved[i] = positions[1][i] - positions[0][i]
+		radius += positions[0][i] * positions[0][i]
+	}
+	radius = math.Sqrt(radius)
+	for i := range moved {
+		along += moved[i] * positions[0][i] / radius
+	}
+	level := 0.0
+	for i := range moved {
+		across := moved[i] - along*positions[0][i]/radius
+		level += across * across
+	}
+	if level < 1 {
 		t.Fatalf("aircraft not moving: %v -> %v", positions[0], positions[1])
 	}
 }
