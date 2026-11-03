@@ -2374,34 +2374,8 @@ func (i *instance) decide(slot int, a *craft, tick uint64) {
 			// (dead-astern, big opening) it just lags the chase into the dirt;
 			// and never against one climbing away above.
 			b.aim = direction.Subtract(flight.Vec3{Y: 0.35}).Add(chase.Scale(-0.2)).Normalize()
-		case b.skill.library >= 2 && a.team == "" && distance > 500 && tail < 0.85 && closure > -40:
-			// (teamless doctrine only for now: a stalking wingman chases
-			// geometry away from his pair — both section sweeps regressed past
-			// their slack when the stalk flew in teams, and gating on b.solo
-			// instead poisoned the A/B by giving only the solo arm a planner.
-			// Section-aware planning is the plan-spine work, measured on its
-			// own terms.)
-			// THE STALK (#206 planner): fly to a control point ON HIS CIRCLE —
-			// half a radian of arc behind him, standing slightly inside — not
-			// at the jet itself. Pointing at a turning target is a matched-
-			// radius tail chase whose angles never improve (measured: no tier
-			// bent the angle-off-tail trace downward, ever); the control point
-			// moves with his turn, so flying at it lags the circle, builds
-			// closure across the chord, and arrives BEHIND him. Straight
-			// targets keep the classic flight-path lag.
-			b.mode = "stalk"
-			if b.ring.valid {
-				point := b.ring.behind(predict(prey, age, b.skill.library >= 3), 0.5, float64(tick)/60)
-				b.aim, _ = i.bearing(me.Position, point)
-				b.throttle, b.reheat = 1, boost(equivalent, pace, tuned(-20))
-				if closure > 140 {
-					b.brake = clamp((closure-140)/120, 0, 1) // arriving too hot overshoots the control zone the stalk is buying
-				}
-			} else {
-				b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // classic lag on a straight runner
-			}
 		case b.skill.library >= 2 && distance > 700 && tail < 0.85 && closure > -40:
-			b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // teams keep the classic crossing lag the stalk replaced for lone fighters — removing it cost the section six deaths
+			b.aim = direction.Add(chase.Scale(-0.25)).Normalize() // the classic crossing lag: removing it cost the section six deaths
 		}
 	case tail < -0.35: // neutral: converging head-on
 		b.mode = "neutral"
