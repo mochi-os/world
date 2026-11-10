@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"math"
+	"strconv"
+	"strings"
 
 	"world/game"
 	"world/games/air/aircraft"
@@ -110,6 +112,9 @@ func TestMask(t *testing.T) {
 	}
 	if spent&(bit("rail2")|bit("rail8")) == 0 {
 		t.Fatalf("empty rails departed with their rounds")
+	}
+	if full&bit("shoulder2") == 0 || full&bit("shoulder8") == 0 || spent&bit("shoulder2") == 0 || spent&bit("shoulder8") == 0 {
+		t.Fatalf("a single heater's empty inboard LAU-7 missing: full %b spent %b", full, spent)
 	}
 	// The armed bot standard is the six-round Fox 2 fighter: tips plus outboard
 	// twins, fired whole in SMS order - tips first, then the twin-rack rounds,
@@ -252,6 +257,48 @@ func TestAmraamStores(t *testing.T) {
 }
 
 // TestInboardHeaters (#27 follow-up): the Sparrow-capable inboards carry
+// TestSingleHeater: a single AIM-9 on a wing pylon rides the LAU-115C/A's
+// outboard LAU-7 with the inboard one fitted and empty (NAVEDTRA 14313 fig
+// 15-20 lists the side launchers only in pairs), as the model draws it: the
+// round at the twin's outboard point, the empty rail's 90 lb at the inboard
+// side, and no empty rail beside a single AIM-120 or on a twin.
+func TestSingleHeater(t *testing.T) {
+	catalog := map[string]flight.Store{}
+	for _, s := range aircraft.Get("fa18c").Stores {
+		catalog[s.Name] = s
+	}
+	for _, key := range []string{"2", "3", "7", "8"} {
+		single, outer, inner, rail := catalog["9m"+key], catalog["9m"+key+"a"], catalog["9m"+key+"b"], catalog["shoulder"+key]
+		if single.Position != outer.Position {
+			t.Fatalf("station %s: single heater at %+v, the twin's outboard point is %+v", key, single.Position, outer.Position)
+		}
+		if rail.Mass != 41 || rail.Fuel != 0 || rail.Warhead != 0 || rail.Position.Z != inner.Position.Z || rail.Position.Y <= inner.Position.Y {
+			t.Fatalf("station %s: empty rail %+v against the inboard round %+v", key, rail, inner.Position)
+		}
+	}
+	fixture := map[string]string{"2": "rail", "3": "pylon", "7": "pylon", "8": "rail"}
+	for key, f := range fixture {
+		station, _ := strconv.Atoi(key)
+		got := stores_entries(station, slot{Fixture: f, Stores: []string{"9m"}})
+		if len(got) != 3 || got[2] != "shoulder"+key {
+			t.Fatalf("station %s single heater entries %v", key, got)
+		}
+		if got := stores_entries(station, slot{Fixture: f, Stores: []string{"120c"}}); len(got) != 2 {
+			t.Fatalf("station %s single AMRAAM entries %v", key, got)
+		}
+		if got := stores_entries(station, slot{Fixture: "twin", Stores: []string{"9m", ""}}); len(got) != 2 {
+			t.Fatalf("station %s twin entries %v", key, got)
+		}
+	}
+	// the empty rail rides the heater's firing order as hardware, never as a round
+	lo := stores_grant(fox2(), "open")
+	for _, name := range stores_rounds(lo) {
+		if strings.HasPrefix(name, "shoulder") {
+			t.Fatalf("an empty rail in the firing order: %v", stores_rounds(lo))
+		}
+	}
+}
+
 // heaters too — singles on the LAU-115C, pairs on its twin rails — and the
 // 9M order steps inboard after the outboard ring, starboard seeding.
 func TestInboardHeaters(t *testing.T) {
@@ -273,7 +320,7 @@ func TestInboardHeaters(t *testing.T) {
 	if got := lo["5"].Stores[0]; got != "" {
 		t.Fatalf("a centreline heater survived: %q", got)
 	}
-	if got := stores_entries(7, lo["7"]); len(got) != 2 || got[0] != "pylon7" || got[1] != "9m7" {
+	if got := stores_entries(7, lo["7"]); len(got) != 3 || got[0] != "pylon7" || got[1] != "9m7" || got[2] != "shoulder7" {
 		t.Fatalf("inboard single entries %v", got)
 	}
 	want := []string{"tip9", "tip1", "9m8a", "9m2a", "9m8b", "9m2b", "9m7", "9m3a", "9m3b"}

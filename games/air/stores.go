@@ -249,7 +249,8 @@ func bots_fuel(weapons string) float64 {
 
 // stores_entries names the catalog entries a station's slot attaches: the
 // fixture hardware (tips: none — the integral rail lives in the empty
-// weight), then one entry per occupied point, outer twin point first.
+// weight), then one entry per occupied point, outer twin point first, and
+// for a single AIM-9 on a wing pylon the empty LAU-7 on its inboard shoulder.
 func stores_entries(station int, s slot) []string {
 	key := strconv.Itoa(station)
 	var out []string
@@ -274,6 +275,9 @@ func stores_entries(station int, s slot) []string {
 	default:
 		if len(s.Stores) > 0 && s.Stores[0] != "" {
 			out = append(out, s.Stores[0]+key) // any occupied single point: 9m2, 120c4, tank3, 9m7...
+		}
+		if len(s.Stores) > 0 && s.Stores[0] == "9m" && station != 4 && station != 5 && station != 6 {
+			out = append(out, "shoulder"+key) // a single wing AIM-9's empty inboard LAU-7
 		}
 	}
 	return out

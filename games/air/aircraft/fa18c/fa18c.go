@@ -115,12 +115,14 @@ func build() *flight.Airframe {
 		{Name: "tip9", Station: 9, Position: flight.Vec3{X: 0.2, Y: -0.77, Z: 5.94}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "rail2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 179, Area: 0.04},
 		{Name: "twin2", Station: 2, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: -3.35}, Mass: 290, Area: 0.06},
-		{Name: "9m2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -3.35}, Mass: 86, Area: 0.05, Warhead: 9.4},
+		// A single AIM-9 on a wing pylon rides the LAU-115C/A's outboard LAU-7, at
+		// the twin's outboard point, as the model hangs it (hang.ts).
+		{Name: "9m2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.50}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m2a", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.50}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m2b", Station: 2, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: -3.20}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "rail8", Station: 8, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: 3.35}, Mass: 179, Area: 0.04},
 		{Name: "twin8", Station: 8, Position: flight.Vec3{X: 0.3, Y: -0.85, Z: 3.35}, Mass: 290, Area: 0.06},
-		{Name: "9m8", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 3.35}, Mass: 86, Area: 0.05, Warhead: 9.4},
+		{Name: "9m8", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.50}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m8a", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.50}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m8b", Station: 8, Position: flight.Vec3{X: 0.0, Y: -1.00, Z: 3.20}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "pylon3", Station: 3, Position: flight.Vec3{X: 0.3, Y: -0.90, Z: -2.24}, Mass: 136, Area: 0.03},
@@ -160,12 +162,21 @@ func build() *flight.Airframe {
 		{Name: "120c7b", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.09}, Mass: 156, Area: 0.05, Warhead: 22.0},
 		// Inboard heaters (#27 follow-up): the same LAU-115C points the
 		// AMRAAMs hang on — singles on the pylon arm, pairs on the twin.
-		{Name: "9m3", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: -2.24}, Mass: 86, Area: 0.05, Warhead: 9.4},
+		{Name: "9m3", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.39}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m3a", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.39}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m3b", Station: 3, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: -2.09}, Mass: 86, Area: 0.05, Warhead: 9.4},
-		{Name: "9m7", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.10, Z: 2.24}, Mass: 86, Area: 0.05, Warhead: 9.4},
+		{Name: "9m7", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.39}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m7a", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.39}, Mass: 86, Area: 0.05, Warhead: 9.4},
 		{Name: "9m7b", Station: 7, Position: flight.Vec3{X: 0.0, Y: -1.05, Z: 2.09}, Mass: 86, Area: 0.05, Warhead: 9.4},
+		// The empty inboard LAU-7 beside a single AIM-9: the LAU-115C/A carries
+		// its side launchers in pairs (NAVEDTRA 14313 fig 15-20), so the other
+		// shoulder keeps its rail. 90 lb (the LAU-7 data sheet); at the twin's
+		// inboard point raised by the round's radius and the rail's half
+		// height; drag about its 4.2 by 5.4 in face, faired.
+		{Name: "shoulder2", Station: 2, Position: flight.Vec3{X: 0.0, Y: -0.87, Z: -3.20}, Mass: 41, Area: 0.01},
+		{Name: "shoulder8", Station: 8, Position: flight.Vec3{X: 0.0, Y: -0.87, Z: 3.20}, Mass: 41, Area: 0.01},
+		{Name: "shoulder3", Station: 3, Position: flight.Vec3{X: 0.0, Y: -0.92, Z: -2.09}, Mass: 41, Area: 0.01},
+		{Name: "shoulder7", Station: 7, Position: flight.Vec3{X: 0.0, Y: -0.92, Z: 2.09}, Mass: 41, Area: 0.01},
 	}
 	a.Default = 0b11 // the bare jet flies wingtips only, exactly as before the catalog grew
 	// R-LIM (NATOPS 2.8.2.8): the wing-pylon tanks engage the FCS roll-rate
