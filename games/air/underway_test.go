@@ -128,21 +128,30 @@ func TestMatchSteers(t *testing.T) {
 	}
 }
 
-// TestIslandSailsWithTheShip: the carrier's island is the ship's own solid,
-// in its frame, and no longer a building left standing in the sea where the
-// map charts the ship.
+// TestIslandSailsWithTheShip: the carrier's island, and the vehicles parked
+// on her deck, are the ship's own solids, in its frame, and no longer
+// buildings left standing in the sea where the map charts the ship.
 func TestIslandSailsWithTheShip(t *testing.T) {
 	chart, found := chart_load("midway")
 	if !found {
 		t.Fatal("no midway map")
 	}
 	c := chart.world.Carrier
-	if len(c.Prisms) != 1 || len(c.Posts) != 1 {
-		t.Fatalf("the carrier carries %d prisms and %d posts, want its island and its mast", len(c.Prisms), len(c.Posts))
+	if len(c.Prisms) < 2 || len(c.Posts) != 1 {
+		t.Fatalf("the carrier carries %d prisms and %d posts, want its island, its vehicles and its mast", len(c.Prisms), len(c.Posts))
 	}
-	for _, q := range c.Prisms[0].Outline {
-		if math.Abs(q.X) > 170 || math.Abs(q.Z) > 50 {
-			t.Fatalf("an island corner at %v is not in the ship's frame", q)
+	for i, p := range c.Prisms {
+		for _, q := range p.Outline {
+			if math.Abs(q.X) > 170 || math.Abs(q.Z) > 50 {
+				t.Fatalf("prism %d's corner at %v is not in the ship's frame", i, q)
+			}
+		}
+	}
+	// the vehicles after the island: each stands on the deck, its top a few
+	// metres over it, and the island's above them all
+	for i, p := range c.Prisms[1:] {
+		if p.Top <= c.Position.Y+0.5 || p.Top > c.Position.Y+6 || p.Top >= c.Prisms[0].Top {
+			t.Fatalf("vehicle %d's top %.2f is not a vehicle's on a deck at %.2f under an island to %.2f", i+1, p.Top, c.Position.Y, c.Prisms[0].Top)
 		}
 	}
 	if p := c.Posts[0].Position; math.Abs(p.X) > 170 || math.Abs(p.Z) > 50 || c.Posts[0].Top < c.Position.Y+20 {
