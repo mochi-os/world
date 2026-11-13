@@ -129,19 +129,18 @@ func TestApproachCrosswind(t *testing.T) {
 func TestCrosswindTrap(t *testing.T) {
 	const wind = 4 // m/s across the deck (~8 kt); hands-off, no lineup corrections
 	m := New(Fighter, Environment{Frame: scene, Chart: scene, Wind: Vec3{Z: wind}}, harbor())
-	ground := Vec3{X: 59, Y: -3.4}
+	// TestTrap's pass (approach()), its nose turned into the wind: it was
+	// scripted apart at 59 m/s, 25.5 m and 44% of military, and once the flaps
+	// carried their real drag it sank at 17 m/s past the ship
+	approach(m, 0)
+	ground := m.State.Velocity
 	relative := ground.Subtract(Vec3{Z: wind})
 	forward := Vec3{X: relative.X, Z: relative.Z}.Normalize()
 	side := forward.Cross(Vec3{Y: 1}).Normalize()
-	m.State.Position = Vec3{X: -300, Y: 25.5, Z: 0}
-	m.State.Velocity = ground
-	m.State.Attitude = Axis(side, 0.10).Multiply(Look(forward)).Normalize()
-	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
-	m.State.Engine[0] = EngineState{Spool: 0.7}
-	m.State.Engine[1] = EngineState{Spool: 0.7}
+	m.State.Attitude = Axis(side, 0.09).Multiply(Look(forward)).Normalize()
 	caught, drift := false, 0.0
 	for i := 0; i < 240*10; i++ {
-		throttle := lever(0.443) // the pass's power, 44% of military, whatever the idle floor the lever commands through
+		throttle := 0.5 // TestTrap's
 		if caught {
 			throttle = 0
 		}

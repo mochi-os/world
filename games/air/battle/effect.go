@@ -69,7 +69,7 @@ func strike(body *Body, part *Part, severity float64, direct bool, seed uint64, 
 		damage.Drag += litter * severity
 		surface := &body.Airframe.Surfaces[part.Surface]
 		if part.Flapped && surface.Kind == flight.Wing && chance(flaperon, 1) {
-			jam(damage, side(surface, flight.ChannelFlaperonLeft, flight.ChannelFlaperonRight), 0.6)
+			jam(damage, side(surface, flight.ChannelWingLeft, flight.ChannelWingRight), 0.6)
 			events = append(events, Event{Kind: "jam", Engine: -1, Surface: part.Surface})
 		}
 		if part.Root && surface.Kind == flight.Stabilator && chance(actuator, 2) {

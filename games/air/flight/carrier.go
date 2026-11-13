@@ -5,11 +5,14 @@
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
 // The catapult holds the jet on the shuttle with a stiff holdback (easing
-// onto the spot is emergent — the spring does it), then throws it with a
-// constant stroke force sized to the cat's end speed. The arrestor cable
-// runs anchor–hook–anchor: tension from the derived payout hauls the jet
-// down and back to the centreline (the V geometry does the centring). A
-// bolter is simply never engaging. Wire capture sweeps the hook path every
+// onto the spot is emergent — the spring does it), then throws it as the
+// Ford's electromagnetic catapults do: closed loop to the end speed set for
+// the jet, at a constant acceleration. The arrestor cable runs
+// anchor–hook–anchor and stops the jet as the Ford's arresting gear does:
+// closed loop to a fixed run-out whatever its weight, speed or thrust, the V
+// geometry doing the centring. Both laws read only the state of the moment,
+// so nothing about the shot or the arrestment is stored and rewind is free.
+// A bolter is simply never engaging. Wire capture sweeps the hook path every
 // substep, so a fast rollout cannot tunnel between frames.
 
 package flight
@@ -19,16 +22,29 @@ import (
 )
 
 const (
-	capture  = 5.0    // m: catapult attach radius around the shuttle
-	lateral  = 2.0    // m: how far off the track line the nose gear may be for the slot to gather it onto the shuttle (TestTaxiUpSlow rolls in 1.5 m off)
-	aligned  = 0.978  // cos of the heading the crew will hook up at: within ~12° of the track
-	tension  = 3000.0 // N per metre of cable payout (at the reference weight setting)
-	absorb   = 8000.0 // N·s/m of payout rate (at the reference weight setting)
-	greatest = 4.2e5  // cable tension ceiling, N (at the reference weight setting): sized so a mid-weight engagement nets ~300 kN ≈ 2.4 g and ~100 m of runout, the Mk 7 class — at 6e5 the wire pulled 4.7 g and crushed the nose gear to a fuselage strike; at 3e5 the setting-scaled pull fell to 220 kN and the runout ran 156 m off the angle deck (#72 scenario 9)
-	// The energy the constants above were tuned at: the setting formula below
-	// evaluated at TestTrap's condition. Defined through the SAME formula so that
-	// condition computes setting = 1.0.
-	reference = 9.13e7 // kg·(m/s)² — 2× the tuned engagement energy
+	capture = 5.0   // m: catapult attach radius around the shuttle
+	lateral = 2.0   // m: how far off the track line the nose gear may be for the slot to gather it onto the shuttle (TestTaxiUpSlow rolls in 1.5 m off)
+	aligned = 0.978 // cos of the heading the crew will hook up at: within ~12° of the track
+	// The catapult: the electromagnetic catapults' sustained launch force,
+	// "~1.3 MN" (Meeker and Newman 2009), and the metres over which the shot's
+	// force ramps up after the holdback lets go ("a gradual ramp-up of force",
+	// its length not public): stepping full thrust on at fire bounced the jet
+	// on its struts.
+	shot = 1.3e6 // N
+	rise = 1.5   // m
+	// The end speed set over the minimum: 15 kt (NATOPS 8.2.5).
+	margin = 15 * 0.5144 // m/s
+	// The arresting gear: the hook's run-out from the wire to the stop. The
+	// Ford's is not public; the Mk 7 Mod 3's 344 ft to the tail hook (NAVEDTRA
+	// 14310) is the only cited figure, and the Ford's gear is held to the same
+	// envelope. Its engagement transient, which the cable shock absorbers take
+	// before the arrestment proper, is spread over the first metres of the run.
+	runout     = 104.9 // m
+	engagement = 6.0   // m
+	// The most the gear pulls, in g along the run: the aircraft's hookload
+	// limits are not public. A pass engaging faster than the gear can stop in
+	// its run-out runs on past it, as an overspeed engagement would.
+	hookload = 3.5
 )
 
 // hook is the tailhook tip position for a trial state (body frame offset:
@@ -107,8 +123,13 @@ func (m *Model) holdback(s *State, total *Forces) {
 	total.Moment = total.Moment.Add(Vec3{Y: -swing * 2.4e6}.Subtract(Vec3{Y: (s.Omega.Y - c.leg(s.Time).Turn) * 3.3e6}))
 }
 
-// stroke is the catapult throw: a constant force along the track while the
-// shuttle runs, sized to reach the cat's end speed over its stroke.
+// stroke is the catapult throw, closed loop as the electromagnetic catapult's
+// controller is: each step it pulls what takes the jet from its speed along the
+// track now to the end speed at the stroke's end, less what the jet's own
+// engines, drag and tyres already add along the track. The acceleration holds
+// constant after the ramp-up, where steam's peaked at 1.25 times its mean
+// (EMALS's requirement is 1.05, Doyle 1995), and the end speed is the one set,
+// whatever the thrust or the weight.
 func (m *Model) stroke(s *State, total *Forces) {
 	c := m.World.Carrier
 	if c == nil || s.Gear.Catapult < 0 || s.Gear.Stroke < 0 {
@@ -139,23 +160,34 @@ func (m *Model) stroke(s *State, total *Forces) {
 		}
 		m.apply(s, slot, Vec3{X: point.X, Y: s.Position.Y, Z: point.Z}, total) // CG height: a deck-level lateral shove at 90 m/s rolls the jet (see holdback)
 	}
-	// The shot is set for the aircraft's weight, as the real crew does: ~1.16× the
-	// powered-approach stall speed, capped by the cat's limit.
+	// The shot is set for the aircraft's weight, as the real crew does: its
+	// minimum end speed, ~1.16× the powered-approach stall speed, and the 15 kt
+	// over it NATOPS 8.2.5 recommends ("11 to 20 knots above minimum" is
+	// normal), capped by the cat's limit. The open-loop shot this replaced got
+	// 4-13 m/s over the speed it was set for from the engines' own thrust.
 	stall := math.Sqrt(2 * m.mass * gravity / (air(m.State.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
 	// The crew sets the shot for AIRSPEED off the bow, and wind over the deck
 	// is part of the budget (#44): a 25 kt headwind means the stroke itself
 	// needs 25 kt less. m.gust is the wind sampled at the jet this step;
 	// -gust·track is the headwind component down the launch track.
 	headwind := math.Max(0, -m.gust.Dot(track))
-	speed := clamp(1.16*stall-headwind, 45, cat.Speed)
-	force := m.mass * speed * speed / (2 * cat.Stroke)
-	force *= clamp(s.Gear.Stroke/8, 0.3, 1) // the real cat builds force over the first metres — stepping full thrust on at fire bounced the jet on its struts (the average loss is made up within the stroke sizing margin)
+	speed := clamp(1.16*stall+margin-headwind, 45, cat.Speed)
+	// stroke runs last in forces: total holds everything else on the jet
+	moving := s.Velocity.Subtract(c.velocity(point, s.Time, m.place)).Dot(track)
+	remaining := math.Max(cat.Stroke-s.Gear.Stroke, 0.5)
+	want := (speed*speed - moving*moving) / (2 * remaining)
+	others := s.Attitude.Rotate(total.Force).Dot(track) / m.mass
+	force := clamp(m.mass*(want-others)*clamp(s.Gear.Stroke/rise, 0.3, 1), 0, shot)
 	local := s.Attitude.Unrotate(track.Scale(force))
 	total.Force = total.Force.Add(local)
 }
 
-// cable is the arrestor wire: tension along both legs from the derived
-// payout — nothing about the cable is stored, so rewind is free.
+// cable is the arrestor wire, closed loop as the arresting gear's controller
+// is: each step it pulls what stops the hook at the run-out from where it is
+// now and how fast it runs, so the deceleration holds constant whatever the
+// weight, the engaging speed or the engines' thrust. It pulls along the V of
+// its two legs from their anchors, which centres the jet. Nothing about the
+// cable is stored, so rewind is free.
 func (m *Model) cable(s *State, in Inputs, total *Forces) {
 	c := m.World.Carrier
 	if c == nil || s.Gear.Wire < 0 || s.Gear.Wire >= len(c.Wires) {
@@ -172,20 +204,41 @@ func (m *Model) cable(s *State, in Inputs, total *Forces) {
 	if payout <= 0 {
 		return
 	}
-	// Payout rate from the hook-tip velocity resolved along both legs.
-	velocity := s.Velocity.Subtract(c.velocity(tip, s.Time, m.place))
-	rate := -velocity.Dot(legA.Normalize()) - velocity.Dot(legB.Normalize())
-	// Weight setting, dialled per engagement: the retard scales with the energy a
-	// correctly-flown engagement carries at THIS gross mass, so runout and felt g
-	// stay constant across fuel states.
-	stall := math.Sqrt(2 * m.mass * gravity / (air(s.Position.Y, m.Environment).Density * 1.55 * m.Airframe.Reference.Area))
-	engage := math.Max(1.16*stall-c.Way(s.Time), 30)
-	setting := m.mass * engage * engage / reference
-	pull := clamp(setting*(tension*payout+absorb*rate), 0, setting*greatest)
-	if rate < 0 {
-		pull = 0 // the arresting engine dissipates: no recoil — even a 12%-of-payout residual dragged the stopped jet 68 m backwards down the deck (#72 scenario 9)
+	// The run: how far the hook has gone from the wire's line across the deck,
+	// the way it goes and how fast.
+	across := Vec3{X: b.X - a.X, Z: b.Z - a.Z}.Normalize()
+	out := Vec3{X: tip.X - a.X, Z: tip.Z - a.Z}
+	out = out.Subtract(across.Scale(out.Dot(across)))
+	run := out.Length()
+	relative := s.Velocity.Subtract(c.velocity(tip, s.Time, m.place))
+	ahead := Vec3{X: relative.X, Z: relative.Z}
+	ahead = ahead.Subtract(across.Scale(ahead.Dot(across)))
+	if run > 0.01 {
+		ahead = out
 	}
+	if ahead.Length() < 1e-6 {
+		return
+	}
+	ahead = ahead.Normalize()
+	speed := relative.Dot(ahead)
+	if speed < 0 {
+		return // the arresting engine dissipates: no recoil — even a small residual dragged the stopped jet backwards down the deck (#72 scenario 9)
+	}
+	// What the engines, drag and tyres already do along the run (cable runs
+	// after aero, propulsion and the struts): the gear takes the push as well,
+	// and holds the jet against it at the end of the run.
+	others := s.Attitude.Rotate(total.Force).Dot(ahead) / m.mass
+	want, left := 0.0, runout-run
+	if left > 0.05 {
+		want = speed * speed / (2 * left) * clamp(run/engagement, 0.2, 1)
+	} else {
+		want = speed / 0.2 // the gear's brake at the end of the run, where a law on the distance left loses its grip: held to half a metre, the jet crept on three metres past it
+	}
+	want = math.Min(want+math.Max(others, 0), hookload*gravity)
 	direction := legA.Normalize().Add(legB.Normalize()).Normalize()
+	// The V pulls partly across the run: enough along it to give want.
+	along := -direction.Dot(ahead)
+	pull := m.mass * want / math.Max(along, 0.5)
 	// The shank is a pinned link and carries no moment, so the airframe feels
 	// the pull at the hook PIVOT, along the tip's geometry. Applied at the tip,
 	// 2.6 m below the CG, the V's lateral component rolls the jet with five

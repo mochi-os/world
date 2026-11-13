@@ -706,16 +706,29 @@ func TestScriptLowFight(t *testing.T) {
 	}
 }
 
+// tow flies a hand-flown jet through one world tick, as Bandit.Step flies the
+// bandit's: 1/60 s, four flight steps at Dt. Stepped once a tick, the towed
+// target moved at a quarter of the speed its state reported, and the bandit
+// chasing it read a jet whose position belied its velocity: it overshot, held
+// clears while the range opened, and porpoised (TestScriptStraight,
+// 2026-11-12).
+func tow(m *flight.Model, in flight.Inputs) {
+	for substeps := max(1, int(math.Round(1.0/60/m.Stride()))); substeps > 0; substeps-- {
+		m.Step(in)
+	}
+}
+
 // TestScriptStraight: against a jet that is not turning. On the gun behind one
 // 300 m dead ahead the scripted expert presses on a good part of four seconds with
 // its nose within 1.5 degrees of him. It rolled through 360 degrees, 33 degrees
 // off him, and never fired when the lift vector chased the direction of a
 // 3-degree offset; 116 frames at 1.9 degrees with the in-plane correction at
-// half its gain. Chasing one that flies straight away and outruns it, it
-// pursues him inside 4 km and spends under 80 s of four minutes below 194 kt
-// (40 to 73 s at five places on the earth: four minutes of chase carry the
-// earth's curve and the geoid under it into the fight); at full fighting alpha
-// it cycled to the regain's floor and back for 93.
+// half its gain. Chasing one that flies straight away, it runs him down and
+// sits on the gun: it pursues him inside 3 km and spends under 10 s of four
+// minutes below 194 kt (2,665 m and none, 2026-11-12). Until then the target
+// was stepped once a world tick where the bandit's jet takes four, so it flew
+// at a quarter of the speed it reported: the bandit porpoised behind it,
+// alpha 28 to -5 degrees every second, and the bounds stood at 4 km and 80 s.
 func TestScriptStraight(t *testing.T) {
 	b := NewBandit("expert", 1, "", false, false, "guns", 0, false)
 	b.Spawn(flight.Vec3{Y: 4572}, flight.Vec3{X: 200})
@@ -744,7 +757,7 @@ func TestScriptStraight(t *testing.T) {
 	target.State.Position, target.State.Velocity, target.State.Attitude = flight.Vec3{X: -2778, Y: altitude}, flight.Vec3{X: 170}, flight.Look(flight.Vec3{X: 1})
 	slow, pursued, farthest := 0, 0, 0.0
 	for tick := 0; tick < 60*240; tick++ {
-		target.Step(flight.Inputs{Throttle: 0.45})
+		tow(target, flight.Inputs{Throttle: 0.45})
 		target.State.Encode(words)
 		c.Mirror(words, false, true)
 		c.Step()
@@ -758,7 +771,7 @@ func TestScriptStraight(t *testing.T) {
 			farthest = math.Max(farthest, target.State.Position.Subtract(c.State().Position).Length())
 		}
 	}
-	if slow > 60*80 || pursued == 0 || farthest > 4000 {
+	if slow > 60*10 || pursued == 0 || farthest > 3000 {
 		t.Errorf("chasing a jet flying straight away it spent %d s below 194 kt and %d s pursuing, and let him get %.0f m away", slow/60, pursued/60, farthest)
 	}
 }
@@ -907,7 +920,7 @@ func TestScriptTrailClearsAJetThatSlows(t *testing.T) {
 	b.craft.brain.routine.passed, b.craft.brain.routine.trailing = true, true
 	him := flight.Level(b.craft.model, flight.Vec3{X: 350, Y: 4572}, flight.Vec3{X: 1}, 200, 2500)
 	words := make([]float64, flight.Size)
-	least, cleared := math.Inf(1), false
+	least, cleared, chased := math.Inf(1), false, 0
 	for tick := 0; tick < 60*25; tick++ {
 		speed := 200.0
 		if t := float64(tick)/60 - 1; t > 0 {
@@ -921,9 +934,15 @@ func TestScriptTrailClearsAJetThatSlows(t *testing.T) {
 		b.Step()
 		least = math.Min(least, him.Position.Subtract(b.State().Position).Length())
 		cleared = cleared || b.Mode() == "clear"
+		if b.craft.brain.routine.away.Length() > 0.5 && b.Mode() != "clear" {
+			chased++ // a clear held and flown by another law: the trail, held through the clear, made it the chase's
+		}
 	}
 	if least < bubble {
 		t.Errorf("trailing at 350 m behind a jet slowing at 4 m/s2 it came %.0f m from him (cleared %v), inside the bubble", least, cleared)
+	}
+	if !cleared || chased > 0 {
+		t.Errorf("trailing at 350 m behind a jet slowing at 4 m/s2: cleared %v, and %d ticks of the clear flown by another law", cleared, chased)
 	}
 }
 

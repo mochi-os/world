@@ -137,7 +137,9 @@ func TestDeck(t *testing.T) {
 		m.Step(flight.Inputs{Gear: true, Throttle: 1, Reheat: 1, Launch: i > 480})
 		if m.State.Gear.Catapult < 0 && !released && i > 480 {
 			released = true
-			if speed := m.State.Velocity.Length(); speed < 80 {
+			// The shot is set for the jet's weight, the minimum end speed and
+			// 15 kt over it: 78 m/s at this weight, whatever the reheat adds.
+			if speed := m.State.Velocity.Length(); speed < 75 {
 				t.Fatalf("limp cat shot: %.1f m/s at release", speed)
 			}
 		}

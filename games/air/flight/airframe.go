@@ -93,6 +93,11 @@ type Element struct {
 	Aerofoil  *Table  // synthesized section polar (aerofoil.go)
 	Flap      float64 // control chord fraction cf/c; 0 = no control surface here
 	Limit     float64 // max deflection, rad
+	Aileron   bool    // a Differential surface's control here is the aileron, not the trailing-edge flap
+	Hinged    float64 // the share of the element's span its control covers; 0 reads as all of it
+	Fade      Curve   // the control's lift effectiveness against the size of its deflection, rad, as a share of the small-deflection value; empty holds it whole
+	Gain      float64 // the control's small-deflection lift effectiveness over the thin-aerofoil theory Effectiveness gives, as measured on the airframe; 0 reads as 1
+	Centre    float64 // chords behind the strip's quarter chord at which the control's lift acts, as measured on the airframe: its pitching moment over its lift, beyond what the strip's place and the tail's downwash give
 }
 
 // Station is a fuselage segment for parasitic drag, slender-body normal
@@ -149,23 +154,90 @@ type Gun struct {
 // actuator rates. The law itself (loop shaping, limiter structure) is shared
 // across aircraft; everything a different airframe would change lives here.
 type Control struct {
-	Onspeed  float64                                          // PA on-speed alpha, rad
-	Blowdown float64                                          // deflection·dynamic-pressure ceiling, Pa
-	Gearing  struct{ Pitch, Roll, Yaw float64 }               // Direct-mode stick to surface, rad
-	Slat     struct{ Slope, Offset, Limit float64 }           // leading-edge schedule: Slope·(alpha−Offset) up to Limit
-	Flap     struct{ Slope, Offset, Limit, Pressure float64 } // AUTO manoeuvring flaps: trailing edge droops with alpha, washing out with q̄/Pressure
-	Flyaway  float64                                          // catapult trim board setting, rad: the stabilator's takeoff trim off the shuttle
-	Capture  float64                                          // reference alpha that trim commands hands-off after the shot, rad
-	Droop    struct{ Angle, Pressure, Half, Lift float64 }    // PA trailing-edge droop, rad, washed out by q̄/Pressure; Half = the takeoff (flaps HALF) fraction of the landing (FULL) droop; Lift = the full landing configuration's zero-alpha lift coefficient (droop + slats), for the PA law's level-flight cap
-	Toe      float64                                          // rudder toe-in with weight on wheels, rad (both trailing edges inboard; canted fins turn it into tail downforce for takeoff rotation)
-	Throw    struct {                                         // surface limits, rad
-		Down, Up float64                    // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
-		Flaperon struct{ Down, Up float64 } // flaperon/aileron travel (positive = trailing edge down)
-		Rudder   float64
-		Brake    float64 // speed brake panel travel, rad: its drag goes with sin² of the deflection, so the fraction the FCS reports is not the fraction of the drag
+	Onspeed  float64                                // PA on-speed alpha, rad
+	Blowdown float64                                // deflection·dynamic-pressure ceiling, Pa
+	Gearing  struct{ Pitch, Roll, Yaw float64 }     // Direct-mode stick to surface, rad
+	Slat     struct{ Slope, Offset, Limit float64 } // leading-edge schedule: Slope·(alpha−Offset) up to Limit
+	Flaps    Flaps                                  // the trailing-edge flaps and aileron droop, by flap switch position
+	Flyaway  float64                                // catapult trim board setting, rad: the stabilator's takeoff trim off the shuttle
+	Capture  float64                                // reference alpha that trim commands hands-off after the shot, rad
+	Toe      Curve                                  // rudder toe-in against alpha in the takeoff and landing modes, rad (+ both trailing edges inboard; canted fins turn it into tail downforce for rotation); weight on the wheels holds the low-alpha end
+	Throw    struct {                               // surface limits, rad
+		Down, Up     float64                    // stabilator (Down clamps the trailing-edge-UP side — core negative = nose-up; Up clamps trailing-edge-down)
+		Differential float64                    // the stabilators' differential at the full roll command, each side
+		Aileron      struct{ Down, Up float64 } // aileron travel (positive = trailing edge down)
+		Trailing     struct{ Down, Up float64 } // trailing-edge flap travel (positive = trailing edge down)
+		Rudder       float64
+		Brake        float64 // speed brake panel travel, rad: its drag goes with sin² of the deflection, so the fraction the FCS reports is not the fraction of the drag
 	}
 	Rate struct { // actuator slew, rad/s (Brake in fraction/s)
-		Stabilator, Flaperon, Rudder, Slat, Brake float64
-		Droop                                     struct{ Extend, Retract float64 } // trailing edge: it is a drive motor through transmissions, not a fast servo, and airloads help it home
+		Stabilator, Aileron, Trailing, Rudder, Slat, Brake float64
 	}
+}
+
+// Flaps is the trailing edge's schedule. AUTO (flaps up) moves the flaps
+// with alpha and Mach and holds the ailerons undrooped; HALF and FULL set
+// both to a fixed angle washed out with dynamic pressure toward the mode's
+// airspeed limit.
+type Flaps struct {
+	Auto         []Sheet // AUTO: the flaps against alpha at each Mach, rad, in ascending Mach
+	Ceiling      Curve   // AUTO: the flaps' limit against impact pressure, Pa to rad
+	Mach         float64 // AUTO: the flaps stay up above this Mach
+	Half, Full   Setting // HALF and FULL: the flaps and the ailerons' droop, rad
+	Pressure     float64 // HALF and FULL wash out with dynamic pressure: whole below 0.45·Pressure, gone at Pressure, Pa
+	Lift         float64 // the FULL configuration's trimmed zero-alpha lift coefficient (flaps, droop and slats), for the PA law's level-flight cap
+	Differential struct {
+		Gain  Curve   // AUTO: the flaps' share of the roll command against alpha
+		Limit float64 // rad
+	}
+}
+
+// Setting is one flap switch position's trailing edge, rad.
+type Setting struct{ Trailing, Aileron float64 }
+
+// Sheet is one Mach's schedule.
+type Sheet struct {
+	Mach  float64
+	Curve Curve
+}
+
+// Curve is a piecewise-linear schedule, (input, output) in ascending input,
+// held at its ends.
+type Curve [][2]float64
+
+// At reads the curve at x.
+func (c Curve) At(x float64) float64 {
+	if len(c) == 0 {
+		return 0
+	}
+	if x <= c[0][0] {
+		return c[0][1]
+	}
+	for i := 1; i < len(c); i++ {
+		if x <= c[i][0] {
+			a, b := c[i-1], c[i]
+			return a[1] + (b[1]-a[1])*(x-a[0])/(b[0]-a[0])
+		}
+	}
+	return c[len(c)-1][1]
+}
+
+// Automatic reads the AUTO flap schedule at an alpha and Mach, between its sheets
+// linearly in Mach and held past the first and last.
+func (f *Flaps) Automatic(alpha, mach float64) float64 {
+	n := len(f.Auto)
+	if n == 0 || mach > f.Mach {
+		return 0
+	}
+	if mach <= f.Auto[0].Mach {
+		return f.Auto[0].Curve.At(alpha)
+	}
+	for i := 1; i < n; i++ {
+		if mach <= f.Auto[i].Mach {
+			a, b := f.Auto[i-1], f.Auto[i]
+			t := (mach - a.Mach) / (b.Mach - a.Mach)
+			return a.Curve.At(alpha)*(1-t) + b.Curve.At(alpha)*t
+		}
+	}
+	return f.Auto[n-1].Curve.At(alpha)
 }

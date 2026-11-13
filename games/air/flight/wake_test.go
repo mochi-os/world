@@ -205,7 +205,8 @@ func dense() Wakes {
 }
 
 // cruise holds a jet level at 150 m/s for seconds with the given wake pieces,
-// and reports, step by step, its load factor and roll rate, and its final speed.
+// and reports, step by step, its load factor and roll rate, and its final
+// energy as a speed at its starting height.
 func cruise(pieces []Vortex, start Vec3, seconds float64) (loads []float64, rolls []float64, speed float64) {
 	m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
 	m.State = Level(m, start, Vec3{X: 1}, 150, 3000)
@@ -216,7 +217,11 @@ func cruise(pieces []Vortex, start Vec3, seconds float64) (loads []float64, roll
 		loads = append(loads, m.State.Fcs.Normal)
 		rolls = append(rolls, m.State.Omega.X)
 	}
-	return loads, rolls, m.State.Velocity.Length()
+	// the jet's energy as the speed it would have at its starting height: a
+	// vortex rolls the jet and trades its speed for height, which a speed
+	// alone reads as drag
+	v := m.State.Velocity.Length()
+	return loads, rolls, math.Sqrt(v*v + 2*gravity*(m.State.Position.Y-start.Y))
 }
 
 // apart is the largest step-by-step difference between two runs.
@@ -288,7 +293,7 @@ func TestUpwash(t *testing.T) {
 	// The same vortex turning the other way puts the wing in its downwash.
 	vortex[0].Circulation = -vortex[0].Circulation
 	_, _, sinking := cruise(vortex, Vec3{Y: 3000}, 6)
-	t.Logf("speed after 6 s: clean %.2f m/s, in the upwash %.2f, in the downwash %.2f", clean, riding, sinking)
+	t.Logf("energy as speed at the starting height after 6 s: clean %.2f m/s, in the upwash %.2f, in the downwash %.2f", clean, riding, sinking)
 	if riding <= clean+0.1 {
 		t.Errorf("the upwash bought %.2f m/s over six seconds", riding-clean)
 	}

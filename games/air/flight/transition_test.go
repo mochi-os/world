@@ -306,11 +306,13 @@ func TestPatternHold(t *testing.T) {
 
 // TestHandsWaveoff: NATOPS 8.2.13 - on the waveoff "apply military/afterburner
 // power and effect a slight nose rotation to stop the rate of descent". The
-// rotation is the pilot's: hands off, the approach law holds its alpha and
-// the power stops the sink, with no automatic pitch-up to a flyaway attitude.
-// Selecting HALF on the way loses the droop's lift, and the jet accelerating
-// out of the approach band in the sink it gathered must level out, not hold
-// that descent.
+// rotation is the pilot's: hands off, the approach law holds its alpha
+// (NATOPS 11.1.1: it "nulls the difference between the trim AOA and actual
+// AOA") and the power stops the sink, with no automatic pitch-up to a
+// flyaway alpha. The jet still climbs on the power at that alpha, so its
+// pitch is not the measure (user, 2026-11-12). Selecting HALF on the way
+// loses the flaps' lift, and the jet accelerating out of the approach band in
+// the sink it gathered must level out, not hold that descent.
 func TestHandsWaveoff(t *testing.T) {
 	for _, flap := range []float64{1, 2} {
 		m := New(Fighter, Environment{Frame: scene, Chart: scene, Seed: 1}, World{Sea: 0})
@@ -319,14 +321,16 @@ func TestHandsWaveoff(t *testing.T) {
 		for i := 0; i < 240*3; i++ {
 			m.Step(Inputs{Throttle: throttle, Gear: true, Flap: flap})
 		}
-		highest := -math.Pi
+		highest, pitch := -math.Pi, -math.Pi
 		for i := 0; i < 240*10; i++ {
 			m.Step(Inputs{Throttle: 1, Gear: true, Flap: flap})
-			highest = math.Max(highest, math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1)))
+			highest = math.Max(highest, alpha(m.State.Attitude.Unrotate(m.State.Velocity)))
+			pitch = math.Max(pitch, math.Asin(clamp(m.State.Attitude.Rotate(Vec3{X: 1}).Y, -1, 1)))
 		}
-		t.Logf("flap %.0f: pitch up to %.1f°, final vertical speed %.1f m/s at %.0f m", flap, highest*180/math.Pi, m.State.Velocity.Y, m.State.Position.Y)
-		if highest > 10*math.Pi/180 {
-			t.Errorf("flap %.0f: hands-off waveoff pitched to %.1f°", flap, highest*180/math.Pi)
+		onspeed := m.Airframe.Control.Onspeed
+		t.Logf("flap %.0f: alpha up to %.1f° (on-speed %.1f°), pitch up to %.1f°, final vertical speed %.1f m/s at %.0f m", flap, highest*180/math.Pi, onspeed*180/math.Pi, pitch*180/math.Pi, m.State.Velocity.Y, m.State.Position.Y)
+		if highest > onspeed+1.5*math.Pi/180 {
+			t.Errorf("flap %.0f: hands-off waveoff pitched up to %.1f° alpha, past on-speed's %.1f°", flap, highest*180/math.Pi, onspeed*180/math.Pi)
 		}
 		if m.State.Velocity.Y < -1 {
 			t.Errorf("flap %.0f: hands-off waveoff still sinking %.1f m/s after ten seconds of full power", flap, m.State.Velocity.Y)

@@ -63,48 +63,59 @@ func build() *flight.Airframe {
 	a.Control.Slat.Slope = 1.4 // the real LEF schedule is steep — full deflection by ~23° alpha, not the 31° the old 0.9 gave. The late slats left the mid-band on the post-stall polar: with the wing Vortex below, trimmed CL across 16-22° (TestLift) moves from ~1.24-1.31 to ~1.31-1.38 against the ~1.33 DCS-class reference
 	a.Control.Slat.Offset = 0.05
 	a.Control.Slat.Limit = 25 * math.Pi / 180
-	a.Control.Flap.Slope = 0.5
-	a.Control.Flap.Offset = 0.03
-	a.Control.Flap.Limit = 12 * math.Pi / 180  // AUTO manoeuvring flaps: droop with alpha to ~12°
-	a.Control.Flap.Pressure = 45000            // washout complete ~M0.78 at sea level (#131): the real AUTO schedule keys on Mach, not 350 KCAS — at 25 kPa the wing fought its combat-CL turns camber-less and sustained rates ran 1.5-2 deg/s short
-	a.Control.Droop.Angle = 26 * math.Pi / 180 // PA droop, HELD through the approach band (see the fcs schedule). Calibrated to the on-speed anchor (134 kt at alpha 8.1, envelope_test.go): the camber model lifts more per degree than the real TEF, so the NATOPS 30/45° labels over-lift — this is the angle whose LIFT matches the real approach numbers
-	a.Control.Droop.Pressure = 10000           // washout complete here (~250 KIAS, the flap limit); held FULL below ~4500 Pa — the whole approach band
-	a.Control.Droop.Half = 2.0 / 3.0           // flaps HALF (the takeoff configuration): NATOPS TEF 30° vs FULL 45° — on deck the jet launches at HALF, and the airborne approach flies the calibrated FULL droop
-	a.Control.Droop.Lift = 0.48                // the TRIMMED landing configuration's zero-alpha CL — solved with the stabilator carrying the droop's pitching moment (the untrimmed camber measures 0.53, but the tail download pays for the trim). With the law's 4.5/rad trimmed slope, the level-flight cap passes just above the on-speed anchor (8.18° at on-speed CL 1.122, margin so capture is never blocked) and within ~0.25° of the solved trim across the pattern band (5.11 v 5.35 at 80 m/s, 3.91 v 3.80 at 85, 3.07 v 2.90 at 110 through the washout)
-	a.Control.Toe = 30 * math.Pi / 180         // rudder toe-in on the ground (both trailing edges 30° inboard, released at lift-off)
+	// The trailing edge (NATOPS 2.8.4.1). AUTO: the flaps against alpha and
+	// Mach, the McDonnell Douglas flight hardware simulator's 8.3.3 schedule
+	// (NASA TM-107601, Buttrill et al. 1992, figure 9.2(d): rising to a 17 deg
+	// plateau by Mach 0.6, 9 deg at Mach 0.9, none from Mach 1.05) under its
+	// impact-pressure ceiling (figure 9.2(e): 17 deg at 600 lb/ft2, 5 at 835),
+	// and up above Mach 1.0 whatever the alpha (NATOPS 2.8.4); the ailerons
+	// undrooped. HALF and FULL: 30 deg flaps and 30 deg aileron droop, and 45
+	// and 42 (NATOPS 2.8.4.1), washed out with dynamic pressure toward the
+	// mode's 250 kt limit: NATOPS schedules them "as a function of airspeed",
+	// its breakpoints not published, so the washout is this model's (whole
+	// below ~4,500 Pa, the approach band, gone at 10,000 Pa, ~250 KIAS).
+	deg := math.Pi / 180
+	psf := 47.880259 // Pa per lb/ft2
+	a.Control.Flaps.Auto = []flight.Sheet{
+		{Mach: 0.6, Curve: flight.Curve{{0, 0}, {12.1 * deg, 17 * deg}, {13.5 * deg, 17 * deg}, {25.6 * deg, 0}}},
+		{Mach: 0.9, Curve: flight.Curve{{0, 0}, {6.4 * deg, 9 * deg}, {13.2 * deg, 9 * deg}, {19.6 * deg, 0}}},
+		{Mach: 1.05, Curve: flight.Curve{{0, 0}}},
+	}
+	a.Control.Flaps.Ceiling = flight.Curve{{600 * psf, 17 * deg}, {835 * psf, 5 * deg}}
+	a.Control.Flaps.Mach = 1.0
+	a.Control.Flaps.Half = flight.Setting{Trailing: 30 * deg, Aileron: 30 * deg}
+	a.Control.Flaps.Full = flight.Setting{Trailing: 45 * deg, Aileron: 42 * deg}
+	a.Control.Flaps.Pressure = 10000
+	a.Control.Flaps.Lift = 0.507 // the lift the PA law's blend into its level-flight trim prices FULL at (its anchor, the on-speed CL): the share of FULL's trimmed zero-alpha lift over the clean wing (0.664, TestFlapsLift) the law was tuned with when the flaps were one 26 deg flaperon (0.48 of its 0.629), so the blend begins where it did
+	// AUTO's differential flaps (TM-107601 figure 9.4(g): the whole roll
+	// command from 0 to 5 deg alpha, none from 10; figure 9.3(c): 18 deg).
+	a.Control.Flaps.Differential.Gain = flight.Curve{{-5 * deg, 0}, {0, 1}, {5 * deg, 1}, {10 * deg, 0}}
+	a.Control.Flaps.Differential.Limit = 18 * deg
+	// Rudder toe-in in the takeoff and landing modes (NATOPS 2.8.2.8): 30 deg
+	// with weight on the wheels or below 2 deg alpha, through 0 to 15 deg
+	// toe-out at 11.
+	a.Control.Toe = flight.Curve{{2 * deg, 30 * deg}, {11 * deg, -15 * deg}}
 	a.Control.Throw.Down = 0.42
-	a.Control.Throw.Up = 0.183                         // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
-	a.Control.Throw.Flaperon.Down = 45 * math.Pi / 180 // aileron/flaperon travel (NATOPS/HARV: 45° trailing-edge down, 25° up; rate 100°/s)
-	a.Control.Throw.Flaperon.Up = 25 * math.Pi / 180
+	a.Control.Throw.Up = 0.183 // trailing-edge down 10.5° (NATOPS: stabilator +10.5/-24)
+	// The stabilators' differential for roll: 10 deg each side at full
+	// lateral stick (NATOPS III-7-20, the before-taxi control check's "20 units
+	// differential stabilator"; NASA's HARV lateral law limits it to +-10.0).
+	a.Control.Throw.Differential = 10 * deg
+	// The ailerons and flaps' travel and rates (TM-107601 table 8.7): ailerons
+	// 25 up and 45 down at 100 deg/s, flaps 8 up and 45 down at 18 deg/s.
+	a.Control.Throw.Aileron.Down = 45 * deg
+	a.Control.Throw.Aileron.Up = 25 * deg
+	a.Control.Throw.Trailing.Down = 45 * deg
+	a.Control.Throw.Trailing.Up = 8 * deg
 	a.Control.Throw.Rudder = 30 * math.Pi / 180 // ±30° rudder travel (NATOPS/HARV)
 	a.Control.Throw.Brake = 60 * math.Pi / 180  // the speed brake panel's travel (HARV simulation model: 0-60°)
 	a.Control.Rate.Stabilator = 40 * math.Pi / 180
-	a.Control.Rate.Flaperon = 100 * math.Pi / 180
+	a.Control.Rate.Aileron = 100 * deg
+	a.Control.Rate.Trailing = 18 * deg
 	a.Control.Rate.Rudder = 75 * math.Pi / 180
 	a.Control.Rate.Slat = 0.6
 	a.Control.Rate.Brake = 0.4 // the panel takes 2.5 s to full travel (NASA TM-110216: 60/2.5 deg/s no-load rate limit; NATOPS: 3 s maximum)
-	// The trailing edge runs; it does not snap (#199). Calibrated to TIME rather
-	// than to degrees per second, because this model's droop range is not the
-	// real one: Droop.Angle above is 26 deg, the angle whose LIFT matches the
-	// approach numbers, where NATOPS labels the surface 30 HALF / 45 FULL. What
-	// the pilot experiences is the seconds, so the seconds are what is matched.
-	//
-	// The transit time is an ESTIMATE from comparable powered trailing edges -
-	// quicker than the F-14's big Fowler flaps at about eight seconds, slower
-	// than the F-16's flaperons at two or three - and it is not sourced: four
-	// searches found the F/A-18 flap system described (a hydraulic motor driving
-	// transmissions through a servo with electrical position feedback) but no
-	// published transit time. Five seconds out, four back; retraction is quicker
-	// because airloads help it home rather than fight it.
-	//
-	// Cross-check that the bracket is sane: with no limit at all, a SELECTION was
-	// measured slewing at 1.17 rad/s (67 deg/s), plainly unphysical, while the
-	// AUTO schedule's own fastest tracking under a hard pull measured 0.193 rad/s
-	// (11 deg/s) - within a factor of two of these limits. So the limit leaves the
-	// schedule broadly as it was and removes only the snap.
-	a.Control.Rate.Droop.Extend = a.Control.Droop.Angle / 5
-	a.Control.Rate.Droop.Retract = a.Control.Droop.Angle / 4
-	a.Wave.Hump = 0.025 // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
+	a.Wave.Hump = 0.025        // the legacy jet is transonically cleaner than the F (its documented edge). Tunable
 	a.Wave.Body = 0.085
 
 	// The full fitment catalog (#17). Bits 0 and 1 must stay the wingtip AIM-9Ms:
@@ -206,10 +217,10 @@ func build() *flight.Airframe {
 
 	for _, side := range []float64{-1, 1} {
 		// Main wing: the C panel is ~80% of the F's area on 84% of the span.
-		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
-			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.14, // recalibrated 2026-07-21 with the fixed control law: the #131 value (0.19) was fitted while the C* law parked sustained pulls ~1 g short, so it priced the law's deficit into the drag. At 0.14 the SL sustained map is real-jet-shaped: a flat 17.5/18.0/16.9 deg/s plateau across 350-450 KCAS at 29k lb with the bucket at 400 and the limiter reached only by ~450, and 15k ft holds the 12-14 deg/s band. Residual: the 350 station sits ~0.4 g under the scaled EM anchor (the high-cl drag stack — vortex suction, post-stall blending — not this parabola) so the bucket reads ~40 kt fast
+		a.Surfaces = append(a.Surfaces, hinged(strips(flight.Surface{
+			Kind: flight.Wing, Side: side, Area: 15.2, Span: 4.7, Ratio: 3.5, Oswald: 0.75, Induced: 0.16, // recalibrated 2026-11-12 for the real flaps: AUTO's schedule (TM-107601) runs about 10 deg of flap at 7 g / 450 KCAS on the deck where the old washout ran 3.5, and with DATCOM's slotted-flap drag priced in, 0.14 left that pull Ps +18 m/s against the doghouse gate's +8 (performance_gate_test.go); 0.16 closes it and keeps the envelope map's windows. Before that, recalibrated 2026-07-21 with the fixed control law: the #131 value (0.19) was fitted while the C* law parked sustained pulls ~1 g short, so it priced the law's deficit into the drag. At 0.14 the SL sustained map is real-jet-shaped: a flat 17.5/18.0/16.9 deg/s plateau across 350-450 KCAS at 29k lb with the bucket at 400 and the limiter reached only by ~450, and 15k ft holds the 12-14 deg/s band. Residual: the 350 station sits ~0.4 g under the scaled EM anchor (the high-cl drag stack — vortex suction, post-stall blending — not this parabola) so the bucket reads ~40 kt fast
 			Vortex: 1.2, Breakdown: 26 * math.Pi / 180, Channel: flight.Differential, // the wing's share of the LEX vortex system riding over the inboard panel. At 0.6/22° it was worth ~0.05 CL at combat alpha and broke down right where the fights live; with the steeper slat schedule this lifts the trimmed mid-band CL (TestLift, 16-22°) from ~1.24-1.31 to ~1.31-1.38 — the DCS-class reference sits near 1.33 — bringing corner to ~345 KCAS at 29k lb. ~sin², so negligible at approach alpha
-		}, 8, span{1.0, 5.7, side}, chord{4.0, 1.1}, sweep{0.55, -1.75}, twist{0.017, -0.052}, &wing, 0.25, 0.52))
+		}, 8, span{1.0, 5.7, side}, chord{4.0, 1.1}, sweep{0.55, -1.75}, twist{0.017, -0.052}, &wing, 0.25, 0.52), 1.0, 5.7))
 		// LEX: the C's original strake — the E/F enlarged it by a third.
 		a.Surfaces = append(a.Surfaces, strips(flight.Surface{
 			Kind: flight.Strake, Side: side, Area: 3.3, Span: 0.95, Ratio: 1.5, Oswald: 0.6,
@@ -285,6 +296,73 @@ type sweep struct{ root, tip float64 } // aerodynamic-centre x at root and tip
 type twist struct{ root, tip float64 } // built-in incidence, rad
 
 // strips fills a surface with n equal-span trapezoid elements.
+// fade is the flaps' and ailerons' lift effectiveness against their deflection,
+// as a share of the small-deflection value: both are single-slotted (NASA
+// TM-107601 table 3.3), and a single-slotted flap of 30% chord loses its
+// effectiveness past 20 deg as USAF DATCOM figure 6.1.1.1-41 correlates it
+// (its section lift-effectiveness parameter at each deflection over its value
+// at none).
+var fade = func() flight.Curve {
+	deg := math.Pi / 180
+	at := []float64{0, 10, 20, 25, 30, 35, 40, 45, 50, 55, 60, 70, 80}
+	share := []float64{1, 1, 0.964, 0.945, 0.909, 0.858, 0.8, 0.72, 0.618, 0.509, 0.455, 0.407, 0.382}
+	c := make(flight.Curve, len(at))
+	for i := range at {
+		c[i] = [2]float64{at[i] * deg, share[i]}
+	}
+	return c
+}()
+
+// hinged gives each strip of a wing laid from root to tip, m, the surface
+// hinged across it: the trailing-edge flap from BL 50 to 153, the aileron from
+// BL 156 to 224.5 (tp209033 figure 2, the flap's outer end and the aileron's
+// inner by photo match: apps/air/tools/fa18c facts.json layout.surfaces), each
+// covering its share of the strip's span. The flap is 30% of the chord (NASA
+// TM-107601 table 3.3); the aileron's chord is the fraction its area
+// (cr201687 table 1: 24.4 ft2 for both sides) takes of the wing's cited
+// trapezoid there (190.29 in at the centreline to 66.28 at BL 222.1). Both
+// lose lift at large deflections (fade). Each is scaled to what the F/A-18
+// measured (NASA TP-97-206539, Iliff and Wang 1997, figures 12 and 13). The
+// ailerons lift and pitch 15% more than the strips' theory gives them: 0.0065
+// normal force and -0.0022 pitching moment per degree in flight at 10 deg
+// alpha, the wind-tunnel database 0.007 and -0.0023 below it, against the
+// strips' 0.0058 and -0.0020. The flaps lift 12% less: 0.88 brings their
+// 0.0163 per degree at low alpha to the wind tunnel's 0.013-0.015 and their
+// 0.0093-0.0119 at 14-20 deg to the flight values' 0.007-0.0095, and with it
+// the FULL approach to NATOPS's on-speed anchor, 134 kt at 8.1 deg with 2,500
+// kg of fuel (envelope_test.go), where 1 flew it at 129 kt. Between 8 and 12
+// deg alpha the wing's own polar steepens past its stall and carries the
+// flaps' lift per degree to twice the measured.
+func hinged(s flight.Surface, root, tip float64) flight.Surface {
+	const inch = 0.0254
+	chord := func(bl float64) float64 { return 190.29 - (190.29-66.28)*bl/222.1 }
+	fraction := func(area, from, to float64) float64 {
+		return area / 2 * 144 / ((chord(from) + chord(to)) / 2 * (to - from))
+	}
+	controls := []struct {
+		from, to, flap float64
+		aileron        bool
+		gain, centre   float64
+	}{
+		{50, 153, 0.30, false, 0.88, 0.07},
+		{156, 224.5, fraction(24.4, 156, 224.5), true, 1.15, 0},
+	}
+	width := (tip - root) / float64(len(s.Elements))
+	for i := range s.Elements {
+		e := &s.Elements[i]
+		lo, hi := root+float64(i)*width, root+float64(i+1)*width
+		e.Flap, e.Hinged, e.Fade = 0, 0, fade
+		best := 0.0
+		for _, c := range controls {
+			covered := math.Max(0, math.Min(hi, c.to*inch)-math.Max(lo, c.from*inch)) / width
+			if covered > best {
+				best, e.Flap, e.Aileron, e.Hinged, e.Gain, e.Centre = covered, c.flap, c.aileron, covered, c.gain, c.centre
+			}
+		}
+	}
+	return s
+}
+
 func strips(s flight.Surface, n int, sp span, ch chord, sw sweep, tw twist, section *flight.Section, flap float64, limit float64) flight.Surface {
 	// The elements' span axes lie along the swept aerodynamic-centre line, so
 	// each section sees the flow normal to it: at sideslip the leading panel

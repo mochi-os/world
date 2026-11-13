@@ -397,8 +397,8 @@ func loaded(m *Model, angle float64, speed float64, stabilator float64) (float64
 	s.Fcs = FcsState{}
 	c := &m.Airframe.Control
 	s.Fcs.Slat = clamp(c.Slat.Slope*(angle-c.Slat.Offset), 0, c.Slat.Limit)
-	droop := clamp(c.Flap.Slope*(angle-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
-	s.Fcs.Flaperon.Left, s.Fcs.Flaperon.Right = droop, droop
+	flaps := c.automatic(angle, local, speed)
+	s.Fcs.Trailing.Left, s.Fcs.Trailing.Right = flaps, flaps
 	s.Fcs.Stabilator.Left, s.Fcs.Stabilator.Right = stabilator, stabilator
 	m.weigh()
 	m.gust = Vec3{}

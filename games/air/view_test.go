@@ -124,7 +124,7 @@ func flier(place func(flight.Vec3) flight.Vec3, turn flight.Quat, ticks int) []f
 	words := make([]float64, flight.Size)
 	var out []flight.Inputs
 	for tick := 0; tick < ticks; tick++ {
-		pm.Step(flight.Inputs{Throttle: 0.8})
+		tow(pm, flight.Inputs{Throttle: 0.8})
 		pm.State.Encode(words)
 		b.Mirror(words, false, true)
 		b.Step()

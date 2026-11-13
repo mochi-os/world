@@ -65,12 +65,19 @@ func (m *Model) residual(speed, altitude, theta, stabilator, path float64) (floa
 // attack in steady level flow at an altitude — the static analysis surface
 // behind the trim solver, the EM sweeps, and the validation tooling.
 func (m *Model) Evaluate(speed float64, angle float64, altitude float64) (float64, float64) {
+	return m.configured(speed, angle, altitude, FcsState{})
+}
+
+// configured is Evaluate with the surfaces set as given: the PA law's
+// level-flight fit prices the flaps, ailerons and leading edges actually out
+// there with the airframe's own statics.
+func (m *Model) configured(speed float64, angle float64, altitude float64, surfaces FcsState) (float64, float64) {
 	s := &m.State
 	s.Position = Vec3{Y: altitude}
 	s.Velocity = Vec3{X: speed}
 	s.Attitude = Axis(Vec3{Z: 1}, angle)
 	s.Omega = Vec3{}
-	s.Fcs = FcsState{}
+	s.Fcs = surfaces
 	// No thrust in the coefficients: a model that had flown kept its spool, and
 	// Level read the thrust as drag near zero and spawned it at the 0.1 floor.
 	s.Engine = [4]EngineState{}
@@ -247,6 +254,17 @@ func (m *Model) climbing(altitude float64, mach float64) (speed float64, rate fl
 	return speed, spare * speed / (c.mass * c.Gravity), true
 }
 
+// steady is the wing the up-and-away law flies at a steady alpha: the leading
+// edge down with alpha and the AUTO flaps on their schedule, the flaps inside
+// what blowdown leaves.
+func (m *Model) steady(alpha float64, local Air, speed float64) (flaps float64, slat float64) {
+	c := &m.Airframe.Control
+	pressure := 0.5 * local.Density * speed * speed
+	slat = clamp(c.Slat.Slope*(alpha-c.Slat.Offset), 0, c.Slat.Limit)
+	flaps = math.Min(c.automatic(alpha, local, speed), c.Throw.Trailing.Down*clamp(c.Blowdown/math.Max(pressure, 1), 0, 1))
+	return flaps, slat
+}
+
 // cruising evaluates the steady-state errors for a trial level-flight trim at
 // a true airspeed: world-frame accelerations (horizontal, vertical) and the
 // pitch moment, scaled as residual scales them. The wing is as the
@@ -255,19 +273,16 @@ func (m *Model) climbing(altitude float64, mach float64) (speed float64, rate fl
 // both inside what blowdown leaves.
 func (m *Model) cruising(speed, altitude, theta, stabilator, core float64) (float64, float64, float64) {
 	s := &m.State
-	c := &m.Airframe.Control
 	local := air(altitude, m.Environment)
-	pressure := 0.5 * local.Density * speed * speed
-	slat := clamp(c.Slat.Slope*(theta-c.Slat.Offset), 0, c.Slat.Limit)
-	droop := clamp(c.Flap.Slope*(theta-c.Flap.Offset), 0, c.Flap.Limit) * clamp(1-pressure/c.Flap.Pressure, 0, 1)
-	droop = math.Min(droop, c.Throw.Flaperon.Down*clamp(c.Blowdown/math.Max(pressure, 1), 0, 1))
+	flaps, slat := m.steady(theta, local, speed)
 	s.Position = Vec3{Y: altitude}
 	s.Velocity = Vec3{X: speed}
 	s.Attitude = Axis(Vec3{Z: 1}, theta)
 	s.Omega = Vec3{}
 	s.Fcs = FcsState{
 		Stabilator: Pair{Left: stabilator, Right: stabilator},
-		Flaperon:   Pair{Left: droop, Right: droop},
+		Trailing:   Pair{Left: flaps, Right: flaps},
+		Flap:       flaps,
 		Slat:       slat,
 	}
 	s.Gear = GearState{Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
@@ -307,17 +322,31 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	// the environment's frame.
 	altitude, home, back := m.under(position)
 	direction = back.Inverse().Vector(direction)
-	q := 0.5 * air(altitude, m.Environment).Density * speed * speed
+	local := air(altitude, m.Environment)
+	q := 0.5 * local.Density * speed * speed
 	demand := m.mass * gravity / (q * m.Airframe.Reference.Area)
-	angle := 0.0
+	// The wing as AUTO flies it at each alpha tried: spawned clean, the
+	// flaps ran out onto their schedule after the trim and the jet climbed
+	wing := func(alpha float64) FcsState {
+		flaps, slat := m.steady(alpha, local, speed)
+		return FcsState{Trailing: Pair{flaps, flaps}, Flap: flaps, Slat: slat}
+	}
+	// The sweep's step brackets the alpha; the secant between its ends lands
+	// on it: stopping at the step's far end trimmed up to 1.5% excess lift,
+	// and every spawn climbed off its height in a slow phugoid
+	angle, previous, lift := 0.0, math.NaN(), 0.0
 	for sweep := -0.05; sweep <= 0.45; sweep += 0.002 {
-		cl, _ := m.Evaluate(speed, sweep, altitude)
+		cl, _ := m.configured(speed, sweep, altitude, wing(sweep))
 		angle = sweep
 		if cl >= demand {
+			if !math.IsNaN(previous) && cl > lift {
+				angle = previous + (sweep-previous)*(demand-lift)/(cl-lift)
+			}
 			break
 		}
+		previous, lift = sweep, cl
 	}
-	_, drag := m.Evaluate(speed, angle, altitude)
+	_, drag := m.configured(speed, angle, altitude, wing(angle))
 	dry, _ := m.Thrust(speed, altitude)
 	spool := clamp(drag*q*m.Airframe.Reference.Area/math.Max(dry, 1), 0.1, 1)
 	forward := Vec3{X: direction.X, Z: direction.Z}.Normalize()
@@ -334,6 +363,8 @@ func Level(m *Model, position Vec3, direction Vec3, speed float64, fuel float64)
 	}
 	s.Engine[0] = EngineState{Spool: spool}
 	s.Engine[1] = EngineState{Spool: spool}
+	trimmed := wing(angle)
+	s.Fcs.Trailing, s.Fcs.Flap, s.Fcs.Slat = trimmed.Trailing, trimmed.Flap, trimmed.Slat
 	s.Fcs.Normal = 1
 	s.Fcs.Reference = angle // stick-free attitude hold: spawn holding the trimmed attitude
 	s.Fcs.Demand = 1
@@ -387,7 +418,8 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	// exactly, so there is no capture transient to fly out of.
 	side := forward.Cross(Vec3{Y: 1}).Normalize()
 	attitude := Axis(side, path+alpha).Multiply(Look(forward)).Normalize() // +angle pitches the nose UP; see the note in Level, which still carries the opposite sign
-	droop, slat := m.Approaching(0.5 * air(altitude, m.Environment).Density * speed * speed)
+	share, slat := m.Approaching(0.5 * air(altitude, m.Environment).Density * speed * speed)
+	full := m.Airframe.Control.Flaps.Full
 
 	// The stores' tanks as the trim weighed them: the caller mounts the loadout
 	// first, and a state without their fuel flies lighter than it was trimmed.
@@ -396,8 +428,9 @@ func Approach(m *Model, position Vec3, direction Vec3, path float64, fuel float6
 	s.Engine[0] = EngineState{Spool: achieved}
 	s.Engine[1] = EngineState{Spool: achieved}
 	s.Fcs.Stabilator = Pair{Left: stabilator, Right: stabilator}
-	s.Fcs.Flaperon = Pair{Left: droop, Right: droop}
-	s.Fcs.Flap = droop
+	s.Fcs.Trailing = Pair{Left: full.Trailing * share, Right: full.Trailing * share}
+	s.Fcs.Aileron = Pair{Left: full.Aileron * share, Right: full.Aileron * share}
+	s.Fcs.Flap = full.Trailing * share
 	s.Fcs.Slat = slat
 	// Hand the PA law its own trim: on-speed with no rate leaves its error term
 	// at zero, so the commanded stabilator IS minus the integrator. Spawning
@@ -431,13 +464,15 @@ func (m *Model) approaching(speed, altitude, alpha, stabilator, throttle, path f
 	s.Attitude = Axis(Vec3{Z: 1}, path+alpha)
 	s.Omega = Vec3{}
 	local := air(altitude, m.Environment)
-	droop, slat := m.Approaching(0.5 * local.Density * speed * speed)
-	// The droop reaches the wing through the FLAPERON actuators (Fcs.Flap is a
-	// readout only) — the same path the FCS drives.
+	share, slat := m.Approaching(0.5 * local.Density * speed * speed)
+	// FULL reaches the wing through the flaps' and the ailerons' actuators
+	// (Fcs.Flap is a readout only) — the same path the FCS drives.
+	full := m.Airframe.Control.Flaps.Full
 	s.Fcs = FcsState{
 		Stabilator: Pair{Left: stabilator, Right: stabilator},
-		Flaperon:   Pair{Left: droop, Right: droop},
-		Flap:       droop,
+		Trailing:   Pair{Left: full.Trailing * share, Right: full.Trailing * share},
+		Aileron:    Pair{Left: full.Aileron * share, Right: full.Aileron * share},
+		Flap:       full.Trailing * share,
 		Slat:       slat,
 	}
 	s.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}

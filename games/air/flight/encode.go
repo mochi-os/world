@@ -14,7 +14,7 @@
 package flight
 
 // Size is the encoded state length in float64 words.
-const Size = 57 + Elements + Channels + 1 + 3 + 4 + 4 + 4 // 121: base state, per-element loss, per-channel jams, lost mass, per-strut gear damage, then pitch-damper washout, PA trim datum, buffet, the roll-trim datum, the wing and centreline external fuel, the spin recovery latch, the inflight IDLE stop's latch and each engine's rundown below idle (each appended LAST so no earlier index moved - the #78/#133 tail bug class)
+const Size = 57 + Elements + Channels + 1 + 3 + 4 + 4 + 4 + 3 // 124: base state, per-element loss, per-channel jams, lost mass, per-strut gear damage, then pitch-damper washout, PA trim datum, buffet, the roll-trim datum, the wing and centreline external fuel, the spin recovery latch, the inflight IDLE stop's latch, each engine's rundown below idle, and the trailing-edge flaps and rudder toe-in (each appended LAST so no earlier index moved - the #78/#133 tail bug class)
 
 // Encode writes the state into out (at least Size long) and returns Size.
 func (s *State) Encode(out []float64) int {
@@ -28,7 +28,7 @@ func (s *State) Encode(out []float64) int {
 	}
 	f := &s.Fcs
 	out[22], out[23] = f.Stabilator.Left, f.Stabilator.Right
-	out[24], out[25] = f.Flaperon.Left, f.Flaperon.Right
+	out[24], out[25] = f.Aileron.Left, f.Aileron.Right
 	out[26], out[27], out[28], out[29] = f.Rudder, f.Slat, f.Flap, f.Speedbrake
 	out[30], out[31], out[32], out[33] = f.Integral, f.Trim, f.Washout, f.Demand
 	out[34] = f.Normal
@@ -76,6 +76,8 @@ func (s *State) Encode(out []float64) int {
 	for i := 0; i < 4; i++ {
 		out[57+Elements+Channels+12+i] = s.Engine[i].Rundown
 	}
+	out[57+Elements+Channels+16], out[57+Elements+Channels+17] = f.Trailing.Left, f.Trailing.Right
+	out[57+Elements+Channels+18] = f.Toe
 	return Size
 }
 
@@ -100,7 +102,7 @@ func Decode(in []float64) State {
 	}
 	f := &s.Fcs
 	f.Stabilator = Pair{in[22], in[23]}
-	f.Flaperon = Pair{in[24], in[25]}
+	f.Aileron = Pair{in[24], in[25]}
 	f.Rudder, f.Slat, f.Flap, f.Speedbrake = in[26], in[27], in[28], in[29]
 	f.Integral, f.Trim, f.Washout, f.Demand = in[30], in[31], in[32], in[33]
 	f.Normal = in[34]
@@ -154,6 +156,8 @@ func Decode(in []float64) State {
 	for i := 0; i < 4; i++ {
 		s.Engine[i].Rundown = in[57+Elements+Channels+12+i]
 	}
+	f.Trailing = Pair{in[57+Elements+Channels+16], in[57+Elements+Channels+17]}
+	f.Toe = in[57+Elements+Channels+18]
 	return s
 }
 

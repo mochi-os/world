@@ -104,10 +104,12 @@ type Pair struct {
 // controller memories.
 type FcsState struct {
 	Stabilator Pair    // rad, + trailing edge down
-	Flaperon   Pair    // rad, + trailing edge down
+	Aileron    Pair    // rad, + trailing edge down: the droop and the roll command
+	Trailing   Pair    // trailing-edge flaps, rad, + trailing edge down: the schedule and, in AUTO, a share of the roll command
 	Rudder     float64 // rad, ganged pair
+	Toe        float64 // rudder toe-in, rad, + both trailing edges inboard (takeoff and landing modes)
 	Slat       float64 // leading-edge flap, rad (scheduled)
-	Flap       float64 // trailing-edge droop, rad (PA configuration)
+	Flap       float64 // the trailing-edge flaps' commanded schedule, rad (a readout)
 	Speedbrake float64 // 0..1 achieved
 	Integral   float64 // outer-loop g-trim integrator (rad/s of rate demand)
 	Trim       float64 // inner-loop surface trim integrator (rad of stabilator)
@@ -117,7 +119,7 @@ type FcsState struct {
 	Normal     float64 // sensed load factor (body up) from the last step — the g meter
 	Reference  float64 // attitude-hold datum, rad of pitch (the stick-free hold in both laws; an early design stored trimmed airspeed here and this comment outlived it)
 	Datum      float64 // PA trim bias, rad of alpha about the law's own datum — the pitch trim switch in the landing configuration
-	Bank       float64 // roll-trim datum: a standing differential-flaperon command (stick fraction), the roll half of the trim hat
+	Bank       float64 // roll-trim datum: a standing roll command (stick fraction), the roll half of the trim hat
 	Recovery   bool    // spin recovery mode engaged (NATOPS 2.8.2.6): latched from the stick placed as the display asks until it goes prospin, airspeed passes about 245 kt or the yaw rate falls under 15°/s
 }
 

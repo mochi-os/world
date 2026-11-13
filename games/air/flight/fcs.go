@@ -14,24 +14,91 @@ import (
 	"math"
 )
 
-// fcs turns stick commands into surface commands and slews the actuators.
-// droopRun moves the trailing edge toward its commanded angle at the flap
-// drive's own rate instead of snapping to it (#199). The surfaces are driven by
-// a motor through transmissions, not by a fast servo, so a selection takes
-// seconds; retraction is quicker because airloads help it home rather than
-// fight it. The AUTO schedule passes through the same limit, which is right —
-// the trailing edge cannot follow an alpha change faster than it can move.
-func (m *Model) droopRun(target float64, c *Control) float64 {
-	if !m.droopInit {
-		m.droop, m.droopInit = target, true
-		return m.droop
+// automatic is the AUTO flaps' command at a flight condition: the schedule
+// against alpha and Mach, under the ceiling impact pressure sets (subsonic
+// isentropic; the flaps are up above Mach 1 anyway). The flaps' actuator
+// paces them (Rate.Trailing), as it paces every selection.
+func (c *Control) automatic(a float64, local Air, speed float64) float64 {
+	mach := speed / math.Max(local.Sound, 1)
+	impact := local.Pressure * (math.Pow(1+0.2*mach*mach, 3.5) - 1)
+	return math.Min(c.Flaps.Automatic(a, mach), c.Flaps.Ceiling.At(impact))
+}
+
+// authority is the production roll law's schedules on its rolling surfaces,
+// each a share of the surface's full authority (NASA TM-107601, Buttrill
+// 1992, figure 9.4, after MDC A4107's lateral functions), with impact and
+// static pressure in psf and their ratio, Ri, standing in for Mach, and the
+// limit on the ailerons' and differential stabilators' commands.
+//   - Function 36 fades the ailerons out across 200 psf of impact pressure up
+//     to 955 + 540 Ri psf, about 570 KCAS at sea level: "the ailerons do not
+//     deflect above 600 knots" (NATOPS 2.8.2), where the wing's twist would
+//     reverse them. Its other branch trims them through the transonic range
+//     low and mid down, held from Ri 0.8 (Mach 0.96).
+//   - Function 35 cuts the ailerons to 0.35 past 24 deg alpha and below -7.7,
+//     where they raise adverse sideslip.
+//   - Function 6 cuts the differential stabilator and function 31 the
+//     differential flaps back at high Mach low down, where NATOPS has their
+//     travel "reduced at high speed to prevent exceeding structural limits".
+//   - Function 41 limits the ailerons' and differential stabilators' commands
+//     from 8 deg alpha down to 0.1 of their travel at 16.7-19 deg, or 0.25 at
+//     22 deg below Ri 0.27 (Mach 0.6), for roll coordination.
+//
+// The law's own command gains (functions 7 and 13) are the rate loop's, and
+// function 34, the differential flaps' alpha schedule, is the airframe's
+// Flaps.Differential.Gain.
+func authority(local Air, speed float64, a float64) (aileron, stabilator, flap, limit float64) {
+	const psf = 47.880259
+	deg := a * 180 / math.Pi
+	mach := speed / math.Max(local.Sound, 1)
+	static := local.Pressure / psf
+	impact := static * (math.Pow(1+0.2*mach*mach, 3.5) - 1)
+	ratio := impact / math.Max(static, 1)
+	dynamic := clamp((955+540*clamp(ratio, 0.7, 1.9)-impact)/200, 0, 1)
+	transonic := math.Min(1+(math.Min(ratio, 0.8)-0.788+1.69e-4*static)*7.46e-3*(440-clamp(static, 440, 640)), 1)
+	aileron = math.Min(dynamic, transonic) * Curve{{-7.7, 0.35}, {0, 1}, {14, 1}, {24, 0.35}}.At(deg)
+	stabilator = (0.511 - clamp(0.22*math.Min(ratio, 1.12)+1.04e-4*static, 0.311, 0.431)) / 0.2
+	// between plotted curves, read linearly in the second variable
+	between := func(x float64, curves []float64, at func(i int) float64) float64 {
+		if x <= curves[0] {
+			return at(0)
+		}
+		for i := 1; i < len(curves); i++ {
+			if x < curves[i] {
+				low, high := at(i-1), at(i)
+				return low + (high-low)*(x-curves[i-1])/(curves[i]-curves[i-1])
+			}
+		}
+		return at(len(curves) - 1)
 	}
-	rate := c.Rate.Droop.Extend
-	if target < m.droop {
-		rate = c.Rate.Droop.Retract
+	// function 31's curves, one per static pressure, the gain over its 0.16
+	// at low Mach
+	flaps := []Curve{
+		{{1.058, 0.16}, {1.379, 0.1249}},
+		{{0.717, 0.16}, {1.379, 0.0870}},
+		{{0.674, 0.16}, {0.717, 0.1296}, {1.379, 0.0555}},
+		{{0.518, 0.16}, {0.717, 0.0864}, {1.379, 0.0123}},
 	}
-	m.droop += clamp(target-m.droop, -rate*m.Stride(), rate*m.Stride())
-	return m.droop
+	flap = between(static, []float64{392, 973, 1455, 2116}, func(i int) float64 { return flaps[i].At(ratio) }) / 0.16
+	// function 41's curves, one per Ri
+	limits := []Curve{
+		{{8, 1}, {22, 0.25}},
+		{{8, 1}, {19, 0.1}},
+		{{8, 1}, {16.7, 0.1}},
+	}
+	limit = between(ratio, []float64{0.27, 0.39, 0.48}, func(i int) float64 { return limits[i].At(deg) })
+	return aileron, stabilator, flap, limit
+}
+
+// shares is the rolling surfaces' shares of the roll command under the law
+// flying now: authority's schedules are the AUTO law's. The takeoff and
+// landing modes', which the report doesn't give, run at speeds where its air
+// data shares are whole; spin recovery has full authority (NATOPS 2.8.2.6);
+// direct and the mechanical linkage have no computer.
+func (m *Model) shares(local Air, speed float64, a float64, mechanical bool) (aileron, stabilator, flap, limit float64) {
+	if m.Direct || m.pa || m.State.Fcs.Recovery || mechanical {
+		return 1, 1, 1, 1
+	}
+	return authority(local, speed, a)
 }
 
 // envelope is the up-and-away pitch law's command range THIS tick: `level`, the
@@ -100,7 +167,10 @@ func (m *Model) fcs(in Inputs, local Air) {
 	lateral := clamp(in.Roll, -1, 1)
 	pedal := clamp(in.Yaw, -1, 1)
 
-	var stabTarget, flapTarget, rudderTarget, droopTarget, slatFloor float64
+	// flapTarget is the roll command, rad: the ailerons take it whole and, in
+	// AUTO at low alpha, the flaps a share of it (spread). trailing and droop
+	// are the flaps' and the ailerons' collective schedule.
+	var stabTarget, flapTarget, rudderTarget, trailing, droop, spread, toe, slatFloor float64
 	brakeTarget := clamp(in.Speedbrake, 0, 1)
 	m.spin = 0
 	if !m.Direct {
@@ -217,32 +287,38 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if in.Trim != 0 {
 			f.Datum = clamp(f.Datum+clamp(in.Trim, -1, 1)*0.012*m.Stride(), -4*math.Pi/180, 4*math.Pi/180)
 		}
-		droopTarget, slatFloor = m.Approaching(pressure)
+		var setting Setting
 		if in.Flap >= 2 {
 			// FULL selected: the heavy shot's and the short field's setting —
 			// honoured even on deck.
+			setting = c.Flaps.Full
 		} else if m.halfleg || in.Flap >= 1 {
 			// Takeoff flap: HALF from the deck through the clean-up climb, or when
-			// selected. Scaled before the lift-cap maths so the cap prices the droop
-			// actually flying.
-			droopTarget *= c.Droop.Half
+			// selected.
+			setting = c.Flaps.Half
 		}
-		commanded := droopTarget
-		droopTarget = m.droopRun(droopTarget, c) // the commanded angle is what the switch and the schedule ask for; this is what is actually out there
-		schedule := droopTarget / math.Max(c.Droop.Angle, 1e-9)
+		// AUTO with weight on the wheels, the one way the ground selects this
+		// law at AUTO, sets the flaps and the droop to 0 (NATOPS 2.8.4.1)
+		var wash float64
+		wash, slatFloor = m.Approaching(pressure)
+		trailing, droop = setting.Trailing*wash, setting.Aileron*wash
+		// the flaps actually out there
+		out := (f.Trailing.Left + f.Trailing.Right) / 2
 		need := m.mass * gravity / math.Max(pressure*m.Airframe.Reference.Area, 1)
 		// The level-flight alpha from the airframe's own statics rather than a
 		// straight-line fit (#86): the 4.5/rad fit disagreed with the real
 		// aerodynamics by over a degree across the envelope, and hands-off the
 		// "trimmed" jet ballooned +1,500 fpm at pattern speeds. A secant walks
-		// the clean-wing CL(alpha) onto the demand four times a second, on a
-		// scratch model because Evaluate composes its own state and must never
-		// run on the flying one; the droop's share stays the linear term the
-		// schedule prices.
-		clean := need - c.Droop.Lift*schedule
+		// CL(alpha) onto the demand four times a second, on a scratch model
+		// because Evaluate composes its own state and must never run on the
+		// flying one, with the flaps, ailerons and leading edges where they
+		// stand: a price linear in the flaps' angle under-priced the partial
+		// flaps of the washout by a fifth of the wing's lift, and the jet
+		// climbed, slowed and ran them further out until the stabilators
+		// stopped against the climb.
 		if m.static == nil {
 			m.static = New(m.Airframe, m.Environment, m.World)
-			m.fitAlpha = clamp(clean/4.5, 0, c.Onspeed)
+			m.fitAlpha = clamp(need/4.5, 0, c.Onspeed)
 			m.fitClock = 0
 		}
 		m.fitClock -= m.Stride()
@@ -254,14 +330,15 @@ func (m *Model) fcs(in Inputs, local Air) {
 			// NaN into the alpha datum and the stabilators for the model's life.
 			m.fitClock = 0.25
 			m.static.State.Fuel = m.State.Fuel
-			cl, _ := m.static.Evaluate(speed, m.fitAlpha, m.State.Position.Y)
-			m.fitAlpha = clamp(m.fitAlpha+(clean-cl)/4.5, -0.05, 0.45)
+			cl, _ := m.static.configured(speed, m.fitAlpha, m.State.Position.Y, FcsState{Trailing: Pair{trailing, trailing}, Aileron: Pair{droop, droop}, Slat: f.Slat})
+			m.fitAlpha = clamp(m.fitAlpha+(need-cl)/4.5, -0.05, 0.45)
 		}
-		grade := clamp(m.fitAlpha, 0, c.Onspeed)
+		// below zero where the flaps out there lift more than level flight needs
+		grade := clamp(m.fitAlpha, -0.05, c.Onspeed)
 		// The cap serves the ARRIVE-DIRTY regime, not the ball: near on-speed `need`
 		// moves as 1/v² and a hard min() walks the datum with every power correction.
 		// Blended ~160-190 kt: AoA-referenced inside, level-flight auto-trim beyond.
-		anchor := c.Droop.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
+		anchor := c.Flaps.Lift + 4.5*c.Onspeed // the trimmed on-speed CL, from the same fit
 		blend := clamp((0.80*anchor-need)/(0.18*anchor), 0, 1)
 		level := c.Onspeed - blend*math.Max(c.Onspeed-grade, 0)
 		if m.flyaway {
@@ -301,14 +378,14 @@ func (m *Model) fcs(in Inputs, local Air) {
 			m.drift = clamp(m.drift+(m.path-gamma)*0.5*m.Stride(), -2*math.Pi/180, 2*math.Pi/180)
 		}
 		if !m.flyaway {
-			if extension := m.State.Gear.Extension; (extension > 0.02 && extension < 0.98) || math.Abs(commanded-droopTarget) > 0.5*math.Pi/180 {
+			if extension := m.State.Gear.Extension; (extension > 0.02 && extension < 0.98) || math.Abs(trailing-out) > 0.5*math.Pi/180 {
 				m.settle = 3
 			} else {
 				m.settle = math.Max(0, m.settle-m.Stride())
 			}
 			push := 1.5 * math.Pi / 180
 			if m.settle > 0 {
-				push = 4 * math.Pi / 180
+				push = 5 * math.Pi / 180
 			}
 			demand += blend * (1 - flying) * clamp((m.path-gamma)*2+m.drift, -push, 4*math.Pi/180)
 		}
@@ -330,8 +407,20 @@ func (m *Model) fcs(in Inputs, local Air) {
 			f.Reference = pitch // leave the deck holding the deck attitude
 		}
 		errorTerm := (demand-a)*2.2 - q*1.8
-		f.Integral = clamp(f.Integral+errorTerm*0.45*m.Stride(), -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
-		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10               // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
+		// The integrator nulls the alpha error (NATOPS 11.1.1: "The computer
+		// nulls the difference between the trim AOA and actual AOA"): on the
+		// whole pitch rate too it held the alpha 0.8·q short wherever the path
+		// curved, 2 deg in a light jet's catapult climb. The catapult capture
+		// (NATOPS 8.2.8) damps the rotation on the pitch rate beyond the steady
+		// pull's (g/V)·(n − upright), half as hard: undamped the heavy jet's
+		// rotation overshot to 15.1 deg against the flaps' 15 deg limit
+		damping := 0.0
+		if m.flyaway {
+			upright := clamp(m.State.Attitude.Rotate(Vec3{Y: 1}).Y, -1, 1)
+			damping = (q - (f.Normal-upright)*gravity/math.Max(speed, 60)) * 0.9
+		}
+		f.Integral = clamp(f.Integral+((demand-a)*2.2-damping)*0.45*m.Stride(), -0.45, 0.45) // clamp re-sized for the honest single-count droop moment (the old ±0.3 pinned alpha 2.5° shy of on-speed)
+		stabTarget = -(errorTerm*0.34 + f.Integral) - fine*0.10                              // direct stick path, like the UA feedforward: the surface bites immediately while the alpha loop trims behind it — without it PA full stick moved the stabilator ~2° and read as dead elevators
 		if !m.State.Gear.Wow {
 			brakeTarget = 0 // the landing configuration auto-retracts the speedbrake in flight (NATOPS 2.8.4.8: not in auto flaps up, it retracts below 250 knots); on the ground the speedbrake operates normally, whatever law the wheels select
 		}
@@ -357,7 +446,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		if m.State.Gear.Wow || m.State.Gear.Catapult >= 0 {
 			leveler = bank * 2.5 // the wing leveler belongs to the DECK alone (its own comment always said so): airborne it fought every bank the pilot held at gain 2.5, so entering PA in the turn to final snapped the jet toward wings-level at 1.5 rad/s — the uncommanded roll the pilot reported at ~250 KCAS, which is exactly the PA entry speed with the gear down
 		}
-		flapTarget = clamp(lateral+leveler-m.State.Omega.X*1.2, -1, 1)*0.30 + f.Bank // +bank: right roll gives bank<0 and needs a left (negative) command; the roll-trim datum rides outside the clamp so full stick retains full authority
+		flapTarget = clamp(lateral+leveler-m.State.Omega.X*1.2, -1, 1)*0.35 + f.Bank // full stick the full roll command, as up and away: NATOPS's control check gives full lateral stick its 20 units of differential stabilator, which 0.30 stopped short of (and the drooped ailerons have 3 deg left below their 45 deg stop). +bank: right roll gives bank<0 and needs a left (negative) command; the roll-trim datum rides outside the clamp so full stick retains full authority
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 	} else {
 		// Up and away: C* command with the carefree limiter. The symmetric limits
@@ -509,10 +598,11 @@ func (m *Model) fcs(in Inputs, local Air) {
 			m.State.Damage.Stress += (equivalent - 380) * 0.02 * m.Stride()
 		}
 		stabTarget = command
-		// AUTO manoeuvring flaps: the trailing edge droops with alpha and
-		// washes out with dynamic pressure — the FCS reshapes the wing
-		// through a turn, exactly as the real jet's AUTO flap mode does.
-		droopTarget = m.droopRun(clamp(c.Flap.Slope*(a-c.Flap.Offset), 0, c.Flap.Limit)*clamp(1-pressure/c.Flap.Pressure, 0, 1), c)
+		// AUTO: the flaps schedule with alpha and Mach under the impact
+		// pressure's ceiling, the ailerons undrooped, and at low alpha the
+		// flaps share the roll command (NATOPS 2.8.4.1, 2.8.2.8)
+		trailing = c.automatic(a, local, speed)
+		spread = c.Flaps.Differential.Gain.At(a)
 		// NATOPS 2.8.4.8: airborne in AUTO FLAPS UP the speedbrake retracts itself
 		// above 6.0 g or 28° alpha. The game's brake command is maintained, so the
 		// board re-extends when the condition clears.
@@ -538,7 +628,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		// and lateral stick roll alike, so the pedal feeds the same roll-rate
 		// command, blended in across 25-35° alpha.
 		rolling := clamp(lateral+pedal*clamp((a-0.44)/0.17, 0, 1), -1, 1)
-		flapTarget = (rolling*limit-p)*0.22 + f.Bank // the roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
+		flapTarget = (rolling*limit-p)*0.184 + f.Bank // the gain is the roll power's inverse: 0.22 when the jet rolled on full-span flaperons and 5 deg of differential stabilator, 0.184 on ailerons, differential flaps and the full 10 deg, which roll 1/0.837 as hard per radian of command at every speed. The roll-trim datum rides outside the rate loop: a rate-command law re-trims itself, so the datum acts as a standing surface bias, exactly like the real jet's trim follow-up
 		rudderTarget = m.yaw(pedal, lateral, a, b, r, f)
 		// Insufficient-airspeed departure (NATOPS 11.1.8.1): the one departure the
 		// FCS does not prevent. A seeded wander on rudder and stabilator, fading in
@@ -550,7 +640,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 			}
 			rudderTarget += ballistic * slew(700, 0.5) * c.Throw.Rudder
 			stabTarget += ballistic * slew(702, 0.4) * 0.7 * c.Throw.Down
-			flapTarget += ballistic * slew(704, 0.6) * c.Throw.Flaperon.Down
+			flapTarget += ballistic * slew(704, 0.6) * c.Throw.Aileron.Down
 		}
 	}
 
@@ -561,7 +651,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		stabTarget = -stick * c.Throw.Down
 		flapTarget = lateral * 0.35
 		rudderTarget = -pedal * c.Throw.Rudder
-		droopTarget = 0
+		trailing, droop, spread = 0, 0, 0
 		f.Integral = 0
 	}
 
@@ -589,7 +679,7 @@ func (m *Model) fcs(in Inputs, local Air) {
 		m.mismatch -= clamp(m.mismatch, -fade, fade)
 		stabTarget = pitch + m.mismatch
 		flapTarget = lateral * c.Gearing.Roll
-		rudderTarget, droopTarget, brakeTarget = 0, 0, f.Speedbrake
+		rudderTarget, trailing, droop, spread, brakeTarget = 0, 0, 0, 0, f.Speedbrake
 		f.Recovery, f.Integral, m.spin = false, 0, 0
 	}
 	m.reverted = mechanical
@@ -609,6 +699,17 @@ func (m *Model) fcs(in Inputs, local Air) {
 	// Blowdown: available deflection falls with dynamic pressure.
 	available := clamp(c.Blowdown/math.Max(pressure, 1), 0, 1)
 
+	// Rudder toe-in (NATOPS 2.8.2.8): in the takeoff and landing modes both
+	// trailing edges go inboard with weight on the wheels or at low alpha,
+	// fading through zero to toe-out as alpha builds; none in AUTO, in
+	// direct, through the mechanical linkage or in spin recovery
+	if m.pa && !m.Direct && !mechanical && !f.Recovery {
+		toe = c.Toe.At(a)
+		if m.State.Gear.Wow {
+			toe = c.Toe.At(math.Inf(-1))
+		}
+	}
+
 	// Actuators: rate-limited slew toward the commanded positions.
 	slew := func(current float64, target float64, rate float64, limit float64) float64 {
 		bound := limit * math.Min(available, 1)
@@ -617,25 +718,53 @@ func (m *Model) fcs(in Inputs, local Air) {
 	}
 	symmetric := clamp(stabTarget, -c.Throw.Down, c.Throw.Up)
 	differential := clamp(flapTarget, -0.35, 0.35)
-	aileron := differential // the flaperons' share of the roll command: none through the mechanical linkage
+	// the ailerons' and differential stabilators' shares of the roll command,
+	// each under function 41's limit, and none of the ailerons through the
+	// mechanical linkage
+	ailerons, stabilators, flaps, limit := m.shares(local, speed, a, mechanical)
+	aileron := 0.35 * clamp(differential/0.35*ailerons, -limit, limit)
 	if mechanical {
 		aileron = 0
+	}
+	// The flaps' share of the roll command, through a lag no faster than they
+	// can move (their limit over their rate, from where they stand): fed the
+	// loop's command directly they ran into their rate limit and the roll
+	// capture rang while the ailerons and stabilators were still settling
+	split := clamp(spread*flaps*differential, -c.Flaps.Differential.Limit, c.Flaps.Differential.Limit)
+	if lag := c.Flaps.Differential.Limit / math.Max(c.Rate.Trailing, 1e-9); lag > 0 {
+		now := (f.Trailing.Left - f.Trailing.Right) / 2
+		split = now + (split-now)*clamp(m.Stride()/lag, 0, 1)
 	}
 	// Battle damage: a jammed actuator slews slower, and a fully jammed one
 	// freezes AT ITS CURRENT DEFLECTION — the surface holds whatever it was
 	// commanding when hit, and the FCS fights it with the others.
 	d := &m.State.Damage
-	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorLeft), c.Throw.Down)
-	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-0.25*differential, c.Rate.Stabilator*d.jam(ChannelStabilatorRight), c.Throw.Down)
-	f.Flaperon.Left = slew(f.Flaperon.Left, clamp(droopTarget+aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonLeft), c.Throw.Flaperon.Down)
-	f.Flaperon.Right = slew(f.Flaperon.Right, clamp(droopTarget-aileron, -c.Throw.Flaperon.Up, c.Throw.Flaperon.Down), c.Rate.Flaperon*d.jam(ChannelFlaperonRight), c.Throw.Flaperon.Down)
+	// the stabilators' differential reaches its limit at the full command
+	twist := clamp(differential/0.35*stabilators, -limit, limit) * c.Throw.Differential
+	f.Stabilator.Left = slew(f.Stabilator.Left, symmetric+twist, c.Rate.Stabilator*d.jam(ChannelStabilatorLeft), c.Throw.Down)
+	f.Stabilator.Right = slew(f.Stabilator.Right, symmetric-twist, c.Rate.Stabilator*d.jam(ChannelStabilatorRight), c.Throw.Down)
+	// The ailerons hold the commanded difference while either has travel
+	// left: drooped 42 deg, the falling one meets its 45 deg stop within 3 deg,
+	// and the rising one takes the rest, as an allocator redistributes a
+	// saturated surface's share (NASA's HARV lateral law's Distributor)
+	left, right := droop+aileron, droop-aileron
+	if over := math.Max(left, right) - c.Throw.Aileron.Down; over > 0 {
+		left, right = left-over, right-over
+	}
+	if under := -c.Throw.Aileron.Up - math.Min(left, right); under > 0 {
+		left, right = left+under, right+under
+	}
+	f.Aileron.Left = slew(f.Aileron.Left, clamp(left, -c.Throw.Aileron.Up, c.Throw.Aileron.Down), c.Rate.Aileron*d.jam(ChannelWingLeft), c.Throw.Aileron.Down)
+	f.Aileron.Right = slew(f.Aileron.Right, clamp(right, -c.Throw.Aileron.Up, c.Throw.Aileron.Down), c.Rate.Aileron*d.jam(ChannelWingRight), c.Throw.Aileron.Down)
+	f.Trailing.Left = slew(f.Trailing.Left, clamp(trailing+split, -c.Throw.Trailing.Up, c.Throw.Trailing.Down), c.Rate.Trailing*d.jam(ChannelWingLeft), c.Throw.Trailing.Down)
+	f.Trailing.Right = slew(f.Trailing.Right, clamp(trailing-split, -c.Throw.Trailing.Up, c.Throw.Trailing.Down), c.Rate.Trailing*d.jam(ChannelWingRight), c.Throw.Trailing.Down)
 	f.Rudder = slew(f.Rudder, rudderTarget, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
+	f.Toe = slew(f.Toe, toe, c.Rate.Rudder*d.jam(ChannelRudder), c.Throw.Rudder)
 	f.Slat += clamp(slatTarget-f.Slat, -c.Rate.Slat*d.jam(ChannelSlat)*m.Stride(), c.Rate.Slat*d.jam(ChannelSlat)*m.Stride())
-	// Was `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a no-op
-	// for a non-finite operand -- 0*Inf and 0*NaN are both NaN -- so that term
-	// contributed nothing except a path for a poisoned actuator position to
-	// reach the Flap readout and ride the wire in the encoded state (#136).
-	f.Flap = droopTarget // droop is carried inside the flaperon targets; keep the readout
+	// The readout is the commanded schedule itself, never derived from an
+	// actuator position: a poisoned position must not reach it and ride the
+	// wire in the encoded state (#136).
+	f.Flap = trailing
 	f.Speedbrake += clamp(brakeTarget-f.Speedbrake, -c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride(), c.Rate.Brake*d.jam(ChannelSpeedbrake)*m.Stride())
 }
 
@@ -731,11 +860,12 @@ func (m *Model) yaw(pedal float64, lateral float64, a float64, b float64, r floa
 	return clamp(-pedal*throw*0.85+(damped*2.0-b*1.2-interconnect)*weight, -throw, throw)
 }
 
-// Approaching reports the trailing-edge droop and slat floor the PA law
-// commands at a dynamic pressure. Shared with the Approach trim helper so a
-// spawn cannot disagree with the FCS. Holds through the band, then washes out.
-func (m *Model) Approaching(pressure float64) (droop float64, slat float64) {
+// Approaching reports the share of the flap switch's setting the PA law
+// commands at a dynamic pressure, and the slat floor with it. Shared with the
+// Approach trim helper so a spawn cannot disagree with the FCS. Holds through
+// the band, then washes out.
+func (m *Model) Approaching(pressure float64) (share float64, slat float64) {
 	c := &m.Airframe.Control
-	schedule := clamp((c.Droop.Pressure-pressure)/(c.Droop.Pressure*0.55), 0, 1) // full below ~0.45·P, gone at P
-	return c.Droop.Angle * schedule, 12 * math.Pi / 180 * schedule               // NATOPS droops the LEADING edge with the flaps (12°)
+	share = clamp((c.Flaps.Pressure-pressure)/(c.Flaps.Pressure*0.55), 0, 1) // whole below ~0.45·P, gone at P
+	return share, 12 * math.Pi / 180 * share                                 // NATOPS droops the LEADING edge with the flaps (12°)
 }

@@ -176,3 +176,34 @@ func Effectiveness(cf float64) float64 {
 	theta := math.Acos(2*cf - 1)
 	return (1 - (theta-math.Sin(theta))/math.Pi) * 0.8 // 0.8 viscous knockdown
 }
+
+// Slotted is a slotted flap's section drag increment against its deflection
+// (rad), for a flap of chord fraction cf: USAF DATCOM figure 6.1.7-23 (the
+// two-dimensional drag increment due to slotted flaps, as Digital DATCOM
+// tabulates it), read between the figure's chord fractions and held past its
+// last.
+func Slotted(cf float64) Curve {
+	deflections := []float64{0, 10, 20, 30, 40, 50}
+	chords := []float64{0, 0.10, 0.23, 0.36, 0.40}
+	increments := [][]float64{
+		{0, 0, 0, 0, 0},
+		{0, 0.002, 0.004, 0.009, 0.012},
+		{0, 0.004, 0.010, 0.018, 0.023},
+		{0, 0.011, 0.029, 0.050, 0.058},
+		{0, 0.020, 0.057, 0.101, 0.117},
+		{0, 0.031, 0.088, 0.171, 0.205},
+	}
+	at := Curve{}
+	for i := range chords {
+		at = append(at, [2]float64{chords[i], float64(i)})
+	}
+	column := at.At(math.Max(cf, 0))
+	low := int(math.Floor(column))
+	high := min(low+1, len(chords)-1)
+	share := column - float64(low)
+	out := make(Curve, len(deflections))
+	for k, row := range increments {
+		out[k] = [2]float64{deflections[k] * math.Pi / 180, row[low] + (row[high]-row[low])*share}
+	}
+	return out
+}

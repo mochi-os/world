@@ -40,7 +40,7 @@ type routine struct {
 	running   int         // ticks he has been running away from me: faster, not turning, the range opening beyond 600 m
 	chasing   bool        // pursuing him, from three seconds of his running until he is inside gun range or turns
 	behind    int         // ticks I have been in his rear quarter beyond 600 m while he flew straight, whatever his speed
-	trailing  bool        // in the rear quarter of a jet flying straight: the power holds the closure, from the chase or three seconds there until he turns or I leave it
+	trailing  bool        // in the rear quarter of a jet flying straight: the power holds the closure, from the chase or three seconds there until he turns, or I break or jink; a clear only suspends it
 }
 
 // drive flies the scripted doctrine for one tick, from what decide() last saw.
@@ -309,15 +309,17 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 
 	// THE CHASE: a jet faster than me, flying straight and opening the range
 	// beyond 600 m cannot be caught by turning, and the fight law's full alpha
-	// behind him bled the expert to the regain's floor and back for minutes (106 s
-	// of four below 194 kt), handing a pilot who turns back a slow bandit. Once
+	// behind him bled the expert to the regain's floor and back for minutes (87 s
+	// of four below 194 kt, and him 44 km away at the end), handing a pilot who
+	// turns back a slow bandit; pursuing, none, and the guns by 104 s. Once
 	// he has run for three seconds the bandit pursues: the near-nose blend of
 	// the gun, and a pull only as hard as the speed affords, the fighting
 	// alpha scaled by the speed over corner squared, until he stops running.
 	// Three seconds keeps it out of the turning fight, where his regain opens
 	// the range for a second or two: the fights against mimic read as they did
 	// without it. A cap of two g lost him (21 km behind at 650 kt), and a
-	// floor on the push changed nothing. Held only while he ran, rather than
+	// floor on the push changed nothing, both measured against a target that
+	// flew at a quarter of the speed it reported. Held only while he ran, rather than
 	// to gun range or his turn, a novice fight went by at 94 m in its deck
 	// recovery: 2 of 256 with a close approach after the merge against 1.
 	//
@@ -355,7 +357,7 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// well: the fight law aims by the nose, and behind a jet slower than it
 	// the expert rode 100-330 m above his line and came onto the gun at 820 m
 	// porpoising, its alpha 9-20 degrees, until it had bled to 145 m/s.
-	pursuing := s.chasing || s.trailing && !gunning
+	pursuing := (s.chasing || s.trailing && !gunning) && !clearing // a trail held through a clear: the clear flies first
 	// THE JINK: his gun lining up on me, read by flinch() at the tier's own
 	// cadence and cue, gets the planner's guns defence, the jet loaded where its
 	// lift already points, or ninety degrees off it every second window so the
@@ -419,8 +421,9 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	// Flown away from the gun as well against a jet that is not turning, with
 	// the pull eased below corner speed while he outran it beyond a kilometre,
 	// it cut the chase of a jet flying straight away from 93 s of four minutes
-	// below 194 kt to 54 s, but the fights with a close approach inside 150 m
-	// after the merge went from 1 of 256 to 6 against mimic. Declined.
+	// below 194 kt to 54 s (a target flying at a quarter of the speed it
+	// reported), but the fights with a close approach inside 150 m after the
+	// merge went from 1 of 256 to 6 against mimic. Declined.
 	const fine = 10.0
 	w := 1.0
 	if gunning || pursuing {
@@ -442,6 +445,17 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	}
 	limit := clamp((equivalent-tuned(60))/tuned(90), 0.15, 1)
 	goal := clamp(angle/180*math.Pi*3, 0, 1) * b.skill.alpha
+	// The chase unloads to roll: with the lift vector more than 46 degrees off
+	// him the pull eases, to none at 78. Pulled while rolling, the bandit
+	// turning round after the merge to chase a jet flying straight away rode
+	// its alpha regulator's porpoise between 0 and 25 degrees for 30 s, the
+	// lift vector going round with full roll stick, and let him reach 4.0 km;
+	// unloaded, 2.7 km. The roll law limits the rolling surfaces above 8
+	// degrees alpha (TM-107601 functions 35 and 41), which had let it roll out
+	// of the porpoise by 40 s (2.65 km).
+	if pursuing && lift.Length() > 1e-6 {
+		goal *= clamp((lift.Dot(up)-0.2)/0.5, 0, 1)
+	}
 	if w < 1 {
 		one := riding * math.Max(up.Y, 0) / math.Max(m.Nz(), 0.5) // the alpha that holds a g in the plane of the wings
 		offset := math.Atan2(want.Dot(normal), want.Dot(bore)) * 180 / math.Pi
@@ -547,8 +561,14 @@ func (i *instance) drive(slot int, a *craft, tick uint64) flight.Inputs {
 	b.play, b.rolled = s.branch, roll
 	b.demand.Stick = pitch
 	throttle, reheat, brake := 1.0, i.reheat(b, me, span, equivalent, wind, tick), 0.0
-	s.trailing = (s.trailing || s.chasing || s.behind >= 180) && !breaking && !clearing && !jinking && bending(&seen) <= 15 && quarter
-	if s.trailing && !s.regaining {
+	// A clear suspends the trail rather than ending it: ended, the gun that
+	// followed the clear flew at full power, and behind a jet slowing at 4 m/s2
+	// it pulled back up at him from below and went by at 124 m (2026-11-12, the
+	// trail's station 5 m lower on the jet's flaps, so the clear pushed under
+	// him instead of rolling off); held, the trail's power comes back with the
+	// gun and it goes by at 175 m.
+	s.trailing = (s.trailing || s.chasing || s.behind >= 180) && !breaking && !jinking && bending(&seen) <= 15 && quarter
+	if s.trailing && !s.regaining && !clearing {
 		closure := me.Velocity.Subtract(seen.velocity).Dot(now.Subtract(me.Position).Normalize())
 		throttle, reheat, brake = trail(span, closure, equivalent > tuned(n.band))
 	}

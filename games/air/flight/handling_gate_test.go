@@ -87,13 +87,17 @@ func TestDepartureBoundary(t *testing.T) {
 	crossed("clean", false, 0, 160)
 	for _, kcas := range []float64{130, 145} {
 		peak, after := crossed("gear down, flap FULL", true, 2, kcas)
-		// Realism cuts both ways in this cell (#97): the real jet departs
-		// under crossed controls dirty and slow (the in-close-waveoff
-		// accident class), so the model must neither shrug it off nor lose
-		// the jet for good — a real yaw excursion, and a recovery once the
-		// controls are released. Measured 2026-08-30: 19.8°/17.9° peaks
-		// (clean 160 kt reaches only 13.8°), 0.6°/0.5° after release.
-		if peak < 15 {
+		// Realism cuts both ways in this cell (#97): the model must neither
+		// shrug crossed controls off dirty and slow (the in-close-waveoff
+		// accident class) nor lose the jet for good — a real yaw excursion,
+		// and a recovery once the controls are released. NATOPS IV-11-7 has
+		// "roll or yaw inputs combined with aft stick movement" very
+		// resistant to departure, and prohibits crossed controls with FULL
+		// only above 150 kt. Measured 2026-08-30 on full-span flaperons:
+		// 19.8°/17.9° peaks; 2026-11-12 on the real outboard ailerons, with
+		// NATOPS's toe-out at high alpha: 12.9°/11.9°, 0.9°/1.0° after
+		// release (the floor 10°, user 2026-11-12).
+		if peak < 10 {
 			t.Errorf("dirty crossed controls at %.0f kt peaked at only %.1f° beta — the accident regime's departure is protected away", kcas, peak)
 		}
 		if after > 12 {

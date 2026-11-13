@@ -305,6 +305,19 @@ func approach(m *Model, offset float64) {
 	m.State.Gear = GearState{Extension: 1, Catapult: -1, Stroke: -1, Wire: -1, Contact: -1}
 	m.State.Engine[0] = EngineState{Spool: 0.5}
 	m.State.Engine[1] = EngineState{Spool: 0.5}
+	full(m)
+}
+
+// full sets a scripted pass's flaps and ailerons where FULL holds them at its
+// speed, as a jet on final flies with them: spawned up, they ran out at their
+// 18 deg/s across the pass and its lift and drag changed under the trap.
+func full(m *Model) {
+	speed := m.State.Velocity.Length()
+	share, slat := m.Approaching(0.5 * air(m.State.Position.Y, m.Environment).Density * speed * speed)
+	c := m.Airframe.Control.Flaps.Full
+	m.State.Fcs.Trailing = Pair{c.Trailing * share, c.Trailing * share}
+	m.State.Fcs.Aileron = Pair{c.Aileron * share, c.Aileron * share}
+	m.State.Fcs.Flap, m.State.Fcs.Slat = c.Trailing*share, slat
 }
 
 // TestTrapOffset: a catch five metres left of the wire's centre. The V pulls

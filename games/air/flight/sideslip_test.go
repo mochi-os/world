@@ -158,9 +158,11 @@ func TestApproachWeathercock(t *testing.T) {
 	local := Atmosphere(400, m.Environment)
 	base := Level(m, Vec3{Y: 400}, Vec3{X: 1}, 72, 2500)
 	q := 0.5 * local.Density * 72 * 72
-	droop, slat := m.Approaching(q)
-	base.Fcs.Flaperon = Pair{Left: droop, Right: droop}
-	base.Fcs.Flap = droop
+	share, slat := m.Approaching(q)
+	full := m.Airframe.Control.Flaps.Full
+	base.Fcs.Trailing = Pair{Left: full.Trailing * share, Right: full.Trailing * share}
+	base.Fcs.Aileron = Pair{Left: full.Aileron * share, Right: full.Aileron * share}
+	base.Fcs.Flap = full.Trailing * share
 	base.Fcs.Slat = slat
 	base.Gear.Extension = 1
 	cy, cn, cl := derivative(m, base, local)

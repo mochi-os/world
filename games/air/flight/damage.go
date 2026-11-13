@@ -47,8 +47,8 @@ const (
 const (
 	ChannelStabilatorLeft = iota
 	ChannelStabilatorRight
-	ChannelFlaperonLeft
-	ChannelFlaperonRight
+	ChannelWingLeft
+	ChannelWingRight
 	ChannelRudder
 	ChannelSlat
 	ChannelSpeedbrake

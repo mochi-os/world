@@ -177,7 +177,7 @@ func TestPedalRollsAtHighAlpha(t *testing.T) {
 		for i := 0; i < 30; i++ {
 			m.Step(Inputs{Throttle: 0.8, Yaw: pedal})
 		}
-		return math.Abs(m.State.Fcs.Flaperon.Left - m.State.Fcs.Flaperon.Right)
+		return math.Abs(m.State.Fcs.Aileron.Left - m.State.Fcs.Aileron.Right)
 	}
 	if high := differential(0.55, 1); high < 0.02 {
 		t.Fatalf("full pedal at 31 deg alpha must move the rolling surfaces: %.3f rad differential", high)
@@ -411,7 +411,7 @@ func TestBallisticDeparture(t *testing.T) {
 }
 
 // TestPoisonedActuatorDoesNotReachTheReadout (#136) — the Flap readout was
-// computed as `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a
+// once computed as `f.Flaperon.Left*0 + droopTarget`. Multiplying by zero is not a
 // no-op for a non-finite operand: 0*Inf and 0*NaN are both NaN. The term
 // contributed nothing except a path for a poisoned actuator position to reach
 // Flap, which then rides the wire in the encoded state.
@@ -431,10 +431,11 @@ func TestPoisonedActuatorDoesNotReachTheReadout(t *testing.T) {
 	} {
 		m := calm()
 		launch(m, 240)
-		m.State.Fcs.Flaperon.Left = poison.value
+		m.State.Fcs.Aileron.Left = poison.value
+		m.State.Fcs.Trailing.Left = poison.value
 		m.Step(Inputs{Throttle: 0.8})
 		if math.IsNaN(m.State.Fcs.Flap) || math.IsInf(m.State.Fcs.Flap, 0) {
-			t.Errorf("a %s flaperon position reached the Flap readout as %v: the poison escapes the actuator "+
+			t.Errorf("a %s aileron and flap position reached the Flap readout as %v: the poison escapes the actuator "+
 				"and is encoded into the state that goes on the wire", poison.name, m.State.Fcs.Flap)
 		}
 	}
@@ -563,18 +564,22 @@ func TestSpinRecoveryMode(t *testing.T) {
 		t.Errorf("flaps: leading edge %.1f°, trailing edge %.1f°, want 33 and 0", f.Slat*180/math.Pi, f.Flap*180/math.Pi)
 	}
 	symmetric := -0.5 * c.Throw.Down
-	if math.Abs(f.Stabilator.Left-(symmetric-0.25*0.35)) > 1e-6 || math.Abs(f.Stabilator.Right-(symmetric+0.25*0.35)) > 1e-6 {
-		t.Errorf("stabilators %.3f %.3f, want %.3f either side of %.3f", f.Stabilator.Left, f.Stabilator.Right, 0.25*0.35, symmetric)
+	// full roll command: the stabilators' whole differential
+	if math.Abs(f.Stabilator.Left-(symmetric-c.Throw.Differential)) > 1e-6 || math.Abs(f.Stabilator.Right-(symmetric+c.Throw.Differential)) > 1e-6 {
+		t.Errorf("stabilators %.3f %.3f, want %.3f either side of %.3f", f.Stabilator.Left, f.Stabilator.Right, c.Throw.Differential, symmetric)
 	}
-	if math.Abs(f.Flaperon.Left+0.35) > 1e-6 || math.Abs(f.Flaperon.Right-0.35) > 1e-6 {
-		t.Errorf("flaperons %.3f %.3f, want full aileron", f.Flaperon.Left, f.Flaperon.Right)
+	if math.Abs(f.Aileron.Left+0.35) > 1e-6 || math.Abs(f.Aileron.Right-0.35) > 1e-6 {
+		t.Errorf("ailerons %.3f %.3f, want full aileron", f.Aileron.Left, f.Aileron.Right)
+	}
+	if f.Trailing.Left != 0 || f.Trailing.Right != 0 {
+		t.Errorf("flaps %.3f %.3f, want 0 with no share of the roll", f.Trailing.Left, f.Trailing.Right)
 	}
 	for i := 0; i < 480; i++ { // the pedals alone: rudder, and nothing on the rolling surfaces
 		m.fcs(Inputs{Yaw: -0.5, Roll: -0.6}, air(m.State.Position.Y, m.Environment))
 	}
 	f = m.State.Fcs
-	if math.Abs(f.Rudder-0.5*c.Throw.Rudder) > 1e-6 || math.Abs(f.Flaperon.Left+0.6*0.35) > 1e-6 {
-		t.Errorf("rudder %.3f and left flaperon %.3f, want %.3f and %.3f straight from the controls", f.Rudder, f.Flaperon.Left, 0.5*c.Throw.Rudder, -0.6*0.35)
+	if math.Abs(f.Rudder-0.5*c.Throw.Rudder) > 1e-6 || math.Abs(f.Aileron.Left+0.6*0.35) > 1e-6 {
+		t.Errorf("rudder %.3f and left aileron %.3f, want %.3f and %.3f straight from the controls", f.Rudder, f.Aileron.Left, 0.5*c.Throw.Rudder, -0.6*0.35)
 	}
 }
 
@@ -589,7 +594,7 @@ func TestMechanical(t *testing.T) {
 	launch(m, 100)
 	f := &m.State.Fcs
 	f.Stabilator = Pair{Left: -0.2, Right: -0.2} // where the computers left it
-	f.Flaperon, f.Rudder, f.Slat, f.Speedbrake, f.Recovery = Pair{Left: 0.1, Right: -0.1}, 0.2, 0.1, 0.5, true
+	f.Aileron, f.Trailing, f.Rudder, f.Slat, f.Speedbrake, f.Recovery = Pair{Left: 0.1, Right: -0.1}, Pair{Left: 0.1, Right: 0.1}, 0.2, 0.1, 0.5, true
 	m.State.Omega = Vec3{Y: 0.5} // a left yaw the spin recovery mode, left to itself, would stay engaged in
 	local := air(m.State.Position.Y, m.Environment)
 	c := &m.Airframe.Control
@@ -609,11 +614,12 @@ func TestMechanical(t *testing.T) {
 	if math.Abs(symmetric()-pitch) > 1e-6 {
 		t.Errorf("faded: stabilator %.4f, want the mechanical %.4f", symmetric(), pitch)
 	}
-	if split := f.Stabilator.Left - f.Stabilator.Right; math.Abs(split-2*0.25*0.4*c.Gearing.Roll) > 1e-6 {
-		t.Errorf("roll through the stabilators: split %.4f, want %.4f", split, 2*0.25*0.4*c.Gearing.Roll)
+	// the roll command's share of the full 0.35, of the stabilators' differential
+	if want := 2 * 0.4 * c.Gearing.Roll / 0.35 * c.Throw.Differential; math.Abs(f.Stabilator.Left-f.Stabilator.Right-want) > 1e-6 {
+		t.Errorf("roll through the stabilators: split %.4f, want %.4f", f.Stabilator.Left-f.Stabilator.Right, want)
 	}
-	if f.Flaperon.Left != 0 || f.Flaperon.Right != 0 || f.Rudder != 0 {
-		t.Errorf("ailerons %.3f %.3f and rudder %.3f, want neutral", f.Flaperon.Left, f.Flaperon.Right, f.Rudder)
+	if f.Aileron.Left != 0 || f.Aileron.Right != 0 || f.Rudder != 0 {
+		t.Errorf("ailerons %.3f %.3f and rudder %.3f, want neutral", f.Aileron.Left, f.Aileron.Right, f.Rudder)
 	}
 	if f.Slat != 0.1 || f.Speedbrake != 0.5 {
 		t.Errorf("leading edge flaps %.3f and speedbrake %.3f moved, want them held", f.Slat, f.Speedbrake)
@@ -625,5 +631,157 @@ func TestMechanical(t *testing.T) {
 	run(in, 1)
 	if want := -0.5 * c.Gearing.Pitch; math.Abs(symmetric()-want) > 1e-6 {
 		t.Errorf("flaps HALF: stabilator %.4f, want the higher gearing's %.4f", symmetric(), want)
+	}
+}
+
+// TestRollAuthority: the production roll law's schedules on its surfaces
+// (NASA TM-107601 figure 9.4) land on the report's own plotted points and
+// its function 36 diagram's values, and full lateral stick at sea level moves
+// the ailerons at 300 KEAS and not at 650, where NATOPS 2.8.2 has them still
+// ("the ailerons do not deflect above 600 knots"), while the differential
+// stabilators and flaps stay within their scheduled shares at every tick.
+func TestRollAuthority(t *testing.T) {
+	const psf = 47.880259
+	// an air at a static pressure, and the speed for an impact to static
+	// pressure ratio, the schedules' stand-in for Mach
+	at := func(static, ratio float64) (Air, float64) {
+		return Air{Pressure: static * psf, Sound: 340}, 340 * math.Sqrt((math.Pow(ratio+1, 1/3.5)-1)/0.2)
+	}
+	const (
+		aileron = iota
+		stabilator
+		flap
+		limit
+	)
+	for _, c := range []struct {
+		name                 string
+		static, ratio, alpha float64
+		want                 float64
+		pick                 int
+	}{
+		{"function 6 at 2000 psf, Ri 0.468", 2000, 0.468, 2, 0.2 / 0.2, stabilator},
+		{"function 6 at 2000 psf, Ri 1.01", 2000, 1.01, 2, 0.08 / 0.2, stabilator},
+		{"function 6 at 1000 psf, Ri 1.12", 1000, 1.12, 2, 0.1606 / 0.2, stabilator},
+		{"function 31 at 2116 psf, Ri 0.717", 2116, 0.717, 2, 0.0864 / 0.16, flap},
+		{"function 31 at 2116 psf, Ri 1.379", 2116, 1.379, 2, 0.0123 / 0.16, flap},
+		{"function 31 at 973 psf, Ri 1.379", 973, 1.379, 2, 0.0870 / 0.16, flap},
+		{"function 31 at 392 psf, Ri 1.058", 392, 1.058, 2, 1, flap},
+		{"function 36 at sea level, Ri 0.3", 2116, 0.3, 2, 1, aileron},
+		{"function 36 at sea level, 1336 psf of impact pressure", 2116, 1336.0 / 2116, 2, 0, aileron},
+		{"function 36 at 1000 psf, Ri 0.8", 1000, 0.8, 2, 0.730, aileron},
+		{"function 36 at 1000 psf, Ri 1.2, held from 0.8", 1000, 1.2, 2, 0.730, aileron},
+		{"function 36 at 540 psf, Ri 0.9", 540, 0.9, 2, 0.923, aileron},
+		{"function 36 at 400 psf, Ri 1.5", 400, 1.5, 2, 1, aileron},
+		{"function 35 at 19 deg", 400, 0.2, 19, 0.675, aileron},
+		{"function 35 at 30 deg", 400, 0.2, 30, 0.35, aileron},
+		{"function 35 at -10 deg", 400, 0.2, -10, 0.35, aileron},
+		{"function 41 at 8 deg", 1000, 0.6, 8, 1, limit},
+		{"function 41 at 22 deg, Ri 0.2", 1000, 0.2, 22, 0.25, limit},
+		{"function 41 at 19 deg, Ri 0.39", 1000, 0.39, 19, 0.1, limit},
+		{"function 41 at 16.7 deg, Ri 0.6", 1000, 0.6, 16.7, 0.1, limit},
+		{"function 41 at 13.5 deg, Ri 0.39", 1000, 0.39, 13.5, 0.55, limit},
+	} {
+		local, speed := at(c.static, c.ratio)
+		a, s, f, l := authority(local, speed, c.alpha*math.Pi/180)
+		got := []float64{a, s, f, l}[c.pick]
+		if math.Abs(got-c.want) > 0.02 {
+			t.Errorf("%s: %.3f, the report's %.3f", c.name, got, c.want)
+		}
+	}
+	// the schedules are the AUTO law's alone
+	for _, law := range []string{"auto", "direct", "landing", "recovery", "mechanical"} {
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
+		local := air(0, m.Environment)
+		m.Direct, m.pa, m.State.Fcs.Recovery = law == "direct", law == "landing", law == "recovery"
+		a, s, f, l := m.shares(local, 650*0.5144, 20*math.Pi/180, law == "mechanical")
+		whole := a == 1 && s == 1 && f == 1 && l == 1
+		if whole != (law != "auto") {
+			t.Errorf("the %s law at 650 KEAS and 20 deg alpha: shares %.2f %.2f %.2f under %.2f", law, a, s, f, l)
+		}
+	}
+	// Full lateral stick at 300 and 650 KEAS level at sea level; at Mach 0.7
+	// at 4 km after 3 s of full aft stick, where the roll's first command
+	// meets function 41's limit on the ailerons and differential stabilators
+	// at 22 deg alpha; and at 180 KEAS at 3 km with the stick full aft into
+	// spin recovery's full authority
+	const slack = 0.1 * math.Pi / 180
+	for _, run := range []struct {
+		name                  string
+		height, mach, keas    float64
+		pitch, pull, duration float64
+	}{
+		{name: "300 KEAS", keas: 300, duration: 3},
+		{name: "650 KEAS", keas: 650, duration: 3},
+		{name: "Mach 0.7 at 4 km pulling", height: 4000, mach: 0.7, pitch: 1, pull: 3, duration: 5},
+		{name: "180 KEAS at 3 km pulling", height: 3000, keas: 180, pitch: 1, duration: 5},
+	} {
+		m := New(Fighter, Environment{Frame: scene, Chart: scene}, World{Sea: -1000})
+		local := air(run.height, m.Environment)
+		speed := run.mach * local.Sound
+		if run.keas > 0 {
+			speed = run.keas * 0.5144 / math.Sqrt(local.Density/1.225)
+		}
+		m.State = Level(m, Vec3{Y: run.height}, Vec3{X: 1}, speed, 3000)
+		c := m.Airframe.Control
+		most, bound, recovered, ratio, ratios := 0.0, 0.0, 0.0, 0.0, 0
+		for i := 0; i < int(run.duration/m.Stride()); i++ {
+			time := float64(i) * m.Stride()
+			roll := 0.0
+			if time >= run.pull {
+				roll = 1
+			}
+			m.Step(Inputs{Roll: roll, Pitch: run.pitch, Throttle: lever(m.State.Engine[0].Spool)})
+			f := m.State.Fcs
+			ailerons, stabilators, flaps, limit := authority(air(m.State.Position.Y, m.Environment), m.State.Velocity.Length(), m.Alpha())
+			aileron := math.Abs(f.Aileron.Left-f.Aileron.Right) / 2
+			twist := math.Abs(f.Stabilator.Left-f.Stabilator.Right) / 2
+			split := math.Abs(f.Trailing.Left-f.Trailing.Right) / 2
+			most = math.Max(most, aileron)
+			if f.Recovery {
+				recovered = math.Max(recovered, aileron)
+				continue
+			}
+			if aileron > 0.35*math.Min(ailerons, limit)+slack {
+				t.Fatalf("%s at %.2f s: the ailerons' differential %.2f deg over its share, %.2f under a limit of %.2f of 20 deg", run.name, time, aileron*180/math.Pi, ailerons, limit)
+			}
+			if twist > c.Throw.Differential*math.Min(stabilators, limit)+slack {
+				t.Fatalf("%s at %.2f s: the stabilators' differential %.2f deg over its share, %.2f under a limit of %.2f of %.1f deg", run.name, time, twist*180/math.Pi, stabilators, limit, c.Throw.Differential*180/math.Pi)
+			}
+			if split > 0.35*flaps+slack {
+				t.Fatalf("%s at %.2f s: the flaps' differential %.2f deg over its share, %.2f of 20 deg", run.name, time, split*180/math.Pi, flaps)
+			}
+			if limit < 0.5 && limit < ailerons {
+				bound = math.Max(bound, aileron/(0.35*limit))
+			}
+			// the flaps settle behind their lag on their share of the
+			// stabilators' differential
+			if time >= 2 && twist > 1e-3 {
+				predicted := c.Flaps.Differential.Gain.At(m.Alpha()) * flaps * 0.35 / (stabilators * c.Throw.Differential)
+				ratio += split / twist / predicted
+				ratios++
+			}
+		}
+		t.Logf("%s: the ailerons' differential up to %.1f deg", run.name, most*180/math.Pi)
+		switch run.name {
+		case "300 KEAS":
+			if most < 5*math.Pi/180 {
+				t.Errorf("300 KEAS: full lateral stick moved the ailerons only %.1f deg", most*180/math.Pi)
+			}
+		case "650 KEAS":
+			if most > slack {
+				t.Errorf("650 KEAS: the ailerons deflected %.1f deg", most*180/math.Pi)
+			}
+			if ratio /= float64(ratios); math.Abs(ratio-1) > 0.15 {
+				t.Errorf("650 KEAS: the flaps' differential settled at %.2f of their scheduled share of the stabilators'", ratio)
+			}
+		case "Mach 0.7 at 4 km pulling":
+			if bound < 0.9 {
+				t.Errorf("%s: the ailerons reached only %.2f of function 41's limit, which never bound", run.name, bound)
+			}
+		case "180 KEAS at 3 km pulling":
+			if recovered < 18*math.Pi/180 {
+				t.Errorf("%s: spin recovery's full authority moved the ailerons only %.1f deg", run.name, recovered*180/math.Pi)
+			}
+		}
 	}
 }

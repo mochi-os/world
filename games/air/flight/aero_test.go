@@ -174,8 +174,8 @@ func TestElementConstants(t *testing.T) {
 			for ei := range a.Surfaces[si].Elements {
 				e := &a.Surfaces[si].Elements[ei]
 				c := m.constants[m.base[si]+ei]
-				if c.sweep != sweep(e) || c.root != math.Sqrt(sweep(e)) || c.effect != Effectiveness(e.Flap) {
-					t.Errorf("element %d of surface %d: constants %+v, computed %v %v %v", ei, si, c, sweep(e), math.Sqrt(sweep(e)), Effectiveness(e.Flap))
+				if c.sweep != sweep(e) || c.root != math.Sqrt(sweep(e)) || c.effect != Effectiveness(e.Flap)*e.share()*e.gain() {
+					t.Errorf("element %d of surface %d: constants %+v, computed %v %v %v", ei, si, c, sweep(e), math.Sqrt(sweep(e)), Effectiveness(e.Flap)*e.share()*e.gain())
 				}
 				if e.Flap > 0 {
 					flapped++

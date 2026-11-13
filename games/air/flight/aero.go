@@ -273,9 +273,20 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			}
 			// Camber lift: the half of the flap deflection that raises CLmax
 			// rather than spending stall margin; rolls off in deep stall.
+			// flapped is the deflection's lift, both halves, for its pitch.
+			flapped := 0.0
 			if shift != 0 {
-				cl += surface.Slope * shift * 0.55 * math.Cos(clamp(body, -1.2, 1.2)) * boost
-				cd += 0.01 * shift * shift * boost
+				camber := surface.Slope * shift * 0.55 * math.Cos(clamp(body, -1.2, 1.2)) * boost
+				cl += camber
+				if len(c.drag) > 0 {
+					// the slotted flaps' and ailerons' profile drag, DATCOM's
+					// section increment over the span they cover: the square
+					// of the shift priced 45 deg of flap at a hundredth of it
+					cd += c.drag.At(math.Abs(m.deflection(s, surface, e))) * e.share() * boost
+				} else {
+					cd += 0.01 * shift * shift * boost
+				}
+				flapped = camber + surface.Slope*shift*0.5/(c.root*c.root)
 			}
 			if surface.Vortex > 0 {
 				extra, suction := vortex(surface.Vortex, surface.Breakdown, body)
@@ -293,6 +304,7 @@ func (m *Model) aero(s *State, total *Forces, local Air) {
 			cl *= slope
 			cd += wave * boost
 			cm += shift * boost
+			cm -= e.Centre * flapped * slope // nose down: the control's lift acts behind the quarter chord
 			cl *= m.State.Damage.element(m.base[si] + ei)
 			// The lift stands perpendicular to the flow the element meets, in
 			// the plane of that flow and the surface normal: for an unswept
@@ -371,8 +383,12 @@ func sweep(e *Element) float64 {
 }
 
 // constant is what an element's geometry fixes for good: its sweep's share of
-// the dynamic pressure, that share's root, and its control's flap effectiveness.
-type constant struct{ sweep, root, effect float64 }
+// the dynamic pressure, that share's root, and its control's flap
+// effectiveness over the share of its span the control covers.
+type constant struct {
+	sweep, root, effect float64
+	drag                Curve // a hinged control's section drag increment against its deflection (Slotted); empty elsewhere
+}
 
 // prepare works the elements' constants out once for the airframe flown, in
 // the order base indexes them.
@@ -382,16 +398,58 @@ func (m *Model) prepare() {
 		for ei := range m.Airframe.Surfaces[si].Elements {
 			e := &m.Airframe.Surfaces[si].Elements[ei]
 			across := sweep(e)
-			m.constants = append(m.constants, constant{sweep: across, root: math.Sqrt(across), effect: Effectiveness(e.Flap)})
+			k := constant{sweep: across, root: math.Sqrt(across), effect: Effectiveness(e.Flap) * e.share() * e.gain()}
+			if m.Airframe.Surfaces[si].Channel == Differential && e.Flap > 0 {
+				k.drag = Slotted(e.Flap)
+			}
+			m.constants = append(m.constants, k)
 		}
 	}
 	m.prepared = m.Airframe
+}
+
+// gain is the control's measured effectiveness over theory's (Gain), 1 unset.
+func (e *Element) gain() float64 {
+	if e.Gain <= 0 {
+		return 1
+	}
+	return e.Gain
+}
+
+// share is the share of the element's span its control covers.
+func (e *Element) share() float64 {
+	if e.Hinged <= 0 {
+		return 1
+	}
+	return e.Hinged
+}
+
+// faded is a deflection as the lift sees it: its size scaled by the curve's
+// share at that size, its sign kept. An empty curve holds the whole of it.
+func (c Curve) faded(deflection float64) float64 {
+	if len(c) == 0 {
+		return deflection
+	}
+	return deflection * c.At(math.Abs(deflection))
 }
 
 // unswept maps a section alpha back to the body alpha it came from, for the
 // terms calibrated on the body angle: root is the root of the sweep's share.
 func unswept(sectional float64, root float64) float64 {
 	return math.Atan(math.Tan(clamp(sectional, -1.5, 1.5)) * root)
+}
+
+// deflection is the hinged control's angle on a Differential surface's
+// element: the flap's inboard, the aileron's outboard, each side its own.
+func (m *Model) deflection(s *State, surface *Surface, e *Element) float64 {
+	surfaces := s.Fcs.Trailing
+	if e.Aileron {
+		surfaces = s.Fcs.Aileron
+	}
+	if surface.Side < 0 {
+		return surfaces.Left
+	}
+	return surfaces.Right
 }
 
 // section splits the raw geometric angle from the control-surface shift:
@@ -411,27 +469,19 @@ func (m *Model) section(s *State, surface *Surface, e *Element, w Vec3, c consta
 		}
 		raw += deflection / c.root
 	case Differential:
-		// The flaperon actuator ALREADY carries the PA droop (fcs.go slews it
-		// toward droop±differential; Fcs.Flap is a readout only). Adding Flap
-		// here doubled the droop camber — the whole PA envelope was tuned
-		// around ~2x the displayed flap angle (the balloon when 45° was tried).
-		deflection := 0.0
-		if surface.Side < 0 {
-			deflection += s.Fcs.Flaperon.Left
-		} else {
-			deflection += s.Fcs.Flaperon.Right
-		}
-		shift = c.effect * deflection
+		// Each strip carries the surface hinged there: the trailing-edge flap
+		// inboard, the aileron outboard. Each actuator already carries its
+		// own schedule (the flaps' and the ailerons' droop) and its share of
+		// the roll command (fcs.go); Fcs.Flap is a readout only.
+		shift = c.effect * e.Fade.faded(m.deflection(s, surface, e))
 	case Rudder:
 		// Mirrored fin frames flip the meaning of a camber shift: without
-		// the side sign the two rudders' side forces cancel exactly.
-		deflection := s.Fcs.Rudder * -surface.Side
-		if s.Gear.Wow && !m.Direct {
-			// Rudder toe-in: on the canted fins both trailing edges inboard cancel
-			// laterally and add vertically - tail downforce, nose-up for rotation. Pure
-			// function of Wow, so replay needs no state.
-			deflection -= m.Airframe.Control.Toe
-		}
+		// the side sign the two rudders' side forces cancel exactly. Toe-in
+		// (fcs.go) takes both trailing edges inboard: on the canted fins the
+		// lateral halves cancel and the vertical ones add, tail downforce
+		// and nose-up for rotation. Each rudder stops at its own travel.
+		throw := m.Airframe.Control.Throw.Rudder
+		deflection := clamp(s.Fcs.Rudder*-surface.Side-s.Fcs.Toe, -throw, throw)
 		shift = c.effect * deflection
 	}
 	return raw + e.Incidence/c.root, shift // the twist is set streamwise; the swept section sees it over cos of the sweep

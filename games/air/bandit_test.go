@@ -176,9 +176,7 @@ func TestBanditJoustHold(t *testing.T) {
 		}
 		result := outcome{aboard: b.craft.missiles}
 		for tick := uint64(1); tick <= 60*20; tick++ {
-			for substep := 0; substep < 4; substep++ {
-				player.Step(flight.Inputs{Throttle: 1, Reheat: 1})
-			}
+			tow(player, flight.Inputs{Throttle: 1, Reheat: 1})
 			player.State.Encode(words)
 			b.Mirror(words, false, true)
 			b.Menace(nil)

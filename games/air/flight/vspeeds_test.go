@@ -404,15 +404,15 @@ func vsApproach(fuel, alt float64) float64 {
 	weight := (10700 + fuel) * 9.81
 	normal := func(v float64) float64 {
 		q := 0.5 * local.Density * v * v
-		schedule := clamp((c.Droop.Pressure-q)/(c.Droop.Pressure*0.55), 0, 1) // the FCS droop washout
-		droop := c.Droop.Angle * schedule
+		schedule, _ := m.Approaching(q) // the FCS's FULL washout
 		alpha := c.Onspeed
 		trial := m.State
 		trial.Velocity = Vec3{X: v * math.Cos(gamma), Y: -v * math.Sin(gamma)}
 		trial.Attitude = Axis(Vec3{Z: 1}, alpha-gamma)
 		trial.Engine[0] = EngineState{Spool: 0.6}
 		trial.Engine[1] = EngineState{Spool: 0.6}
-		trial.Fcs.Flaperon = Pair{Left: droop, Right: droop} // the flaperon actuator carries the droop; Fcs.Flap is a readout
+		trial.Fcs.Trailing = Pair{Left: c.Flaps.Full.Trailing * schedule, Right: c.Flaps.Full.Trailing * schedule} // the actuators carry the flaps and the droop; Fcs.Flap is a readout
+		trial.Fcs.Aileron = Pair{Left: c.Flaps.Full.Aileron * schedule, Right: c.Flaps.Full.Aileron * schedule}
 		trial.Fcs.Slat = math.Max(clamp(c.Slat.Slope*(alpha-c.Slat.Offset), 0, c.Slat.Limit), 12*math.Pi/180*schedule)
 		low, high := -c.Throw.Down, c.Throw.Up // positive = trailing edge down = nose-down moment
 		var total Forces

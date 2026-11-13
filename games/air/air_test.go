@@ -1744,7 +1744,7 @@ func TestBandit(t *testing.T) {
 	// close), survives (sea, mush-lock), and the mirror/step plumbing holds.
 	closest, slowest := math.MaxFloat64, 0.0
 	for tick := 0; tick < 60*240; tick++ {
-		player.Step(flight.Inputs{Throttle: 0.45})
+		tow(player, flight.Inputs{Throttle: 0.45})
 		player.State.Encode(words)
 		b.Mirror(words, false, true)
 		b.Step()
