@@ -2509,8 +2509,11 @@ const (
 	// nose disagreeing with recorded AOA by up to 80 degrees. Sideslip took
 	// the byte the two engine fires gave up by sharing byte 29 rather than
 	// widening the record: 27 poses at 39 bytes plus six missiles is ~1.2 kB,
-	// and the near/roving sizes below are what pay for anything wider.
-	pose_record = 39
+	// and the near/roving sizes below are what pay for anything wider. Byte 39
+	// is the wire his hook holds: no free bit would carry three wires, and a
+	// recipient that worked it out from where the jet stopped would name the
+	// wrong one for a jet the roving set sees late.
+	pose_record = 40
 	// slot_most is the highest slot the missile record can name: the shooter
 	// occupies seven bits because the eighth carries the round's kind (#27).
 	slot_most = 127
@@ -2607,6 +2610,13 @@ func pose(slot int, a *craft, origin flight.Vec3) []byte {
 	// step: a bare conversion truncates toward zero, and read 7.99 as 7.
 	b[37] = byte(int8(math.Round(clamp(a.model.Alpha()*180/math.Pi, -127, 127))))
 	b[38] = byte(int8(math.Round(clamp(a.model.Nz()*10, -127, 127))))
+	// Byte 39 is the arresting wire his hook holds, counted from 1, or 0 off
+	// every wire: the recipient drags that wire into a V under his hook and
+	// swings the hook to its pull, as the pilot's own client does from the
+	// core it flies.
+	if w := s.Gear.Wire; w >= 0 && w < 255 {
+		b[39] = byte(w + 1)
+	}
 	return b
 }
 

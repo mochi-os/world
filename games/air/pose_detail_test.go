@@ -7,6 +7,7 @@
 package air
 
 import (
+	"encoding/hex"
 	"math"
 	"testing"
 
@@ -109,7 +110,51 @@ func TestPoseEngineFires(t *testing.T) {
 // The protocol byte gates the wire VERSION, not the stride, so nothing at the
 // join refuses a peer that disagrees here — it simply misreads every pose.
 func TestPoseRecordStride(t *testing.T) {
-	if pose_record != 39 {
+	if pose_record != 40 {
 		t.Errorf("pose_record = %d; net.ts POSE_RECORD must be changed to match, in the same release", pose_record)
+	}
+}
+
+// Byte 39 is the wire his hook holds, counted from 1, and 0 off every wire: a
+// recipient drags that wire into a V under his hook and swings the hook to its
+// pull. Counted from 1 so that a zeroed byte reads as no wire, never the first.
+func TestPoseCarriesWire(t *testing.T) {
+	i := build(t, "furball", nil, 2)
+	a := i.aircraft[0]
+	for _, c := range []struct {
+		wire int
+		want byte
+	}{
+		{-1, 0},
+		{0, 1},
+		{1, 2},
+		{2, 3},
+	} {
+		a.model.State.Gear.Wire = c.wire
+		if got := pose(0, a, flight.Vec3{})[39]; got != c.want {
+			t.Errorf("wire index %d: byte 39 = %d, want %d", c.wire, got, c.want)
+		}
+	}
+}
+
+// The cross-language contract with apps/air/web/src/game/pose.test.ts, which
+// decodes these same bytes: a jet with both engines alight, fuel burning and
+// leaking, 240 rounds fired, 14 deg of alpha and 5 of sideslip at 6.4 g, his
+// hook on the second wire, sent from his own position. If either side's
+// layout drifts, one of the two tests fails.
+func TestPoseGolden(t *testing.T) {
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	me := i.aircraft[0]
+	me.condition.Fire = [2]float64{0.6, 0.2}
+	me.condition.Burning = true
+	me.model.State.Damage.Leak = 1.5
+	me.spent = 240
+	me.model.State.Velocity = flight.Vec3{X: 200}
+	me.model.State.Attitude = flight.Axis(flight.Vec3{Y: 1}, 5*math.Pi/180).Multiply(flight.Axis(flight.Vec3{Z: 1}, 14*math.Pi/180))
+	me.model.State.Fcs.Normal = 6.4
+	me.model.State.Gear.Wire = 1
+	want := "00000000000000000000000000eb7eae008a05950f7f0000d00731000093050f000000f0000e4002"
+	if got := hex.EncodeToString(pose(0, me, me.model.State.Position)); got != want {
+		t.Errorf("pose bytes\n got %s\nwant %s (pose.test.ts decodes the wanted bytes)", got, want)
 	}
 }
