@@ -7,6 +7,7 @@
 package air
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"math"
 	"testing"
@@ -140,8 +141,9 @@ func TestPoseCarriesWire(t *testing.T) {
 // The cross-language contract with apps/air/web/src/game/pose.test.ts, which
 // decodes these same bytes: a jet with both engines alight, fuel burning and
 // leaking, 240 rounds fired, 14 deg of alpha and 5 of sideslip at 6.4 g, his
-// hook on the second wire, sent from his own position. If either side's
-// layout drifts, one of the two tests fails.
+// hook on the second wire, sent from his own position: the record's position
+// is his datum's offset from his centre of mass, which his missiles move. If
+// either side's layout drifts, one of the two tests fails.
 func TestPoseGolden(t *testing.T) {
 	i := build(t, "furball", map[string]any{"missiles": true}, 2)
 	me := i.aircraft[0]
@@ -153,8 +155,40 @@ func TestPoseGolden(t *testing.T) {
 	me.model.State.Attitude = flight.Axis(flight.Vec3{Y: 1}, 5*math.Pi/180).Multiply(flight.Axis(flight.Vec3{Z: 1}, 14*math.Pi/180))
 	me.model.State.Fcs.Normal = 6.4
 	me.model.State.Gear.Wire = 1
-	want := "00000000000000000000000000eb7eae008a05950f7f0000d00731000093050f000000f0000e4002"
+	want := "005b7ec23db7cd043dbb2008bceb7eae008a05950f7f0000d00731000093050f000000f0000e4002"
 	if got := hex.EncodeToString(pose(0, me, me.model.State.Position)); got != want {
 		t.Errorf("pose bytes\n got %s\nwant %s (pose.test.ts decodes the wanted bytes)", got, want)
+	}
+}
+
+// Every record places a jet at its datum, the point its airframe is drawn
+// from, not at its centre of mass: hung stores pull the centre below the
+// datum, and a recipient drawing the airframe at the centre sank a loaded
+// jet's tyres 11-28 cm into the deck (#188). A spawn's payload and a wreck's
+// record are the same.
+func TestRecordsCarryTheDatum(t *testing.T) {
+	i := build(t, "furball", nil, 2)
+	a := i.aircraft[0]
+	a.model.Stores(a.model.Airframe.Default | 1<<uint(len(a.model.Airframe.Stores)-1))
+	a.model.State.Attitude = flight.Axis(flight.Vec3{Z: 1}, 0.3)
+	center := a.model.Center()
+	if center.Y > -0.01 {
+		t.Fatalf("the loaded jet's centre %+v lies within a centimetre of the datum: the test needs a store that moves it", center)
+	}
+	want := a.model.State.Position.Subtract(a.model.State.Attitude.Rotate(center))
+	origin := flight.Vec3{X: 10, Y: 2, Z: -3}
+	read := func(b []byte, at int) flight.Vec3 {
+		f := func(k int) float64 { return float64(math.Float32frombits(binary.LittleEndian.Uint32(b[at+k:]))) }
+		return flight.Vec3{X: f(0), Y: f(4), Z: f(8)}.Add(origin)
+	}
+	if got := read(pose(0, a, origin), 1); got.Subtract(want).Length() > 1e-3 {
+		t.Errorf("pose at %+v, want the datum %+v (the centre of mass is %+v)", got, want, a.model.State.Position)
+	}
+	if at := state_payload(a.model)["position"].([]float64); (flight.Vec3{X: at[0], Y: at[1], Z: at[2]}).Subtract(want).Length() > 1e-9 {
+		t.Errorf("spawn payload at %v, want the datum %+v", at, want)
+	}
+	i.wrecks = append(i.wrecks, &wreck{model: a.model})
+	if got := read(i.derelicts(1, origin), 0); got.Subtract(want).Length() > 1e-3 {
+		t.Errorf("wreck at %+v, want the datum %+v", got, want)
 	}
 }

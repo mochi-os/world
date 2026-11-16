@@ -160,6 +160,41 @@ func (m *Model) probes(s *State) {
 	}
 }
 
+// slot is the catapult whose shuttle the crew would hook the jet up to as it
+// stands, or -1: its nose leg within reach of the shuttle, on the track line
+// and pointing down it, and the jet at no more than a walk over the deck.
+func (m *Model) slot(s *State) int {
+	c := m.World.Carrier
+	if c == nil {
+		return -1
+	}
+	relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.place))
+	if relative.Length() > 4 {
+		return -1
+	}
+	nose := s.Position.Add(s.Attitude.Rotate(m.Airframe.Gear.Nose.Attach.Subtract(m.center)))
+	forward := s.Attitude.Rotate(Vec3{X: 1})
+	for i := range c.Catapults {
+		shuttle := c.world(c.Catapults[i].Position, s.Time, m.place)
+		dx := shuttle.X - nose.X
+		dz := shuttle.Z - nose.Z
+		if dx*dx+dz*dz >= capture*capture {
+			continue
+		}
+		// The crew only hook up an ALIGNED aircraft, its nose gear on the track
+		// line and pointing down it - the launch bar has to drop into the
+		// shuttle. A 25° gate on proximity alone let the slot haul a crossing
+		// jet's nose sideways, which swung it into a 20° crab that mil power
+		// then rolled over (the holdback is a jackknife under thrust).
+		track := c.track(c.Catapults[i].Heading, s.Time, m.place)
+		if math.Abs(dx*track.Z-dz*track.X) > lateral || forward.X*track.X+forward.Z*track.Z < aligned {
+			continue
+		}
+		return i
+	}
+	return -1
+}
+
 // catapult handles attach (roll slowly over a shuttle, gear down), fire
 // (Launch while held back), stroke advance, and end-of-stroke release.
 func (m *Model) catapult(s *State, in Inputs) {
@@ -193,30 +228,9 @@ func (m *Model) catapult(s *State, in Inputs) {
 		if in.Yaw > 0.5 || in.Yaw < -0.5 {
 			return // steering away is not asking to hook up
 		}
-		relative := s.Velocity.Subtract(c.velocity(s.Position, s.Time, m.place))
-		if relative.Length() > 4 {
-			return
-		}
-		forward := s.Attitude.Rotate(Vec3{X: 1})
-		for i := range c.Catapults {
-			shuttle := c.world(c.Catapults[i].Position, s.Time, m.place)
-			dx := shuttle.X - nose.X
-			dz := shuttle.Z - nose.Z
-			if dx*dx+dz*dz >= capture*capture {
-				continue
-			}
-			// The crew only hook up an ALIGNED aircraft, its nose gear on the track
-			// line and pointing down it - the launch bar has to drop into the
-			// shuttle. A 25° gate on proximity alone let the slot haul a crossing
-			// jet's nose sideways, which swung it into a 20° crab that mil power
-			// then rolled over (the holdback is a jackknife under thrust).
-			track := c.track(c.Catapults[i].Heading, s.Time, m.place)
-			if math.Abs(dx*track.Z-dz*track.X) > lateral || forward.X*track.X+forward.Z*track.Z < aligned {
-				continue
-			}
+		if i := m.slot(s); i >= 0 {
 			s.Gear.Catapult = i
 			s.Gear.Stroke = -1
-			return
 		}
 		return
 	}

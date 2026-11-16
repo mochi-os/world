@@ -177,15 +177,18 @@ func ramp(fraction float64) float64 {
 
 // propulsion adds engine forces for a trial state.
 func (m *Model) propulsion(s *State, total *Forces, local Air) {
-	v := s.Attitude.Unrotate(s.Velocity.Subtract(m.gust))
-	mach := v.Length() / local.Sound
 	for i := range m.Airframe.Engines {
-		engine := &m.Airframe.Engines[i]
-		dry, boost := output(s.Engine[i], engine, local.Density, mach)
-		force := Vec3{X: (dry + boost) * m.State.Damage.engine(i)}
+		force := Vec3{X: m.thrust(s, local, i)}
 		total.Force = total.Force.Add(force)
-		total.Moment = total.Moment.Add(engine.Position.Subtract(m.center).Cross(force))
+		total.Moment = total.Moment.Add(m.Airframe.Engines[i].Position.Subtract(m.center).Cross(force))
 	}
+}
+
+// thrust is one engine's push along the body's x axis for a state, N.
+func (m *Model) thrust(s *State, local Air, i int) float64 {
+	v := s.Attitude.Unrotate(s.Velocity.Subtract(m.gust))
+	dry, boost := output(s.Engine[i], &m.Airframe.Engines[i], local.Density, v.Length()/local.Sound)
+	return (dry + boost) * m.State.Damage.engine(i)
 }
 
 // burn decrements fuel by the flow the condition demands. The engines draw on

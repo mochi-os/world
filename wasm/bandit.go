@@ -23,9 +23,9 @@ import (
 
 var (
 	bandit *air.Bandit
-	mirror [flight.Size + 1]float64 // player state + a flags word (1 firing, 2 alive, 4 the jammer radiating)
-	back   [flight.Size + 5]float64 // bandit state out, plus the instrument tail (alpha, beta, nz, mach, cas) at the ownship's own indices
-	shots  [64]float64              // up to eight rounds in the air, eight words each: position, velocity, shooter, phase
+	mirror [flight.Size + 1]float64     // player state + a flags word (1 firing, 2 alive, 4 the jammer radiating)
+	back   [flight.Size + extra]float64 // bandit state out, plus the instrument tail at the ownship's own indices: alpha, beta, nz, mach, cas, and the centre of mass (the three between and the rest after unused)
+	shots  [64]float64                  // up to eight rounds in the air, eight words each: position, velocity, shooter, phase
 )
 
 func bandits() map[string]any {
@@ -125,6 +125,8 @@ func bandit_coast(this js.Value, arguments []js.Value) any {
 	bandit.Coast(arguments[0].Float())
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
+	center := bandit.Model().Center()
+	back[flight.Size+8], back[flight.Size+9], back[flight.Size+10] = center.X, center.Y, center.Z
 	send(back[:], arguments[1])
 	return 0
 }
@@ -144,6 +146,8 @@ func bandit_step(this js.Value, arguments []js.Value) any {
 	lay(enemy, bandit.Model())
 	bandit.State().Encode(back[:flight.Size])
 	back[flight.Size], back[flight.Size+1], back[flight.Size+2], back[flight.Size+3], back[flight.Size+4] = bandit.Instruments()
+	center := bandit.Model().Center()
+	back[flight.Size+8], back[flight.Size+9], back[flight.Size+10] = center.X, center.Y, center.Z
 	send(back[:], arguments[0])
 	flags := 0
 	if fire {

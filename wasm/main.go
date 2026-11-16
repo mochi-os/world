@@ -41,7 +41,7 @@ import (
 )
 
 // Extra is the instrument tail appended to the encoded state.
-const extra = 8
+const extra = 13
 
 // ring is the prediction history: one slot per input sequence.
 const ring = 512
@@ -294,6 +294,14 @@ func emit(view js.Value) {
 	output[flight.Size+5] = power
 	output[flight.Size+6] = stage
 	output[flight.Size+7] = model.Spin()
+	// The centre of mass from the datum, body axes: the host draws and places
+	// the airframe from its datum, Position less the attitude's turn of this
+	center := model.Center()
+	output[flight.Size+8], output[flight.Size+9], output[flight.Size+10] = center.X, center.Y, center.Z
+	// How it stands at rest on level ground under its weight, and on a
+	// catapult its thrust against the holdback: the datum's height and the
+	// pitch, where a host places a jet on the ground
+	output[flight.Size+11], output[flight.Size+12] = model.Rest()
 	send(output[:], view)
 }
 

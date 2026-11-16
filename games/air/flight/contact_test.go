@@ -7,6 +7,7 @@
 package flight
 
 import (
+	"fmt"
 	"math"
 	"testing"
 )
@@ -66,6 +67,81 @@ func TestRest(t *testing.T) {
 	}
 	if math.IsNaN(m.State.Position.Y) {
 		t.Fatal("diverged")
+	}
+}
+
+// TestStandsAtRest: a jet placed as Rest has it stands there: on the runway
+// with its brakes held, and on a catapult at military power against the
+// holdback, clean or with every store hung. The datum at Rest's height and
+// the attitude at its pitch, it neither falls, rises nor rocks once its
+// weight is on the wheels (#188: placed at a clean jet's stance, a loaded one
+// fell 3 cm, and placed with its centre of mass there, 20; on the catapult,
+// rested on its weight alone, the thrust against the holdback stood it up
+// 1.9 cm).
+func TestStandsAtRest(t *testing.T) {
+	for _, catapult := range []bool{false, true} {
+		for _, loaded := range []bool{false, true} {
+			name := fmt.Sprintf("catapult %v, loaded %v", catapult, loaded)
+			m := New(Fighter, Environment{Frame: scene, Chart: scene}, harbor())
+			if loaded {
+				m.Stores(1<<uint(len(m.Airframe.Stores)) - 1)
+			}
+			// spawned as a host spawns it: not yet hooked up, its engines at
+			// the lever's power, then placed by its datum
+			spot := Vec3{Z: 8000} // on the runway
+			in := Inputs{Gear: true, Brake: true}
+			if catapult {
+				spot = Vec3{X: 48 - m.Airframe.Gear.Nose.Attach.X, Z: -0.6} // the nose leg over the shuttle
+				in = Inputs{Gear: true, Throttle: 1}
+			}
+			park(m, spot.X, spot.Z)
+			if catapult {
+				m.State.Engine[0] = EngineState{Spool: 1}
+				m.State.Engine[1] = EngineState{Spool: 1}
+			}
+			ground, _, _, found := m.World.surface(Vec3{X: spot.X, Y: 25, Z: spot.Z}, 0, m.place)
+			if !found {
+				t.Fatalf("%s: no surface under the spot", name)
+			}
+			m.State.Position = Vec3{X: spot.X, Y: ground + 2.5, Z: spot.Z}
+			height, pitch := m.Rest()
+			if height < 2 || height > 3 || math.Abs(pitch) > 0.02 {
+				t.Fatalf("%s: rest at %.3f m, pitch %.4f rad: not a standing jet", name, height, pitch)
+			}
+			m.State.Attitude = Axis(Vec3{Z: 1}, pitch)
+			datum := func() float64 { return m.State.Position.Subtract(m.State.Attitude.Rotate(m.Center())).Y }
+			m.State.Position = Vec3{X: spot.X, Y: ground + height, Z: spot.Z}.Add(m.State.Attitude.Rotate(m.Center()))
+			start := datum()
+			low, high := start, start
+			for i := 0; i < 240*3; i++ {
+				m.Step(in)
+				low = math.Min(low, datum())
+				high = math.Max(high, datum())
+			}
+			if catapult && m.State.Gear.Catapult != 0 {
+				t.Fatalf("%s: not hooked up: %d", name, m.State.Gear.Catapult)
+			}
+			// On the catapult the holdback is a spring the thrust stretches 0.4 m
+			// as the jet surges onto it (holdback), and until it carries the
+			// whole thrust the couple is part made: the jet rocks 6 mm on its
+			// struts while it takes up the stretch, then stands where Rest put it.
+			rock := 0.005
+			if catapult {
+				rock = 0.01
+			}
+			if fall := start - low; fall > rock {
+				t.Errorf("%s: fell %.3f m below where it was placed", name, fall)
+			}
+			if rise := high - start; rise > rock {
+				t.Errorf("%s: rose %.3f m above where it was placed", name, rise)
+			}
+			if settle := math.Abs(datum() - start); settle > 0.005 {
+				t.Errorf("%s: settled %.3f m from where it was placed", name, settle)
+			}
+			if turned := math.Abs(math.Asin(m.State.Attitude.Rotate(Vec3{X: 1}).Y) - pitch); turned > 0.002 {
+				t.Errorf("%s: pitched %.4f rad from its rest", name, turned)
+			}
+		}
 	}
 }
 

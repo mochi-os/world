@@ -129,6 +129,29 @@ func TestFuelShift(t *testing.T) {
 	}
 }
 
+// TestCenter: the centre of mass a host draws the airframe from is the one the
+// step flies about, before any step and after the stores change, and a store
+// hung below the datum pulls it down by its share of the mass.
+func TestCenter(t *testing.T) {
+	a := block()
+	a.Mass.Fuel = 0
+	a.Stores = []Store{{Name: "tank", Position: Vec3{X: 0.5, Y: -1}, Mass: 250}}
+	m := New(a, Environment{Frame: scene, Chart: scene}, World{})
+	if c := m.Center(); c != (Vec3{}) {
+		t.Fatalf("clean: centre %+v, want the empty jet's, the datum", c)
+	}
+	m.Stores(1)
+	got := m.Center()
+	want := Vec3{X: 0.5 * 250 / 1250, Y: -250.0 / 1250}
+	if math.Abs(got.X-want.X) > 1e-12 || math.Abs(got.Y-want.Y) > 1e-12 || got.Z != 0 {
+		t.Fatalf("loaded, before a step: centre %+v, want %+v", got, want)
+	}
+	m.Step(Inputs{})
+	if m.Center() != m.center {
+		t.Fatalf("after a step: Center %+v, the step's %+v", m.Center(), m.center)
+	}
+}
+
 // TestAllocations: the hot path must not allocate.
 func TestAllocations(t *testing.T) {
 	m := New(block(), Environment{Frame: scene, Chart: scene}, World{})

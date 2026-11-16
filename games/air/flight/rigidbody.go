@@ -382,15 +382,76 @@ func (m *Model) shake(local Air) {
 	m.State.Buffet = onset * (0.7 + 0.3*loading(alpha)) * felt
 }
 
-// weigh caches mass, combined CG, and the inertia tensor (and inverse) for the
-// step. External fuel rides at the attached tanks, each group's split over its
+// Center is the centre of mass from the datum, body axes, metres: the point the
+// state's Position is, in the airframe the jet is drawn in. A host draws the
+// airframe from its datum, Position less the attitude's turn of this. It is
+// weighed from the state now, so it holds before the first step and after a
+// host replaces the state, and it changes nothing the step reads.
+func (m *Model) Center() Vec3 {
+	_, center, _, _ := m.balance()
+	return center
+}
+
+// Rest is how the airframe stands at rest on level ground under its weight
+// now: its datum's height over the ground, metres, and its pitch, radians nose
+// up. Each strut is pushed in until together they carry the weight with no
+// turn about the centre of mass: the nose leg carries the share its distance
+// from the mains puts on it, the mains the rest, each in by its share over its
+// stiffness. A host places a jet on the ground here, at the centre of mass the
+// datum's place gives (Center), and it stands without falling or rocking.
+// Held on a catapult's holdback, or standing where the crew would hook it up
+// (slot), the engines' thrust against the holdback is a couple too: the
+// holdback pulls at the nose leg's height as the power comes up (holdback),
+// the engines push at theirs, and at military power that couple stands the
+// mains up 2 cm as it moves weight onto the nose leg.
+func (m *Model) Rest() (height, pitch float64) {
+	g := &m.Airframe.Gear
+	mains := (g.Left.Attach.X + g.Right.Attach.X) / 2
+	if g.Nose.Stiffness <= 0 || g.Left.Stiffness <= 0 || g.Right.Stiffness <= 0 || g.Nose.Attach.X == mains {
+		return 0, 0 // no undercarriage to stand on
+	}
+	mass, center, _, _ := m.balance()
+	weight := mass * m.Gravity
+	nose := (weight*(center.X-mains) - m.restrained(center)) / (g.Nose.Attach.X - mains)
+	in := (weight - nose) / 2 * (1/g.Left.Stiffness + 1/g.Right.Stiffness) / 2 // the mains' mean compression
+	low := (g.Left.Attach.Y + g.Right.Attach.Y) / 2
+	// each contact at the depth its compression gives: height + y + x*pitch = -in
+	pitch = (in - nose/g.Nose.Stiffness + low - g.Nose.Attach.Y) / (g.Nose.Attach.X - mains)
+	return -in - low - mains*pitch, pitch
+}
+
+// restrained is the nose-up moment the holdback and the engines' thrust against it
+// put on the airframe at rest, N m about any point (the two pull level and
+// cancel: a couple), with its centre of mass at center; 0 unless the jet is
+// held on a catapult or stands where it would be hooked up.
+func (m *Model) restrained(center Vec3) float64 {
+	s := &m.State
+	if s.Gear.Catapult < 0 && (s.Gear.Stroke <= -2 || s.Gear.Extension < 0.95 || m.slot(s) < 0) {
+		return 0
+	}
+	if s.Gear.Catapult >= 0 && s.Gear.Stroke >= 0 {
+		return 0 // fired: the shuttle tows, nothing holds
+	}
+	local := air(s.Position.Y, m.Environment)
+	power := clamp((s.Engine[0].Spool-0.2)/0.5, 0, 1)
+	hold := (m.Airframe.Gear.Nose.Attach.Y - center.Y) * power // the holdback's height over the centre (holdback)
+	couple := 0.0
+	for i := range m.Airframe.Engines {
+		couple += m.thrust(s, local, i) * (hold - (m.Airframe.Engines[i].Position.Y - center.Y))
+	}
+	return couple
+}
+
+// balance is the flown mass and its centre (Center), with the empty
+// structure's mass and the external tanks' holding that weigh() goes on with.
+// External fuel rides at the attached tanks, each group's split over its
 // tanks by capacity: a group's tanks drain in step.
-func (m *Model) weigh() {
+func (m *Model) balance() (mass float64, center Vec3, empty float64, held Tanks) {
 	a := m.Airframe
 	fuel := m.State.Fuel
-	empty := math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
-	held := m.capacity(m.stores)
-	m.mass = empty + fuel
+	empty = math.Max(a.Mass.Empty*0.7, a.Mass.Empty-m.State.Damage.Loss) // shed structure leaves; the floor keeps the model sane
+	held = m.capacity(m.stores)
+	mass = empty + fuel
 	moment := a.Center.Scale(empty).Add(a.Tank.Scale(fuel))
 	for i := range a.Stores {
 		if m.stores&(1<<uint(i)) == 0 {
@@ -401,10 +462,20 @@ func (m *Model) weigh() {
 		if store.Fuel > 0 {
 			carried += m.share(store, held)
 		}
-		m.mass += carried
+		mass += carried
 		moment = moment.Add(store.Position.Scale(carried))
 	}
-	m.center = moment.Scale(1 / m.mass).Add(m.State.Damage.Shift)
+	return mass, moment.Scale(1 / mass).Add(m.State.Damage.Shift), empty, held
+}
+
+// weigh caches mass, combined CG (balance), and the inertia tensor (and
+// inverse) for the step.
+func (m *Model) weigh() {
+	a := m.Airframe
+	fuel := m.State.Fuel
+	var empty float64
+	var held Tanks
+	m.mass, m.center, empty, held = m.balance()
 	// Parallel-axis: empty tensor is about the empty CG; move every mass to
 	// the combined CG. The empty tensor is deliberately NOT reduced with
 	// Loss — a conservative, documented approximation.

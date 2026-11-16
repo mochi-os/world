@@ -890,7 +890,8 @@ func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) boo
 // state_payload is one aircraft's snapshot entry: the legacy derived fields
 // every client renders from, the world velocity, and the full encoded core
 // state whose own entry feeds the sender's prediction replay.
-func state_payload(s *flight.State) map[string]any {
+func state_payload(m *flight.Model) map[string]any {
+	s := &m.State
 	direction := s.Velocity.Normalize()
 	if s.Velocity.Length() < 1 {
 		direction = s.Attitude.Rotate(flight.Vec3{X: 1})
@@ -921,8 +922,9 @@ func state_payload(s *flight.State) map[string]any {
 		}
 		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
 	}
+	at := datum(m) // where a spawn is placed and drawn from; the core words carry the centre of mass
 	return map[string]any{
-		"position":  []float64{s.Position.X, s.Position.Y, s.Position.Z},
+		"position":  []float64{at.X, at.Y, at.Z},
 		"direction": []float64{direction.X, direction.Y, direction.Z},
 		"attitude":  []float64{s.Attitude.W, s.Attitude.X, s.Attitude.Y, s.Attitude.Z},
 		"speed":     s.Velocity.Length(),
@@ -1022,11 +1024,11 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 			b.arm()
 			b.rearm()
 			b.alive = true
-			i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&b.model.State)})
+			i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(b.model)})
 		}
 	}
 	waiting := i.mode == "joust" && !i.started
-	welcome := map[string]any{"state": state_payload(&a.model.State), "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
+	welcome := map[string]any{"state": state_payload(a.model), "model": flight.Version, "aircraft": kind, "waiting": waiting, "mode": i.mode,
 		"map": map[string]any{"name": i.chart.name, "hash": i.chart.hash}, "ship": i.voyage(), "wind": []float64{i.environment.Wind.X, i.environment.Wind.Y, i.environment.Wind.Z}}
 	if i.mode == "teams" {
 		welcome["team"] = team
@@ -1392,7 +1394,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 					a.brain.reborn()
 				}
 				a.alive = true
-				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(&a.model.State)})
+				i.events = append(i.events, map[string]any{"kind": "respawn", "slot": slot, "state": state_payload(a.model)})
 			}
 			continue
 		}
@@ -2522,14 +2524,21 @@ const (
 	roving = 6  // far-tail remotes rotated through per snapshot (sized with the sticky set + missiles to fit the poses datagram)
 )
 
+// datum is where an aircraft's airframe is drawn from: its state's Position is
+// its centre of mass, which its fuel and stores move about the datum.
+func datum(m *flight.Model) flight.Vec3 {
+	return m.State.Position.Subtract(m.State.Attitude.Rotate(m.Center()))
+}
+
 // pose packs one aircraft into the pose_record-byte wire record. Its position
-// is from origin, the recipient's own: a 32-bit float holds the earth's whole
-// size to a metre and a half, and a neighbour's offset to a centimetre.
+// is its datum (datum), from origin, the recipient's own: a 32-bit float holds
+// the earth's whole size to a metre and a half, and a neighbour's offset to a
+// centimetre.
 func pose(slot int, a *craft, origin flight.Vec3) []byte {
 	s := &a.model.State
 	b := make([]byte, pose_record)
 	b[0] = byte(slot)
-	offset := s.Position.Subtract(origin)
+	offset := datum(a.model).Subtract(origin)
 	binary.LittleEndian.PutUint32(b[1:], math.Float32bits(float32(offset.X)))
 	binary.LittleEndian.PutUint32(b[5:], math.Float32bits(float32(offset.Y)))
 	binary.LittleEndian.PutUint32(b[9:], math.Float32bits(float32(offset.Z)))
@@ -2779,7 +2788,7 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 			// through the pose blob below, not through a core.
 			continue
 		}
-		entry := state_payload(&me.model.State)
+		entry := state_payload(me.model)
 		cores[self] = entry["core"]
 		// Interest management: everyone else sorted by wrap distance; the
 		// nearest `near` every snapshot, the far tail rotated `roving` at a
@@ -2902,18 +2911,19 @@ func (i *instance) Snapshot(tick uint64) map[string]any {
 	}
 	var anchor flight.Vec3
 	if limit > 0 {
-		anchor = i.wrecks[0].model.State.Position
+		anchor = datum(i.wrecks[0].model)
 	}
 	return map[string]any{"wrecks": i.derelicts(limit, anchor), "anchor": []float64{anchor.X, anchor.Y, anchor.Z}, "cores": cores, "poses": poses}
 }
 
-// derelicts packs the first limit wrecks into wreck_record-byte records.
+// derelicts packs the first limit wrecks into wreck_record-byte records, each
+// at its datum (datum).
 func (i *instance) derelicts(limit int, origin flight.Vec3) []byte {
 	derelicts := make([]byte, 0, limit*wreck_record)
 	for _, w := range i.wrecks[:limit] {
 		s := &w.model.State
 		var d [wreck_record]byte
-		offset := s.Position.Subtract(origin)
+		offset := datum(w.model).Subtract(origin)
 		binary.LittleEndian.PutUint32(d[0:], math.Float32bits(float32(offset.X)))
 		binary.LittleEndian.PutUint32(d[4:], math.Float32bits(float32(offset.Y)))
 		binary.LittleEndian.PutUint32(d[8:], math.Float32bits(float32(offset.Z)))
