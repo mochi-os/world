@@ -124,6 +124,43 @@ func TestLevelAfterFlight(t *testing.T) {
 	}
 }
 
+// TestPower: the book of power for the approach is Approach's own trim for the
+// jet as it is - its fuel and its stores - and reading it leaves the flying
+// state where it was.
+func TestPower(t *testing.T) {
+	env := Environment{Frame: scene, Chart: scene, Seed: 1}
+	m := New(Fighter, env, World{})
+	m.State = Level(m, Vec3{Y: 1500}, Vec3{X: 1}, 180, 2041)
+	position, velocity, fuel, clock := m.State.Position, m.State.Velocity, m.State.Fuel, m.State.Time
+	for _, degrees := range []float64{0, -3.5} {
+		throttle, speed := m.Power(120, degrees*math.Pi/180)
+		fresh := New(Fighter, env, World{})
+		state, want := Approach(fresh, Vec3{Y: 120}, Vec3{X: 1}, degrees*math.Pi/180, 2041)
+		if math.Abs(throttle-want) > 1e-4 || math.Abs(speed-state.Velocity.Length()) > 0.01 {
+			t.Errorf("path %.1f: power %.4f at %.2f m/s, Approach trims %.4f at %.2f (%.2g, %.2g)", degrees, throttle, speed, want, state.Velocity.Length(), throttle-want, speed-state.Velocity.Length())
+		}
+	}
+	if m.State.Position != position || m.State.Velocity != velocity || m.State.Fuel != fuel || m.State.Time != clock {
+		t.Fatalf("reading the book moved the flying jet")
+	}
+	level, _ := m.Power(120, 0)
+	sloped, _ := m.Power(120, -3.5*math.Pi/180)
+	if !(sloped < level) {
+		t.Errorf("the slope takes %.4f, level %.4f: a descent should take less", sloped, level)
+	}
+	heavy := New(Fighter, env, World{})
+	heavy.State.Fuel = 4900
+	if more, _ := heavy.Power(120, 0); !(more > level) {
+		t.Errorf("4,900 kg of fuel takes %.4f level, 2,041 kg %.4f: weight should take more", more, level)
+	}
+	bare := New(Fighter, env, World{})
+	bare.State.Fuel = 2041
+	bare.Stores(0)
+	if clean, _ := bare.Power(120, 0); !(clean < level) {
+		t.Errorf("with no stores the level power is %.4f against %.4f with the airframe's own: stores should cost power", clean, level)
+	}
+}
+
 // TestApproachInWind: Approach spawns on-speed through the air whichever way
 // the wind blows, as Level does, and the jet stays there. It spawned at its
 // on-speed figure over the ground, so the Case II start, level at 1,200 ft into

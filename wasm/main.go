@@ -80,6 +80,7 @@ func main() {
 		"footing":  guard(footing),
 		"reframe":  guard(reframe),
 		"approach": guard(approach),
+		"power":    guard(power),
 		"cruise":   guard(cruise),
 		"climb":    guard(climb),
 		"clear":    guard(clear),
@@ -468,6 +469,18 @@ func approach(this js.Value, arguments []js.Value) any {
 	state, throttle := flight.Approach(model, position, direction, -arguments[5].Float()*math.Pi/180, arguments[6].Float())
 	model.State = state
 	return throttle
+}
+
+// power reports [throttle, true airspeed m/s] for an on-speed path of slope
+// degrees (positive descending, as approach takes it) at an altitude (m), for
+// the jet as it is now: the book a scripted pilot flies the approach's power
+// from. The flying state is untouched.
+func power(this js.Value, arguments []js.Value) any {
+	if model == nil {
+		return []any{0.0, 0.0}
+	}
+	throttle, speed := model.Power(arguments[0].Float(), -arguments[1].Float()*math.Pi/180)
+	return []any{throttle, speed}
 }
 
 // cruise reports trimmed level flight on dry power at an altitude (m) and Mach

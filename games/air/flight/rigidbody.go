@@ -49,6 +49,7 @@ type Model struct {
 	// never run on the flying one.
 	static   *Model
 	cruise   *Model // Cruise's scratch model, for the same reason: its trim solve composes its own state
+	book     *Model // Power's scratch model, for the same reason: Approach composes its own state
 	fitAlpha float64
 	fitClock float64
 	rolling  float64 // ground-gains hold, s: weight-on-wheels keyed the law directly and a strut bounce flickered it mid-rollout (#86)

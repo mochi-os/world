@@ -139,6 +139,24 @@ func (m *Model) Cruise(altitude float64, mach float64) (flow float64, speed floa
 	return flow, speed, true
 }
 
+// Power reports the throttle and true airspeed of an on-speed path (radians,
+// negative descending) at an altitude (m), for the jet as it is now - its fuel,
+// stores, external tanks and damage - as Approach would trim them: a pilot's
+// book of power for the approach, read off the model itself so that it follows
+// the airframe. Worked on a scratch model: the flying state is untouched.
+func (m *Model) Power(altitude float64, path float64) (throttle float64, speed float64) {
+	if m.book == nil {
+		m.book = New(m.Airframe, m.Environment, World{Sea: -1e6})
+	}
+	b := m.book
+	b.Environment = m.Environment
+	b.stores = m.stores
+	b.State.External = m.State.External
+	b.State.Damage = m.State.Damage
+	state, throttle := Approach(b, Vec3{Y: altitude}, Vec3{X: 1}, path, m.State.Fuel)
+	return throttle, state.Velocity.Length()
+}
+
 // flat solves the level-flight trim Cruise and Climb share, on the scratch
 // model loaded as the jet is: the core fraction that holds it level and the
 // true airspeed. Not ok as Cruise is not.

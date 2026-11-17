@@ -20,6 +20,15 @@ const (
 	aloft        = 0.6   // fractional wind increase from boundary layer to 10 km
 	gusts        = 8     // sinusoid components per turbulence axis
 	burble_reach = 800.0 // m astern of the island the burble extends
+	// The burble's strength as shares of the wind over the deck, from the
+	// wind-tunnel mapping of a carrier's airwake (Cherry and Constantino, The
+	// Burble Effect): the island takes the speed deficit astern from 17% to
+	// nearly 30%, and turns the flow down 5-8 degrees at the deck edge, so the
+	// downwash is at most tan 8 degrees of it. At 0.4 the groove met 3-4 m/s of
+	// sink in its last 100 m, doubling the slope's own, and the scripted pilots
+	// struck the ramp.
+	burble_deficit  = 0.3
+	burble_downwash = 0.14
 )
 
 // mix is a SplitMix64-style integer mixer: the deterministic noise source.
@@ -137,8 +146,8 @@ func field(home Vec3, height float64, time float64, env Environment, carrier *Ca
 			forward := back.Vector(attitude.Rotate(Vec3{X: 1}))
 			over := forward.Scale(-carrier.Way(time)).Subtract(mean).Length() // wind over deck
 			fade := (1 - behind/burble_reach) * (1 - lateral/60) * math.Exp(-deck.Y/25)
-			mean = mean.Add(forward.Scale(0.3 * over * fade))                                       // deficit along the deck wind
-			mean = mean.Subtract(back.Vector(attitude.Rotate(Vec3{Y: 1})).Scale(0.4 * over * fade)) // the sink in the groove
+			mean = mean.Add(forward.Scale(burble_deficit * over * fade))                                        // deficit along the deck wind
+			mean = mean.Subtract(back.Vector(attitude.Rotate(Vec3{Y: 1})).Scale(burble_downwash * over * fade)) // the sink in the groove
 		}
 	}
 	return mean

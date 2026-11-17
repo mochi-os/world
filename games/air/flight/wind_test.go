@@ -88,3 +88,35 @@ func TestBurble(t *testing.T) {
 		t.Fatalf("no burble sink: %f vs %f", with.Y, without.Y)
 	}
 }
+
+// TestBurbleStrength: the burble's sink is never more than the downwash the
+// wind tunnel measured behind a carrier's island, 8 degrees of the wind over
+// the deck, and it peaks near that close astern of the deck; its deficit never
+// more than 30% of the wind.
+func TestBurbleStrength(t *testing.T) {
+	env := breeze()
+	env.Turbulence = 0
+	boat := &Carrier{Chart: scene, Position: Vec3{Y: 19}, Heading: 0, Speed: 0}
+	env.Wind = Vec3{X: -14.4} // 28 kt down the deck, as the ship steams for (ship.Over)
+	over := 14.4
+	deepest, slowest := 0.0, 0.0
+	for x := -10.0; x > -800; x -= 10 {
+		for _, y := range []float64{20, 22, 26, 35, 50} {
+			for _, z := range []float64{-40, -10, 0, 10, 40} {
+				p := Vec3{X: x, Y: y, Z: z}
+				with, without := wind(p, 0, env, boat), wind(p, 0, env, nil)
+				deepest = math.Max(deepest, without.Y-with.Y)
+				slowest = math.Max(slowest, without.Subtract(with).Dot(Vec3{X: -1}))
+			}
+		}
+	}
+	if limit := math.Tan(8*math.Pi/180) * over; deepest > limit+1e-9 {
+		t.Errorf("the burble sinks the air %.2f m/s at 28 kt over the deck, past the measured downwash's %.2f", deepest, limit)
+	}
+	if deepest < 0.8*burble_downwash*over {
+		t.Errorf("the burble's sink peaks at %.2f m/s, short of its %.2f close astern", deepest, burble_downwash*over)
+	}
+	if slowest > 0.3*over+1e-9 || slowest < 0.8*0.3*over {
+		t.Errorf("the burble takes %.2f m/s off the wind over the deck; the island's deficit is up to 30%%, %.2f", slowest, 0.3*over)
+	}
+}
