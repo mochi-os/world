@@ -108,6 +108,7 @@ func TestBvrWide(t *testing.T) {
 			if !mirror && top.brain.skill.library <= low.brain.skill.library && !(top.brain.skill.machine && !low.brain.skill.machine) {
 				top, low = low, top
 			}
+			ends(top, low, seed)
 			decided := false
 			for tick := uint64(0); tick < 60*600 && !decided; tick++ {
 				i.Step(tick, nil)

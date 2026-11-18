@@ -420,6 +420,7 @@ func joust(t *testing.T, level string, seed uint64, pilot *lancer, seconds int, 
 		return fray{}
 	}
 	me, him := i.aircraft[0], i.aircraft[bandit]
+	ends(me, him, seed) // single player draws the pilot's end by a coin
 	f := fray{closest: math.Inf(1)}
 	f.carried = [2]int{len(stores_amraams(me.loadout)), len(stores_amraams(him.loadout))}
 	rack, magazine := him.amraams, me.amraams

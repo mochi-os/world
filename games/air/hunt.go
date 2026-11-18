@@ -607,10 +607,12 @@ func (i *instance) defend(slot int, a *craft, tick uint64) bool {
 	b.throttle, b.reheat = 1, 0
 	b.mode = "notch"
 	// A bloom is worth dispensing only outside the seeker's Resolve range, while
-	// the jet is in the seeker's notch, and never into the five cartridges each
+	// the jet is in the seeker's notch - judged level under the round, as the
+	// seeker judges it, not level under this jet: 20 km off the two frames' ups
+	// are 3 milliradians apart, a third of the clutter's edge - and never into the five cartridges each
 	// other inbound round will want. The 1.4 s cadence is measured: waiting for
 	// the seeker's Hold to expire leaves half-second gaps with no fresh cloud.
-	if a.clouded > 1.4 && span > round.Resolve && round.Notched(threat.position, a.model.State.Position, a.model.State.Velocity) && a.chaff > 5*(inbound-1) {
+	if a.clouded > 1.4 && span > round.Resolve && round.Masked(i.environment, threat.position, a.model.State.Position, a.model.State.Velocity) && a.chaff > 5*(inbound-1) {
 		b.bloom = true
 	}
 	// No bot arms its jammer: the superhuman flies the expert's doctrine, and the

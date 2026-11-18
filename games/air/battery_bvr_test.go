@@ -68,6 +68,7 @@ func TestBvrLadder(t *testing.T) {
 			if top == nil || low == nil {
 				t.Fatal("ladder roster wrong")
 			}
+			ends(top, low, seed)
 			decided := false
 			for tick := uint64(0); tick < 60*600 && !decided; tick++ {
 				i.Step(tick, nil)

@@ -856,9 +856,10 @@ func TestAmraamAlongTheNose(t *testing.T) {
 }
 
 // TestSeparation (#32): the BVR spawn distance is DERIVED from the round's
-// own ladder — head-on Rmax at the spawn state plus the fifteen-mile commit
-// buffer — so a flight-model retune moves the match geometry automatically.
-// This pins the relationship and the sanity band, not a number.
+// own ladder — head-on Rmax at the spawn state plus the commit buffer — so a
+// flight-model retune moves the match geometry automatically. This pins the
+// relationship and the sanity band, not a number: just outside Rmax, a few
+// seconds of closing before either can shoot.
 func TestSeparation(t *testing.T) {
 	ladder := round.Ladder(
 		round.Target{Position: flight.Vec3{Y: bvraltitude}, Velocity: rail(flight.Vec3{X: 1}, bvrspeed)},
@@ -872,22 +873,23 @@ func TestSeparation(t *testing.T) {
 	if apart < 45000 || apart > 120000 {
 		t.Fatalf("separation %.0f m outside the sanity band — the ladder or the spawn state moved a long way", apart)
 	}
-	// The organisation phase is real: from spawn, the pair closes for tens
-	// of seconds before either can be inside Rmax.
-	if organise := commit / (2 * bvrspeed); organise < 30 {
-		t.Fatalf("the commit buffer gives only %.0f s of closing before Rmax", organise)
+	// Neither can shoot at spawn, and the start is not far beyond: the pair
+	// closes for some seconds, not a minute, before either is inside Rmax.
+	if organise := commit / (2 * bvrspeed); organise < 5 || organise > 10 {
+		t.Fatalf("the commit buffer gives %.1f s of closing before Rmax, want 5-10", organise)
 	}
 }
 
 // TestOpening (#46): a BVR joust's start is drawn from a seed - each block
 // inside 15,000-35,000 ft, one speed, a hot start about a third of the time
 // and otherwise a 20-45 degree flank, inside the radar's scan - and opens far
-// enough apart that neither jet starts inside the other's Rmax.
+// enough apart that neither jet starts inside the other's Rmax, and near
+// enough that a fair share start inside both radars' reach.
 func TestOpening(t *testing.T) {
 	if Draw(7) != Draw(7) {
 		t.Fatal("one seed drew two openings: a match and its client would disagree")
 	}
-	hot, split := 0, 0
+	hot, split, seen := 0, 0, 0
 	for seed := uint64(1); seed <= 300; seed++ {
 		o := Draw(seed)
 		for _, h := range o.Altitude {
@@ -920,6 +922,17 @@ func TestOpening(t *testing.T) {
 		if o.Flank == 0 {
 			hot++
 		}
+		reached := true // each end inside the other's detection range from the first look (hunt.go detection)
+		for slot := 0; slot < 2; slot++ {
+			me, him := o.state(slot, o.Apart), o.state(1-slot, o.Apart)
+			line := him.Position.Subtract(me.Position).Normalize()
+			if o.Apart >= radar_base*aspect(line, him.Velocity)*(1-radar_clutter*round.Clutter(me.Position, him.Position)) {
+				reached = false
+			}
+		}
+		if reached {
+			seen++
+		}
 		if math.Abs(o.Altitude[0]-o.Altitude[1]) > 1500 {
 			split++
 		}
@@ -934,6 +947,11 @@ func TestOpening(t *testing.T) {
 	}
 	if split < 150 {
 		t.Errorf("only %d of 300 starts split the blocks by more than 1,500 m", split)
+	}
+	// Just outside Rmax, about a third of starts lie where both radars already
+	// reach; a fifteen-mile buffer put none there.
+	if seen < 60 {
+		t.Errorf("only %d of 300 starts inside both radars' reach", seen)
 	}
 	if h := headon(); h.Altitude != [2]float64{bvraltitude, bvraltitude} || h.Speed != bvrspeed || h.Flank != 0 || h.Apart != separation() {
 		t.Errorf("the pinned head-on start moved: %+v", h)

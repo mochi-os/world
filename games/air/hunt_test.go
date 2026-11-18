@@ -749,6 +749,48 @@ func TestDefendPassed(t *testing.T) {
 	}
 }
 
+// TestDefendChaffFrame: the bot dispenses chaff when the seeker will take it, and the
+// seeker judges the notch level under the round. 20 km off, the up under the
+// round leans 3 milliradians from the up under the jet, and the clutter's edge
+// is 10 milliradians wide, so over a band of heights the jet's own frame reads
+// it against the sky while the seeker has it against the sea.
+func TestDefendChaffFrame(t *testing.T) {
+	round_at := flight.Vec3{X: -20000, Y: 7000}
+	beam := flight.Vec3{Z: 250} // across the line: no radial speed
+	cover := flight.Environment{Frame: scene, Chart: scene}
+	height := 0.0 // the lowest height at which the seeker level under the round has the jet in the notch and the jet's own frame does not
+	for h := 5000.0; h < 7000; h++ {
+		if round.Masked(cover, round_at, flight.Vec3{Y: h}, beam) && !round.Notched(round_at, flight.Vec3{Y: h}, beam) {
+			height = h
+			break
+		}
+	}
+	if height == 0 {
+		t.Fatal("no height where the frames disagree: the scenario no longer tests the frame")
+	}
+	i, c, a, self := radar_pair(t) // the machine defends; the novice shoots
+	slot := -1
+	for _, s := range i.slots() {
+		if i.aircraft[s] == c {
+			slot = s
+		}
+	}
+	park(c, flight.Vec3{X: -60000, Y: 7000}, flight.Vec3{X: 250})
+	a.model.State.Position, a.model.State.Velocity, a.model.State.Attitude = flight.Vec3{Y: height}, beam, flight.Quat{W: 1}
+	a.brain.alerted, a.clouded, a.chaff, a.brain.bloom = 1, 10, 30, false
+	number := uint64(1)
+	for chance(i.environment.Seed, self, number, 1) < 0.5 { // an engagement that holds the beam, not the drag
+		number++
+	}
+	inbound := round.New(round_at, flight.Vec3{X: 900}, nil, cover, 0)
+	inbound.Phase = round.Active
+	i.flying = append(i.flying, &missile{radar: inbound, shooter: slot, target: self, position: round_at, velocity: flight.Vec3{X: 900}, life: 60, number: number})
+	i.defend(self, a, 600)
+	if !a.brain.bloom {
+		t.Errorf("holding the chaff at %.0f m, where the seeker level under the round has the jet in the notch and takes the cloud", height)
+	}
+}
+
 // TestRadarPicture: the bot fights from what it senses. While its STT holds it
 // has the jet as it is; once the lock is lost it has only its last look,
 // carried on by that look's velocity - a notch costs it the picture too.

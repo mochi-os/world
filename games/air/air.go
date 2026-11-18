@@ -68,16 +68,17 @@ const (
 
 // The BVR spawn block (#32): separation is DERIVED from the round's own
 // ladder, never hand-picked — head-on Rmax at the spawn state plus the
-// commit buffer (the P-825 shape: employment plus fifteen nautical miles of
-// organisation room). Geometry provides the pre-fight seconds, so there is
-// no countdown and no weapons hold: the closing run IS the commit phase,
-// and a flight-model retune moves the match geometry automatically
-// (TestSeparation pins the relationship). Spaced open respawns use half the
-// joust separation; anchored team walls use all of it.
+// commit buffer, two nautical miles: a few seconds of closing before either
+// can shoot, from a start near the radar's reach: about a third of the
+// openings start inside both radars' detection.
+// Geometry provides the pre-fight seconds, so there is no countdown and no
+// weapons hold, and a flight-model retune moves the match geometry
+// automatically (TestSeparation pins the relationship). Spaced open
+// respawns use half the joust separation; anchored team walls use all of it.
 const (
-	bvraltitude = 6096.0  // m (20,000 ft)
-	bvrspeed    = 272.0   // m/s (~M0.85 at the block): organised, fighting speed
-	commit      = 27780.0 // m (15 nmi): organisation room beyond head-on Rmax
+	bvraltitude = 6096.0 // m (20,000 ft)
+	bvrspeed    = 272.0  // m/s (~M0.85 at the block): organised, fighting speed
+	commit      = 3704.0 // m (2 nmi): the closing beyond head-on Rmax, about 7 s head-on at the block
 )
 
 // trades is a match's wind, single player's: 25 kt (12.9 m/s) from 070, the way

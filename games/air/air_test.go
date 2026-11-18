@@ -54,6 +54,25 @@ func ending(top, low *craft) string {
 	return ""
 }
 
+// ends puts each jet of a BVR ladder joust at each end of the line equally
+// often across the seeds: on an odd seed the pair trade places before the
+// first step. Slots fix the ends - the bots fill theirs in tier order, so the
+// stronger always took the same end, and a joined pilot always takes slot 0's -
+// and the ends are not equal. The match's wind strengthens and veers aloft,
+// lying roughly along the line, and two experts starting the jet downwind won
+// 20 of 24 fights with it, 17 of 24 with the wind reversed and 12 of 24 in
+// still air.
+func ends(a, b *craft, seed uint64) {
+	if seed%2 == 0 {
+		return
+	}
+	p, q := &a.model.State, &b.model.State
+	p.Position, q.Position = q.Position, p.Position
+	p.Velocity, q.Velocity = q.Velocity, p.Velocity
+	p.Attitude, q.Attitude = q.Attitude, p.Attitude
+	p.Omega, q.Omega = q.Omega, p.Omega
+}
+
 // TestEndingScoresATrade: a ladder fight where both jets fall in one step is a
 // trade, whichever jet a ladder looks at first, and a jet whose model was torn
 // down in the death step is down.
