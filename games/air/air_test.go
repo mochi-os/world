@@ -3271,6 +3271,43 @@ func TestAcquireSlaved(t *testing.T) {
 	}
 }
 
+// TestAcquireEarthCentred: in a match laid as the server lays one,
+// Earth-centred, the seeker's line is read as a direction of that frame - the
+// client must send it so. The same line given in the jet's own tangent frame,
+// the engine's, as the client once sent it, points the seeker nowhere near the
+// target, and every round it fires leaves unguided. The scene frame the other
+// tests fly in shares the tangent frame's axes near its anchor, which is why
+// they never saw the difference.
+func TestAcquireEarthCentred(t *testing.T) {
+	was := setting
+	setting.Frame, setting.Chart = flight.Frame{}, flight.Frame{}
+	defer func() { setting = was }()
+	i := build(t, "furball", map[string]any{"missiles": true}, 2)
+	if !i.environment.Theatre().Same(flight.Earth) {
+		t.Fatalf("the session is laid in %v, want the Earth-centred frame", i.environment.Theatre())
+	}
+	shooter := &i.aircraft[0].model.State
+	forward, right := shooter.Attitude.Rotate(flight.Vec3{X: 1}), shooter.Attitude.Rotate(flight.Vec3{Z: 1})
+	r := 20 * math.Pi / 180
+	target := &i.aircraft[1].model.State
+	target.Position = shooter.Position.Add(forward.Scale(math.Cos(r) * 1500)).Add(right.Scale(math.Sin(r) * 1500))
+	target.Attitude, target.Velocity = shooter.Attitude, shooter.Velocity // going away: the tailpipe toward the shooter
+	look := func(v flight.Vec3) {
+		v = v.Normalize()
+		a, e := math.Round(math.Atan2(v.Z, v.X)*180/math.Pi*100), math.Round(math.Asin(v.Y)*180/math.Pi*100)
+		i.aircraft[0].sight, i.aircraft[0].slaved = sighted(map[string]any{"seeker": []any{a, e}})
+	}
+	look(target.Position.Subtract(shooter.Position))
+	if got := i.acquire(0, i.aircraft[0]); got != 1 {
+		t.Errorf("a line in the match's own frame, at the jet 20° off the nose: acquired %d, want 1", got)
+	}
+	level := i.environment.Theatre().Level(shooter.Position)
+	look(level.Local(target.Position).Subtract(level.Local(shooter.Position)))
+	if got := i.acquire(0, i.aircraft[0]); got != -1 {
+		t.Errorf("the same line in the jet's tangent frame: acquired %d, want none - the frames do not differ here and the test proves nothing", got)
+	}
+}
+
 // TestStepSighted: the session takes the seeker's line from each batch's newest
 // sample, as it takes the status, and a batch whose newest sample has none
 // leaves the seeker on the nose cone.
