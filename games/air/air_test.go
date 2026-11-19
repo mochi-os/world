@@ -37,31 +37,61 @@ func heavy(t *testing.T) {
 }
 
 // ending reads a ladder fight after a step, from the stronger jet's side:
-// "won" when only the weaker is down, "lost" when only the stronger is,
-// "traded" when both fell in the same step, "" while both fly. A trade is
-// neither side's win: the ladders that tested one death first credited every
-// trade to whichever jet they tested.
-func ending(top, low *craft) string {
-	down := func(c *craft) bool { return c.model == nil || !c.alive }
-	switch {
-	case down(top) && down(low):
-		return "traded"
-	case down(low):
+// "won" or "lost" once it is decided, "traded" when both went down, "" until
+// then. A ladder fight is a joust's (reckon): the first kill decides it once
+// nothing the fallen jet left behind can still down the other, and the other
+// falling first is the trade - nobody's win. A joust keeps that rule itself; a
+// furball ladder borrows it here, holding the fallen jet out of its respawn.
+func ending(i *instance, top, low *craft) string {
+	seat := func(c *craft) int {
+		for slot, a := range i.aircraft {
+			if a == c {
+				return slot
+			}
+		}
+		return -1
+	}
+	if i.mode != "joust" && !i.finished {
+		switch d := i.decided; {
+		case d == nil && felled(top) && felled(low):
+			i.finish(-1, -1)
+		case d == nil && (felled(top) || felled(low)):
+			fallen, other := top, low
+			if felled(low) {
+				fallen, other = low, top
+			}
+			fallen.wait = math.Inf(1)
+			i.decided = &verdict{winner: seat(other), loser: seat(fallen)}
+		case d != nil && felled(i.aircraft[d.winner]):
+			i.finish(-1, -1)
+		}
+		i.settle(i.stepped)
+	}
+	if !i.finished {
+		return ""
+	}
+	switch i.results["winner"] {
+	case seat(top):
 		return "won"
-	case down(top):
+	case seat(low):
 		return "lost"
 	}
-	return ""
+	return "traded"
 }
+
+// felled is a jet down: dead, or its model torn down in the death tick.
+func felled(c *craft) bool { return c.model == nil || !c.alive }
 
 // ends puts each jet of a BVR ladder joust at each end of the line equally
 // often across the seeds: on an odd seed the pair trade places before the
 // first step. Slots fix the ends - the bots fill theirs in tier order, so the
 // stronger always took the same end, and a joined pilot always takes slot 0's -
-// and the ends are not equal. The match's wind strengthens and veers aloft,
-// lying roughly along the line, and two experts starting the jet downwind won
-// 20 of 24 fights with it, 17 of 24 with the wind reversed and 12 of 24 in
-// still air.
+// and the ends are not equal. The clutter notch is the sea's, so a jet
+// notching a round holds a beam over the ground, and with the match's wind
+// along the line that beam carries it away from the round through the air at
+// the east end and toward it at the west: the east jet stays pinned longer.
+// Two experts held to their ends split 16-32 to the west over 48 seeds, 23-25
+// in still air, and 25-23 with the notch judged and flown through the air.
 func ends(a, b *craft, seed uint64) {
 	if seed%2 == 0 {
 		return
@@ -73,31 +103,54 @@ func ends(a, b *craft, seed uint64) {
 	p.Omega, q.Omega = q.Omega, p.Omega
 }
 
-// TestEndingScoresATrade: a ladder fight where both jets fall in one step is a
-// trade, whichever jet a ladder looks at first, and a jet whose model was torn
-// down in the death step is down.
-func TestEndingScoresATrade(t *testing.T) {
-	jet := func(alive, torn bool) *craft {
-		c := &craft{alive: alive, model: new(flight.Model)}
+// TestEnding: a ladder reads a joust's own decision, from either side, and a
+// furball ladder borrows the joust's rule. The furball's first death decides
+// nothing while the fallen jet's wreckage can strike, and holds that jet out
+// of its respawn; the other falling in that window is the trade, a jet whose
+// model was torn down in its death tick among the fallen.
+func TestEnding(t *testing.T) {
+	i, top, low := pair(t, "furball")
+	if got := ending(i, top, low); got != "" {
+		t.Fatalf("both flying: %q", got)
+	}
+	i.kill(1, 0)
+	if got := ending(i, top, low); got != "" {
+		t.Fatalf("decided at the kill, with the wreckage still falling: %q", got)
+	}
+	if !math.IsInf(low.wait, 1) {
+		t.Errorf("the fallen jet respawns in %.1f s", low.wait)
+	}
+	tick := uint64(1)
+	for ; tick < 60*10 && ending(i, top, low) == ""; tick++ {
+		i.Step(tick, nil)
+	}
+	if got := ending(i, top, low); got != "won" || float64(tick)/60 < 5 {
+		t.Errorf("the furball kill read %q at %.2f s; want won once the five-second cloud is spent", got, float64(tick)/60)
+	}
+	for _, torn := range []bool{false, true} {
+		i, top, low := pair(t, "furball")
+		i.kill(0, 1)
+		ending(i, top, low)
 		if torn {
-			c.model = nil
+			low.model = nil
+		} else {
+			i.kill(1, 0)
 		}
-		return c
+		if got := ending(i, top, low); got != "traded" {
+			t.Errorf("the other jet down in the window (model torn down %v): %q, want traded", torn, got)
+		}
 	}
 	for _, c := range []struct {
-		top, low *craft
-		want     string
-	}{
-		{jet(true, false), jet(true, false), ""},
-		{jet(true, false), jet(false, false), "won"},
-		{jet(false, false), jet(true, false), "lost"},
-		{jet(false, false), jet(false, false), "traded"},
-		{jet(true, true), jet(false, false), "traded"},
-		{jet(true, false), jet(true, true), "won"},
-	} {
-		if got := ending(c.top, c.low); got != c.want {
-			t.Errorf("top alive %v torn %v, low alive %v torn %v: %q, want %q",
-				c.top.alive, c.top.model == nil, c.low.alive, c.low.model == nil, got, c.want)
+		winner, loser int
+		want          string
+	}{{0, 1, "won"}, {1, 0, "lost"}, {-1, -1, "traded"}} {
+		i, top, low := pair(t, "joust")
+		if got := ending(i, top, low); got != "" {
+			t.Fatalf("an undecided joust: %q", got)
+		}
+		i.finish(c.winner, c.loser)
+		if got := ending(i, top, low); got != c.want {
+			t.Errorf("joust won by %d: %q, want %q", c.winner, got, c.want)
 		}
 	}
 }
@@ -301,6 +354,154 @@ func TestJoustLeave(t *testing.T) {
 	}
 }
 
+// TestJoustPosthumous: a joust's first kill decides it only once nothing the
+// fallen jet left behind can still down the winner (reckon): its rounds in
+// flight, its wreckage, a fire burning in the winner. The winner falling
+// before then is a trade. Each clause is measured alone: the wreckage, which
+// holds every kill open for five seconds by itself, is cleared from the
+// others.
+func TestJoustPosthumous(t *testing.T) {
+	// fallen is a joust whose slot 1 has just been downed by slot 0, both
+	// jets level at 3,000 m, slot 0 the gap ahead of slot 1 and flying on.
+	fallen := func(t *testing.T, gap float64, before func(i *instance, winner, loser *craft)) (*instance, *craft) {
+		i := build(t, "joust", map[string]any{"missiles": true}, 2)
+		winner, loser := i.aircraft[0], i.aircraft[1]
+		posed(winner, flight.Vec3{X: gap, Y: 3000}, 0, 250)
+		posed(loser, flight.Vec3{Y: 3000}, 0, 250)
+		if before != nil {
+			before(i, winner, loser)
+		}
+		i.kill(1, 0)
+		return i, winner
+	}
+	// run steps the joust on from its kill until it finishes, or for a
+	// minute, and says how long that took.
+	run := func(i *instance) float64 {
+		tick := uint64(1)
+		for ; tick < 60*60 && !i.finished; tick++ {
+			i.Step(tick, nil)
+		}
+		return float64(tick-1) / 60
+	}
+	outcome := func(t *testing.T, i *instance, winner, loser int) {
+		t.Helper()
+		if done, results := i.Finished(); !done || results["winner"] != winner || results["loser"] != loser {
+			t.Errorf("finished %v, %v; want winner %d and loser %d", done, results, winner, loser)
+		}
+	}
+	// aloft steps the joust on from its kill until it finishes, and says the
+	// last tick that ended with something of the fallen jet's still in the air
+	// (count) and the tick it finished on.
+	aloft := func(i *instance, count func() int) (flew, end int) {
+		for tick := 1; tick < 60*60 && !i.finished; tick++ {
+			i.Step(uint64(tick), nil)
+			if count() > 0 {
+				flew = tick
+			}
+			end = tick
+		}
+		return flew, end
+	}
+	// heater is the fallen jet's AIM-9 at the winner, fired as it fell.
+	heater := func(i *instance, winner, loser *craft) {
+		i.launched++
+		sight, _ := i.bearing(loser.model.State.Position, winner.model.State.Position)
+		i.flying = append(i.flying, &missile{shooter: 1, target: 0, position: loser.model.State.Position, life: missile_life,
+			velocity: flight.Vec3{X: 280}, burn: missile_boost, sight: sight, number: i.launched})
+	}
+	t.Run("the wreckage", func(t *testing.T) {
+		i, _ := fallen(t, 20000, nil)
+		if at := run(i); at < 5 || at > 5.1 {
+			t.Errorf("finished %.2f s after the kill; the cloud strikes for five", at)
+		}
+		outcome(t, i, 0, 1)
+	})
+	t.Run("a heater that reaches the winner", func(t *testing.T) {
+		i, winner := fallen(t, 1200, heater)
+		run(i)
+		if winner.alive {
+			t.Fatal("the heater missed: this case needs it to land")
+		}
+		outcome(t, i, -1, -1)
+	})
+	t.Run("a heater that never finds the winner", func(t *testing.T) {
+		i, winner := fallen(t, -3000, heater) // fired ahead, the winner astern: it flies out its twenty seconds
+		i.debris = nil
+		if flew, end := aloft(i, func() int { return len(i.flying) }); flew == 0 || !winner.alive {
+			t.Fatalf("the heater flew %d ticks, the winner alive %v: this case needs it to fly and not reach him", flew, winner.alive)
+		} else if end != flew+1 {
+			t.Errorf("finished at tick %d, the heater last in the air at %d", end, flew)
+		}
+		outcome(t, i, 0, 1)
+	})
+	t.Run("gun rounds in the air", func(t *testing.T) {
+		i, _ := fallen(t, 20000, func(i *instance, winner, loser *craft) {
+			i.merged = true // a joust holds fire until the merge
+			i.Step(0, map[int][]game.Input{1: {{Sequence: 1, Data: map[string]any{"throttle": 0.85, "fire": true}}}})
+		})
+		i.debris = nil
+		if flew, end := aloft(i, func() int { return len(i.rounds) }); flew == 0 {
+			t.Fatal("no round of the burst outlived the first tick")
+		} else if end != flew+1 {
+			t.Errorf("finished at tick %d, the rounds last in the air at %d", end, flew)
+		}
+		outcome(t, i, 0, 1)
+	})
+	t.Run("a fuel fire in the winner", func(t *testing.T) {
+		i, _ := fallen(t, 20000, func(i *instance, winner, loser *craft) {
+			winner.condition.Burning, winner.condition.Fuse = true, 8
+			winner.condition.Damager, winner.condition.Damaged = 1, 0
+		})
+		i.debris = nil
+		if at := run(i); at < 7.9 {
+			t.Errorf("finished %.2f s after the kill, with an eight-second fuse burning", at)
+		}
+		outcome(t, i, -1, -1)
+	})
+	t.Run("an engine fire starved out", func(t *testing.T) {
+		i, winner := fallen(t, 20000, func(i *instance, winner, loser *craft) {
+			winner.condition.Fire[0] = 0.6 // at idle, out in seven and a half seconds
+		})
+		i.debris = nil
+		if at := run(i); at < 7 || !winner.alive {
+			t.Errorf("finished %.2f s after the kill, the winner alive %v: the fire burned for seven", at, winner.alive)
+		}
+		outcome(t, i, 0, 1)
+	})
+	t.Run("a store cooking off", func(t *testing.T) {
+		i, _ := fallen(t, 20000, func(i *instance, winner, loser *craft) {
+			if winner.model.Attached()&1 == 0 {
+				t.Fatal("no store on the first station")
+			}
+			winner.condition.Cook[0] = 3
+		})
+		i.debris = nil
+		if at := run(i); at < 2.9 {
+			t.Errorf("finished %.2f s after the kill, a round three seconds from cooking off", at)
+		}
+		outcome(t, i, -1, -1)
+	})
+	t.Run("both in one tick", func(t *testing.T) {
+		i, _ := fallen(t, 20000, nil)
+		i.kill(0, 1)
+		outcome(t, i, -1, -1)
+	})
+	t.Run("the winner walks out", func(t *testing.T) {
+		i, _ := fallen(t, 20000, nil)
+		i.Leave(game.Player{Slot: 0})
+		outcome(t, i, -1, 1) // nobody wins, and the fallen jet still lost: no mutual kill
+	})
+	t.Run("the fallen walks out", func(t *testing.T) {
+		i, _ := fallen(t, 20000, nil)
+		i.Leave(game.Player{Slot: 1})
+		if i.finished {
+			t.Fatal("the fallen player's leaving finished the match with its wreckage still falling")
+		}
+		run(i)
+		outcome(t, i, 0, 1)
+	})
+}
+
 // TestJoustWaiting: the first joiner is held frozen until the pair completes,
 // then both merge fresh via match-start respawn events.
 func TestJoustWaiting(t *testing.T) {
@@ -498,7 +699,9 @@ func TestBotLadder(t *testing.T) {
 	experts, novices, total := 0, 0, 0
 	for _, a := range i.aircraft {
 		total += a.kills
-		if len(a.player.Name) > 0 && a.player.Name[0] == 'A' {
+		// By the brain, not the name: bots are named for their level ("Expert 1"),
+		// and an 'A' this once looked for credited every kill to the novices.
+		if a.brain != nil && a.brain.skill == skills["expert"] {
 			experts += a.kills
 		} else {
 			novices += a.kills
@@ -2897,8 +3100,11 @@ func TestBreakup(t *testing.T) {
 		if p := i.aircraft[victim].model.State.Position; math.IsNaN(p.Length()) {
 			t.Errorf("%s: the dead jet is left at %v", injury.name, p)
 		}
-		if !i.finished {
-			t.Errorf("%s: the joust did not finish", injury.name)
+		for tick := uint64(61); tick < 60*60 && !i.finished; tick++ {
+			i.Step(tick, nil) // through the wreckage's fall: the joust is decided once it can strike no more
+		}
+		if done, results := i.Finished(); !done || results["winner"] != other {
+			t.Errorf("%s: the joust finished %v, %v; want the other jet's win", injury.name, done, results)
 		}
 		if !i.aircraft[other].alive {
 			t.Errorf("%s: the other jet died with it", injury.name)

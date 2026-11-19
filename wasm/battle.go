@@ -191,11 +191,17 @@ func volley(this js.Value, arguments []js.Value) any {
 // frame — and the gap is negative when no round came near enough to measure.
 const grazed = 3 + 3*battle.ImpactPoints
 
+// aloft is where fly says how many rounds are still in the air after the
+// step: the ownship's, then the bandit's. A joust the pilot has lost waits on
+// his (the server's reckon), and gun rounds are the one part of what he left
+// flying that the engine cannot see.
+const aloft = grazed + 4
+
 // flown is fly's whole output length. It is written in full on every path,
 // including the early returns: CopyBytesToJS fills only as many bytes as it is
 // given, so a short write would leave the previous tick's numbers standing in
 // the slots it skipped.
-const flown = grazed + 4
+const flown = aloft + 2
 
 // fly advances every airborne round one step and resolves arrivals: ownship
 // rounds (identity 0) against the bandit hulk, bandit rounds (identity 1)
@@ -204,7 +210,8 @@ const flown = grazed + 4
 // attitude, 10-12 bandit velocity]. Output: [0 hits on the bandit, 1 hits on
 // the ownship, 2 impact count, then x|y|z per impact in the BANDIT's body
 // frame, then at `grazed` the closest MISS of an ownship round this tick:
-// gap in metres (negative for none) and the point in the bandit's body frame]
+// gap in metres (negative for none) and the point in the bandit's body frame,
+// then at `aloft` the ownship's and the bandit's rounds still in the air]
 // — ownship damage itself flows through the model and progress() as always.
 //
 // The miss is here because Strike reports nothing at all when a round goes
@@ -287,6 +294,13 @@ func fly(this js.Value, arguments []js.Value) any {
 	if measured {
 		out[grazed] = closest
 		out[grazed+1], out[grazed+2], out[grazed+3] = spot.X, spot.Y, spot.Z
+	}
+	for _, round := range airborne {
+		if round.Shooter == 0 {
+			out[aloft]++
+		} else {
+			out[aloft+1]++
+		}
 	}
 	send(out, arguments[1])
 	return bandit_hits + own_hits

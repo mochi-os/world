@@ -176,25 +176,30 @@ func TestLadderDuel(t *testing.T) {
 				if top == nil || low == nil {
 					t.Fatalf("%s vs %s: roster wrong", strong, weak)
 				}
-				done := false
+				done, killed := false, 0.0
 				for tick := uint64(0); tick < 60*240 && !done; tick++ {
 					i.Step(tick, nil)
 					// A detonation (the tank-vapour roll) tears the model down
 					// in the death tick, so model-nil IS a kill — breaking on it
 					// before the switch silently scored every detonation as no
-					// result, which under real drag is most kills.
-					switch ending(top, low) {
+					// result, which under real drag is most kills. The fight is
+					// timed to its first kill, not to the end of what the fallen
+					// jet left in the air (ending).
+					if killed == 0 && (felled(top) || felled(low)) {
+						killed = float64(tick) / 60
+					}
+					switch ending(i, top, low) {
 					case "won":
 						wins++
-						times = append(times, float64(tick)/60)
+						times = append(times, killed)
 						done = true
 					case "lost":
 						losses++
-						times = append(times, float64(tick)/60)
+						times = append(times, killed)
 						done = true
 					case "traded":
 						trades++
-						times = append(times, float64(tick)/60) // decided, by both at once
+						times = append(times, killed)
 						done = true
 					}
 				}

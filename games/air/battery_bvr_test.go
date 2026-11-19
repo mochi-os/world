@@ -77,7 +77,7 @@ func TestBvrLadder(t *testing.T) {
 						r.closest = span
 					}
 				}
-				switch ending(top, low) {
+				switch ending(i, top, low) {
 				case "won":
 					r.strong++
 					decided = true

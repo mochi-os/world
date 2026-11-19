@@ -21,7 +21,8 @@ func mover(a *craft) battle.Mover {
 // the tick, and what met is struck through the midair table - a clip sheds a
 // wing, a break-up is a kill. Nobody is credited: a ram costs the rammer the
 // same death, and the invulnerable cheat covers weapons, not the sky. A joust
-// goes to the survivor if there is one, and to nobody if there is not.
+// goes to the survivor if there is one, and to nobody if there is not: the
+// second death of the pair is the trade reckon scores.
 func (i *instance) midair(dt float64) {
 	order := i.slots()
 	for x := 0; x < len(order); x++ {
@@ -56,16 +57,6 @@ func (i *instance) midair(dt float64) {
 			}
 			if fatalB {
 				i.fell(order[y], -1, "midair", order[x])
-			}
-			if (fatalA || fatalB) && i.mode == "joust" && !i.finished {
-				switch {
-				case fatalA && fatalB:
-					i.finish(-1, -1)
-				case fatalA:
-					i.finish(order[y], order[x])
-				default:
-					i.finish(order[x], order[y])
-				}
 			}
 		}
 	}

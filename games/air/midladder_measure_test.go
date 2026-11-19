@@ -67,8 +67,11 @@ func TestMidladderMeasure(t *testing.T) {
 						closest = span
 					}
 				}
-				if end := ending(top, low); end != "" {
-					verdict, when = end, float64(tick)/60
+				if when == 600 && (felled(top) || felled(low)) {
+					when = float64(tick) / 60 // the first kill, not the end of what the fallen jet left flying
+				}
+				if end := ending(i, top, low); end != "" {
+					verdict = end
 					break
 				}
 			}

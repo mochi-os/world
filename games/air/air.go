@@ -607,7 +607,7 @@ type wreck struct {
 
 type instance struct {
 	rehearsals  int     // arbiter re-plans spent this tick (#256): the allowance that bounds the rollout cost by construction
-	mode        string  // furball (open, endless) or joust (1v1, first kill ends it)
+	mode        string  // furball (open, endless) or joust (1v1, decided by the first kill and what the fallen jet left flying)
 	started     bool    // joust: false until BOTH players are present — the first joiner is held frozen at the ring, and the pair merges fresh together
 	merged      bool    // joust: weapons hold until the MERGE — either aircraft crossing the other's 3/9 line (x < -margin in the other's body frame); one-shot, announced with a "fighton" event
 	missiles    bool    // rule: any missiles allowed (weapons != "guns" — kept for the gates that only care about that much)
@@ -634,6 +634,7 @@ type instance struct {
 	launched uint64
 	events   []map[string]any
 	finished bool
+	decided  *verdict // a joust's first kill, until it is known whether the fallen jet's rounds down the winner too
 	results  map[string]any
 	score    map[string]int // teams mode: running team score (enemy kill +1, teammate kill -1)
 	warned   map[int]uint64 // last BREAK call per menaced human slot (#139): one warning per victim per few seconds, whoever calls it
@@ -1041,9 +1042,22 @@ func (i *instance) Join(player game.Player) (map[string]any, error) {
 func (i *instance) Leave(player game.Player) {
 	delete(i.aircraft, player.Slot)
 	i.wakes.Forget(player.Slot)
+	if i.mode != "joust" || !i.started || i.finished {
+		return
+	}
+	// A kill waiting on the fallen jet's rounds: the winner walking out before
+	// it is known keeps nothing - nobody wins, and the fallen jet is still the
+	// one shot down, so it is no mutual kill - and the fallen player leaving
+	// changes nothing, since what he fired flies on without him.
+	if d := i.decided; d != nil {
+		if player.Slot == d.winner {
+			i.finish(-1, d.loser)
+		}
+		return
+	}
 	// A joust abandoned mid-fight ends in favour of whoever stayed — but only
 	// once it actually started: bailing out of the waiting room is not a win.
-	if i.mode == "joust" && i.started && !i.finished && len(i.aircraft) == 1 {
+	if len(i.aircraft) == 1 {
 		for slot := range i.aircraft {
 			i.finish(slot, player.Slot)
 		}
@@ -1417,6 +1431,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	i.pursue(dt, tick)
 	i.scatter(dt, tick)
 	i.drift(dt)
+	i.settle(tick)
 }
 
 // stepping is one live jet's flight for a tick: its inputs, and where it was
@@ -2424,12 +2439,12 @@ func mask(a *flight.Airframe, element []float64) int {
 }
 
 // kill downs a victim; by is the killer's slot or -1 for the environment.
-// In joust mode the first kill finishes the match.
+// In joust mode the first kill decides the match (reckon).
 func (i *instance) kill(victim int, by int) { i.fell(victim, by, "", -1) }
 
 // fell is the death itself: the scoring, the respawn wait, the kill event -
 // carrying the cause and the other party when there is one to name, as a
-// midair has - and the joust's end, which a midair decides for itself.
+// midair has - and the joust's decision.
 func (i *instance) fell(victim int, by int, cause string, other int) {
 	a := i.aircraft[victim]
 	if a == nil || !a.alive {
@@ -2466,17 +2481,88 @@ func (i *instance) fell(victim int, by int, cause string, other int) {
 		event["score"] = map[string]any{"red": i.score["red"], "blue": i.score["blue"]}
 	}
 	i.events = append(i.events, event)
-	if i.mode == "joust" && !i.finished && cause != "midair" {
-		winner := by
-		if winner < 0 { // flew into the sea: the other player wins
-			for slot := range i.aircraft {
-				if slot != victim {
-					winner = slot
-				}
+	if i.mode == "joust" && !i.finished {
+		i.reckon(victim, by)
+	}
+}
+
+// verdict is a joust's first kill, waiting to know whether it was a trade.
+type verdict struct {
+	winner, loser int
+}
+
+// reckon is a joust's first kill and what follows it. The other jet wins it,
+// unless what the fallen one left behind downs him too: its missiles and gun
+// rounds in flight, its wreckage, a fire it lit. The match runs on until
+// nothing of that can (settle), and the survivor dying first is the trade, a
+// mutual kill: both down, nobody wins, and no loser either. Any death counts,
+// a midair and the sea included: inside that window it is the fight that
+// killed him.
+func (i *instance) reckon(victim int, by int) {
+	if d := i.decided; d != nil {
+		if victim == d.winner {
+			i.finish(-1, -1)
+		}
+		return
+	}
+	winner := by
+	if winner < 0 { // flew into the sea, or a midair: the other player wins
+		for slot := range i.aircraft {
+			if slot != victim {
+				winner = slot
 			}
 		}
-		i.finish(winner, victim)
 	}
+	i.decided = &verdict{winner: winner, loser: victim}
+}
+
+// settle finishes a decided joust once nothing the fallen jet left behind can
+// still down the winner. It runs at the end of the tick, after every death in
+// it, so two jets falling in one tick - a midair, or each to the other's round
+// - are a trade whichever of them fell first.
+func (i *instance) settle(tick uint64) {
+	if d := i.decided; d != nil && !i.finished && !i.undecided(d, tick) {
+		i.finish(d.winner, d.loser)
+	}
+}
+
+// undecided reports whether anything can still down the winner of a decided
+// joust: the fallen jet's missiles and gun rounds in flight, its wreckage while
+// the cloud lasts (a joust's only cloud is its kill's), or a fire burning in
+// the winner. A fuel fire runs to the explosion or the pilot's ejection, a
+// store's to its cook-off unless the round leaves the rail, an engine's until
+// it is starved out or reaches the fuel: each of them ends.
+func (i *instance) undecided(d *verdict, tick uint64) bool {
+	for _, m := range i.flying {
+		if m.shooter == d.loser {
+			return true
+		}
+	}
+	for _, r := range i.rounds {
+		if r.Shooter == d.loser {
+			return true
+		}
+	}
+	clock := float64(tick) / 60
+	for _, cloud := range i.debris {
+		if _, _, _, alive := cloud.Cloud(clock); alive {
+			return true
+		}
+	}
+	a := i.aircraft[d.winner]
+	if a == nil || !a.alive {
+		return false
+	}
+	c := &a.condition
+	if c.Burning || c.Fire[0] > 0 || c.Fire[1] > 0 {
+		return true
+	}
+	for _, fuse := range c.Cook {
+		if fuse > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // finish records the joust outcome.

@@ -260,7 +260,7 @@ func TestGunLadderWide(t *testing.T) {
 			done := false
 			for tick := uint64(0); tick < 60*240 && !done; tick++ {
 				i.Step(tick, nil)
-				switch ending(top, low) {
+				switch ending(i, top, low) {
 				case "won":
 					wins++
 					done = true

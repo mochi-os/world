@@ -112,7 +112,7 @@ func TestBvrWide(t *testing.T) {
 			decided := false
 			for tick := uint64(0); tick < 60*600 && !decided; tick++ {
 				i.Step(tick, nil)
-				switch ending(top, low) {
+				switch ending(i, top, low) {
 				case "won":
 					wins++
 					decided = true
@@ -217,7 +217,7 @@ func TestMissileLadderWide(t *testing.T) {
 			done := false
 			for tick := uint64(0); tick < 60*240 && !done; tick++ {
 				i.Step(tick, nil)
-				switch ending(top, low) {
+				switch ending(i, top, low) {
 				case "won":
 					wins++
 					done = true

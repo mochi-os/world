@@ -434,7 +434,9 @@ func joust(t *testing.T, level string, seed uint64, pilot *lancer, seconds int, 
 		i.Radar(0, mode, lock) // the report a client sends
 		before := append([]*missile{}, i.flying...)
 		i.Step(tick, map[int][]game.Input{0: {{Data: data}}})
-		f.seconds = float64(tick+1) / 60
+		if !felled(me) && !felled(him) {
+			f.seconds = float64(tick+1) / 60 // to the first kill: the fight, not the wait on what the fallen jet left flying
+		}
 		for _, m := range before {
 			if m.radar == nil || slices.Contains(i.flying, m) {
 				continue
@@ -450,7 +452,7 @@ func joust(t *testing.T, level string, seed uint64, pilot *lancer, seconds int, 
 				hit[c] = struck{weapon(before, i.flying, c.player.Slot), tick}
 			}
 		}
-		if f.outcome = ending(me, him); f.outcome != "" { // from the first jet's side: the stand-in's
+		if f.outcome = ending(i, me, him); f.outcome != "" { // from the first jet's side: the stand-in's
 			victim := him
 			if f.outcome == "lost" {
 				victim = me
