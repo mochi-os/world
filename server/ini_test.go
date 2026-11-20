@@ -8,6 +8,7 @@ package main
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -45,5 +46,28 @@ func TestBooleanReadsBothSpellings(t *testing.T) {
 	os.Unsetenv("MOCHI_WORLD_PUBLIC")
 	if !ini_bool("world", "public", true) || ini_bool("world", "public", false) {
 		t.Error("an unset key did not fall through to its default")
+	}
+}
+
+// TestBrokenConfigurationIsAnError: a file that is there but cannot be read or
+// parsed was one warning, and the server started on defaults - every bind,
+// certificate and limit the operator set dropped at once behind a process that
+// looked healthy. A missing file is still the defaults, as it always was.
+func TestBrokenConfigurationIsAnError(t *testing.T) {
+	previous := ini_file
+	t.Cleanup(func() { ini_file = previous })
+	directory := t.TempDir()
+	if err := ini_load(filepath.Join(directory, "absent.conf")); err != nil {
+		t.Errorf("a missing configuration is an error: %v", err)
+	}
+	malformed := filepath.Join(directory, "malformed.conf")
+	os.WriteFile(malformed, []byte("[world\nname = x\n"), 0644)
+	if err := ini_load(malformed); err == nil {
+		t.Error("a malformed configuration loaded without an error")
+	}
+	unreadable := filepath.Join(directory, "unreadable.conf")
+	os.WriteFile(unreadable, []byte("[world]\nname = x\n"), 0)
+	if err := ini_load(unreadable); err == nil && os.Geteuid() != 0 {
+		t.Error("an unreadable configuration loaded without an error")
 	}
 }

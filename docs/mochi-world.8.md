@@ -117,6 +117,11 @@ directory - each gets its own listing.
 **port**
 :   Lobby TCP port. Default *4433*.
 
+**address**
+:   The lobby's public URL, which a public server publishes to the
+    network-wide join list. Defaults to [transport] address while both ports
+    are the same; must be set when they differ.
+
 ## [transport]
 
 **listen**
@@ -128,7 +133,8 @@ directory - each gets its own listing.
 **address**
 :   The public URL advertised to clients, for example
     *https://example.com:4433*. Also used as the subject of the ephemeral
-    certificate when no operator certificate is configured.
+    certificate when no operator certificate is configured. When unset, each
+    client is told the host it reached the lobby at, on this port.
 
 ## [tls]
 
@@ -181,14 +187,25 @@ hash, which the lobby advertises.
 :   Offer withdrawals allowed per client address per minute. Default *30*.
 
 **browses**
-:   Match-list, status and chat reads allowed per client address per minute.
-    Default *120*. The loosest budget, because the match-list poll doubles as
-    the offer heartbeat.
+:   Status, match-list, chat and map reads allowed per client address per
+    minute. Default *400*: a player spends about 20 a minute, on the server
+    page or in a match, so this admits sixteen behind one address with room
+    for the map each fetches to join.
+
+**offers**
+:   Matches one client address may hold open that nobody else has joined.
+    Default *3*.
+
+**hosts**
+:   Game connections one client address may hold at once. Default *16*.
+    Raise it for a LAN event or a campus behind one address.
+
+**plays**
+:   Game connections one client address may open per minute. Default *30*.
 
 Every per-address budget counts an IPv6 client against its /64 prefix rather
 than its literal address, since a single subscriber is normally given a whole
-/64. The player connection itself is limited separately: 30 connects per
-minute and 16 concurrent connections per address, neither configurable.
+/64.
 
 # FILES
 

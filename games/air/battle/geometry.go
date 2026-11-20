@@ -174,13 +174,17 @@ func parts_build(a *flight.Airframe) []Part {
 // ray each was met - a 20 mm SAPHEI round does not stop at the first thing it
 // meets, and the distances put the hit flash on the airframe rather than at its
 // centre.
-func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) ([]int, []float64) {
+func pierce(body *Body, origin flight.Vec3, direction flight.Vec3, reach float64) ([]int, []float64) {
 	type met struct {
 		part  int
 		along float64
 	}
 	found := []met{}
+	parts := body.Parts
 	for pi := range parts {
+		if !carried(&parts[pi], body.Stores) {
+			continue // a fired station is empty air, as Near and Contact already treat it
+		}
 		if t := capsule(origin, direction, parts[pi].A, parts[pi].B, parts[pi].Radius, reach); t >= 0 {
 			found = append(found, met{pi, t})
 		}
@@ -198,10 +202,13 @@ func pierce(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float
 // trace finds the first part a ray hits: origin and direction in the
 // target's BODY frame, direction unit length. Returns the part index and
 // the distance along the ray, or (-1, 0) for a miss.
-func trace(parts []Part, origin flight.Vec3, direction flight.Vec3, reach float64) (int, float64) {
+func trace(body *Body, origin flight.Vec3, direction flight.Vec3, reach float64) (int, float64) {
 	best, nearest := -1, reach
-	for pi := range parts {
-		p := &parts[pi]
+	for pi := range body.Parts {
+		p := &body.Parts[pi]
+		if !carried(p, body.Stores) {
+			continue
+		}
 		t := capsule(origin, direction, p.A, p.B, p.Radius, nearest)
 		if t >= 0 && t < nearest {
 			best, nearest = pi, t

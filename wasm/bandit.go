@@ -97,7 +97,7 @@ func bandit_mirror(this js.Value, arguments []js.Value) any {
 }
 
 // bandit_menace declares the player's missiles chasing the bandit: count
-// missiles of six words each (position, velocity).
+// missiles of eight words each (position, velocity, shooter, phase).
 func bandit_menace(this js.Value, arguments []js.Value) any {
 	if bandit == nil {
 		return "uninitialised"

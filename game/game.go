@@ -37,12 +37,13 @@ type Session struct {
 // Input is one sequenced control sample from a player. Data is game-defined.
 type Input struct {
 	Sequence uint32
-	// Steps is how many fixed 1/60 steps the client integrated this sample
-	// for before sending the next (#176). The server applies it for the same
-	// number, so a reconciliation compares two states that reached the same
-	// point in time rather than merely the same sequence number. A client
-	// that does not send the field is read as one, which is what every
-	// sample was worth before this existed.
+	// Steps is how many fixed 1/240 sub-steps - four to a 60 Hz server tick -
+	// the client integrated this sample for before sending the next (#176).
+	// The server applies it for the same number, so a reconciliation compares
+	// two states that reached the same point in time rather than merely the
+	// same sequence number. A client that does not send the field is read as
+	// four, a whole tick, which is what every sample was worth before this
+	// existed.
 	Steps int
 	Data  map[string]any
 }

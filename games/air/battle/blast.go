@@ -80,7 +80,7 @@ func Warhead(class float64, point flight.Vec3, closure float64, position flight.
 		origin, budget := burst, fringe*2
 		var mark *flight.Vec3
 		for hop := 0; hop < 4 && budget > 0; hop++ {
-			part, along := trace(body.Parts, origin, direction, budget)
+			part, along := trace(body, origin, direction, budget)
 			if part < 0 {
 				break
 			}

@@ -7,13 +7,14 @@
 package main
 
 import (
+	"fmt"
 	"testing"
 
 	"world/game"
 )
 
 // TestDrainSpendsOneTick pins #176. The client integrates each control sample
-// for a whole number of fixed 1/60 steps and records that count against its
+// for a whole number of fixed 1/240 sub-steps and records that count against its
 // prediction ring; the server must fly the sample for the same number, or the
 // state it acknowledges is not the state the prediction reached and the client
 // reconciles the difference away as if it were a prediction error. Measured on
@@ -168,5 +169,39 @@ func TestInputStepsDecode(t *testing.T) {
 	}
 	if got[3].Steps != 30 {
 		t.Errorf("99 steps decoded as %d, want it clamped to 30 - the same cap the client core applies - because the wire promises nothing and one sample may not buy a second of physics", got[3].Steps)
+	}
+}
+
+// TestResendsAreFlownOnce: each input datagram carries the newest sample and
+// the two before it. A resend was admitted whenever the queue happened to be
+// empty - every time the server had caught up - and flown a second time ahead
+// of the new sample, rolling the acknowledgement back and leaving every sample
+// after it a tick late.
+func TestResendsAreFlownOnce(t *testing.T) {
+	s := slot_session(&fake_instance{}, silent_link())
+	p := s.players[0]
+	flown := []uint32{}
+	batch := func(sequences ...uint32) {
+		list := []game.Input{}
+		for _, n := range sequences {
+			list = append(list, game.Input{Sequence: n, Steps: substeps, Data: map[string]any{}})
+		}
+		s.inbox <- order{kind: "input", slot: 0, link: p.link, inputs: list}
+		session_orders(s)
+		before := p.sequence
+		for _, in := range player_drain(p) {
+			flown = append(flown, in.Sequence)
+		}
+		if after(before, p.sequence) {
+			t.Errorf("the acknowledgement went back from %d to %d", before, p.sequence)
+		}
+	}
+	batch(1)
+	batch(1, 2)
+	batch(1, 2, 3)
+	batch(2, 3, 4)
+	batch(3, 4, 5)
+	if fmt.Sprint(flown) != "[1 2 3 4 5]" {
+		t.Errorf("flew %v, want each sample once, in order: [1 2 3 4 5]", flown)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -51,165 +52,128 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// amend applies one dotted-name override to the doctrine. Explicit rather
-// than reflected: the fields are unexported and a typo'd override must fail
-// loudly, not silently measure the baseline.
+// knobs maps each tunable constant's dotted name to its field in t. Explicit
+// rather than reflected: the fields are unexported and a typo'd override must
+// fail loudly, not silently measure the baseline. One table serves both ways,
+// so the overrides the battery takes and the defaults it reports cannot name
+// different sets.
+func knobs(t *tactics) map[string]any {
+	return map[string]any{
+		"aim.walk":        &t.aim.walk,
+		"aim.settle":      &t.aim.settle,
+		"aim.reach":       &t.aim.reach,
+		"drag.pace":       &t.drag.pace,
+		"drag.span":       &t.drag.span,
+		"bag.reach":       &t.bag.reach,
+		"bag.bend":        &t.bag.bend,
+		"spiral.nose":     &t.spiral.nose,
+		"spiral.span":     &t.spiral.span,
+		"spiral.floor":    &t.spiral.floor,
+		"spiral.saddle":   &t.spiral.saddle,
+		"spiral.hold":     &t.spiral.hold,
+		"jink.span":       &t.jink.span,
+		"jink.base":       &t.jink.base,
+		"jink.spread":     &t.jink.spread,
+		"high.closure":    &t.high.closure,
+		"high.span":       &t.high.span,
+		"high.tail":       &t.high.tail,
+		"high.hold":       &t.high.hold,
+		"low.near":        &t.low.near,
+		"low.far":         &t.low.far,
+		"low.tail":        &t.low.tail,
+		"low.rise":        &t.low.rise,
+		"plan.deficit":    &t.plan.deficit,
+		"lead.closure":    &t.lead.closure,
+		"lead.floor":      &t.lead.floor,
+		"lead.angle":      &t.lead.angle,
+		"missile.tail":    &t.missile.tail,
+		"missile.span":    &t.missile.span,
+		"missile.margin":  &t.missile.margin,
+		"missile.step":    &t.missile.step,
+		"missile.base":    &t.missile.base,
+		"missile.slope":   &t.missile.slope,
+		"missile.floor":   &t.missile.floor,
+		"missile.gain":    &t.missile.gain,
+		"sandwich.span":   &t.sandwich.span,
+		"sandwich.nose":   &t.sandwich.nose,
+		"sandwich.weight": &t.sandwich.weight,
+		"support.span":    &t.support.span,
+		"support.share":   &t.support.share,
+		"support.engaged": &t.support.engaged,
+		"support.behind":  &t.support.behind,
+		"support.above":   &t.support.above,
+		"support.near":    &t.support.near,
+		"support.out":     &t.support.out,
+		"support.rise":    &t.support.rise,
+		"support.limit":   &t.support.limit,
+		"form.abeam":      &t.form.abeam,
+		"form.blend":      &t.form.blend,
+		"form.burner":     &t.form.burner,
+		"press.span":      &t.press.span,
+		"press.hold":      &t.press.hold,
+		"press.loose":     &t.press.loose,
+		"press.closure":   &t.press.closure,
+		"press.gap":       &t.press.gap,
+		"crowd.weight":    &t.crowd.weight,
+		"sandwich.reach":  &t.sandwich.reach,
+		"rejoin.span":     &t.rejoin.span,
+		"rejoin.fight":    &t.rejoin.fight,
+		"zoom.edge":       &t.zoom.edge,
+		"zoom.roof":       &t.zoom.roof,
+		"zoom.hold":       &t.zoom.hold,
+		"rope.edge":       &t.rope.edge,
+		"rope.near":       &t.rope.near,
+		"rope.far":        &t.rope.far,
+		"rope.nose":       &t.rope.nose,
+		"rope.hold":       &t.rope.hold,
+		"bracket.span":    &t.bracket.span,
+		"bracket.angle":   &t.bracket.angle,
+		"wounded.weight":  &t.wounded.weight,
+		"gravity":         &t.gravity,
+		"span.high":       &t.span.high,
+		"span.pitch":      &t.span.pitch,
+		"span.climb":      &t.span.climb,
+		"span.beam":       &t.span.beam,
+	}
+}
+
+// amend applies one dotted-name override to the doctrine.
 func amend(t *tactics, name string, value float64) bool {
-	switch name {
-	case "aim.walk":
-		t.aim.walk = value
-	case "aim.settle":
-		t.aim.settle = value
-	case "aim.reach":
-		t.aim.reach = value
-	case "drag.pace":
-		t.drag.pace = value
-	case "drag.span":
-		t.drag.span = value
-	case "bag.reach":
-		t.bag.reach = value
-	case "bag.bend":
-		t.bag.bend = value
-	case "spiral.nose":
-		t.spiral.nose = value
-	case "spiral.span":
-		t.spiral.span = value
-	case "spiral.floor":
-		t.spiral.floor = value
-	case "spiral.saddle":
-		t.spiral.saddle = int(value)
-	case "spiral.hold":
-		t.spiral.hold = uint64(value)
-	case "jink.span":
-		t.jink.span = value
-	case "jink.base":
-		t.jink.base = uint64(value)
-	case "jink.spread":
-		t.jink.spread = uint64(value)
-	case "high.closure":
-		t.high.closure = value
-	case "high.span":
-		t.high.span = value
-	case "high.tail":
-		t.high.tail = value
-	case "high.hold":
-		t.high.hold = uint64(value)
-	case "low.near":
-		t.low.near = value
-	case "low.far":
-		t.low.far = value
-	case "low.tail":
-		t.low.tail = value
-	case "low.rise":
-		t.low.rise = value
-	case "plan.deficit":
-		t.plan.deficit = value
-	case "lead.closure":
-		t.lead.closure = value
-	case "lead.floor":
-		t.lead.floor = value
-	case "lead.angle":
-		t.lead.angle = value
-	case "missile.tail":
-		t.missile.tail = value
-	case "missile.span":
-		t.missile.span = value
-	case "missile.margin":
-		t.missile.margin = value
-	case "missile.step":
-		t.missile.step = value
-	case "missile.base":
-		t.missile.base = value
-	case "missile.slope":
-		t.missile.slope = value
-	case "missile.floor":
-		t.missile.floor = value
-	case "missile.gain":
-		t.missile.gain = value
-	case "sandwich.span":
-		t.sandwich.span = value
-	case "sandwich.nose":
-		t.sandwich.nose = value
-	case "sandwich.weight":
-		t.sandwich.weight = value
-	case "support.span":
-		t.support.span = value
-	case "support.share":
-		t.support.share = value
-	case "support.engaged":
-		t.support.engaged = value
-	case "support.behind":
-		t.support.behind = value
-	case "support.above":
-		t.support.above = value
-	case "support.near":
-		t.support.near = value
-	case "support.out":
-		t.support.out = value
-	case "support.rise":
-		t.support.rise = value
-	case "support.limit":
-		t.support.limit = value
-	case "form.abeam":
-		t.form.abeam = value
-	case "form.blend":
-		t.form.blend = value
-	case "form.burner":
-		t.form.burner = value
-	case "press.span":
-		t.press.span = value
-	case "press.hold":
-		t.press.hold = value
-	case "press.loose":
-		t.press.loose = value
-	case "press.closure":
-		t.press.closure = value
-	case "press.gap":
-		t.press.gap = value
-	case "crowd.weight":
-		t.crowd.weight = value
-	case "sandwich.reach":
-		t.sandwich.reach = value
-	case "rejoin.span":
-		t.rejoin.span = value
-	case "rejoin.fight":
-		t.rejoin.fight = value
-	case "zoom.edge":
-		t.zoom.edge = value
-	case "zoom.roof":
-		t.zoom.roof = value
-	case "zoom.hold":
-		t.zoom.hold = uint64(value)
-	case "rope.edge":
-		t.rope.edge = value
-	case "rope.near":
-		t.rope.near = value
-	case "rope.far":
-		t.rope.far = value
-	case "rope.nose":
-		t.rope.nose = value
-	case "rope.hold":
-		t.rope.hold = uint64(value)
-	case "bracket.span":
-		t.bracket.span = value
-	case "bracket.angle":
-		t.bracket.angle = value
-	case "wounded.weight":
-		t.wounded.weight = value
-	case "gravity":
-		t.gravity = value != 0
-	case "span.high":
-		t.span.high = value
-	case "span.pitch":
-		t.span.pitch = value
-	case "span.climb":
-		t.span.climb = value
-	case "span.beam":
-		t.span.beam = value
+	switch field := knobs(t)[name].(type) {
+	case *float64:
+		*field = value
+	case *int:
+		*field = int(value)
+	case *uint64:
+		*field = uint64(value)
+	case *bool:
+		*field = value != 0
 	default:
 		return false
 	}
 	return true
+}
+
+// knob_values is every tunable constant's value in t, as tactics.py reads them.
+func knob_values(t *tactics) map[string]float64 {
+	values := map[string]float64{}
+	for name, field := range knobs(t) {
+		switch field := field.(type) {
+		case *float64:
+			values[name] = *field
+		case *int:
+			values[name] = float64(*field)
+		case *uint64:
+			values[name] = float64(*field)
+		case *bool:
+			if *field {
+				values[name] = 1
+			} else {
+				values[name] = 0
+			}
+		}
+	}
+	return values
 }
 
 // battery is one scenario: build an instance, fly it, report metrics.
@@ -368,6 +332,12 @@ func TestBattery(t *testing.T) {
 		}
 	}()
 	doc := standard()
+	// The defaults this run measured against: tools/tactics.py centres its
+	// candidates on these rather than on a copy of standard() of its own,
+	// which had drifted from it.
+	if defaults, err := json.Marshal(knob_values(&doc)); err == nil {
+		t.Logf("BATTERY-DEFAULTS %s", defaults)
+	}
 	if raw := os.Getenv("AIR_TACTICS"); raw != "" {
 		overrides := map[string]float64{}
 		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
@@ -429,5 +399,51 @@ func TestBattery(t *testing.T) {
 			line += fmt.Sprintf(" %s=%.3f", name, total/math.Max(float64(len(results[n][name])), 1))
 		}
 		t.Logf("BATTERY %s%s (%d seeds)", b.name, line, seeds)
+	}
+}
+
+// TestKnobsReportTheDoctrineFlown: tools/tactics.py centred its sweeps on a
+// hand copy of standard(), and support.share had drifted - it swept 0.6-0.9
+// around a 0.75 the bots stopped flying in August. The battery now reports the
+// defaults it ran with, read through the same table its overrides go through,
+// and every name in that table can be both read and set.
+func TestKnobsReportTheDoctrineFlown(t *testing.T) {
+	doc := standard()
+	values := knob_values(&doc)
+	if values["support.share"] != doc.support.share || values["drag.pace"] != doc.drag.pace || values["jink.base"] != float64(doc.jink.base) {
+		t.Errorf("reported %v / %v / %v, flown %v / %v / %v", values["support.share"], values["drag.pace"], values["jink.base"], doc.support.share, doc.drag.pace, doc.jink.base)
+	}
+	if len(values) != len(knobs(&doc)) {
+		t.Errorf("reported %d of the %d constants: a field type the report does not read", len(values), len(knobs(&doc)))
+	}
+	for name, value := range values {
+		moved, next := doc, value+1
+		if _, flag := knobs(&moved)[name].(*bool); flag {
+			next = 1 - value
+		}
+		if !amend(&moved, name, next) || knob_values(&moved)[name] == value {
+			t.Errorf("%s cannot be set through the table it is reported from", name)
+		}
+	}
+}
+
+// TestTacticsNamesTheBatteryKnobs: tools/tactics.py sweeps constants by name
+// and centres them on the defaults the battery reports, so a name it carries
+// that the battery's table does not would end its run at the baseline.
+func TestTacticsNamesTheBatteryKnobs(t *testing.T) {
+	source, err := os.ReadFile("../../tools/tactics.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	table := regexp.MustCompile(`(?m)^\s+"([a-z.]+)":\s+\((True|False),`).FindAllStringSubmatch(string(source), -1)
+	if len(table) < 40 {
+		t.Fatalf("read %d constants from tactics.py: its table has changed shape", len(table))
+	}
+	doc := standard()
+	known := knobs(&doc)
+	for _, row := range table {
+		if known[row[1]] == nil {
+			t.Errorf("tactics.py sweeps %q, which the battery cannot report or set", row[1])
+		}
 	}
 }

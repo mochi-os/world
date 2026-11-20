@@ -29,6 +29,13 @@ jobs:
           # new enough to honour it.
           go-version: '1.25'
 
+      - name: Native compile check (go vet)
+        # govulncheck has to load every package to say anything, and a file
+        # that breaks the native package graph - a browser-only file missing
+        # its js && wasm constraint - left it unable to pass on any push.
+        # Failing here names that cause rather than disabling the scan below.
+        run: go vet ./...
+
       - name: Vulnerability scan (govulncheck)
         # Reports only vulnerabilities this code can actually reach, by
         # building the call graph rather than comparing module versions, so a

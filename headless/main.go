@@ -60,8 +60,23 @@ func main() {
 	}
 }
 
-// selected is the airframe under analysis (-aircraft flag, default fa18f).
+// selected is the airframe under analysis (-aircraft flag; empty is the
+// catalogue's default).
 var selected = ""
+
+// aircraft_help is the -aircraft flag's help, from the airframes this build
+// carries, so it cannot name one that does not exist.
+func aircraft_help() string {
+	fallback, _ := aircraft.Grant("")
+	return fmt.Sprintf("airframe: %s (default %s)", strings.Join(aircraft.Names(), ", "), fallback)
+}
+
+// analysis is the air every command flies in: calm, standard, and a tangent
+// frame, where a position's Y is its height above the sea. A zero Environment
+// is the Earth-centred frame, in which Vec3{Y: 3000} is 3 km from the earth's
+// centre - the air clamped to sea level and "down" swinging a radian for every
+// 3 km flown.
+var analysis = flight.Environment{Frame: flight.Midway, Chart: flight.Midway}
 
 // airframe resolves the selection, failing loudly on unknown names.
 func airframe() *flight.Airframe {
@@ -75,7 +90,7 @@ func airframe() *flight.Airframe {
 
 // model builds a calm-air analysis model at a fuel fraction.
 func model(fraction float64) *flight.Model {
-	m := flight.New(airframe(), flight.Environment{}, flight.World{})
+	m := flight.New(airframe(), analysis, flight.World{})
 	m.State.Fuel = fraction * airframe().Mass.Fuel
 	return m
 }
@@ -87,7 +102,7 @@ func weight(fraction float64) float64 {
 
 func command_trim(arguments []string) {
 	flags := flag.NewFlagSet("trim", flag.ExitOnError)
-	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
+	flags.StringVar(&selected, "aircraft", "", aircraft_help())
 	speed := flags.Float64("speed", 200, "true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
@@ -132,7 +147,7 @@ func (d doublet) at(t float64) float64 {
 
 func command_fly(arguments []string) {
 	flags := flag.NewFlagSet("fly", flag.ExitOnError)
-	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
+	flags.StringVar(&selected, "aircraft", "", aircraft_help())
 	seconds := flags.Float64("seconds", 20, "duration")
 	speed := flags.Float64("speed", 200, "initial true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "initial altitude, m")
@@ -193,7 +208,7 @@ func clamp(v float64, low float64, high float64) float64 {
 // command_modes identifies the classical dynamic modes by perturb-and-fit.
 func command_modes(arguments []string) {
 	flags := flag.NewFlagSet("modes", flag.ExitOnError)
-	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
+	flags.StringVar(&selected, "aircraft", "", aircraft_help())
 	speed := flags.Float64("speed", 200, "true airspeed, m/s")
 	altitude := flags.Float64("altitude", 3000, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
@@ -370,7 +385,7 @@ func spiral(speed float64, altitude float64, fuel float64, direct bool) {
 
 // pressure is dynamic pressure at a flight condition in ISA air.
 func pressure(speed float64, altitude float64) float64 {
-	local := flight.Atmosphere(altitude, flight.Environment{})
+	local := flight.Atmosphere(altitude, analysis)
 	return 0.5 * local.Density * speed * speed
 }
 
@@ -406,7 +421,7 @@ func ceiling(m *flight.Model, speed float64, altitude float64) (float64, float64
 // command_em sweeps climb and turn performance at one altitude.
 func command_em(arguments []string) {
 	flags := flag.NewFlagSet("em", flag.ExitOnError)
-	flags.StringVar(&selected, "aircraft", "", "airframe (default fa18f)")
+	flags.StringVar(&selected, "aircraft", "", aircraft_help())
 	altitude := flags.Float64("altitude", 0, "altitude, m")
 	fuel := flags.Float64("fuel", 0.5, "fuel fraction")
 	table := flags.Bool("table", false, "print the full sweep table")
@@ -414,7 +429,7 @@ func command_em(arguments []string) {
 	m := model(*fuel)
 	w := weight(*fuel)
 	area := airframe().Reference.Area
-	local := flight.Atmosphere(*altitude, flight.Environment{})
+	local := flight.Atmosphere(*altitude, analysis)
 	fmt.Printf("energy-manoeuvrability at %.0f m (%.0f ft), fuel %.0f%%, weight %.0f kg\n",
 		*altitude, *altitude*feet, *fuel*100, w/gravity)
 	if *table {
@@ -481,8 +496,8 @@ func command_em(arguments []string) {
 
 // cas approximates calibrated airspeed as equivalent airspeed.
 func cas(speed float64, altitude float64) float64 {
-	local := flight.Atmosphere(altitude, flight.Environment{})
-	sea := flight.Atmosphere(0, flight.Environment{})
+	local := flight.Atmosphere(altitude, analysis)
+	sea := flight.Atmosphere(0, analysis)
 	return speed * math.Sqrt(local.Density/sea.Density)
 }
 

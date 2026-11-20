@@ -253,16 +253,19 @@ func (s *Ship) Hold(c *flight.Carrier, t float64, speed float64, instant bool) b
 }
 
 // Needed reports whether anyone needs the deck at time t: an aircraft on it,
-// or one coming in to land - gear down within Approach of the ship. The
-// aircraft are in the world frame, where the ship sails.
-func Needed(c *flight.Carrier, t float64, aircraft []flight.State) bool {
+// or one coming in to land - gear down within Approach of the ship. home
+// carries the aircraft's positions into the chart, where the ship sails: the
+// server keeps its jets Earth-centred, and compared unconverted no jet was
+// ever near her, so she never turned into the wind for one.
+func Needed(c *flight.Carrier, t float64, aircraft []flight.State, home flight.Rigid) bool {
 	at, _ := c.Where(t, flight.Identity)
 	for i := range aircraft {
 		a := &aircraft[i]
-		if c.Aboard(a.Position, t, flight.Identity) {
+		position := home.Point(a.Position)
+		if c.Aboard(position, t, flight.Identity) {
 			return true
 		}
-		if a.Gear.Extension > 0.5 && a.Position.Subtract(at).Length() < Approach {
+		if a.Gear.Extension > 0.5 && position.Subtract(at).Length() < Approach {
 			return true
 		}
 	}

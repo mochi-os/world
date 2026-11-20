@@ -29,56 +29,59 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# The tunable doctrine, mirroring standard() in games/air/bot.go: default, an
-# integer flag (candidates round to whole numbers and duplicates collapse), and
-# the reason today's value was picked, shown in the report.
+# The tunable doctrine: an integer flag (candidates round to whole numbers and
+# duplicates collapse) and the reason today's value was picked, shown in the
+# report. The values themselves are NOT kept here: the baseline run reports the
+# defaults it flew (its BATTERY-DEFAULTS line, read from standard() in
+# games/air/bot.go), and the candidates are centred on those. A copy kept here
+# drifted - support.share read 0.75 for months after bot.go moved to 0.9.
 CONSTANTS = {
-    "drag.pace":       (0.68, False, "below ~2/3 corner a break neither defeats his solution nor keeps the corner"),
-    "drag.span":       (720,  False, "inside 900 m an extension hands him the saddle; the break stays mandatory"),
-    "spiral.nose":     (0.90, False, "established = his nose committed, not merely pointed this decision"),
-    "spiral.span":     (1400, False, "a spiral against a distant attacker donates altitude for nothing"),
-    "spiral.floor":    (2300, False, "the descending turn needs altitude to spend before the guard flattens it"),
-    "spiral.saddle":   (2,    True,  "one-decision transients belong to the reversal, not a committed spiral"),
-    "spiral.hold":     (150,  True,  "a spiral re-decided every cadence is no spiral"),
-    "jink.span":       (900,  False, "jinking outside guns range spends the energy the fight is decided by"),
-    "jink.base":       (40,   True,  "faster re-rolls smear the track; slower ones are learnable"),
-    "jink.spread":     (35,   True,  "the irregularity that keeps the rhythm unlearnable"),
-    "high.closure":    (90,   False, "modest overtake is the closure discipline's job, not a vertical excursion"),
-    "high.span":       (1200, False, "beyond this the chase needs the knots the yo-yo would spend"),
-    "high.tail":       (0.85, False, "dead astern is a pure closure problem"),
-    "low.near":        (-30,  False, "a slight opening is patience, not a cut"),
-    "low.far":         (-140, False, "a big opening means he is running, and lagging a runner points behind him"),
-    "plan.deficit":    (400,  False, "a REAL energy deficit before denying his rate game"),
-    "lead.closure":    (2.0,  False, "the pull begins ~2 s before the pass"),
-    "lead.floor":      (600,  False, "closer than this the merge is already happening"),
-    "lead.angle":      (1.3,  False, "a quarter-circle post-merge angle without giving up the tally"),
-    "missile.margin":  (0.87, False, "loose noses feed flares at the merge"),
-    "missile.tail":    (0.3,  False, "the disciplined save the shot for rear aspect the flare reaction cannot beat"),
-    "missile.span":    (2600, False, "close enough that the motor wins the tail chase"),
-    "sandwich.span":   (2200, False, "an attack run, not someone merely pointed this way for a moment"),
-    "sandwich.nose":   (0.92, False, "a loose 0.8 cone flagged anyone merely flying toward the teammate"),
-    "sandwich.weight": (0.3,  False, "the threatened wingman's problem outranks nearer targets"),
-    "support.behind":  (1100, False, "the perch converts the instant the picture changes"),
-    "support.above":   (500,  False, "the energy bank the conversion is paid from"),
-    "support.share":   (0.75, False, "a mate meaningfully closer than me owns the fight"),
-    "form.abeam":      (1500, False, "combat spread: mutual lookout without fouling each other's turns"),
-    "form.blend":      (1200, False, "station-chasing inside the spread just S-turns forever"),
-    "form.burner":     (3000, False, "a rejoin from far behind needs the corner cut in reheat"),
-    "press.span":      (1500, False, "the advantage clock runs only inside the fight, not on a transit"),
-    "press.hold":      (300,  True,  "five seconds of held angles before patience becomes the finish"),
-    "press.loose":     (1.0,  False, "measured: rounds trace the airframe, a wider gate only sprays"),
-    "press.closure":   (45,   False, "the overtake ceiling of the run-in to the finishing gap"),
-    "press.gap":       (250,  False, "dispersion is angular: half the range is four times the hit density"),
-    "crowd.weight":    (2.75,  False, "spread the section across a target-rich picture; a perch is parked guns"),
-    "sandwich.reach":  (10000, False, "a rescue 20 km out is a lonely transit to a stale fight, not a rescue"),
-    "rejoin.span":     (4000, False, "a pair this far apart is two singles; re-form before crossing into a fight"),
-    "rejoin.fight":    (10000, False, "a target inside this is my fight now, rejoined or not"),
-    "zoom.edge":       (500,  False, "an energy edge worth spending upstairs, not on rate"),
-    "rope.edge":       (600,  False, "the climb he cannot follow needs a real bank balance"),
-    "rope.hold":       (180,  True,  "three committed seconds - a released rope is just a climb"),
-    "bracket.span":    (4500, False, "split the approach while there is still sky to split"),
-    "bracket.angle":   (0.6,  False, "~35 degrees off the direct line: a flank at the merge, not a detour"),
-    "wounded.weight":  (0.6,  False, "finish what is already dying - the smoking bird pulls the eye"),
+    "drag.pace":       (False, "below ~2/3 corner a break neither defeats his solution nor keeps the corner"),
+    "drag.span":       (False, "inside 900 m an extension hands him the saddle; the break stays mandatory"),
+    "spiral.nose":     (False, "established = his nose committed, not merely pointed this decision"),
+    "spiral.span":     (False, "a spiral against a distant attacker donates altitude for nothing"),
+    "spiral.floor":    (False, "the descending turn needs altitude to spend before the guard flattens it"),
+    "spiral.saddle":   (True,  "one-decision transients belong to the reversal, not a committed spiral"),
+    "spiral.hold":     (True,  "a spiral re-decided every cadence is no spiral"),
+    "jink.span":       (False, "jinking outside guns range spends the energy the fight is decided by"),
+    "jink.base":       (True,  "faster re-rolls smear the track; slower ones are learnable"),
+    "jink.spread":     (True,  "the irregularity that keeps the rhythm unlearnable"),
+    "high.closure":    (False, "modest overtake is the closure discipline's job, not a vertical excursion"),
+    "high.span":       (False, "beyond this the chase needs the knots the yo-yo would spend"),
+    "high.tail":       (False, "dead astern is a pure closure problem"),
+    "low.near":        (False, "a slight opening is patience, not a cut"),
+    "low.far":         (False, "a big opening means he is running, and lagging a runner points behind him"),
+    "plan.deficit":    (False, "a REAL energy deficit before denying his rate game"),
+    "lead.closure":    (False, "the pull begins ~2 s before the pass"),
+    "lead.floor":      (False, "closer than this the merge is already happening"),
+    "lead.angle":      (False, "a quarter-circle post-merge angle without giving up the tally"),
+    "missile.margin":  (False, "loose noses feed flares at the merge"),
+    "missile.tail":    (False, "the disciplined save the shot for rear aspect the flare reaction cannot beat"),
+    "missile.span":    (False, "close enough that the motor wins the tail chase"),
+    "sandwich.span":   (False, "an attack run, not someone merely pointed this way for a moment"),
+    "sandwich.nose":   (False, "a loose 0.8 cone flagged anyone merely flying toward the teammate"),
+    "sandwich.weight": (False, "the threatened wingman's problem outranks nearer targets"),
+    "support.behind":  (False, "the perch converts the instant the picture changes"),
+    "support.above":   (False, "the energy bank the conversion is paid from"),
+    "support.share":   (False, "a mate meaningfully closer than me owns the fight"),
+    "form.abeam":      (False, "combat spread: mutual lookout without fouling each other's turns"),
+    "form.blend":      (False, "station-chasing inside the spread just S-turns forever"),
+    "form.burner":     (False, "a rejoin from far behind needs the corner cut in reheat"),
+    "press.span":      (False, "the advantage clock runs only inside the fight, not on a transit"),
+    "press.hold":      (True,  "five seconds of held angles before patience becomes the finish"),
+    "press.loose":     (False, "measured: rounds trace the airframe, a wider gate only sprays"),
+    "press.closure":   (False, "the overtake ceiling of the run-in to the finishing gap"),
+    "press.gap":       (False, "dispersion is angular: half the range is four times the hit density"),
+    "crowd.weight":    (False, "spread the section across a target-rich picture; a perch is parked guns"),
+    "sandwich.reach":  (False, "a rescue 20 km out is a lonely transit to a stale fight, not a rescue"),
+    "rejoin.span":     (False, "a pair this far apart is two singles; re-form before crossing into a fight"),
+    "rejoin.fight":    (False, "a target inside this is my fight now, rejoined or not"),
+    "zoom.edge":       (False, "an energy edge worth spending upstairs, not on rate"),
+    "rope.edge":       (False, "the climb he cannot follow needs a real bank balance"),
+    "rope.hold":       (True,  "three committed seconds - a released rope is just a climb"),
+    "bracket.span":    (False, "split the approach while there is still sky to split"),
+    "bracket.angle":   (False, "~35 degrees off the direct line: a flank at the merge, not a detour"),
+    "wounded.weight":  (False, "finish what is already dying - the smoking bird pulls the eye"),
 }
 
 DEFAULT_SWEEP = [
@@ -89,10 +92,12 @@ DEFAULT_SWEEP = [
 ]
 
 LINE = re.compile(r"BATTERY (\S+)((?: \S+=\S+)+) \((\d+) seeds\)")
+DEFAULTS = re.compile(r"BATTERY-DEFAULTS (\{.*\})")
 
 
 def battery(seeds, overrides):
-    """Run the battery once; return {scenario: {metric: mean}}."""
+    """Run the battery once; return ({scenario: {metric: mean}}, {constant: the
+    default it ran with})."""
     env = {"AIR_BATTERY": "1", "AIR_SEEDS": str(seeds)}
     if overrides:
         env["AIR_TACTICS"] = json.dumps(overrides)
@@ -110,7 +115,10 @@ def battery(seeds, overrides):
             out[scenario][name] = float(value)
     if not out:
         sys.exit(f"no BATTERY lines in output:\n{run.stdout[-2000:]}")
-    return out
+    found = DEFAULTS.search(run.stdout)
+    if not found:
+        sys.exit(f"no BATTERY-DEFAULTS line in output:\n{run.stdout[-2000:]}")
+    return out, json.loads(found.group(1))
 
 
 def score(baseline, candidate):
@@ -144,13 +152,19 @@ def main():
 
     started = time.time()
     print(f"baseline ({args.seeds} seeds)...", flush=True)
-    baseline = battery(args.seeds, None)
+    baseline, defaults = battery(args.seeds, None)
+    for name in names:
+        if name not in defaults:
+            sys.exit(f"the battery reports no constant {name!r}: tactics.py and battery_test.go's knobs disagree")
     for scenario, metrics in sorted(baseline.items()):
         print(f"  {scenario}: " + " ".join(f"{k}={v:.3f}" for k, v in sorted(metrics.items())))
 
     report = {"seeds": args.seeds, "baseline": baseline, "constants": {}}
     for name in names:
-        default, whole, why = CONSTANTS[name]
+        whole, why = CONSTANTS[name]
+        default = defaults[name]
+        if whole:
+            default = int(default)
         candidates = []
         for f in factors:
             value = round(default * f) if whole else round(default * f, 6)
@@ -159,7 +173,7 @@ def main():
         rows = []
         for value, _ in candidates:
             print(f"{name}={value} ({args.seeds} seeds)...", flush=True)
-            result = battery(args.seeds, {name: value})
+            result, _ = battery(args.seeds, {name: value})
             rows.append({"value": value, "score": score(baseline, result), "metrics": result})
         rows.sort(key=lambda r: -r["score"])
         report["constants"][name] = {"default": default, "reason": why, "candidates": rows}

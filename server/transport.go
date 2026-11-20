@@ -57,10 +57,50 @@ func transport_admit() bool {
 // transport_release returns a slot taken by transport_admit.
 func transport_release() { connections.Add(-1) }
 
-// HOST_CONNECTIONS_MAXIMUM caps how many transport connections ONE address may
-// hold at once: the sliding-minute limiter bounds connect RATE, not holds.
-// Generous, because a household behind one NAT address is ordinary.
+// HOST_CONNECTIONS_MAXIMUM is the default for [limits] hosts: how many transport
+// connections ONE address may hold at once, where the sliding-minute limiter
+// bounds connect RATE, not holds. Generous, because a household behind one NAT
+// address is ordinary; a LAN event, a campus or the load-test harness behind one
+// address raises it.
 const HOST_CONNECTIONS_MAXIMUM = 16
+
+// PLAYS_MINUTE is the default for [limits] plays: /play connects allowed per
+// address per minute.
+const PLAYS_MINUTE = 30
+
+// transport_idle closes a connection that holds no request stream: one that
+// never asked for /play, or whose session has ended. Neither QUIC's idle timer
+// nor the session layer ever does, since this server's own keep-alives are
+// acknowledged by any stock QUIC stack. A live WebTransport session holds its
+// CONNECT stream open, which stops the timer for as long as it lasts. A
+// variable so a test can shorten it.
+var transport_idle = 30 * time.Second
+
+// UNVALIDATED_SECOND is how many connection attempts from unproven source
+// addresses the transport takes in a second before it asks each for a Retry:
+// a stateless round trip that proves the address before anything is held for
+// it, so a flood of forged Initials costs a Retry each rather than a pending
+// handshake.
+const UNVALIDATED_SECOND = 50
+
+var unvalidated struct {
+	sync.Mutex
+	window time.Time
+	count  int
+}
+
+// transport_verify is the transport's VerifySourceAddress: whether to demand a
+// Retry of a new connection attempt.
+func transport_verify(net.Addr) bool {
+	unvalidated.Lock()
+	defer unvalidated.Unlock()
+	now := time.Now()
+	if now.Sub(unvalidated.window) >= time.Second {
+		unvalidated.window, unvalidated.count = now, 0
+	}
+	unvalidated.count++
+	return unvalidated.count > UNVALIDATED_SECOND
+}
 
 var (
 	hosts      = map[string]int{}
@@ -83,13 +123,18 @@ func origin(address string) string {
 	return parsed.Mask(net.CIDRMask(64, 128)).String()
 }
 
+// transport_permit is the per-host connect-rate budget of /play.
+func transport_permit(r *http.Request) bool {
+	return lobby_permit(plays, r, ini_int("limits", "plays", PLAYS_MINUTE))
+}
+
 // transport_host_admit reserves a per-host slot, reporting false when this
 // address already holds its share. Paired with transport_host_release.
 func transport_host_admit(address string) bool {
 	host := origin(address)
 	hosts_lock.Lock()
 	defer hosts_lock.Unlock()
-	if hosts[host] >= HOST_CONNECTIONS_MAXIMUM {
+	if hosts[host] >= ini_int("limits", "hosts", HOST_CONNECTIONS_MAXIMUM) {
 		return false
 	}
 	hosts[host]++
@@ -119,7 +164,7 @@ func transport_start(fatal chan<- error) error {
 	address := fmt.Sprintf("%s:%d", ini_string("transport", "listen", ""), ini_int("transport", "port", 4433))
 	mux := http.NewServeMux()
 	server := &webtransport.Server{
-		H3: &http3.Server{Addr: address, TLSConfig: tlsconf, Handler: mux, EnableDatagrams: true,
+		H3: &http3.Server{Addr: address, TLSConfig: tlsconf, Handler: mux, EnableDatagrams: true, IdleTimeout: transport_idle,
 			// quic-go defaults to a 30 s idle timeout with keepalives OFF, which drops a
 			// client that goes quiet. Datagrams must be re-enabled here: providing a
 			// config replaces the one http3 would otherwise build.
@@ -162,7 +207,7 @@ func transport_start(fatal chan<- error) error {
 		// and player caps bound the steady state, not connection churn. The
 		// capacity budgets are already spent by transport_accept, which admitted
 		// this connection before HTTP/3 ever saw a request on it.
-		if !lobby_permit(plays, r, 30) {
+		if !transport_permit(r) {
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
@@ -178,16 +223,22 @@ func transport_start(fatal chan<- error) error {
 	// Own the accept loop rather than handing the socket to Serve: it accepts
 	// every QUIC handshake and only then routes a request, so a peer that
 	// completed the handshake and never asked for /play held a connection, its
-	// buffers and its goroutines for the whole 60 s idle timeout, counted by
-	// nothing. The budgets belong where the connection is born.
+	// buffers and its goroutines, counted by nothing - and for ever, since the
+	// keep-alives above stop QUIC idling it out; transport_idle is what ends
+	// it. The budgets belong where the connection is born.
 	// The two flags webtransport.Server.serve would have set for us, and which
 	// its ServeQUICConn refuses a connection without: taking over the accept
 	// loop means taking over the whole of what it did.
 	quicconf := server.H3.QUICConfig.Clone()
 	quicconf.EnableDatagrams = true
 	quicconf.EnableStreamResetPartialDelivery = true
-	quictransport := &quic.Transport{Conn: connection}
-	listener, err := quictransport.ListenEarly(tlsconf, quicconf)
+	// Listen, not ListenEarly: an early connection is handed over as soon as the
+	// client's first flight is read, before it has shown it can receive at the
+	// address it claims, so the budgets below would be charged to an address
+	// anyone can forge. The server takes no 0-RTT data, so waiting for the
+	// handshake costs it nothing.
+	quictransport := &quic.Transport{Conn: connection, VerifySourceAddress: transport_verify}
+	listener, err := quictransport.Listen(tlsconf, quicconf)
 	if err != nil {
 		return fmt.Errorf("transport listen %s: %w", address, err)
 	}
@@ -266,6 +317,7 @@ func transport_serve(session *webtransport.Session) {
 		stream:   stream,
 		inbound:  make(chan []byte, 256),
 		outbound: make(chan []byte, 256),
+		datagram: make(chan []byte, datagram_depth),
 		closed:   make(chan struct{}),
 	}
 	// Each reader owns its own guard: a panic on one of these goroutines is
@@ -273,6 +325,7 @@ func transport_serve(session *webtransport.Session) {
 	go guard("wire streams", func() { l.close("fault") }, l.streams)
 	go guard("wire datagrams", func() { l.close("fault") }, l.datagrams)
 	go guard("wire writer", func() { l.close("fault") }, l.writer)
+	go guard("wire sender", func() { l.close("fault") }, l.sender)
 	connection_serve(l)
 }
 
@@ -300,18 +353,32 @@ type wire struct {
 	stream   wire_stream
 	inbound  chan []byte
 	outbound chan []byte
+	datagram chan []byte // unreliable payloads waiting for the sender
 	closed   chan struct{}
 	once     sync.Once
 	sending  sync.Mutex   // serialises stream writes
 	reason   string       // set once by close before closed is closed
 	oversize sync.Once    // bounds the too-large datagram warning to one per connection
 	queued   atomic.Int64 // bytes sitting in inbound, bounded by queue_bytes
+	jammed   atomic.Int64 // when write first found datagram full (unix nanoseconds), 0 while it drains
 	rate     struct {
 		sync.Mutex
 		window time.Time
 		count  int
 	}
 }
+
+// datagram_depth bounds the datagrams waiting for one connection's sender. A
+// snapshot and a pose set leave every 50 ms, and a newer one supersedes the
+// last, so a few is all a healthy link ever holds.
+const datagram_depth = 8
+
+// datagram_patience is how long a connection's datagrams may stay jammed - every
+// write finding the queue full - before it is closed as slow, as a full
+// reliable queue is. A peer that has stopped acknowledging gets no more of
+// them, and its player leaves rather than being sent snapshots into a void
+// until QUIC's idle timer notices.
+var datagram_patience = 3 * time.Second
 
 // queue_bytes bounds the payload one connection may have waiting for the
 // consumer. The 256-message channel depth alone permits 256 x frame_most.
@@ -531,12 +598,57 @@ func (l *wire) write(bytes []byte, reliable bool) {
 		}
 		return
 	}
-	// An unreliable send may legitimately fail (the session is going away), but
-	// a payload above the peer's datagram ceiling fails EVERY time, so a busy
-	// match dropped the recipient's pose updates entirely and silently: the
-	// interest window reaches 31 remotes, which is ~1280 bytes of CBOR, and
-	// before MTU discovery lifts it the usable datagram is ~1240. Fall back to
-	// the reliable stream so the player still sees the world, and say so once.
+	// Never SendDatagram here: this runs on the session's tick goroutine, and
+	// quic-go queues 32 datagrams and then blocks until congestion control
+	// lets one out. A peer that stops acknowledging - dropped off Wi-Fi, or
+	// hostile - would park the tick, and with it the whole match, for as long
+	// as its connection lived. The sender goroutine takes that wait instead.
+	select {
+	case l.datagram <- bytes:
+		l.jammed.Store(0)
+		return
+	case <-l.closed:
+		return
+	default:
+	}
+	// Full: the oldest waiting goes, since this newer state supersedes it.
+	select {
+	case <-l.datagram:
+	default:
+	}
+	select {
+	case l.datagram <- bytes:
+	default:
+	}
+	now := time.Now().UnixNano()
+	if since := l.jammed.Load(); since == 0 {
+		l.jammed.Store(now)
+	} else if time.Duration(now-since) > datagram_patience {
+		l.close("slow")
+	}
+}
+
+// sender drains the datagram queue onto the session, on its own goroutine so a
+// congested connection blocks nobody but itself.
+func (l *wire) sender() {
+	for {
+		select {
+		case bytes := <-l.datagram:
+			l.transmit(bytes)
+		case <-l.closed:
+			return
+		}
+	}
+}
+
+// transmit sends one datagram. An unreliable send may legitimately fail (the
+// session is going away), but a payload above the peer's datagram ceiling
+// fails EVERY time, so a busy match dropped the recipient's pose updates
+// entirely and silently: the interest window reaches 31 remotes, which is
+// ~1280 bytes of CBOR, and before MTU discovery lifts it the usable datagram
+// is ~1240. Fall back to the reliable stream so the player still sees the
+// world, and say so once.
+func (l *wire) transmit(bytes []byte) {
 	if err := l.session.SendDatagram(bytes); err != nil {
 		var large *quic.DatagramTooLargeError
 		if errors.As(err, &large) {

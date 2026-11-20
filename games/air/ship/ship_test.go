@@ -388,11 +388,18 @@ func TestNeeded(t *testing.T) {
 		state flight.State
 		want  bool
 	}{{"aboard", on, true}, {"gear down inbound", down, true}, {"gear up", up, false}, {"gear down far off", far, false}} {
-		if got := Needed(c, 0, []flight.State{test.state}); got != test.want {
+		if got := Needed(c, 0, []flight.State{test.state}, flight.Identity); got != test.want {
 			t.Errorf("%s: needed %v, want %v", test.name, got, test.want)
 		}
+		// The same jets as an Earth-centred host keeps them, with the motion
+		// that carries them back into the chart.
+		earthly := test.state
+		earthly.Position = flight.Between(flight.Midway, flight.Earth).Point(test.state.Position)
+		if got := Needed(c, 0, []flight.State{earthly}, flight.Between(flight.Earth, flight.Midway)); got != test.want {
+			t.Errorf("%s, kept Earth-centred: needed %v, want %v", test.name, got, test.want)
+		}
 	}
-	if Needed(c, 0, nil) {
+	if Needed(c, 0, nil, flight.Identity) {
 		t.Error("an empty sky needs the deck")
 	}
 }

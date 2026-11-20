@@ -7,7 +7,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,7 +29,9 @@ func listing_test_conf(t *testing.T, content string) {
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
-	ini_load(path)
+	if err := ini_load(path); err != nil {
+		t.Fatal(err)
+	}
 	t.Cleanup(func() { ini_file = previous })
 }
 
@@ -66,7 +74,7 @@ public = false
 // unchanged state compares byte-equal for the change debounce.
 func TestListingPayload(t *testing.T) {
 	dir := t.TempDir()
-	listing_test_conf(t, "[world]\ndata = "+dir+"\nname = Test World\npublic = true\n")
+	listing_test_conf(t, "[world]\ndata = "+dir+"\nname = Test World\npublic = true\n[lobby]\naddress = https://example.com:4433\n")
 	one, err := listing_payload("abcdefghij0123456789abcdefghij01", "Test World")
 	if err != nil {
 		t.Fatal(err)
@@ -131,5 +139,122 @@ func TestListingIDHasNoModuloBias(t *testing.T) {
 	id := listing_id()
 	if id != strings.Repeat("0", 32) {
 		t.Errorf("id %q: byte 253 was mapped rather than resampled", id)
+	}
+}
+
+// TestListingPublishesTheLobby: the listing carried the transport's address,
+// and a join page fetches <address>/status from it - so a server whose lobby
+// listened on another port was listed where nothing answers HTTP.
+func TestListingPublishesTheLobby(t *testing.T) {
+	t.Setenv("MOCHI_WORLD_PUBLIC", "true")
+	t.Setenv("MOCHI_WORLD_NAME", "Test world")
+	t.Setenv("MOCHI_TRANSPORT_ADDRESS", "https://game.example:4433")
+	t.Setenv("MOCHI_TRANSPORT_PORT", "4433")
+	t.Setenv("MOCHI_LOBBY_PORT", "4433")
+	if got := lobby_origin(); got != "https://game.example:4433" {
+		t.Errorf("one port for both: published %q, want the transport's address, which is the lobby's too", got)
+	}
+	t.Setenv("MOCHI_LOBBY_PORT", "443")
+	if _, ok := listing_ready(); ok {
+		t.Error("published a lobby on port 443 under the transport's address on 4433")
+	}
+	t.Setenv("MOCHI_LOBBY_ADDRESS", "https://lobby.example/")
+	if _, ok := listing_ready(); !ok || lobby_origin() != "https://lobby.example" {
+		t.Errorf("with [lobby] address set: ready %v, publishing %q; want it published", ok, lobby_origin())
+	}
+	payload, err := listing_payload(strings.Repeat("a", 32), "Test world")
+	if err != nil || !strings.Contains(string(payload), `"address":"https://lobby.example"`) {
+		t.Errorf("the payload carries no lobby address: %s", payload)
+	}
+}
+
+// TestListingRefusesWhatCoreRefuses: the world server checked only that a name
+// and an address were set; core refused anything longer than its bounds on
+// every push, and the operator saw an unreachable server.
+func TestListingRefusesWhatCoreRefuses(t *testing.T) {
+	t.Setenv("MOCHI_WORLD_PUBLIC", "true")
+	t.Setenv("MOCHI_LOBBY_ADDRESS", "https://lobby.example")
+	for _, c := range []struct {
+		what, key, value string
+	}{
+		{"a 65-character name", "MOCHI_WORLD_NAME", strings.Repeat("n", LISTING_NAME_MOST+1)},
+		{"a name holding a bidi override", "MOCHI_WORLD_NAME", "Den\u202eden"},
+		{"a game name too long", "MOCHI_AIR_NAME", strings.Repeat("g", LISTING_NAME_MOST+1)},
+		{"an address that is not http or https", "MOCHI_LOBBY_ADDRESS", "ftp://lobby.example"},
+		{"a 256-byte address", "MOCHI_LOBBY_ADDRESS", "https://" + strings.Repeat("a", LISTING_ADDRESS_MOST-7)},
+	} {
+		t.Run(c.what, func(t *testing.T) {
+			t.Setenv("MOCHI_WORLD_NAME", "Fine")
+			t.Setenv(c.key, c.value)
+			if _, ok := listing_ready(); ok {
+				t.Errorf("published with %s", c.what)
+			}
+		})
+	}
+	t.Setenv("MOCHI_WORLD_NAME", strings.Repeat("n", LISTING_NAME_MOST))
+	if _, ok := listing_ready(); !ok {
+		t.Error("refused a name of exactly the most core takes")
+	}
+}
+
+// TestListingIdCoreRefusesIsReplaced: any 32 bytes were kept as the id, and
+// core takes only 32 of [0-9a-z], so a hand-edited or damaged world.id refused
+// every push for the life of the install.
+func TestListingIdCoreRefusesIsReplaced(t *testing.T) {
+	dir := t.TempDir()
+	listing_test_conf(t, "[world]\ndata = "+dir+"\n")
+	os.WriteFile(filepath.Join(dir, "world.id"), []byte(strings.Repeat("A", 32)+"\n"), 0644)
+	if id := listing_id(); !match_listing_id.MatchString(id) {
+		t.Errorf("kept the id %q, which core refuses", id)
+	}
+}
+
+// refusing answers every request with a fixed status and body.
+type refusing struct {
+	status int
+	body   string
+}
+
+func (r refusing) RoundTrip(*http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: r.status, Status: fmt.Sprintf("%d Refused", r.status), Body: io.NopCloser(strings.NewReader(r.body)), Header: http.Header{}}, nil
+}
+
+type unreachable struct{}
+
+func (unreachable) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("connect: no such file or directory")
+}
+
+// TestListingRefusalIsNotAnOutage: core refusing the status was logged at
+// debug level only, and the one line the operator saw said the Mochi server
+// could not be reached. A refusal is said once, with the setting to check.
+func TestListingRefusalIsNotAnOutage(t *testing.T) {
+	listing_once.Do(func() {})
+	previous := listing_client
+	t.Cleanup(func() { listing_client = previous })
+	var logged bytes.Buffer
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	listing_client = &http.Client{Transport: refusing{400, `{"error":"invalid status","field":"name"}`}}
+	var told listing_told
+	for range 3 {
+		if !told.note(listing_push([]byte("{}"))) {
+			t.Fatal("a refusal was taken for an outage")
+		}
+	}
+	if strings.Count(logged.String(), "WARN") != 1 || !strings.Contains(logged.String(), "[world] name") || strings.Contains(logged.String(), "cannot push") {
+		t.Errorf("three refusals logged %q; want one warning naming [world] name and nothing about reaching the server", logged.String())
+	}
+
+	logged.Reset()
+	listing_client = &http.Client{Transport: unreachable{}}
+	if told.note(listing_push([]byte("{}"))) || !strings.Contains(logged.String(), "cannot push") {
+		t.Errorf("an unreachable server logged %q", logged.String())
+	}
+	logged.Reset()
+	listing_client = &http.Client{Transport: refusing{200, "{}"}}
+	if !told.note(listing_push([]byte("{}"))) || !strings.Contains(logged.String(), "reachable again") {
+		t.Errorf("a push taken after an outage logged %q", logged.String())
 	}
 }

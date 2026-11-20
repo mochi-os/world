@@ -835,7 +835,7 @@ func TestLancerRadar(t *testing.T) {
 	}{
 		{"ahead at 30 km", flight.Vec3{X: 30000, Y: 6000}, true},
 		{"abeam at 30 km", flight.Vec3{Z: 30000, Y: 6000}, false},
-		{"ahead at 95 km", flight.Vec3{X: 95000, Y: 6000}, false},
+		{"ahead at 130 km", flight.Vec3{X: 130000, Y: 6000}, false}, // past the edge at any aspect: 68 nm beam-on
 	} {
 		i, _, _ := bench(c.position, flight.Vec3{X: -1})
 		l := &lancer{}

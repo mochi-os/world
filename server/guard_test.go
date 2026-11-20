@@ -85,12 +85,12 @@ func TestSessionPanicIsContained(t *testing.T) {
 	games["healthy"] = &fake_game{name: "healthy", instance: healthy}
 	defer func() { delete(games, "faulty"); delete(games, "healthy") }()
 
-	good, err := sessions_make("healthy", "m", "M", 4, nil, false)
+	good, err := sessions_make("healthy", "m", "M", 4, nil, false, offer{})
 	if err != nil {
 		t.Fatalf("healthy session: %v", err)
 	}
 	defer session_close(good, "test")
-	bad, err := sessions_make("faulty", "m", "M", 4, nil, false)
+	bad, err := sessions_make("faulty", "m", "M", 4, nil, false, offer{})
 	if err != nil {
 		t.Fatalf("faulty session: %v", err)
 	}
@@ -119,5 +119,59 @@ func TestSessionPanicIsContained(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 	if healthy.steps.Load() <= before {
 		t.Fatalf("healthy session stopped ticking: %d steps", healthy.steps.Load()-before)
+	}
+}
+
+// TestStandingMatchIsMadeAgain: a fault in the standing match's tick ends it as
+// it ends any match, and it was made only at startup - so the server ran on
+// without the always-open match its listing promises. It is made again, and a
+// game that faults at once is made again no faster than its back-off.
+func TestStandingMatchIsMadeAgain(t *testing.T) {
+	games["faulty"] = &fake_game{name: "faulty", instance: &faulty_instance{after: 2}}
+	defer delete(games, "faulty")
+	t.Setenv("MOCHI_WORLD_STANDING", "faulty")
+	standing := func() *session {
+		sessions_lock.RLock()
+		defer sessions_lock.RUnlock()
+		for _, s := range sessions {
+			if s.permanent && s.spec.Game == "faulty" {
+				return s
+			}
+		}
+		return nil
+	}
+	clocks := map[string]*standing_clock{}
+	now := time.Now()
+	if made := sessions_standing_check(now, clocks); made != 1 {
+		t.Fatalf("made %d standing matches where none stood, want 1", made)
+	}
+	first := standing()
+	if first == nil {
+		t.Fatal("no standing match after the check made one")
+	}
+	select {
+	case <-first.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the faulty standing match never ended")
+	}
+	if made := sessions_standing_check(now.Add(time.Second), clocks); made != 0 {
+		t.Errorf("made the match again %v after the last, inside the %v back-off", time.Second, STANDING_WAIT)
+	}
+	if made := sessions_standing_check(now.Add(STANDING_WAIT), clocks); made != 1 {
+		t.Fatalf("the ended standing match was not made again once the back-off passed")
+	}
+	second := standing()
+	if second == nil || second == first {
+		t.Fatal("no new standing match")
+	}
+	<-second.done
+	if made := sessions_standing_check(now.Add(STANDING_WAIT+STANDING_WAIT), clocks); made != 0 {
+		t.Error("a match that faulted again was made again after the first pause, not a doubled one")
+	}
+	if made := sessions_standing_check(now.Add(STANDING_WAIT+2*STANDING_WAIT), clocks); made != 1 {
+		t.Error("the doubled pause never ended")
+	}
+	if s := standing(); s != nil {
+		<-s.done
 	}
 }

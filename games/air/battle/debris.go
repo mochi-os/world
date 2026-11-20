@@ -98,7 +98,7 @@ func (d Debris) Meet(time float64, dt float64, position flight.Vec3, velocity fl
 	extent := Extent(body.Parts)
 	across := scatter(toward, (roll(seed, slot, tick, 41)-0.5)*0.8, (roll(seed, slot, tick, 42)-0.5)*0.8)
 	origin := across.Scale(-(extent + 1))
-	part, along := trace(body.Parts, origin, across, 2*extent+2)
+	part, along := trace(body, origin, across, 2*extent+2)
 	if part < 0 {
 		return false, nil, nil // it passed between the tails and the wing
 	}

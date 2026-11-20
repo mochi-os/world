@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,12 +49,76 @@ const (
 // refuses.
 const LOBBY_CONNECTIONS_MAXIMUM = 512
 
-// listener_limit caps accepted connections. Excess connections wait in the
-// kernel's accept queue rather than being refused, and the cap is released as
-// connections close. maximum is a parameter so a test can assert at a small
-// size.
-func listener_limit(listener net.Listener, maximum int) net.Listener {
-	return netutil.LimitListener(listener, maximum)
+// LOBBY_HOST_CONNECTIONS_MAXIMUM caps the lobby connections ONE address may hold
+// at once, as HOST_CONNECTIONS_MAXIMUM does the transport's: without it one
+// client opening keep-alive connections - a 429 keeps one open as well as a 200
+// does - held all 512 and nobody else could read the status, list a match or
+// fetch a map. A browser holds up to six HTTP/1.1 connections to a host and the
+// client polls two or three things at once, so sixteen players behind one
+// address fit inside it.
+const LOBBY_HOST_CONNECTIONS_MAXIMUM = 64
+
+// listener_limit caps accepted connections, in all and per address. Excess over
+// maximum waits in the kernel's accept queue rather than being refused, and the
+// cap is released as connections close; a connection from an address already
+// holding share is closed at once, since what it waits for is its own
+// address's connections to end. The figures are parameters so a test can
+// assert at a small size.
+func listener_limit(listener net.Listener, maximum int, share int) net.Listener {
+	return netutil.LimitListener(&listener_hold{Listener: listener, share: share, held: map[string]int{}}, maximum)
+}
+
+// listener_hold is the per-address half of listener_limit.
+type listener_hold struct {
+	net.Listener
+	share int
+	lock  sync.Mutex
+	held  map[string]int
+}
+
+func (l *listener_hold) Accept() (net.Conn, error) {
+	for {
+		connection, err := l.Listener.Accept()
+		if err != nil {
+			return nil, err
+		}
+		host := origin(connection.RemoteAddr().String())
+		l.lock.Lock()
+		if l.held[host] >= l.share {
+			l.lock.Unlock()
+			connection.Close()
+			continue
+		}
+		l.held[host]++
+		l.lock.Unlock()
+		return &listener_held{Conn: connection, release: func() { l.release(host) }}, nil
+	}
+}
+
+// release returns one address's slot, and forgets the address at zero so the
+// map holds only addresses with a connection open.
+func (l *listener_hold) release(host string) {
+	l.lock.Lock()
+	defer l.lock.Unlock()
+	if l.held[host] <= 1 {
+		delete(l.held, host)
+		return
+	}
+	l.held[host]--
+}
+
+// listener_held is an accepted connection that returns its address's slot when
+// it closes, once however often it is closed.
+type listener_held struct {
+	net.Conn
+	once    sync.Once
+	release func()
+}
+
+func (c *listener_held) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(c.release)
+	return err
 }
 
 // lobby_start serves the public lobby API. World servers are open: there is
@@ -64,6 +129,7 @@ func lobby_start(fatal chan<- error) error {
 	mux.HandleFunc("/sessions", lobby_sessions)
 	mux.HandleFunc("/withdraw", lobby_withdraw)
 	mux.HandleFunc("/chat", lobby_chat)
+	mux.HandleFunc("/poll", lobby_poll)
 	mux.HandleFunc("/maps/", lobby_map)
 	address := fmt.Sprintf("%s:%d", ini_string("lobby", "listen", ""), ini_int("lobby", "port", 4433))
 	server := &http.Server{
@@ -81,7 +147,7 @@ func lobby_start(fatal chan<- error) error {
 	if err != nil {
 		return fmt.Errorf("lobby listen %s: %w", address, err)
 	}
-	listener = listener_limit(listener, LOBBY_CONNECTIONS_MAXIMUM)
+	listener = listener_limit(listener, LOBBY_CONNECTIONS_MAXIMUM, LOBBY_HOST_CONNECTIONS_MAXIMUM)
 	info("lobby listening on %s", address)
 	if certificate_file != "" || acme_manager != nil {
 		// TLS resolves per handshake through certificate_get, so file
@@ -212,6 +278,11 @@ func lobby_status(w http.ResponseWriter, r *http.Request) {
 		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
 		return
 	}
+	lobby_respond(w, http.StatusOK, lobby_state(r))
+}
+
+// lobby_state is the body of /status, for the request it answers.
+func lobby_state(r *http.Request) map[string]any {
 	count, players := sessions_counts()
 	// present is everyone here: the pilots seen on the server page lately plus
 	// the players in a match, who are not polling the page from the cockpit.
@@ -231,46 +302,125 @@ func lobby_status(w http.ResponseWriter, r *http.Request) {
 		"sessions": count,
 		"players":  players,
 		"present":  present,
-		"address":  transport_address(),
+		"address":  transport_address(r),
 	}
 	if hash, expires := certificate_hash(); hash != "" {
 		body["certificate"] = map[string]any{"hash": hash, "expires": expires}
 	}
-	lobby_respond(w, http.StatusOK, body)
+	return body
 }
 
-// presence is the pilots seen on this server's page lately, by token: the
-// match-list poll every few seconds is the sighting, and the status counts
-// the tokens sighted inside the window as players here. A token is the
-// player's own stable offer token, so one player is one entry however many
-// polls they make.
-var presence = map[string]time.Time{}
+// presence is the pilots seen on this server's page lately, by the address
+// they polled from and then by token: the match-list poll every few seconds
+// is the sighting, and the status counts the tokens sighted inside the window
+// as players here. A token is the player's own stable offer token, so one
+// player is one entry however many polls they make - but the token is also
+// whatever the caller puts in the query, so one address stands for no more
+// pilots than it may hold game connections.
+var presence = map[string]map[string]time.Time{}
 var presence_lock sync.Mutex
 
 const presence_window = 20 * time.Second
 
-func presence_touch(pilot string) {
+func presence_touch(address string, pilot string) {
 	if pilot == "" {
 		return
 	}
+	host := origin(address)
+	now := time.Now()
 	presence_lock.Lock()
-	presence[pilot] = time.Now()
-	presence_lock.Unlock()
+	defer presence_lock.Unlock()
+	seen := presence[host]
+	if seen == nil {
+		seen = map[string]time.Time{}
+		presence[host] = seen
+	}
+	if _, known := seen[pilot]; !known {
+		for token, when := range seen {
+			if now.Sub(when) > presence_window {
+				delete(seen, token)
+			}
+		}
+		if len(seen) >= ini_int("limits", "hosts", HOST_CONNECTIONS_MAXIMUM) {
+			return
+		}
+	}
+	seen[pilot] = now
 }
 
-// presence_count is the pilots sighted inside the window; older sightings
-// are dropped as they are counted, so the map never outgrows the players
-// who have been here.
+// presence_count is the pilots sighted inside the window.
 func presence_count() int {
 	presence_lock.Lock()
 	defer presence_lock.Unlock()
 	now := time.Now()
-	for pilot, seen := range presence {
-		if now.Sub(seen) > presence_window {
-			delete(presence, pilot)
+	count := 0
+	for _, seen := range presence {
+		for _, when := range seen {
+			if now.Sub(when) <= presence_window {
+				count++
+			}
 		}
 	}
-	return len(presence)
+	return count
+}
+
+// presence_prune drops sightings older than the window, and addresses left
+// with none, so the map holds only who has been here lately whether or not
+// anybody asks for the status.
+func presence_prune() {
+	presence_lock.Lock()
+	defer presence_lock.Unlock()
+	now := time.Now()
+	for host, seen := range presence {
+		for token, when := range seen {
+			if now.Sub(when) > presence_window {
+				delete(seen, token)
+			}
+		}
+		if len(seen) == 0 {
+			delete(presence, host)
+		}
+	}
+}
+
+// presence_manager runs the prune on the server's own clock, forever.
+func presence_manager() {
+	for range time.Tick(5 * time.Second) {
+		presence_prune()
+	}
+}
+
+// lobby_poll answers everything the server page shows in one request: the
+// status, the match list and the lobby chat since a cursor. It is the offer
+// heartbeat and the presence sighting, as the match-list read is, and spends
+// one read of the budget where the three separate reads it replaces spent
+// three.
+func lobby_poll(w http.ResponseWriter, r *http.Request) {
+	if lobby_cors(w, r) {
+		return
+	}
+	if r.Method != http.MethodGet {
+		lobby_respond(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
+		return
+	}
+	if !lobby_browse(r) {
+		lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
+		return
+	}
+	since, valid := chat_cursor(r)
+	if !valid {
+		lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "since"})
+		return
+	}
+	pilot := clean(r.URL.Query().Get("pilot"), 64)
+	sessions_touch(pilot)
+	presence_touch(r.RemoteAddr, pilot)
+	lines, latest := chat_since(since)
+	lobby_respond(w, http.StatusOK, map[string]any{
+		"status":   lobby_state(r),
+		"sessions": sessions_list(r.URL.Query().Get("game"), pilot),
+		"chat":     map[string]any{"lines": lines, "sequence": latest},
+	})
 }
 
 func lobby_sessions(w http.ResponseWriter, r *http.Request) {
@@ -288,7 +438,7 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		// same token tells the listing which offer is the caller's own.
 		pilot := clean(r.URL.Query().Get("pilot"), 64)
 		sessions_touch(pilot)
-		presence_touch(pilot)
+		presence_touch(r.RemoteAddr, pilot)
 		lobby_respond(w, http.StatusOK, map[string]any{"sessions": sessions_list(r.URL.Query().Get("game"), pilot)})
 	case http.MethodPost:
 		if !lobby_allow(r) {
@@ -313,7 +463,7 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		request.Mode = clean(request.Mode, 32)
 		request.Label = clean(request.Label, 64)
 		pilot := clean(request.Pilot, 64)
-		s, err := sessions_create(request.Game, request.Mode, request.Label, request.Capacity, request.Parameters)
+		s, err := sessions_make(request.Game, request.Mode, request.Label, request.Capacity, request.Parameters, false, offer{creator: origin(r.RemoteAddr), pilot: pilot})
 		if err != nil {
 			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 			return
@@ -332,7 +482,7 @@ func lobby_sessions(w http.ResponseWriter, r *http.Request) {
 		}
 		body := map[string]any{
 			"session": s.identifier, "game": s.spec.Game, "mode": s.spec.Mode,
-			"label": s.spec.Label, "capacity": s.spec.Capacity, "address": transport_address(),
+			"label": s.spec.Label, "capacity": s.spec.Capacity, "address": transport_address(r),
 		}
 		if hash, expires := certificate_hash(); hash != "" {
 			body["certificate"] = map[string]any{"hash": hash, "expires": expires}
@@ -406,28 +556,12 @@ func lobby_chat(w http.ResponseWriter, r *http.Request) {
 			lobby_respond(w, http.StatusTooManyRequests, map[string]any{"error": "rate"})
 			return
 		}
-		since := uint64(0)
-		if cursor := r.URL.Query().Get("since"); cursor != "" {
-			parsed, err := strconv.ParseUint(cursor, 10, 64)
-			if err != nil {
-				lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "since"})
-				return
-			}
-			since = parsed
+		since, valid := chat_cursor(r)
+		if !valid {
+			lobby_respond(w, http.StatusBadRequest, map[string]any{"error": "since"})
+			return
 		}
-		chat_lock.Lock()
-		lines := []map[string]any{}
-		for _, line := range chat_lines {
-			// chat_append is the only writer today, but this is an anonymous
-			// request path: a single-value assertion here would panic the
-			// handler goroutine the day that stops being true.
-			sequence, _ := line["sequence"].(uint64)
-			if sequence > since {
-				lines = append(lines, line)
-			}
-		}
-		latest := chat_sequence
-		chat_lock.Unlock()
+		lines, latest := chat_since(since)
 		lobby_respond(w, http.StatusOK, map[string]any{"lines": lines, "sequence": latest})
 	case http.MethodPost:
 		if !lobby_voice(r) {
@@ -456,6 +590,34 @@ func lobby_chat(w http.ResponseWriter, r *http.Request) {
 	default:
 		lobby_respond(w, http.StatusMethodNotAllowed, map[string]any{"error": "method"})
 	}
+}
+
+// chat_cursor reads a chat read's "since" cursor: zero when absent, and not
+// valid when present but not a number.
+func chat_cursor(r *http.Request) (uint64, bool) {
+	cursor := r.URL.Query().Get("since")
+	if cursor == "" {
+		return 0, true
+	}
+	since, err := strconv.ParseUint(cursor, 10, 64)
+	return since, err == nil
+}
+
+// chat_since is the lines after since, and the newest sequence number.
+func chat_since(since uint64) ([]map[string]any, uint64) {
+	chat_lock.Lock()
+	defer chat_lock.Unlock()
+	lines := []map[string]any{}
+	for _, line := range chat_lines {
+		// chat_append is the only writer today, but this is an anonymous
+		// request path: a single-value assertion here would panic the
+		// handler goroutine the day that stops being true.
+		sequence, _ := line["sequence"].(uint64)
+		if sequence > since {
+			lines = append(lines, line)
+		}
+	}
+	return lines, chat_sequence
 }
 
 // clean strips control characters and caps a user string at limit runes.
@@ -506,13 +668,24 @@ func lobby_retire(r *http.Request) bool {
 	return lobby_permit(retires, r, ini_int("limits", "withdraws", 30))
 }
 
-// lobby_browse rate-limits the match-list read: it returns a body proportional
-// to the whole server and answers every origin. The loosest of the four
-// budgets, because this poll doubles as the offer heartbeat (#77).
+// lobby_browse rate-limits the reads - status, match list, chat and maps: they
+// return a body proportional to the whole server and answer every origin. The
+// loosest of the four budgets, because the match-list poll doubles as the offer
+// heartbeat (#77).
 var browses = map[string][]time.Time{}
 
+// BROWSES_MINUTE is the default for [limits] browses, sized from the transport's
+// own figure for one address, HOST_CONNECTIONS_MAXIMUM players: a player on the
+// server page makes one /poll every 3 s, and a player in a match polls the
+// lobby chat at the same rate, so each spends 20 a minute. Sixteen of them are
+// 320, and the rest covers the map each fetches to join. At 120 the stock
+// client's three separate polls - 44 a minute - admitted two players behind one
+// address, and the third saw the server flicker unreachable and lost the match
+// they were offering.
+const BROWSES_MINUTE = 400
+
 func lobby_browse(r *http.Request) bool {
-	return lobby_permit(browses, r, ini_int("limits", "browses", 120))
+	return lobby_permit(browses, r, ini_int("limits", "browses", BROWSES_MINUTE))
 }
 
 // lobby_permit is the shared per-host sliding-minute limiter.
@@ -560,17 +733,51 @@ func lobby_prune() {
 	}
 }
 
-// transport_origin is the server's advertised base URL - what a player pastes
-// or picks in a join page. The client adds the /play path itself.
-func transport_origin() string {
-	address := ini_string("transport", "address", "")
-	if address == "" {
-		address = fmt.Sprintf("https://127.0.0.1:%d", ini_int("transport", "port", 4433))
+// transport_origin is the game transport's base URL as the caller of r should
+// dial it: [transport] address when set. Unset - the packaged default - it is
+// the host the caller reached the lobby at, on the transport's port: the answer
+// goes only to that caller, and a pinned ephemeral certificate is matched by
+// its hash, not its name. The fixed https://127.0.0.1 it used to be sent every
+// remote player to their own machine.
+func transport_origin(r *http.Request) string {
+	if address := ini_string("transport", "address", ""); address != "" {
+		return strings.TrimSuffix(address, "/")
 	}
-	return strings.TrimSuffix(address, "/")
+	host := "127.0.0.1"
+	if r != nil {
+		name := r.Host
+		if bare, _, err := net.SplitHostPort(r.Host); err == nil {
+			name = bare
+		}
+		name = strings.Trim(name, "[]")
+		if net.ParseIP(name) != nil || match_hostname.MatchString(name) {
+			host = name
+		}
+	}
+	return "https://" + net.JoinHostPort(host, strconv.Itoa(ini_int("transport", "port", 4433)))
 }
 
-// transport_address is the WebTransport URL advertised to clients.
-func transport_address() string {
-	return transport_origin() + "/play"
+// match_hostname is what a Host header may name for transport_origin to put it
+// in an address: a DNS name, nothing that could carry a path or a port.
+var match_hostname = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9.-]{0,252})$`)
+
+// transport_address is the WebTransport URL advertised to the caller of r.
+func transport_address(r *http.Request) string {
+	return transport_origin(r) + "/play"
+}
+
+// lobby_origin is the lobby's public base URL, the address the listing
+// publishes: a join page fetches its /status and dials the transport address
+// that answer names. [lobby] address when set; otherwise [transport] address,
+// which is the lobby's too while the two listen on one port number - the
+// default - and "" when they do not, since nothing then says where the lobby
+// is.
+func lobby_origin() string {
+	if address := ini_string("lobby", "address", ""); address != "" {
+		return strings.TrimSuffix(address, "/")
+	}
+	if ini_int("lobby", "port", 4433) != ini_int("transport", "port", 4433) {
+		return ""
+	}
+	return strings.TrimSuffix(ini_string("transport", "address", ""), "/")
 }

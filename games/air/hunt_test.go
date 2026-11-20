@@ -486,12 +486,14 @@ func TestRadarDetection(t *testing.T) {
 		park(c, curved(x, y), flight.Vec3{Z: 250}) // on the beam
 		return i.detection(a, c)
 	}
+	// The published range is where half the looks paint: 44 nm nose-on, 55 nm
+	// beam-on, with the sky behind.
 	park(c, curved(38*nm, 3000), flight.Vec3{X: -272})
-	if d := i.detection(a, c); math.Abs(d-44*nm) > 1 {
-		t.Errorf("nose-on detection %.1f nm, want 44", d/nm)
+	if p := probability(44*nm, i.detection(a, c)); math.Abs(p-0.5) > 1e-4 {
+		t.Errorf("paint odds nose-on at 44 nm: %.3f, want even", p)
 	}
-	if d := at(3000, 15*nm); math.Abs(d-55*nm) > 1 {
-		t.Errorf("beam detection %.1f nm, want 55", d/nm)
+	if p := probability(55*nm, at(3000, 15*nm)); math.Abs(p-0.5) > 1e-4 {
+		t.Errorf("paint odds beam-on at 55 nm: %.3f, want even", p)
 	}
 	clear := at(3000, 15*nm)
 	// On the curved earth a jet due east is not quite on the beam of a
@@ -981,5 +983,57 @@ func TestRadarFrame(t *testing.T) {
 	}
 	if seen == 0 || missed == 0 {
 		t.Errorf("sixty frames at even odds painted %d and missed %d: the rolls are not per frame", seen, missed)
+	}
+}
+
+// TestHumanLockIsHeld: a human's STT was whatever the client reported - the
+// server checked only that the slot existed - so a modified client locked a jet
+// behind it, far outside its radar's reach or beaming in the notch, fired on
+// it with the target's exact position and velocity for an estimate, and kept
+// the datalink feeding truth for as long as it liked. Each tick the lock is
+// held to the radar the client flies, and one that fails drops to search.
+func TestHumanLockIsHeld(t *testing.T) {
+	i, a, c, slot := radar_pair(t)
+	a.bot = false // the reporting jet stands for a human; locks never judges a bot
+	own := -1
+	for s, k := range i.aircraft {
+		if k == a {
+			own = s
+		}
+	}
+	held := func(position, velocity flight.Vec3, ticks uint64) bool {
+		park(c, position, velocity)
+		i.Radar(own, 1, -1) // each case a fresh lock
+		i.Radar(own, 2, slot)
+		for tick := uint64(1); tick <= ticks; tick++ {
+			i.locks(tick)
+		}
+		return a.emitter == 2 && a.lock == slot
+	}
+	if !held(flight.Vec3{X: 20000, Y: 3000}, flight.Vec3{Z: 250}, 1) {
+		t.Fatal("a lock on a beaming target 20 km ahead, the sky behind it, was dropped")
+	}
+	if !held(flight.Vec3{X: 20000, Z: -20000, Y: 3000}, flight.Vec3{Z: 250}, 1) {
+		t.Error("a lock 45 degrees off the nose, inside the ±70 degree gimbal, was dropped")
+	}
+	if held(flight.Vec3{X: -20000, Y: 3000}, flight.Vec3{X: 250}, 1) {
+		t.Error("a lock on a jet behind the radar was kept")
+	}
+	if held(flight.Vec3{X: 200000, Y: 3000}, flight.Vec3{Z: 250}, 1) {
+		t.Error("a lock 200 km away, past any range the radar holds, was kept")
+	}
+	if !held(flight.Vec3{X: 20000, Y: 300}, flight.Vec3{Z: 250}, radar_memory) {
+		t.Error("a lock in the notch dropped inside the radar's memory")
+	}
+	if held(flight.Vec3{X: 20000, Y: 300}, flight.Vec3{Z: 250}, radar_memory+2) {
+		t.Error("a lock in the notch outlasted the radar's memory")
+	}
+	// And the session holds every tick to it, before any input reads a lock.
+	park(c, flight.Vec3{X: -20000, Y: 3000}, flight.Vec3{X: 250})
+	i.Radar(own, 1, -1)
+	i.Radar(own, 2, slot)
+	i.Step(1, nil)
+	if a.emitter == 2 {
+		t.Error("a tick of the session kept a lock on a jet behind the radar")
 	}
 }

@@ -7,6 +7,9 @@
 package main
 
 import (
+	"errors"
+	"fmt"
+	"io/fs"
 	"os"
 	"strconv"
 	"strings"
@@ -17,18 +20,22 @@ import (
 var ini_file *goini.File
 
 // ini_load reads the configuration file. A missing file is not an error — an
-// open world server runs usefully on defaults alone.
-func ini_load(path string) {
+// open world server runs usefully on defaults alone — but one that is there
+// and cannot be read or parsed is: running on defaults then drops every
+// setting the operator made at once, a bind restricted to one interface back
+// to all of them and a certificate back to the ephemeral one, behind a
+// process that looks healthy.
+func ini_load(path string) error {
 	file, err := goini.Load(path)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			info("configuration %s not found, using defaults", path)
-			return
+			return nil
 		}
-		warn("configuration %s: %v", path, err)
-		return
+		return fmt.Errorf("configuration %s: %w", path, err)
 	}
 	ini_file = file
+	return nil
 }
 
 // ini_value returns the raw value for section/key, honouring the

@@ -9,6 +9,7 @@ package main
 import (
 	"errors"
 	"time"
+	"unicode/utf8"
 
 	"world/game"
 )
@@ -117,6 +118,25 @@ func connection_join(l link) (map[string]any, error) {
 	return message, nil
 }
 
+// CHAT_BYTES is the bound on a chat line at the door: 200 runes of four bytes,
+// the most the session keeps (clean, 200 runes) in the widest script.
+const CHAT_BYTES = 800
+
+// chat_cut bounds a chat line's bytes at the door, on a rune boundary: a line
+// cut inside a character carries the broken bytes on as a replacement mark,
+// and a 400-byte cut kept 133 characters of Chinese or Hindi where the lobby
+// keeps 200. The session trims to runes.
+func chat_cut(words string) string {
+	if len(words) <= CHAT_BYTES {
+		return words
+	}
+	end := CHAT_BYTES
+	for end > 0 && !utf8.RuneStart(words[end]) {
+		end--
+	}
+	return words[:end]
+}
+
 // connection_read pumps inbound messages into the session until the
 // connection drops or the session ends.
 func connection_read(l link, s *session, slot int) {
@@ -156,9 +176,7 @@ func connection_read(l link, s *session, slot int) {
 			if words == "" {
 				continue
 			}
-			if len(words) > 400 {
-				words = words[:400] // a hard byte cap at the door; the session trims to runes
-			}
+			words = chat_cut(words)
 			select {
 			case s.inbox <- order{kind: "chat", slot: slot, link: l, text: words, scope: text(message, "scope")}:
 			case <-s.done:

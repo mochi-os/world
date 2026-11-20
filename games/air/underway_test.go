@@ -169,3 +169,27 @@ func TestIslandSailsWithTheShip(t *testing.T) {
 		}
 	}
 }
+
+// TestDeckNeededEarthCentred: the server keeps its jets Earth-centred and the
+// ship sails the chart, so a jet coming in to land, compared unconverted, was
+// never near her: the deck was never needed and she never turned into the
+// wind for anyone.
+func TestDeckNeededEarthCentred(t *testing.T) {
+	was := setting
+	setting.Frame, setting.Chart = flight.Frame{}, flight.Frame{}
+	defer func() { setting = was }()
+	i := build(t, "furball", nil, 1)
+	c := i.chart.world.Carrier
+	clock := i.clock()
+	at, _ := c.Where(clock, flight.Identity)
+	jet := &i.aircraft[0].model.State
+	jet.Position = flight.Between(i.environment.Charted(), i.environment.Theatre()).Point(at.Add(flight.Vec3{X: 8000, Y: 300}))
+	jet.Gear.Extension = 1
+	if !i.deck(c, clock) {
+		t.Error("a jet 8 km from the ship with its gear down does not need her deck")
+	}
+	jet.Gear.Extension = 0
+	if i.deck(c, clock) {
+		t.Error("a jet with its gear up needs the deck")
+	}
+}

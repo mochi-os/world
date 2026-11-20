@@ -9,13 +9,7 @@
 // Single-player damage runs the SAME battle package the multiplayer server runs
 // natively. Hulks are model-less target bodies for the AI aircraft; the
 // ownship's body binds into the flight model's damage state, so hits change the
-// aero.
-//
-// burst input words: 0 target (-1 ownship, else hulk), 1-3 shooter position,
-// 4-6 forward, 7-9 up, 10-12 target position, 13-16 target attitude (hulk
-// targets; the ownship poses from its model), 17 rounds, 18 shooter identity,
-// 19 tick, 20-22 shooter velocity, 23-25 target velocity (hulk targets; the
-// ownship's comes from its model). Output: 0 hits, 1 event mask.
+// aero. The gun's volley and fly carry their layouts on their own functions.
 //
 // blast input words: 0 target, 1-3 burst point, 4-6 target position, 7-10
 // attitude, 11 shooter identity, 12 tick. Output: 0 kill, 1 mask.
@@ -38,17 +32,30 @@ import (
 	"world/games/air/flight"
 )
 
-// The event mask bits shared with the client.
+// The event mask bits shared with the client. A leak is no event: it crosses
+// as a word of its own.
 const (
 	mask_fire = 1 << iota
 	mask_pilot
 	mask_explode
 	mask_jam
 	mask_shed
-	mask_leak
 )
 
-const hulks = 9 // bandit + up to eight neutral traffic aircraft
+// hulks is how many target bodies rig accepts: the bandit and up to five
+// neutral traffic aircraft, which is what progress's 64 words hold - the
+// ownship's six, nine for each hulk, and the two cook-off masks at 62 and 63.
+// It used to accept nine, and the first used hulk past the sixth indexed off
+// the buffer, so the client read the previous frame's fires and kills for
+// every aircraft.
+const hulks = 6
+
+// progress_words is the progress output's length, and the client's
+// battle_output (apps/air flight.ts) is that long. The constant below does not
+// compile if a hulk's block would reach the cook-off masks.
+const progress_words = 64
+
+const _ = uint(62 - (6 + hulks*9))
 
 type hulk struct {
 	body      battle.Body
@@ -65,7 +72,7 @@ var (
 )
 
 func battles() map[string]any {
-	arsenal = make([]float64, 64)
+	arsenal = make([]float64, progress_words)
 	return map[string]any{
 		"hulk":     guard(rig),
 		"racks":    guard(racks), // NOT "stores": every table here merges into ONE flat export map, and main.go already owns that name for the ownship's store mask — a collision would silently replace it
@@ -389,7 +396,7 @@ func progress(this js.Value, arguments []js.Value) any {
 	if model != nil {
 		seed = model.Environment.Seed
 	}
-	out := arsenal[:64]
+	out := arsenal[:progress_words]
 	for i := range out {
 		out[i] = 0
 	}
@@ -425,8 +432,7 @@ func progress(this js.Value, arguments []js.Value) any {
 		out[base+8] = h.damage.Leak // the visible wound the client streams as fuel mist (#244)
 	}
 	// The stores burning on the rails, as attach masks: the ownship's and
-	// the bandit's. The last two words, which only a seventh hulk's block would
-	// reach, and that block already overruns the buffer.
+	// the bandit's, in the last two words.
 	if model != nil {
 		out[62] = cooking(&condition)
 	}

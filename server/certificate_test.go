@@ -142,7 +142,7 @@ func TestListenerLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	limited := listener_limit(raw, 1)
+	limited := listener_limit(raw, 1, 16)
 	defer limited.Close()
 
 	accepted := make(chan net.Conn, 2)
@@ -272,9 +272,11 @@ func TestResponderBudget(t *testing.T) {
 	// Fill the budget. Dialling always succeeds - the kernel completes the
 	// handshake into the accept queue regardless of the cap - so what is
 	// measured is whether Accept hands the connection to the server.
+	// Each from an address of its own, as the CA's vantage points are: one
+	// address holds only its share of the budget.
 	held := make([]net.Conn, 0, RESPONDER_CONNECTIONS_MAXIMUM)
 	for i := 0; i < RESPONDER_CONNECTIONS_MAXIMUM; i++ {
-		dialled, err := net.Dial("tcp", raw.Addr().String())
+		dialled, err := dial_from(i, raw.Addr().String())
 		if err != nil {
 			t.Fatalf("dial %d: %v", i+1, err)
 		}
@@ -287,7 +289,7 @@ func TestResponderBudget(t *testing.T) {
 		}
 	}
 
-	past, err := net.Dial("tcp", raw.Addr().String())
+	past, err := dial_from(RESPONDER_CONNECTIONS_MAXIMUM, raw.Addr().String())
 	if err != nil {
 		t.Fatalf("dial past the budget: %v", err)
 	}
@@ -307,5 +309,73 @@ func TestResponderBudget(t *testing.T) {
 	}
 	for _, connection := range held[1:] {
 		connection.Close()
+	}
+}
+
+// dial_from connects from loopback address number n, so a test can stand for
+// as many client addresses as it needs.
+func dial_from(n int, address string) (net.Conn, error) {
+	dialer := net.Dialer{LocalAddr: &net.TCPAddr{IP: net.IPv4(127, 0, 1+byte(n/250), 1+byte(n%250))}}
+	return dialer.Dial("tcp", address)
+}
+
+// TestListenerHoldsEachAddressToItsShare: the TCP listeners had a global cap and
+// nothing per address, so one client opening keep-alive connections held all of
+// them, and nobody else could read the status, list a match or fetch a map - or,
+// on port 80, renew the certificate.
+func TestListenerHoldsEachAddressToItsShare(t *testing.T) {
+	raw, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	limited := listener_limit(raw, 100, 2)
+	defer limited.Close()
+	accepted := make(chan net.Conn, 8)
+	go func() {
+		for {
+			connection, err := limited.Accept()
+			if err != nil {
+				return
+			}
+			accepted <- connection
+		}
+	}()
+	take := func(from int) (net.Conn, net.Conn) {
+		t.Helper()
+		dialled, err := dial_from(from, raw.Addr().String())
+		if err != nil {
+			t.Fatalf("dial: %v", err)
+		}
+		t.Cleanup(func() { dialled.Close() })
+		select {
+		case connection := <-accepted:
+			return dialled, connection
+		case <-time.After(500 * time.Millisecond):
+			return dialled, nil
+		}
+	}
+	_, first := take(0)
+	_, second := take(0)
+	if first == nil || second == nil {
+		t.Fatal("an address was refused inside its share of 2")
+	}
+	third, refused := take(0)
+	if refused != nil {
+		t.Fatal("an address was handed a third connection past its share of 2")
+	}
+	third.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := third.Read(make([]byte, 1)); err == nil || errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("the connection past the share was left open (read: %v), holding a socket for nothing", err)
+	}
+	if _, other := take(1); other == nil {
+		t.Error("a second address was refused because the first held its share")
+	}
+	first.Close()
+	first.Close() // a second close must not return a second slot
+	if _, again := take(0); again == nil {
+		t.Error("the address was refused after one of its connections closed: its share never releases")
+	}
+	if _, over := take(0); over != nil {
+		t.Error("a double close returned two slots")
 	}
 }

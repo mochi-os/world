@@ -332,6 +332,15 @@ func (w *Wakes) aged(k mark, time float64, sea float64) (left Vec3, right Vec3, 
 	return left, right, circulation, core
 }
 
+// Encounter is the wake aircraft id, flying model m, meets now: Near at its
+// position carried into the chart, as Record carries its marks there, above
+// the model's sea. A host hands the result to m.Meet. A host passing its own
+// position to Near met nothing whenever its frame was not the chart - which
+// is every match on the server, kept Earth-centred.
+func (w *Wakes) Encounter(id int, time float64, m *Model) []Vortex {
+	return w.Near(id, m.Environment.Placement().Point(m.State.Position), time, m.World.Sea)
+}
+
 // Near is the wake aircraft id meets at position and time: every piece of
 // every trail within reach, aged to time, nearest first and no more than
 // wake_pieces of them. Its own wake counts once it is wake_fresh seconds old.

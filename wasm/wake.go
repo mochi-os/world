@@ -55,7 +55,7 @@ func wake_reset(environment flight.Environment) {
 
 // meet hands a model the wake pieces near it on the shared clock.
 func meet(id int, m *flight.Model) {
-	m.Meet(wakes.Near(id, m.Environment.Placement().Point(m.State.Position), clock, m.World.Sea)) // the wakes are laid in the chart
+	m.Meet(wakes.Encounter(id, clock, m))
 }
 
 // lay records a model's mark on the shared clock.

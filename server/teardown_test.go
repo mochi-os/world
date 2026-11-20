@@ -10,8 +10,11 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"world/game"
 
 	"github.com/quic-go/webtransport-go"
 )
@@ -84,6 +87,55 @@ func TestSlowWriterTeardown(t *testing.T) {
 	case <-session.closed:
 	default:
 		t.Fatal("session was not closed on teardown")
+	}
+}
+
+// jam_session is a wire_session whose SendDatagram blocks, as quic-go's does
+// once 32 datagrams wait for a peer that has stopped acknowledging.
+type jam_session struct {
+	record_session
+	release chan struct{}
+	sent    atomic.Int32
+}
+
+func (j *jam_session) SendDatagram([]byte) error {
+	j.sent.Add(1)
+	<-j.release
+	return nil
+}
+
+// TestBlockedDatagramSparesTheTick: snapshots went out with SendDatagram on the
+// session's tick goroutine, so one peer that stopped acknowledging parked the
+// tick - the whole match, for everyone - until its connection died. The tick
+// must go on, and the jammed link must be closed as slow.
+func TestBlockedDatagramSparesTheTick(t *testing.T) {
+	saved := datagram_patience
+	datagram_patience = 100 * time.Millisecond
+	t.Cleanup(func() { datagram_patience = saved })
+	session := &jam_session{record_session: record_session{closed: make(chan struct{})}, release: make(chan struct{})}
+	t.Cleanup(func() { close(session.release) })
+	l := &wire{session: session, stream: &stall_stream{unblock: make(chan struct{})}, datagram: make(chan []byte, datagram_depth), closed: make(chan struct{})}
+	go l.sender()
+	s := bare_session(&fake_instance{}, 4)
+	s.players[0] = &player{Player: game.Player{Slot: 0}, link: l}
+
+	ticked := make(chan struct{})
+	go func() {
+		for end := time.Now().Add(300 * time.Millisecond); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+			session_snapshot(s)
+		}
+		close(ticked)
+	}()
+	select {
+	case <-ticked:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the tick parked on a datagram the peer will never take")
+	}
+	if session.sent.Load() != 1 {
+		t.Errorf("%d datagrams reached the session, want the one the sender is stuck in", session.sent.Load())
+	}
+	if l.reason != "slow" {
+		t.Errorf("a link jammed for the whole run closed as %q, want slow", l.reason)
 	}
 }
 

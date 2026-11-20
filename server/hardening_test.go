@@ -20,6 +20,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 // silent is a link that never delivers a message, like a peer that completes
@@ -162,6 +163,40 @@ func TestHostConnectionCap(t *testing.T) {
 		t.Error("a second address was refused because the first was at its cap")
 	}
 	transport_host_release(other)
+}
+
+// TestTransportBudgetsAreConfigurable: both of the transport's per-address
+// budgets were literals, so the load-test harness - every client from one
+// machine - was refused all but 16 connections, and a LAN event or a campus
+// behind one address could not be let in at all.
+func TestTransportBudgetsAreConfigurable(t *testing.T) {
+	t.Setenv("MOCHI_LIMITS_HOSTS", "40")
+	t.Setenv("MOCHI_LIMITS_PLAYS", "120")
+	address := "203.0.113.8:40000"
+	granted := 0
+	for range 50 {
+		if transport_host_admit(address) {
+			granted++
+		}
+	}
+	for range granted {
+		transport_host_release(address)
+	}
+	if granted != 40 {
+		t.Errorf("one address held %d connections under [limits] hosts = 40", granted)
+	}
+	plays = map[string][]time.Time{}
+	request := httptest.NewRequest("GET", "/play", nil)
+	request.RemoteAddr = address
+	permitted := 0
+	for range 150 {
+		if transport_permit(request) {
+			permitted++
+		}
+	}
+	if permitted != 120 {
+		t.Errorf("one address made %d connects in a minute under [limits] plays = 120", permitted)
+	}
 }
 
 // TestHostConnectionReleaseForgetsTheAddress — the map must not retain an entry
@@ -478,3 +513,44 @@ func TestChatReadIsRateLimited(t *testing.T) {
 		t.Fatal("the chat read refused everything")
 	}
 }
+
+// TestChatIsCutOnARuneBoundary: match chat was cut at 400 bytes at the door,
+// which is 133 characters of a three-byte script, and the cut fell inside a
+// character two times in three, leaving a replacement mark on the line.
+func TestChatIsCutOnARuneBoundary(t *testing.T) {
+	s := &session{inbox: make(chan order, 4), done: make(chan struct{})}
+	said := func(words string) string {
+		t.Helper()
+		frame, err := encode(map[string]any{"kind": "chat", "text": words})
+		if err != nil {
+			t.Fatal(err)
+		}
+		connection_read(&prompted{frames: [][]byte{frame}}, s, 0)
+		o := <-s.inbox
+		<-s.inbox // the leave the reader queues as the link ends
+		return o.text
+	}
+	han := strings.Repeat("飞", 200)
+	if got := said(han); got != han {
+		t.Errorf("a 200-character line of Chinese arrived as %d characters, want all 200", utf8.RuneCountInString(got))
+	}
+	emoji := strings.Repeat("🛩", 300)
+	got := said(emoji)
+	if !utf8.ValidString(got) || utf8.RuneCountInString(got) < 200 {
+		t.Errorf("a long emoji line arrived as %d characters (valid UTF-8: %v), want at least the 200 the session keeps, cut between characters", utf8.RuneCountInString(got), utf8.ValidString(got))
+	}
+}
+
+// prompted is a link that answers a fixed run of frames, then ends.
+type prompted struct{ frames [][]byte }
+
+func (p *prompted) read() ([]byte, error) {
+	if len(p.frames) == 0 {
+		return nil, io.EOF
+	}
+	frame := p.frames[0]
+	p.frames = p.frames[1:]
+	return frame, nil
+}
+func (p *prompted) write([]byte, bool) {}
+func (p *prompted) close(string)       {}

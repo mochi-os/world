@@ -249,7 +249,7 @@ func (m *Model) Wind() flight.Vec3 {
 
 // Mach is the round's speed through the air over the speed of sound there.
 func (m *Model) Mach() float64 {
-	_, sound := atmosphere(m.Environment.Theatre().Altitude(m.Position))
+	sound := flight.Atmosphere(m.Environment.Theatre().Altitude(m.Position), m.Environment).Sound
 	return m.Velocity.Subtract(m.Wind()).Length() / sound
 }
 
@@ -458,10 +458,11 @@ func (m *Model) step(dt float64, support *Target, truth *Target) bool {
 // forward are the round's through the air.
 func (m *Model) integrate(dt float64, command flight.Vec3, speed float64, forward flight.Vec3) bool {
 	// The lateral channel, capped by structure and by what the air gives.
-	density, sound := atmosphere(m.Position.Y)
+	local := flight.Atmosphere(m.Position.Y, m.Environment)
+	density, sound := local.Density, local.Sound
 	dynamic := 0.5 * density * speed * speed
 	mass := Mass - Propellant + m.Fuel
-	ceiling := Ceiling(speed, m.Position.Y, mass)
+	ceiling := Ceiling(speed, m.Position.Y, mass, m.Environment)
 	lateral := command.Subtract(forward.Scale(command.Dot(forward))) // guidance never commands along the axis
 	demand := lateral.Length()
 	if demand > ceiling {
@@ -572,9 +573,11 @@ func (m *Model) Fused(dt float64, truth Target) (bool, flight.Vec3) {
 
 // Ceiling is the lateral acceleration available at a state: the structural
 // limit, or what the air gives through the lift area — whichever runs out
-// first. This collapse with falling speed IS range-dependent escapability.
-func Ceiling(speed float64, altitude float64, mass float64) float64 {
-	density, _ := atmosphere(altitude)
+// first. This collapse with falling speed IS range-dependent escapability. The
+// air is the flight core's, in the environment's weather, as every jet and
+// every other weapon reads it.
+func Ceiling(speed float64, altitude float64, mass float64, environment flight.Environment) float64 {
+	density := flight.Atmosphere(altitude, environment).Density
 	return math.Min(Structure, Lift*0.5*density*speed*speed/mass)
 }
 
@@ -606,20 +609,4 @@ func drag(mach float64) float64 {
 		}
 	}
 	return points[len(points)-1][1]
-}
-
-// atmosphere is the ISA in two segments: density and the speed of sound at
-// altitude. Enough sky for any loft; the stratosphere is isothermal.
-func atmosphere(altitude float64) (float64, float64) {
-	h := math.Max(0, altitude)
-	var temperature, pressure float64
-	if h <= 11000 {
-		temperature = 288.15 - 0.0065*h
-		pressure = 101325 * math.Pow(temperature/288.15, 5.2561)
-	} else {
-		temperature = 216.65
-		pressure = 22632 * math.Exp(-9.80665*(h-11000)/(287.05*216.65))
-	}
-	density := pressure / (287.05 * temperature)
-	return density, math.Sqrt(1.4 * 287.05 * temperature)
 }

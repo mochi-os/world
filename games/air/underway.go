@@ -52,15 +52,20 @@ func (i *instance) steer(tick uint64, clock float64) {
 	if c == nil || len(c.Track) == 0 || tick%60 != 0 {
 		return
 	}
+	if i.ship.Step(c, clock, i.deck(c, clock)) {
+		i.events = append(i.events, map[string]any{"kind": "ship", "ship": i.voyage()})
+	}
+}
+
+// deck reports whether any live jet in the session needs the ship's deck.
+func (i *instance) deck(c *flight.Carrier, clock float64) bool {
 	var states []flight.State
 	for _, slot := range i.slots() {
 		if a := i.aircraft[slot]; a.alive && a.model != nil {
 			states = append(states, a.model.State)
 		}
 	}
-	if i.ship.Step(c, clock, ship.Needed(c, clock, states)) {
-		i.events = append(i.events, map[string]any{"kind": "ship", "ship": i.voyage()})
-	}
+	return ship.Needed(c, clock, states, i.environment.Placement())
 }
 
 // voyage is the ship's track as the clients take it: the heading into the

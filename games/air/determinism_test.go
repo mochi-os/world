@@ -111,3 +111,30 @@ func TestSpacedRespawnIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// TestInputsInSlotOrder: the tick's inputs were taken in map order, which Go
+// randomises, and a launch numbers its round in the order it is taken - the
+// number the flare-decoy and re-acquisition rolls are keyed on. Two players
+// firing on one tick had their rounds numbered either way round, so the same
+// inputs could seduce a different round on a rerun.
+func TestInputsInSlotOrder(t *testing.T) {
+	fire := []game.Input{{Sequence: 1, Steps: 4, Data: map[string]any{"missile": true}}}
+	for trial := range 24 {
+		i := build(t, "furball", map[string]any{"missiles": true, "weapons": "fox2"}, 2)
+		for _, slot := range []int{0, 1} {
+			a := i.aircraft[slot]
+			a.release, a.missiles = 5, 2
+		}
+		i.Step(1, map[int][]game.Input{0: fire, 1: fire})
+		numbers := map[int]uint64{}
+		for _, m := range i.flying {
+			numbers[m.shooter] = m.number
+		}
+		if len(numbers) != 2 {
+			t.Fatalf("trial %d: %d of the two players' rounds left the rail", trial, len(numbers))
+		}
+		if numbers[0] > numbers[1] {
+			t.Fatalf("trial %d: slot 1's round was numbered %d and slot 0's %d: taken in map order", trial, numbers[1], numbers[0])
+		}
+	}
+}

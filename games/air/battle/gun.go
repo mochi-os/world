@@ -260,7 +260,7 @@ func Strike(r *Round, position flight.Vec3, attitude flight.Quat, velocity fligh
 		return false, nil, flight.Vec3{}
 	}
 	direction := attitude.Unrotate(step.Scale(1 / span))
-	chain, along := pierce(body.Parts, origin, direction, span)
+	chain, along := pierce(body, origin, direction, span)
 	if len(chain) == 0 {
 		return false, nil, flight.Vec3{}
 	}

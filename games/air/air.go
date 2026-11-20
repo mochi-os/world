@@ -455,6 +455,7 @@ type craft struct {
 	deaths     int
 	emitter    int         // radar emitter state (#30): 0 silent, 1 search, 2 STT — client-reported, relayed in every pose record
 	lock       int         // the STT'd slot when emitter is 2, -1 otherwise
+	starved    uint64      // a human's STT: the tick the notch or a jammer began starving it, 0 while it is fed (locks)
 	discharged bool        // the fire extinguisher bottle is spent this life (NATOPS 2.14.2): there is one
 	status     status      // what this craft's side needs of its IFF and Link 16, as it last reported
 	reporting  bool        // it has reported one: an older client never does
@@ -892,6 +893,37 @@ func (i *instance) bvr(slot int, m *flight.Model, team string, tank float64) boo
 // state_payload is one aircraft's snapshot entry: the legacy derived fields
 // every client renders from, the world velocity, and the full encoded core
 // state whose own entry feeds the sender's prediction replay.
+// wire_tail is the ranges of the wire core's quantized tail words, by word:
+// the unit interval the wire carries maps onto [least, most]. The Air client
+// expands the tail with the same table (net.ts WIRE_TAIL); every word not in it
+// is a loss, a jam or a latch on [0, 1]. A signed word left off it was clamped
+// to zero, so a nose-down PA trim, a left roll trim, a flap raised by a roll
+// command and toe-out all reached the client as nothing, and its prediction was
+// restarted from a state the server did not have.
+var wire_tail = func() map[int][2]float64 {
+	tail := 57 + flight.Elements + flight.Channels // Loss, the first word past the losses and the jams
+	flaps := [2]float64{-0.14, 0.79}               // the trailing edge, rad: 8 degrees up, 45 down
+	return map[int][2]float64{
+		tail:      {0, 8000},     // Loss, kg
+		tail + 4:  {-1.5, 1.5},   // Pitchwash, rad/s
+		tail + 5:  {-0.07, 0.07}, // the PA trim datum, rad: 4 degrees either way
+		tail + 7:  {-0.06, 0.06}, // the roll-trim datum, stick fraction
+		tail + 8:  {0, 8000},     // external fuel in the wing tanks, kg
+		tail + 9:  {0, 8000},     // and the centreline's
+		tail + 16: flaps,         // the trailing-edge flaps, left
+		tail + 17: flaps,         // and right
+		tail + 18: {-0.27, 0.53}, // the rudders' toe, rad: 15 degrees out, 30 in
+	}
+}()
+
+// wire_range is a tail word's range on the wire.
+func wire_range(word int) (float64, float64) {
+	if r, found := wire_tail[word]; found {
+		return r[0], r[1]
+	}
+	return 0, 1
+}
+
 func state_payload(m *flight.Model) map[string]any {
 	s := &m.State
 	direction := s.Velocity.Normalize()
@@ -900,29 +932,19 @@ func state_payload(m *flight.Model) map[string]any {
 	}
 	words := make([]float64, flight.Size)
 	s.Encode(words)
-	// The wire core: 57 base words at full precision, then the damage tail
-	// QUANTIZED to uint16 — the tail is unit-interval losses plus one mass,
-	// and at float64 it pushed the snapshot past the QUIC datagram MTU
-	// (SendDatagram drops oversized frames silently; TestPair catches it).
-	// The client re-expands to the full 106-word layout before the core
-	// feeds prediction; 1.5e-5 quantisation steps are far below anything
-	// the aero can feel. Scale for Loss (words beyond the unit losses): kg/8000.
+	// The wire core: 57 base words at full precision, then the tail QUANTIZED
+	// to uint16 - at float64 it pushed the snapshot past the QUIC datagram MTU
+	// (SendDatagram drops oversized frames silently; TestPair catches it). The
+	// client re-expands it to the flight core's flight.Size words before the
+	// core feeds prediction; each word's step is its range over 65535, far
+	// below anything the aero can feel.
 	core := make([]byte, 57*8+(flight.Size-57)*2)
 	for i := 0; i < 57; i++ {
 		binary.LittleEndian.PutUint64(core[i*8:], math.Float64bits(words[i]))
 	}
 	for i := 57; i < flight.Size; i++ {
-		v := words[i]
-		if i == 57+flight.Elements+flight.Channels { // Loss, kg
-			v /= 8000
-		}
-		if i == 57+flight.Elements+flight.Channels+4 { // Pitchwash, signed rad/s: map ±1.5 onto the unit interval
-			v = v/3 + 0.5
-		}
-		if i == 57+flight.Elements+flight.Channels+8 || i == 57+flight.Elements+flight.Channels+9 { // External fuel, wing and centreline, kg — same scale as Loss
-			v /= 8000
-		}
-		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp(v, 0, 1)*65535+0.5))
+		least, most := wire_range(i)
+		binary.LittleEndian.PutUint16(core[57*8+(i-57)*2:], uint16(clamp((words[i]-least)/(most-least), 0, 1)*65535+0.5))
 	}
 	at := datum(m) // where a spawn is placed and drawn from; the core words carry the centre of mass
 	return map[string]any{
@@ -1117,6 +1139,12 @@ func (a *craft) trigger(free bool) flight.Inputs {
 }
 
 // input converts a wire sample into flight inputs.
+// input decodes one sample of a client's controls. Reverted and Mechanical are
+// never taken from it: each is a failure the client judged - mission computer
+// 1 lost, all electrical power gone - and the server models neither, so a
+// client holding "reverted" flew the placard g at any weight and rolled a
+// tanked jet a third faster, for nothing. A match flies with both computers
+// and both generators, and the client's prediction does too.
 func input(data map[string]any) flight.Inputs {
 	flag := func(key string) bool { v, _ := data[key].(bool); return v }
 	position := func(key string) int { return int(clamp(math.Round(number(data, key)), -1, 1)) } // a three-position switch
@@ -1131,7 +1159,6 @@ func input(data map[string]any) flight.Inputs {
 		Lean:       clamp(number(data, "lean"), -1, 1),
 		Reset:      flag("reset"),
 		Onspeed:    flag("onspeed"),                   // the pitch trim alone back to on-speed; an older client never sends it
-		Reverted:   flag("reverted"),                  // mission computer 1 lost: the limiter's weight schedule and the stores' roll limit go
 		Held:       math.Max(0, number(data, "held")), // wing fuel held at INHIBIT, kg: it only takes from what the engines may burn
 		Flap:       clamp(number(data, "flap"), 0, 2),
 		Brake:      flag("brake"),
@@ -1139,7 +1166,6 @@ func input(data map[string]any) flight.Inputs {
 		Steering:   position("steering"), // nosewheel steering: -1 off, 0 LOW, +1 HI; absent reads LOW
 		Gear:       flag("gear"),
 		Emergency:  flag("emergency"),                            // the gear handle turned and pulled: the emergency extension
-		Mechanical: flag("mechanical"),                           // MECH ON: the client judges when all electrical power is gone
 		Spin:       flag("spin"),                                 // the spin recovery switch at RCVY; an older client never sends it and keeps NORM
 		Transfer:   [2]int{position("wing"), position("centre")}, // the EXT TANKS switches: -1 STOP, 0 NORM, +1 ORIDE; absent reads NORM
 		Probe:      flag("probe"),
@@ -1200,7 +1226,17 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 	dt := 1.0 / 60
 	i.stepped = tick // Jettison runs on this goroutine but off this call: it reads the clock here
 	i.rehearsals = 0 // the tick's arbiter allowance (#256)
-	for slot, list := range inputs {
+	i.locks(tick)    // before any input reads a lock: the AMRAAM's trigger is among them
+	// In slot order, never the map's: a launch numbers its round as it is
+	// taken, and the number keys the round's decoy and re-acquisition rolls,
+	// so two players firing on one tick must be taken the same way every run.
+	order := make([]int, 0, len(inputs))
+	for slot := range inputs {
+		order = append(order, slot)
+	}
+	sort.Ints(order)
+	for _, slot := range order {
+		list := inputs[slot]
 		a := i.aircraft[slot]
 		if a == nil || len(list) == 0 {
 			continue
@@ -1416,7 +1452,7 @@ func (i *instance) Step(tick uint64, inputs map[int][]game.Input) {
 		fed := a.trigger(i.free())
 		// The wake is fetched here, on the tick goroutine: Near fills a cache
 		// shared by every jet's lookup.
-		a.model.Meet(i.wakes.Near(slot, a.model.State.Position, clock, a.model.World.Sea))
+		a.model.Meet(i.wakes.Encounter(slot, clock, a.model))
 		// The tick's start, where a jet that breaks up during it is laid to rest.
 		batch = append(batch, stepping{slot: slot, craft: a, fed: fed, whole: a.model.State})
 		if !batched {
@@ -2729,6 +2765,9 @@ func (i *instance) Radar(slot int, mode int, target int) {
 	}
 	if target >= 0 && i.aircraft[target] == nil {
 		target = -1 // an absent aircraft is no lock; every present one sits inside the pose record's seven bits
+	}
+	if target != a.lock {
+		a.starved = 0
 	}
 	a.emitter = mode
 	a.lock = target

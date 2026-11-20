@@ -922,11 +922,11 @@ func TestOpening(t *testing.T) {
 		if o.Flank == 0 {
 			hot++
 		}
-		reached := true // each end inside the other's detection range from the first look (hunt.go detection)
+		reached := true // each end paints the other at even odds or better from the first look (hunt.go detection)
 		for slot := 0; slot < 2; slot++ {
 			me, him := o.state(slot, o.Apart), o.state(1-slot, o.Apart)
 			line := him.Position.Subtract(me.Position).Normalize()
-			if o.Apart >= radar_base*aspect(line, him.Velocity)*(1-radar_clutter*round.Clutter(me.Position, him.Position)) {
+			if probability(o.Apart, extent(line, him.Velocity, round.Clutter(me.Position, him.Position))) < 0.5 {
 				reached = false
 			}
 		}
@@ -948,10 +948,10 @@ func TestOpening(t *testing.T) {
 	if split < 150 {
 		t.Errorf("only %d of 300 starts split the blocks by more than 1,500 m", split)
 	}
-	// Just outside Rmax, about a third of starts lie where both radars already
-	// reach; a fifteen-mile buffer put none there.
-	if seen < 60 {
-		t.Errorf("only %d of 300 starts inside both radars' reach", seen)
+	// Just outside Rmax, about a third of starts lie where both radars paint
+	// half their looks from the first: the published range is where half do.
+	if seen < 80 {
+		t.Errorf("only %d of 300 starts where both radars paint at even odds", seen)
 	}
 	if h := headon(); h.Altitude != [2]float64{bvraltitude, bvraltitude} || h.Speed != bvrspeed || h.Flank != 0 || h.Apart != separation() {
 		t.Errorf("the pinned head-on start moved: %+v", h)

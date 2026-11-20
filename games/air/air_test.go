@@ -3160,13 +3160,14 @@ func TestInputSteering(t *testing.T) {
 }
 
 // TestInputSystems: the wire's "emergency" is the gear handle turned and
-// pulled, "mechanical" MECH ON, and "wing" and "centre" the EXT TANKS switches
-// (-1 STOP, 0 NORM, +1 ORIDE, clamped); a sample without them (an older client)
-// keeps the normal gear, the computers and the normal transfer.
+// pulled, and "wing" and "centre" the EXT TANKS switches (-1 STOP, 0 NORM, +1
+// ORIDE, clamped); a sample without them (an older client) keeps the normal
+// gear and the normal transfer. MECH ON is never taken from the wire
+// (TestClientJudgesNoFailures).
 func TestInputSystems(t *testing.T) {
 	in := input(map[string]any{"emergency": true, "mechanical": true, "wing": -1.0, "centre": 5.0})
-	if !in.Emergency || !in.Mechanical || in.Transfer != [2]int{-1, 1} {
-		t.Errorf("sent: emergency %v mechanical %v transfer %v, want true, true and [-1 1]", in.Emergency, in.Mechanical, in.Transfer)
+	if !in.Emergency || in.Mechanical || in.Transfer != [2]int{-1, 1} {
+		t.Errorf("sent: emergency %v mechanical %v transfer %v, want true, false and [-1 1]", in.Emergency, in.Mechanical, in.Transfer)
 	}
 	if in := input(map[string]any{}); in.Emergency || in.Mechanical || in.Transfer != [2]int{} {
 		t.Errorf("absent: emergency %v mechanical %v transfer %v, want the zero values", in.Emergency, in.Mechanical, in.Transfer)
@@ -3325,8 +3326,8 @@ func TestStepSighted(t *testing.T) {
 
 func TestInputReversions(t *testing.T) {
 	in := input(map[string]any{"onspeed": true, "reverted": true, "held": 312.5})
-	if !in.Onspeed || !in.Reverted || in.Held != 312.5 {
-		t.Errorf("sent: onspeed %v reverted %v held %v, want true, true and 312.5", in.Onspeed, in.Reverted, in.Held)
+	if !in.Onspeed || in.Reverted || in.Held != 312.5 {
+		t.Errorf("sent: onspeed %v reverted %v held %v, want true, false (never taken from the wire) and 312.5", in.Onspeed, in.Reverted, in.Held)
 	}
 	if in := input(map[string]any{"held": -40.0}); in.Held != 0 {
 		t.Errorf("a negative held reads %v, want 0", in.Held)

@@ -4,6 +4,12 @@
 // each, and measures the tick-advance rate (must hold ~60/s in wall time) and
 // snapshot cadence/jitter from the stream each client receives.
 //
+// Every client connects from this machine, so the server under test must let
+// one address hold them all: start it with [limits] hosts and plays at least
+// the client count (MOCHI_LIMITS_HOSTS=100 MOCHI_LIMITS_PLAYS=100 in its
+// environment), or it refuses all but 16 and the run measures a 16-player
+// match.
+//
 // Run (world1 must be up):
 //
 // go run ./tools/loadtest -clients 100 -duration 20s
@@ -233,6 +239,9 @@ func report(stats []stat, window time.Duration) {
 		}
 	}
 	fmt.Printf("\nconnected %d/%d clients\n", joined, len(stats))
+	if joined < len(stats) {
+		fmt.Printf("short of the count asked for: raise [limits] hosts and plays on the server under test to at least %d\n", len(stats))
+	}
 	if len(tick_rates) == 0 {
 		fmt.Println("no snapshots measured — check the server is up and the match started")
 		return

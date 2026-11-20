@@ -29,6 +29,7 @@ type player struct {
 	link     link         // nil once disconnected
 	sequence uint32       // highest input sequence APPLIED (acknowledged in snapshots)
 	received uint32       // highest input sequence RECEIVED, for the duplicate test (#176): the two used to be one field, so a sample was acknowledged the instant it arrived and the client reconciled against a state the server had not yet stepped it into
+	began    bool         // a sample has been received, so received is a mark to judge resends against
 	queue    []game.Input // inputs since the last step
 	credit   int          // fixed sub-steps already bought by samples applied (#176), carried between ticks: a sample worth two of the four in a tick cannot be rounded away
 	seen     time.Time    // last input received — the application-level liveness signal
@@ -101,7 +102,7 @@ type session struct {
 	empty   time.Time // since when no player has been connected
 	chats   []spoken  // the recent-chat ring (#84): replayed to joiners so a late arrival sees the conversation
 
-	permanent bool // a standing match: exempt from the idle sweep, recreated at startup
+	permanent bool // a standing match: exempt from the idle sweep, and made again by sessions_standing_manager whenever it ends
 
 	// Offer ownership (#77): a player holds ONE live offer, kept alive by its
 	// owner's match-list poll. owner is the pilot token (stable across
@@ -113,6 +114,7 @@ type session struct {
 	offered   time.Time
 	joined    bool
 	withdrawn bool
+	creator   string // the creating address's origin(): the per-address offer cap counts these
 
 	// registry-owned counters mirrored for the lobby (updated under sessions_lock):
 	connected int
@@ -142,13 +144,39 @@ func identifier() (string, error) {
 // sessions_create makes a session for the named game, starts its tick loop,
 // and registers it. Enforced limits: known game, total session cap.
 func sessions_create(name string, mode string, label string, capacity int, parameters map[string]any) (*session, error) {
-	return sessions_make(name, mode, label, capacity, parameters, false)
+	return sessions_make(name, mode, label, capacity, parameters, false, offer{})
 }
 
-// sessions_standing creates the permanent matches: one always-open session
-// per game listed in [world] standing (default: every registered game).
-// Anyone may join or leave at any time; the idle sweep never ends them.
-func sessions_standing() {
+// offer is who asks for a session through the lobby: the address it came from,
+// and the pilot token whose earlier offer it will replace.
+type offer struct {
+	creator string
+	pilot   string
+}
+
+// OFFERS_MAXIMUM is the default for [limits] offers: the unjoined offers one
+// address may hold. The pilot token is the caller's own choice, so one offer per
+// pilot bounds nothing for a caller who sends a fresh token each time, and two
+// addresses heartbeating fifty offers each held every session the server has.
+// Three is generous for a household.
+const OFFERS_MAXIMUM = 3
+
+// sessions_offered is how many live offers count against this one's creator:
+// unjoined, not already withdrawn, and not the pilot's own, which the create
+// replaces. Called with sessions_lock held.
+func sessions_offered(o offer) int {
+	held := 0
+	for _, s := range sessions {
+		if s.creator == o.creator && !s.joined && !s.withdrawn && (o.pilot == "" || s.owner != o.pilot) {
+			held++
+		}
+	}
+	return held
+}
+
+// standing_games is the games that keep a standing match: those listed in
+// [world] standing, or every registered game.
+func standing_games() []string {
 	names := ini_string("world", "standing", "")
 	list := []string{}
 	if names == "" {
@@ -167,22 +195,110 @@ func sessions_standing() {
 			list = append(list, name)
 		}
 	}
-	for _, name := range list {
+	return list
+}
+
+// sessions_standing creates the permanent matches: one always-open session
+// per game listed in [world] standing (default: every registered game).
+// Anyone may join or leave at any time; the idle sweep never ends them.
+func sessions_standing() {
+	for _, name := range standing_games() {
 		if games[name] == nil {
 			warn("standing session: unknown game %q", name)
 			continue
 		}
-		// The standing session is the always-on free-for-all: it carries the MODE's
-		// name ("Furball", the dogfight term) in the match list, not the game's.
-		mode := "furball"
-		label := strings.ToUpper(mode[:1]) + mode[1:]
-		if _, err := sessions_make(name, mode, label, 0, nil, true); err != nil {
-			warn("standing session %s: %v", name, err)
-		}
+		standing_make(name)
 	}
 }
 
-func sessions_make(name string, mode string, label string, capacity int, parameters map[string]any, permanent bool) (*session, error) {
+// standing_make creates one game's standing match. It is the always-on
+// free-for-all, so it carries the MODE's name ("Furball", the dogfight term) in
+// the match list, not the game's.
+func standing_make(name string) bool {
+	mode := "furball"
+	label := strings.ToUpper(mode[:1]) + mode[1:]
+	if _, err := sessions_make(name, mode, label, 0, nil, true, offer{}); err != nil {
+		warn("standing session %s: %v", name, err)
+		return false
+	}
+	return true
+}
+
+// STANDING_WAIT is the first pause before a standing match that ended is made
+// again; each further remaking inside STANDING_SETTLED doubles it, up to
+// STANDING_WAIT_MOST, so a game that faults on every tick is a warning a few
+// times a minute rather than a hot loop.
+const (
+	STANDING_WAIT      = 5 * time.Second
+	STANDING_WAIT_MOST = 5 * time.Minute
+	STANDING_SETTLED   = 10 * time.Minute
+)
+
+// standing_clock is one game's back-off: when its standing match may next be
+// made again, and the pause after that.
+type standing_clock struct {
+	next time.Time
+	wait time.Duration
+	made time.Time
+}
+
+// sessions_standing_check makes again each standing match that has ended - a
+// fault in its tick ends it as it ends any match, and nothing else would bring
+// it back while the process runs - and reports how many it made.
+func sessions_standing_check(now time.Time, clocks map[string]*standing_clock) int {
+	made := 0
+	for _, name := range standing_games() {
+		if games[name] == nil {
+			continue // warned about at startup
+		}
+		sessions_lock.RLock()
+		present := false
+		for _, s := range sessions {
+			if s.permanent && s.spec.Game == name {
+				present = true
+				break
+			}
+		}
+		sessions_lock.RUnlock()
+		if present {
+			continue
+		}
+		clock := clocks[name]
+		if clock == nil {
+			clock = &standing_clock{}
+			clocks[name] = clock
+		}
+		if now.Before(clock.next) {
+			continue
+		}
+		if clock.made.IsZero() || now.Sub(clock.made) > STANDING_SETTLED {
+			clock.wait = STANDING_WAIT
+		} else {
+			clock.wait = min(clock.wait*2, STANDING_WAIT_MOST)
+		}
+		warn("standing session %s has ended; making it again (next no sooner than %v)", name, clock.wait)
+		clock.made, clock.next = now, now.Add(clock.wait)
+		if standing_make(name) {
+			made++
+		}
+	}
+	return made
+}
+
+// sessions_standing_manager keeps the standing matches standing, forever.
+func sessions_standing_manager() {
+	clocks := map[string]*standing_clock{}
+	for range time.Tick(time.Second) {
+		select {
+		case <-shutdown:
+			return // the matches are ending because the server is
+		default:
+		}
+		sessions_standing_check(time.Now(), clocks)
+	}
+}
+
+func sessions_make(name string, mode string, label string, capacity int, parameters map[string]any, permanent bool, by offer) (*session, error) {
 	g, found := games[name]
 	if !found {
 		return nil, errors.New("unknown")
@@ -202,11 +318,16 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 	}
 	// Cheap pre-check so an obviously full server refuses before paying for a
 	// Create; the authoritative test is under the lock below.
+	offers := ini_int("limits", "offers", OFFERS_MAXIMUM)
 	sessions_lock.RLock()
 	full := len(sessions) >= limit
+	crowded := by.creator != "" && sessions_offered(by) >= offers
 	sessions_lock.RUnlock()
 	if full {
 		return nil, errors.New("full")
+	}
+	if crowded {
+		return nil, errors.New("offers")
 	}
 	token, err := identifier()
 	if err != nil {
@@ -237,7 +358,14 @@ func sessions_make(name string, mode string, label string, capacity int, paramet
 		}
 		return nil, errors.New("full")
 	}
+	if by.creator != "" && sessions_offered(by) >= offers { // re-checked, as above: two creates at once must not both pass
+		if closer, ok := instance.(game.Closer); ok {
+			closer.Close()
+		}
+		return nil, errors.New("offers")
+	}
 	s := &session{
+		creator:    by.creator,
 		permanent:  permanent,
 		identifier: spec.Identifier,
 		spec:       spec,

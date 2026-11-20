@@ -4,6 +4,8 @@
 // This file is part of Mochi, licensed under the GNU AGPL v3 with the
 // Mochi Application Interface Exception - see license.txt and license-exception.md.
 
+//go:build js && wasm
+
 package main
 
 import (
@@ -60,9 +62,7 @@ func steer(js.Value, []js.Value) any {
 		return false
 	}
 	c, t := model.World.Carrier, model.State.Time
-	jet := model.State
-	jet.Position = model.Environment.Placement().Point(jet.Position) // the ship sails the chart
-	changed := vessel.Step(c, t, ship.Needed(c, t, []flight.State{jet}))
+	changed := vessel.Step(c, t, ship.Needed(c, t, []flight.State{model.State}, model.Environment.Placement()))
 	if held > 0 {
 		place := model.Environment.Placement()
 		before := model.World.Footing(model.State.Position, t, place)

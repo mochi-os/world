@@ -17,14 +17,15 @@
 // Input buffer layout (float64 words):
 //
 //	0 pitch, 1 roll, 2 yaw, 3 throttle, 4 speedbrake,
-//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON, 262144/524288 ENG CRANK),
+//	5 flags (1 dump, 2 brake, 4 gear, 8 hook, 16 launch, 32 override, 64 probe, 128 reset, 256/512 fuel off, 1024 fire, 2048 anti-skid off, 4096 emergency gear, 8192 MECH ON, 16384 mission computer 1 lost, 32768 pitch trim to on-speed, 65536 LAUNCH BAR at RETRACT, 131072 spin recovery switch at RCVY, 262144/524288 ENG CRANK),
 //	6 sequence, 7 steps, 8 reheat, 9 pitch trim, 10 flap switch, 11 roll trim,
 //	12/13 the EXT TANKS switches, WING and CTR (-1 STOP, 0 NORM, +1 ORIDE),
-//	14 nosewheel steering (-1 off, 0 LOW, +1 HI)
+//	14 nosewheel steering (-1 off, 0 LOW, +1 HI), 15 wing fuel held at INHIBIT (kg)
 //
-// Output buffer layout: flight.Size encoded state words, then
-// alpha, beta, nz, mach, cas, power, stage, and the spin recovery display's
-// stick direction (-1 left, +1 right, 0 none).
+// Output buffer layout: flight.Size encoded state words, then the extra-word
+// instrument tail: alpha, beta, nz, mach, cas, power, stage, the spin recovery
+// display's stick direction (-1 left, +1 right, 0 none), the centre of mass
+// from the datum in body axes (three words), and the rest height and pitch.
 package main
 
 import (

@@ -42,7 +42,7 @@ func TestTraceElement(t *testing.T) {
 		}
 	}
 	origin := aim.Subtract(flight.Vec3{X: 200}) // dead ahead of the element
-	part, distance := trace(body.Parts, origin, flight.Vec3{X: 1}, reach)
+	part, distance := trace(body, origin, flight.Vec3{X: 1}, reach)
 	if part < 0 {
 		t.Fatal("ray at a wing element missed everything")
 	}
@@ -307,7 +307,7 @@ func TestGearShot(t *testing.T) {
 	body, _ := target()
 	leg := fa18c.Airframe.Gear.Left.Attach
 	origin := leg.Add(flight.Vec3{Y: -8})
-	hit, _ := trace(body.Parts, origin, flight.Vec3{Y: 1}, 20)
+	hit, _ := trace(body, origin, flight.Vec3{Y: 1}, 20)
 	if hit < 0 || body.Parts[hit].Kind != Gear {
 		t.Fatalf("the ray up into the left leg missed the gear capsule: part %d", hit)
 	}
@@ -737,5 +737,34 @@ func TestStoreFire(t *testing.T) {
 	}
 	if _, exploded := run(true); exploded {
 		t.Error("a store fired off the rail still cooked the jet off")
+	}
+}
+
+// TestEmptyRailsStopNothing: the ordnance capsules stay in Parts after their
+// rounds have gone, and Near and Contact skip a station that is empty - but the
+// ray queries did not. A gun round or a fragment whose path crossed a fired
+// tip rail met it first: the round spent itself on empty air and was still
+// counted a hit, and a fragment stopped there and did nothing.
+func TestEmptyRailsStopNothing(t *testing.T) {
+	body, _ := target()
+	rail := fa18c.Airframe.Stores[0].Position     // the left wingtip AIM-9M's rail
+	outboard := rail.Subtract(flight.Vec3{Z: 10}) // beyond the wingtip, looking in along the span
+	ordnance := func(part int) bool { return part >= 0 && body.Parts[part].Kind == Ordnance }
+
+	body.Stores = 1 // the round on the rail
+	if part, _ := trace(body, outboard, flight.Vec3{Z: 1}, 20); !ordnance(part) {
+		t.Fatalf("a ray in along the span past a loaded tip rail met part %d first, not the round", part)
+	}
+	body.Stores = 0 // fired
+	if part, _ := trace(body, outboard, flight.Vec3{Z: 1}, 20); part < 0 || ordnance(part) {
+		t.Errorf("the ray in past an empty tip rail met part %d, want the airframe behind it and never the empty rail", part)
+	}
+	below := rail.Subtract(flight.Vec3{Y: 3})
+	if chain, _ := pierce(body, below, flight.Vec3{Y: 1}, 6); len(chain) != 0 {
+		t.Errorf("a round up through nothing but an empty rail met %d parts, want none: it is no hit", len(chain))
+	}
+	body.Stores = 1
+	if chain, _ := pierce(body, below, flight.Vec3{Y: 1}, 6); len(chain) == 0 || !ordnance(chain[0]) {
+		t.Errorf("a round up through a loaded rail met %v, want the round", chain)
 	}
 }

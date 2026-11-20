@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -22,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/quic-go/quic-go"
 	"github.com/quic-go/webtransport-go"
 
 	"strings"
@@ -36,6 +38,10 @@ func TestMain(m *testing.M) {
 	os.Setenv("MOCHI_TRANSPORT_LISTEN", "127.0.0.1")
 	os.Setenv("MOCHI_TRANSPORT_PORT", fmt.Sprint(test_port))
 	os.Setenv("MOCHI_LIMITS_IDLE", "1")
+	// Short, so TestIdleConnectionIsClosed need not wait out the real one - and
+	// every session test below then also shows that a live session's open
+	// CONNECT stream holds the timer off.
+	transport_idle = time.Second
 	games_register(echo_new())
 	games_register(air.New())
 	if err := certificate_start(); err != nil {
@@ -948,7 +954,7 @@ func TestCreateStaysOutOfTheRegistryLock(t *testing.T) {
 
 	created := make(chan *session, 1)
 	go func() {
-		s, err := sessions_make(g.Name(), "test", "Slow", 2, nil, false)
+		s, err := sessions_make(g.Name(), "test", "Slow", 2, nil, false, offer{})
 		if err != nil {
 			t.Error(err)
 		}
@@ -993,5 +999,161 @@ func TestCapacityStaysInsideTheWireFormat(t *testing.T) {
 	})
 	if s.spec.Capacity != slots {
 		t.Errorf("capacity %d, want the %d ceiling the protocol can address", s.spec.Capacity, slots)
+	}
+}
+
+// quiet dials the transport and completes the QUIC handshake without making
+// any request on the connection.
+func quiet(t *testing.T) *quic.Conn {
+	t.Helper()
+	background, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := quic.DialAddr(background, fmt.Sprintf("127.0.0.1:%d", test_port), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	return connection
+}
+
+// TestIdleConnectionIsClosed: a connection that completes the handshake and
+// never asks for /play held its budget slots for ever - the server's own
+// keep-alives are acknowledged, so QUIC never idled it out, and nothing else
+// closes a connection with no session on it.
+func TestIdleConnectionIsClosed(t *testing.T) {
+	before := connections.Load()
+	connection := quiet(t)
+	defer connection.CloseWithError(0, "")
+	select {
+	case <-connection.Context().Done():
+	case <-time.After(transport_idle + 5*time.Second):
+		t.Fatalf("a connection with no request was still open %v after the idle timeout", 5*time.Second)
+	}
+	for end := time.Now().Add(2 * time.Second); connections.Load() > before && time.Now().Before(end); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if got := connections.Load(); got > before {
+		t.Errorf("%d connections held after the idle one closed, want at most the %d before it", got, before)
+	}
+}
+
+// TestLiveSessionOutlastsTheIdleTimeout is the control: the timer runs only
+// while a connection holds no request stream, and a session's CONNECT stream
+// is one, so a match lasting longer than the timeout keeps its connection.
+func TestLiveSessionOutlastsTheIdleTimeout(t *testing.T) {
+	p := dial(t)
+	defer p.session.CloseWithError(0, "")
+	time.Sleep(transport_idle + 500*time.Millisecond)
+	select {
+	case <-p.session.Context().Done():
+		t.Fatal("the idle timeout closed a connection whose session was still live")
+	default:
+	}
+}
+
+// deaf is a client socket that sends but never hears an answer: a handshake
+// from it never completes, as one from a forged source address never does. It
+// reads and discards every packet, so deadlines and Close still end a read. It
+// holds the socket as a bare net.PacketConn: a *net.UDPConn embedded here would
+// promote ReadMsgUDP and SyscallConn, quic-go would read through those, and the
+// handshake would complete without ReadFrom ever being called.
+type deaf struct {
+	net.PacketConn
+}
+
+func (d deaf) ReadFrom(b []byte) (int, net.Addr, error) {
+	for {
+		if _, _, err := d.PacketConn.ReadFrom(b); err != nil {
+			return 0, nil, err
+		}
+	}
+}
+
+// TestUnprovenAddressTakesNoBudget: an early listener handed a connection over
+// as soon as the client's first flight was read, so the budgets were charged to
+// a source address nobody had proved - one forged datagram took a slot from
+// the address it named, and held it until the handshake gave up.
+func TestUnprovenAddressTakesNoBudget(t *testing.T) {
+	// An address of its own on the loopback network, so the slot read below can
+	// only be this client's: every other test dials from 127.0.0.1, and one of
+	// their connections arriving late would otherwise read as a hold.
+	source := net.IPv4(127, 0, 9, 1)
+	socket, err := net.ListenUDP("udp", &net.UDPAddr{IP: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &quic.Transport{Conn: deaf{socket}}
+	defer client.Close()
+	held := func() int {
+		hosts_lock.Lock()
+		defer hosts_lock.Unlock()
+		return hosts[origin(socket.LocalAddr().String())]
+	}
+	background, cancel := context.WithTimeout(context.Background(), 800*time.Millisecond)
+	defer cancel()
+	go client.Dial(background, &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: test_port}, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h3"}}, &quic.Config{EnableDatagrams: true})
+	most := 0
+	for end := time.Now().Add(600 * time.Millisecond); time.Now().Before(end); time.Sleep(5 * time.Millisecond) {
+		most = max(most, held())
+	}
+	if most > 0 {
+		t.Errorf("a handshake that never completed took a connection slot for %s (%d held)", source, most)
+	}
+}
+
+// TestRetryPastTheUnprovenRate: past UNVALIDATED_SECOND attempts in a second,
+// each new one is asked to prove its address with a Retry before anything is
+// held for it.
+func TestRetryPastTheUnprovenRate(t *testing.T) {
+	unvalidated.Lock()
+	unvalidated.window, unvalidated.count = time.Time{}, 0
+	unvalidated.Unlock()
+	asked := 0
+	for range UNVALIDATED_SECOND + 10 {
+		if transport_verify(nil) {
+			asked++
+		}
+	}
+	if asked != 10 {
+		t.Errorf("%d of %d attempts in one second were asked for a Retry, want the 10 past %d", asked, UNVALIDATED_SECOND+10, UNVALIDATED_SECOND)
+	}
+}
+
+// TestOffersPerAddress: one offer per pilot bounded nothing, since the pilot
+// token is the caller's own choice - a fresh token with each create kept fifty
+// offers alive from one address, and two addresses filled the session table.
+func TestOffersPerAddress(t *testing.T) {
+	creates = map[string][]time.Time{}
+	pilots := []string{}
+	t.Cleanup(func() {
+		creates = map[string][]time.Time{}
+		for _, pilot := range pilots {
+			sessions_withdraw(pilot)
+		}
+	})
+	create := func(address string, pilot string) (int, string) {
+		pilots = append(pilots, pilot)
+		body, _ := json.Marshal(map[string]any{"game": "echo", "mode": "test", "label": "offer cap", "pilot": pilot})
+		r := httptest.NewRequest("POST", "/sessions", bytes.NewReader(body))
+		r.RemoteAddr = address
+		w := httptest.NewRecorder()
+		lobby_sessions(w, r)
+		var answer map[string]any
+		json.Unmarshal(w.Body.Bytes(), &answer)
+		refusal, _ := answer["error"].(string)
+		return w.Code, refusal
+	}
+	for n := range OFFERS_MAXIMUM {
+		if code, refusal := create("198.51.100.20:1", fmt.Sprintf("offer-cap-%d", n)); code != 200 {
+			t.Fatalf("offer %d refused inside the cap of %d: %d %s", n+1, OFFERS_MAXIMUM, code, refusal)
+		}
+	}
+	if code, refusal := create("198.51.100.20:2", "offer-cap-fresh"); code != 400 || refusal != "offers" {
+		t.Errorf("an offer past the address's %d under a fresh token answered %d %q, want 400 offers", OFFERS_MAXIMUM, code, refusal)
+	}
+	if code, refusal := create("198.51.100.20:3", "offer-cap-0"); code != 200 {
+		t.Errorf("a pilot replacing their own offer at the cap was refused: %d %s", code, refusal)
+	}
+	if code, refusal := create("198.51.100.21:1", "offer-cap-other"); code != 200 {
+		t.Errorf("another address was refused because the first held its offers: %d %s", code, refusal)
 	}
 }

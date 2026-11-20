@@ -142,13 +142,15 @@ func session_orders(s *session) {
 						// p.sequence now means APPLIED and is advanced by the
 						// drain below (#176). The batch re-sends the last few
 						// samples for loss tolerance, so this is what keeps a
-						// resend from being flown twice.
-						if after(in.Sequence, p.received) || len(p.queue) == 0 {
-							p.queue = append(p.queue, in)
-							if after(in.Sequence, p.received) {
-								p.received = in.Sequence
-							}
+						// resend from being flown twice - even when the queue
+						// has run dry, which is every time the server has
+						// caught up. Only a connection's first sample has no
+						// mark to be judged against.
+						if p.began && !after(in.Sequence, p.received) {
+							continue
 						}
+						p.queue = append(p.queue, in)
+						p.received, p.began = in.Sequence, true
 					}
 					if len(p.queue) > 64 {
 						p.queue = p.queue[len(p.queue)-64:]

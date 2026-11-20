@@ -24,8 +24,12 @@ func trailing(t *testing.T, offset float64) (swirl float64, roll float64) {
 	const sunk = 12.0 // m
 	i := build(t, "furball", nil, 2)
 	leader, follower := i.aircraft[0], i.aircraft[1]
-	leader.model.State = flight.Level(leader.model, flight.Vec3{X: 1500, Y: 3000, Z: offset}, flight.Vec3{X: 1}, 150, 3000)
-	follower.model.State = flight.Level(follower.model, flight.Vec3{Y: 3000 - sunk}, flight.Vec3{X: 1}, 150, 3000)
+	// Laid level in the chart and carried into the session's own frame, which
+	// on the live server is Earth-centred and not the chart at all.
+	r := flight.Between(i.environment.Charted(), i.environment.Theatre())
+	east := r.Vector(flight.Vec3{X: 1})
+	leader.model.State = flight.Level(leader.model, r.Point(flight.Vec3{X: 1500, Y: 3000, Z: offset}), east, 150, 3000)
+	follower.model.State = flight.Level(follower.model, r.Point(flight.Vec3{Y: 3000 - sunk}), east, 150, 3000)
 	leader.latest = flight.Inputs{Throttle: leader.model.State.Engine[0].Spool}
 	follower.latest = flight.Inputs{Throttle: follower.model.State.Engine[0].Spool}
 	for tick := uint64(1); tick <= 60*14; tick++ {
@@ -48,6 +52,25 @@ func TestSessionWake(t *testing.T) {
 	}
 	if clear != 0 {
 		t.Errorf("2 km aside the follower met %.2f m/s of wake", clear)
+	}
+}
+
+// TestSessionWakeEarthCentred: the wakes are laid in the chart, and the live
+// server keeps its jets Earth-centred, so a jet's position handed to the wake
+// query unconverted sat some 6,370 km from every mark and nobody met a wake in
+// any match. The tests above lay their sessions in the chart itself, where the
+// conversion does nothing; this one is laid as the server lays a match.
+func TestSessionWakeEarthCentred(t *testing.T) {
+	was := setting
+	setting.Frame, setting.Chart = flight.Frame{}, flight.Frame{}
+	defer func() { setting = was }()
+	inside, _ := trailing(t, 0)
+	clear, _ := trailing(t, 2000)
+	if inside < 2 {
+		t.Errorf("in an Earth-centred session the follower met only %.2f m/s of the leader's wake", inside)
+	}
+	if clear != 0 {
+		t.Errorf("2 km aside in an Earth-centred session the follower met %.2f m/s of wake", clear)
 	}
 }
 

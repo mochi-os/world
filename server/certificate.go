@@ -117,11 +117,17 @@ func certificate_start() error {
 // cap delays a validation rather than failing it.
 const RESPONDER_CONNECTIONS_MAXIMUM = 64
 
+// RESPONDER_HOST_CONNECTIONS_MAXIMUM is the responder's share for one address:
+// the CA's vantage points each make a request or two from addresses of their
+// own, so a stranger holding more than this is holding them for nothing, and
+// would otherwise hold all 64 and stall the renewal.
+const RESPONDER_HOST_CONNECTIONS_MAXIMUM = 8
+
 // certificate_listener caps what the responder accepts. Split out from
 // certificate_start, like the deadlines below, so a test can assert the budget
 // without binding port 80.
 func certificate_listener(listener net.Listener) net.Listener {
-	return listener_limit(listener, RESPONDER_CONNECTIONS_MAXIMUM)
+	return listener_limit(listener, RESPONDER_CONNECTIONS_MAXIMUM, RESPONDER_HOST_CONNECTIONS_MAXIMUM)
 }
 
 // certificate_responder builds the HTTP-01 validation listener. It carries the

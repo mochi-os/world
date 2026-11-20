@@ -17,13 +17,19 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"world/games/air/flight"
 )
@@ -48,8 +54,10 @@ func listing_id() string {
 	directory := ini_string("world", "data", "/var/lib/mochi-world")
 	path := filepath.Join(directory, "world.id")
 	if data, err := os.ReadFile(path); err == nil {
+		// Core takes only 32 of [0-9a-z], and refuses every push carrying
+		// anything else, so a file holding another id is replaced.
 		id := strings.TrimSpace(string(data))
-		if len(id) == 32 {
+		if match_listing_id.MatchString(id) {
 			return id
 		}
 	}
@@ -83,6 +91,35 @@ func listing_id() string {
 		return ""
 	}
 	return id
+}
+
+var match_listing_id = regexp.MustCompile(`^[0-9a-z]{32}$`)
+
+// LISTING_NAME_MOST and LISTING_ADDRESS_MOST are core's bounds on a listing's
+// names and its address (world_name_most, world_address_most): core refuses a
+// push past them, so a server is told here instead of never being listed.
+const (
+	LISTING_NAME_MOST    = 64
+	LISTING_ADDRESS_MOST = 255
+)
+
+// listing_name_valid is core's test of a display name: no control or format
+// character - the bidi overrides and zero-width joiners among them - and no
+// more than LISTING_NAME_MOST runes.
+func listing_name_valid(name string) bool {
+	for _, character := range name {
+		if unicode.IsControl(character) || unicode.Is(unicode.Cf, character) {
+			return false
+		}
+	}
+	return utf8.RuneCountInString(name) <= LISTING_NAME_MOST
+}
+
+// listing_address_valid is whether core will take an address: an http or https
+// URL of no more than LISTING_ADDRESS_MOST bytes.
+func listing_address_valid(address string) bool {
+	parsed, err := url.Parse(address)
+	return err == nil && len(address) <= LISTING_ADDRESS_MOST && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Host != ""
 }
 
 // listing_services builds the announced service list: every registered game
@@ -119,7 +156,7 @@ func listing_payload(id, name string) ([]byte, error) {
 		"world": map[string]any{
 			"id":      id,
 			"name":    name,
-			"address": transport_origin(),
+			"address": lobby_origin(),
 			// The flight model version is what decides whether a client can
 			// fly here (the wasm and the server must agree), so it is the
 			// compatibility number the join page judges by.
@@ -144,13 +181,12 @@ func listing_start() {
 }
 
 // listing_ready reports whether this server may publish, and the name it
-// publishes under. Both refusals are operator mistakes caught here rather than
-// downstream: an unnamed listing would put an infrastructure name on a
-// player-facing join page, and a server with no [transport] address would
-// publish transport_origin's https://127.0.0.1:<port> fallback - right for a
-// client on this machine, wrong for the address gossiped to every server on the
-// network. Core accepts that one (world_address_valid passes any https URL) and
-// republishes it, so nothing downstream catches it either.
+// publishes under. Each refusal is an operator mistake caught here, naming the
+// setting, rather than downstream: an unnamed listing would put an
+// infrastructure name on a player-facing join page; a server with no address
+// set has nothing to publish that reaches it from elsewhere; and a name or
+// address past core's bounds is refused by core on every push, which the
+// operator would otherwise see only as a listing that never appears.
 func listing_ready() (string, bool) {
 	if !ini_bool("world", "public", false) {
 		return "", false
@@ -160,8 +196,27 @@ func listing_ready() (string, bool) {
 		warn("listing: [world] public is true but no name is set - not publishing")
 		return "", false
 	}
-	if ini_string("transport", "address", "") == "" {
-		warn("listing: [world] public is true but no [transport] address is set - not publishing")
+	if !listing_name_valid(name) {
+		warn("listing: [world] name is longer than %d characters or holds a control or format character - not publishing", LISTING_NAME_MOST)
+		return "", false
+	}
+	for game := range games {
+		if label := ini_string(game, "name", ""); label != "" && !listing_name_valid(label) {
+			warn("listing: [%s] name is longer than %d characters or holds a control or format character - not publishing", game, LISTING_NAME_MOST)
+			return "", false
+		}
+	}
+	address := lobby_origin()
+	if address == "" {
+		if ini_string("transport", "address", "") != "" {
+			warn("listing: [lobby] port differs from [transport] port, so [lobby] address must be set - not publishing")
+		} else {
+			warn("listing: [world] public is true but no [transport] address is set - not publishing")
+		}
+		return "", false
+	}
+	if !listing_address_valid(address) {
+		warn("listing: the lobby address %q is not an http or https URL of at most %d bytes - check [lobby] address and [transport] address - not publishing", address, LISTING_ADDRESS_MOST)
 		return "", false
 	}
 	return name, true
@@ -171,7 +226,7 @@ func listing_ready() (string, bool) {
 func listing_push_manager(id, name string) {
 	var last []byte
 	var pushed time.Time
-	var down bool
+	var told listing_told
 	for ; ; time.Sleep(15 * time.Second) {
 		payload, err := listing_payload(id, name)
 		if err != nil {
@@ -183,20 +238,80 @@ func listing_push_manager(id, name string) {
 		if !(changed && since >= listing_minimum*time.Second) && since < listing_floor*time.Second {
 			continue
 		}
-		if listing_push(payload) {
-			if down {
-				info("listing: Mochi server reachable again")
-				down = false
-			}
+		if told.note(listing_push(payload)) {
+			// Taken, or refused - which waits for a change or the floor as a
+			// push does, since sending the same refused status again changes
+			// nothing.
 			last = payload
 			pushed = time.Now()
-		} else if !down {
+		}
+	}
+}
+
+// listing_told is what the push manager has said to the operator, so each
+// outage and each distinct refusal is said once.
+type listing_told struct {
+	down    bool
+	refusal string
+}
+
+// note logs one push's outcome if the operator has not been told it yet, and
+// reports whether core answered - took the status or refused it - rather than
+// being out of reach.
+func (t *listing_told) note(err error) bool {
+	var refused *listing_refusal
+	switch {
+	case err == nil:
+		if t.down {
+			info("listing: Mochi server reachable again")
+		}
+		t.down, t.refusal = false, ""
+		return true
+	case errors.As(err, &refused):
+		// Core is there and said no: a setting to change, not an outage.
+		if refused.Error() != t.refusal {
+			warn("listing: %v", refused)
+			t.refusal = refused.Error()
+		}
+		t.down = false
+		return true
+	default:
+		if !t.down {
 			// One warning per outage, then silence: the game must not fill
 			// its log because its listing endpoint is down.
 			warn("listing: cannot push status to the Mochi server (will keep trying quietly)")
-			down = true
+			t.down = true
 		}
+		return false
 	}
+}
+
+// listing_refusal is core refusing a push it was able to read.
+type listing_refusal struct {
+	status string // the HTTP status line
+	reason string // core's error
+	field  string // the field core named, "" from a core that names none
+}
+
+// listing_settings is the setting behind each field core may name.
+var listing_settings = map[string]string{
+	"id":       "the listing id in world.id under [world] data",
+	"name":     "[world] name",
+	"address":  "[lobby] address or [transport] address",
+	"label":    "a game's own name ([<game>] name)",
+	"service":  "the games this server hosts",
+	"services": "the games this server hosts",
+}
+
+func (r *listing_refusal) Error() string {
+	message := "the Mochi server refused the status: " + r.status
+	if r.reason != "" {
+		message += " " + r.reason
+	}
+	if setting, found := listing_settings[r.field]; found {
+		return message + " - check " + setting
+	}
+	return message + " - check [world] name, [lobby] address, [transport] address and each game's name"
 }
 
 // listing_client is built once, at the first push. A Transport per push
@@ -211,23 +326,32 @@ var (
 )
 
 // listing_push delivers one status payload over the local socket. Latest
-// state only: a failure is reported, never retried out of band.
-func listing_push(payload []byte) bool {
+// state only: a failure is reported, never retried out of band. Core refusing
+// the status is a *listing_refusal; any other error is core out of reach.
+func listing_push(payload []byte) error {
 	listing_once.Do(func() {
 		listing_client = &http.Client{Timeout: 10 * time.Second, Transport: listing_transport()}
 	})
 	response, err := listing_client.Post("http://mochi/_/world/status", "application/json", bytes.NewReader(payload))
 	if err != nil {
 		debug("listing: push: %v", err)
-		return false
+		return err
 	}
 	defer response.Body.Close()
+	if response.StatusCode/100 == 4 {
+		var body struct {
+			Error string `json:"error"`
+			Field string `json:"field"`
+		}
+		_ = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&body)
+		return &listing_refusal{status: response.Status, reason: body.Error, field: body.Field}
+	}
 	if response.StatusCode/100 != 2 {
-		debug("listing: push refused: %s", response.Status)
-		return false
+		debug("listing: push failed: %s", response.Status)
+		return fmt.Errorf("push: %s", response.Status)
 	}
 	// Drained so the connection is reused rather than closed and redialled:
 	// net/http only pools a connection whose body was read to EOF.
 	_, _ = io.Copy(io.Discard, response.Body)
-	return true
+	return nil
 }

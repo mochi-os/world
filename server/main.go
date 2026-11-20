@@ -69,15 +69,20 @@ func main() {
 func main_serve(ready func()) int {
 	path := flag.String("f", "/etc/mochi/world.conf", "configuration file")
 	flag.Parse()
-	ini_load(*path)
+	if err := ini_load(*path); err != nil {
+		warn("startup: %v", err)
+		return 1
+	}
 	log_debug = ini_bool("log", "debug", false)
 	info("mochi-world %s starting", build_version)
 
 	games_register(air.New())
 
 	sessions_standing()
+	go sessions_standing_manager()
 	go sessions_stale_manager()
 	go lobby_prune_manager()
+	go presence_manager()
 	if err := certificate_start(); err != nil {
 		warn("startup: %v", err)
 		return 1

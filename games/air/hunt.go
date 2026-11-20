@@ -65,7 +65,7 @@ func pressing(library int) press {
 // pilot's default four bars, a beam each, about where the antenna points.
 // hunt_test.go holds the two in step.
 const (
-	radar_base    = 55 * 1852.0 // m: beam-aspect detection range against a fighter, 44 nm nose-on
+	radar_base    = 55 * 1852.0 // m: beam-aspect range at which half the looks paint a fighter, 44 nm nose-on
 	radar_clutter = 0.35        // how much of its range a target seen against the sea loses
 	radar_hold    = 1.15        // an STT holds its lock out to this multiple of the detection range
 	radar_memory  = 4 * 60      // ticks a starved STT coasts on memory before the lock drops
@@ -92,14 +92,25 @@ func aspect(line flight.Vec3, velocity flight.Vec3) float64 {
 	return 1 - 0.2*math.Abs(velocity.Dot(line))/speed
 }
 
-// detection is how far this target paints, this look. Its aspect is read off
-// its track, as the pilot's radar (radar.ts) reads it: the two radars hold the
-// same numbers, and in the match's breeze the drift moves the aspect term by
-// up to 3% of the range.
+// detection is how far this target paints at all, this look. Its aspect is
+// read off its track, as the pilot's radar (radar.ts) reads it: the two radars
+// hold the same numbers, and in the match's breeze the drift moves the aspect
+// term by up to 3% of the range.
 func (i *instance) detection(a, c *craft) float64 {
 	line, _ := i.bearing(a.model.State.Position, c.model.State.Position)
-	return radar_base * aspect(line, c.model.State.Velocity) * (1 - radar_clutter*round.Clutter(a.model.State.Position, c.model.State.Position))
+	return extent(line, c.model.State.Velocity, round.Clutter(a.model.State.Position, c.model.State.Position))
 }
+
+// extent is the detection edge for a target on this line, flying this velocity,
+// this much against the sea: past it no look paints, and radar_base, scaled
+// the same way, is where half of them do.
+func extent(line, velocity flight.Vec3, sea float64) float64 {
+	return radar_base * aspect(line, velocity) * (1 - radar_clutter*sea) / radar_half
+}
+
+// radar_half is where probability gives even odds, as a fraction of the
+// detection edge.
+const radar_half = 0.55 + 0.45*(0.97-0.5)/(0.97-0.15)
 
 // probability is the chance one frame's look paints a target at this span
 // against its detection range: all but sure well inside, marginal at the edge.
@@ -168,20 +179,68 @@ func (i *instance) antenna(a *craft, tick uint64) float64 {
 // jammer cost its pilot home-on-jam against a bot's round and denied the
 // bot nothing.
 func (i *instance) trackable(a, prey *craft, locked bool, tick uint64) bool {
-	b := a.brain
-	line, span := i.bearing(a.model.State.Position, prey.model.State.Position)
+	line, _ := i.bearing(a.model.State.Position, prey.model.State.Position)
+	held := i.tracked(a, prey, locked, tick, &a.brain.notching)
+	return a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) >= round.Gimbal && held
+}
+
+// tracked is the range and starvation half of an STT, a bot's and a human's
+// alike: inside the detection range - or radar_hold of it for a lock already
+// held - and fed, or starved for no longer than radar_memory. The notch
+// starves it, and so does a jammer radiating from outside burnthrough.
+// notching keeps the tick the starvation began, 0 while the lock is fed.
+func (i *instance) tracked(a, prey *craft, locked bool, tick uint64, notching *uint64) bool {
+	_, span := i.bearing(a.model.State.Position, prey.model.State.Position)
 	reach := i.detection(a, prey)
 	if locked {
 		reach *= radar_hold
 	}
 	starved := round.Notched(a.model.State.Position, prey.model.State.Position, prey.model.State.Velocity) || (prey.loud && span > round.Burnthrough)
 	if !locked || !starved {
-		b.notching = 0
-	} else if b.notching == 0 {
-		b.notching = tick
+		*notching = 0
+	} else if *notching == 0 {
+		*notching = tick
 	}
-	return a.model.State.Attitude.Rotate(flight.Vec3{X: 1}).Dot(line) >= round.Gimbal && span <= reach &&
-		(!starved || (b.notching > 0 && tick-b.notching <= radar_memory)) // a fresh lock never starts starved
+	return span <= reach && (!starved || (*notching > 0 && tick-*notching <= radar_memory)) // a fresh lock never starts starved
+}
+
+// radar_gimbal is the pilot's STT gimbal in azimuth off the nose (radar.ts
+// GIMBAL, ±70°): wider than the cone the bots scan, and what a human's own
+// radar breaks its lock at.
+const radar_gimbal = 1.222
+
+// locks holds every human's reported STT to what the radar the client flies
+// can hold - inside its gimbal, inside its range, and out of the notch and a
+// jammer's starvation past the memory - by the physics the bots' locks are
+// held to. The lock was whatever the client said, so a modified client locked
+// and fired on a jet behind it, far outside its scan or beaming in the notch,
+// was handed that jet's exact position and velocity for its round, and the
+// lock never broke. One that fails drops to search, so the AMRAAM's launch,
+// its datalink and every RWR read only a lock the server has confirmed.
+func (i *instance) locks(tick uint64) {
+	for _, a := range i.aircraft { // each jet's lock is its own: no order between them to keep
+		if a.bot || a.emitter != 2 || a.lock < 0 {
+			continue
+		}
+		prey := i.aircraft[a.lock]
+		if !a.alive || a.model == nil || prey == nil || !prey.alive || prey.model == nil || !i.gimballed(a, prey) || !i.tracked(a, prey, true, tick, &a.starved) {
+			a.emitter, a.lock, a.starved = 1, -1, 0
+		}
+	}
+}
+
+// gimballed reports whether the prey sits inside the pilot's radar gimbal: its
+// bearing off the nose, both laid flat in the level under the jet as the
+// client's radar measures azimuth against its heading.
+func (i *instance) gimballed(a, prey *craft) bool {
+	line, _ := i.bearing(a.model.State.Position, prey.model.State.Position)
+	up := a.model.Up()
+	flat := func(v flight.Vec3) flight.Vec3 { return v.Subtract(up.Scale(v.Dot(up))) }
+	nose, toward := flat(a.model.State.Attitude.Rotate(flight.Vec3{X: 1})), flat(line)
+	if nose.Length() < 1e-6 || toward.Length() < 1e-6 {
+		return true // straight up or down: no azimuth to judge, as the client has none
+	}
+	return math.Acos(clamp(nose.Normalize().Dot(toward.Normalize()), -1, 1)) <= radar_gimbal
 }
 
 // incoming reports whether a radar round is a threat to a jet: its seeker

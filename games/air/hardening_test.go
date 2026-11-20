@@ -11,6 +11,8 @@
 package air
 
 import (
+	"encoding/binary"
+	"math"
 	"testing"
 
 	"world/game"
@@ -258,5 +260,56 @@ func TestJettisonDropsTheRadarMagazine(t *testing.T) {
 	i.Jettison(0, []game.Departure{{Station: 6, What: "stores"}})
 	if a.amraams != 0 {
 		t.Errorf("dropping the last loaded rail left the magazine at %d, want 0", a.amraams)
+	}
+}
+
+// TestClientJudgesNoFailures: a client's "reverted" removed the limiter's
+// weight schedule and the R-LIM roll limit, and its "mechanical" traded the
+// flight computers for the mechanical link - failures the server never models,
+// so a modified client could hold either for free. Neither is taken from the
+// wire.
+func TestClientJudgesNoFailures(t *testing.T) {
+	in := input(map[string]any{"reverted": true, "mechanical": true, "pitch": 1.0})
+	if in.Reverted || in.Mechanical {
+		t.Errorf("a client's sample set reverted %v and mechanical %v", in.Reverted, in.Mechanical)
+	}
+	if in.Pitch != 1 {
+		t.Error("the sample's other controls were not read")
+	}
+}
+
+// TestWireTailRoundTrips: every tail word past the losses was sent as
+// clamp(v, 0, 1), so a signed one - the PA trim datum, the roll-trim datum, a
+// trailing-edge flap raised by a roll command, the rudders toed out - reached
+// the client as exactly zero and its prediction restarted every snapshot from
+// a state the server did not have. Each word, at both ends of its range,
+// comes back within one quantisation step.
+func TestWireTailRoundTrips(t *testing.T) {
+	i := build(t, "furball", nil, 1)
+	m := i.aircraft[0].model
+	for _, end := range []float64{0, 1} {
+		at := func(word int) float64 {
+			least, most := wire_range(word)
+			return least + end*(most-least)
+		}
+		tail := 57 + flight.Elements + flight.Channels
+		f := &m.State.Fcs
+		f.Pitchwash, f.Datum, f.Bank = at(tail+4), at(tail+5), at(tail+7)
+		f.Trailing.Left, f.Trailing.Right, f.Toe = at(tail+16), at(tail+17), at(tail+18)
+		m.State.Damage.Loss = at(tail)
+		m.State.External.Wing, m.State.External.Centre = at(tail+8), at(tail+9)
+		words := make([]float64, flight.Size)
+		m.State.Encode(words)
+		core := state_payload(m)["core"].([]byte)
+		for word := 57; word < flight.Size; word++ {
+			least, most := wire_range(word)
+			got := least + float64(binary.LittleEndian.Uint16(core[57*8+(word-57)*2:]))/65535*(most-least)
+			if step := (most - least) / 65535; math.Abs(got-words[word]) > step {
+				t.Errorf("word %d at the %v end: sent %v, arrived %v", word, end, words[word], got)
+			}
+		}
+		if end == 0 && (f.Datum >= 0 || f.Toe >= 0 || f.Trailing.Left >= 0) {
+			t.Fatal("the low end of the signed words is not below zero: the case tests nothing")
+		}
 	}
 }

@@ -243,7 +243,7 @@ func TestFullSessionClosesTheInstance(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := sessions_make(g.Name(), "test", "Closing", 2, nil, false)
+		_, err := sessions_make(g.Name(), "test", "Closing", 2, nil, false, offer{})
 		done <- err
 	}()
 
@@ -287,6 +287,7 @@ func TestListingRefusesWithoutATransportAddress(t *testing.T) {
 	}
 
 	os.Setenv("MOCHI_TRANSPORT_ADDRESS", "https://example:4433")
+	t.Setenv("MOCHI_LOBBY_PORT", os.Getenv("MOCHI_TRANSPORT_PORT")) // one port, so the transport's address is the lobby's
 	name, ok := listing_ready()
 	if !ok || name != "Test world" {
 		t.Errorf("listing_ready() = %q, %v with an address set; want the name and true", name, ok)
@@ -298,7 +299,7 @@ func TestListingRefusesWithoutATransportAddress(t *testing.T) {
 // said replacement; the failure path did removal.
 func TestFailedCreateKeepsTheOffer(t *testing.T) {
 	const pilot = "test-pilot-offer"
-	standing, err := sessions_make("air", "furball", "Standing", 2, nil, false)
+	standing, err := sessions_make("air", "furball", "Standing", 2, nil, false, offer{})
 	if err != nil {
 		t.Fatalf("could not create the pilot's existing offer: %v", err)
 	}

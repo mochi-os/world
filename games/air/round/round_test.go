@@ -151,16 +151,16 @@ func TestLoft(t *testing.T) {
 // about 10 g. This collapse is what makes range escapable.
 func TestCeiling(t *testing.T) {
 	empty := Mass - Propellant
-	if g := Ceiling(1200, 500, empty) / 9.80665; g < 29.9 {
+	if g := Ceiling(1200, 500, empty, flight.Environment{}) / 9.80665; g < 29.9 {
 		t.Fatalf("Mach-4-class at 500 m gives %.1f g, want the structural 30", g)
 	}
-	if g := Ceiling(650, 5000, empty) / 9.80665; g >= 30 {
+	if g := Ceiling(650, 5000, empty, flight.Environment{}) / 9.80665; g >= 30 {
 		t.Fatalf("650 m/s at 5 km still gives %.1f g, want under 30", g)
 	}
-	if g := Ceiling(750, 5000, empty) / 9.80665; g < 29.9 {
+	if g := Ceiling(750, 5000, empty, flight.Environment{}) / 9.80665; g < 29.9 {
 		t.Fatalf("750 m/s at 5 km gives %.1f g, want the structural 30", g)
 	}
-	if g := Ceiling(340, 0, empty) / 9.80665; g < 9 || g > 14 {
+	if g := Ceiling(340, 0, empty, flight.Environment{}) / 9.80665; g < 9 || g > 14 {
 		t.Fatalf("transonic sea level gives %.1f g, want ~10-12", g)
 	}
 }
@@ -783,5 +783,27 @@ func TestEscapeTurnFromExactlyHeadOn(t *testing.T) {
 		Velocity: flight.Vec3{X: 250 * math.Cos(2.356), Z: 250 * math.Sin(2.356)}}
 	if z := Ladder(shooter, oblique, flight.Environment{Frame: scene, Chart: scene}, 0); z.Escape >= z.Max {
 		t.Errorf("the oblique escape regressed: Escape %.0f, Max %.0f", z.Escape, z.Max)
+	}
+}
+
+// atmosphere is the standard air at altitude, density and the speed of sound,
+// as the round reads it.
+func atmosphere(altitude float64) (float64, float64) {
+	air := flight.Atmosphere(altitude, flight.Environment{})
+	return air.Density, air.Sound
+}
+
+// TestRoundFliesTheWeather: the round carried an ISA of its own with no
+// environment, while every jet and every other weapon reads the flight core's
+// in the session's weather - so on a day of non-standard air the AMRAAM alone
+// flew standard air, and its launch zone disagreed with the round the HUD
+// flies.
+func TestRoundFliesTheWeather(t *testing.T) {
+	empty := Mass - Propellant
+	standard := Ceiling(650, 5000, empty, flight.Environment{})
+	var warm flight.Environment
+	warm.Temperature = 30
+	if hot := Ceiling(650, 5000, empty, warm); hot >= standard {
+		t.Errorf("the round turns at %.1f g in air 30 K warmer and %.1f g in standard air: it does not read the weather", hot/9.80665, standard/9.80665)
 	}
 }
