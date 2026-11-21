@@ -80,7 +80,7 @@ func certificate_start() error {
 		acme_manager = &autocert.Manager{
 			Prompt:     autocert.AcceptTOS,
 			HostPolicy: autocert.HostWhitelist(names...),
-			Cache:      autocert.DirCache(ini_string("acme", "cache", "/var/lib/mochi-world")),
+			Cache:      autocert.DirCache(ini_string("acme", "cache", state_directory())),
 		}
 		// The HTTP-01 responder: ACME validates on port 80 only. A taken port
 		// is a warning, not fatal — cached certificates keep serving, though

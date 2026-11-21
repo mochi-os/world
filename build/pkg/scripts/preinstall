@@ -1,30 +1,64 @@
 #!/bin/bash
 
-# Create the mochi user and group if they don't exist. The account is the
-# same _mochi that mochi-server's package creates - the two products share it.
-if ! dscl . -read /Groups/_mochi &>/dev/null; then
-    # Find an unused GID
-    GID=400
-    while dscl . -read /Groups/gid/$GID &>/dev/null 2>&1; do
-        GID=$((GID + 1))
+# id_taken <id>: whether any group holds the id as its PrimaryGroupID or any
+# user as its UniqueID. dscl -search matches an attribute value; -read takes a
+# record path, and gid/<n> under /Groups never named one.
+id_taken() {
+    dscl . -search /Groups PrimaryGroupID "$1" | grep -q PrimaryGroupID || dscl . -search /Users UniqueID "$1" | grep -q UniqueID
+}
+
+# id_free [other]: the lowest id from 400 that no user or group holds, never
+# other - the id given an account earlier in this run, which a directory that
+# has not yet published the new record would otherwise hand out twice.
+id_free() {
+    local id=400
+    while [ "$id" = "${1:-}" ] || id_taken "$id"; do
+        id=$((id + 1))
     done
+    echo "$id"
+}
+
+# Create the _mochi group and user if they don't exist, on one id that no user
+# or group holds. The account is the same _mochi that mochi-server's package
+# creates - the two products share it.
+ID=""
+if ! dscl . -read /Groups/_mochi &>/dev/null || ! dscl . -read /Users/_mochi &>/dev/null; then
+    ID=$(id_free)
+fi
+
+if ! dscl . -read /Groups/_mochi &>/dev/null; then
     dscl . -create /Groups/_mochi
-    dscl . -create /Groups/_mochi PrimaryGroupID $GID
+    dscl . -create /Groups/_mochi PrimaryGroupID $ID
 fi
 
 if ! dscl . -read /Users/_mochi &>/dev/null; then
-    # Find an unused UID
-    UID_NUM=400
-    while dscl . -read /Users/uid/$UID_NUM &>/dev/null 2>&1; do
-        UID_NUM=$((UID_NUM + 1))
-    done
     GID=$(dscl . -read /Groups/_mochi PrimaryGroupID | awk '{print $2}')
     dscl . -create /Users/_mochi
-    dscl . -create /Users/_mochi UniqueID $UID_NUM
+    dscl . -create /Users/_mochi UniqueID $ID
     dscl . -create /Users/_mochi PrimaryGroupID $GID
     dscl . -create /Users/_mochi UserShell /usr/bin/false
     dscl . -create /Users/_mochi NFSHomeDirectory /var/lib/mochi
     dscl . -create /Users/_mochi RealName "Mochi Server"
+fi
+
+# The world-status socket's group. mochi-server gives <data>/run/world.sock
+# this group, so a member of it may push world status; it is created here, by
+# the package that supplies the only thing which speaks to that socket. The
+# shipped daemon runs mochi-world as _mochi, which reaches the socket by
+# ownership; the group is what lets an operator run the world server under its
+# own account instead, without handing it the Mochi server's data directory.
+if ! dscl . -read /Groups/_mochi-world &>/dev/null; then
+    dscl . -create /Groups/_mochi-world
+    dscl . -create /Groups/_mochi-world PrimaryGroupID $(id_free "$ID")
+fi
+
+# ...and the Mochi server's own account joins it: a process may give a file
+# only a group it is in, so without this the socket keeps the server's own
+# group. Supplementary groups are read at process start, so the socket takes
+# its group on the next mochi-server restart; until then mochi-world reaches
+# it by ownership exactly as before.
+if ! dseditgroup -o checkmember -m _mochi _mochi-world &>/dev/null; then
+    dseditgroup -o edit -a _mochi -t user _mochi-world
 fi
 
 # Create directories

@@ -18,6 +18,10 @@
 	<string>_mochi</string>
 	<key>GroupName</key>
 	<string>_mochi</string>
+	<!-- The server logs to standard output, which launchd discards unless
+	     it is given a path. -->
+	<key>StandardOutPath</key>
+	<string>/var/log/mochi-world.log</string>
 	<key>StandardErrorPath</key>
 	<string>/var/log/mochi-world.log</string>
 </dict>

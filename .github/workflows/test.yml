@@ -1,0 +1,28 @@
+name: Test
+
+# Every push and pull request must compile and pass the short suite. The
+# security workflow scans but builds nothing of its own, so a file that broke
+# the native build passed CI. The long suites stay in the release preflight.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # The go.mod toolchain directive is the floor; this only has to be
+          # new enough to honour it.
+          go-version: '1.25'
+
+      - name: Vet, build, short tests and the wasm compile
+        run: make check

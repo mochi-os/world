@@ -87,7 +87,15 @@
                 <CreateFolder />
                 <RegistryValue Root="HKLM" Key="Software\Mochi" Name="WorldInstalled" Type="integer" Value="1" KeyPath="yes" />
             </Component>
-            <Component Id="ConfigFile" Guid="2DDF1BED-8537-4498-B3F2-E308D0709BE0" Win64="yes">
+            <!-- The operator edits this file, and a major upgrade removes the old
+                 product before installing the new one, unattended self-updates
+                 included. Permanent keeps that removal from deleting world.conf;
+                 the install then finds it, and Windows Installer never
+                 replaces an unversioned file modified since it was created, so
+                 an edited file survives and an untouched one takes the new
+                 default. An uninstall leaves it behind, as configuration should
+                 be. NeverOverwrite would be dropped by wixl without a word. -->
+            <Component Id="ConfigFile" Guid="2DDF1BED-8537-4498-B3F2-E308D0709BE0" Win64="yes" Permanent="yes">
                 <File Id="WorldConf"
                       Name="world.conf"
                       Source="$(var.SourceDir)/world.conf"

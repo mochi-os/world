@@ -12,24 +12,44 @@ go_sources := $(shell find server game games -name '*.go') go.mod go.sum
 major = $(word 1,$(subst ., ,$(version)))
 
 JOBS ?= $(shell nproc)
-timing = /tmp/mochi-world-release-timing.txt
 
-build_linux_amd64 = /tmp/mochi-world_$(version)_linux_amd64
-build_linux_arm64 = /tmp/mochi-world_$(version)_linux_arm64
-build_linux_armhf = /tmp/mochi-world_$(version)_linux_armhf
+# Per-phase timing lines, printed again as a summary at the end of `release`.
+# Inside the checkout, not /tmp: a fixed name in a world-writable directory can
+# be a symlink someone else planted, and the release writes through it.
+timing = local/release-timing.txt
+
+# Release staging root, as core's Makefile has it. Every package is built under
+# one private directory made for this invocation, never under a fixed name in
+# /tmp, where any local account could pre-create a package or plant files in a
+# staging tree that the package builder would pack and gpg would sign.
+# `release` makes the root once and hands it to its sub-makes as STAGE; a
+# package target run on its own makes its own. The package rules are named
+# deb-amd64, msi, pkg-arm64 and so on rather than by their output path, so make
+# never takes a file someone left in /tmp as an up-to-date package, and no rule
+# header expands the root at parse time. The prefix differs from core's, so
+# neither release's clean-up removes the other's root.
+ifdef STAGE
+stage := $(STAGE)
+else
+stage = $(eval stage := $(shell mktemp -d /tmp/mochi-world-release.XXXXXX))$(stage)
+endif
+
+build_linux_amd64 = $(stage)/mochi-world_$(version)_linux_amd64
+build_linux_arm64 = $(stage)/mochi-world_$(version)_linux_arm64
+build_linux_armhf = $(stage)/mochi-world_$(version)_linux_armhf
 deb_amd64 = $(build_linux_amd64).deb
 deb_arm64 = $(build_linux_arm64).deb
 deb_armhf = $(build_linux_armhf).deb
-rpm_x86_64 = /tmp/mochi-world-$(version)-1.x86_64.rpm
-rpm_aarch64 = /tmp/mochi-world-$(version)-1.aarch64.rpm
-rpm_armv7hl = /tmp/mochi-world-$(version)-1.armv7hl.rpm
-rpmbuild_x86_64  = /tmp/mochi-world-rpmbuild-x86_64
-rpmbuild_aarch64 = /tmp/mochi-world-rpmbuild-aarch64
-rpmbuild_armv7hl = /tmp/mochi-world-rpmbuild-armv7hl
-build_windows = /tmp/mochi-world_$(version)_windows_amd64
+rpm_x86_64 = $(stage)/mochi-world-$(version)-1.x86_64.rpm
+rpm_aarch64 = $(stage)/mochi-world-$(version)-1.aarch64.rpm
+rpm_armv7hl = $(stage)/mochi-world-$(version)-1.armv7hl.rpm
+rpmbuild_x86_64  = $(stage)/rpmbuild-x86_64
+rpmbuild_aarch64 = $(stage)/rpmbuild-aarch64
+rpmbuild_armv7hl = $(stage)/rpmbuild-armv7hl
+build_windows = $(stage)/mochi-world_$(version)_windows_amd64
 msi = $(build_windows).msi
-pkg_amd64 = /tmp/mochi-world_$(version)_darwin_amd64.pkg
-pkg_arm64 = /tmp/mochi-world_$(version)_darwin_arm64.pkg
+pkg_amd64 = $(stage)/mochi-world_$(version)_darwin_amd64.pkg
+pkg_arm64 = $(stage)/mochi-world_$(version)_darwin_arm64.pkg
 docker_image = ghcr.io/mochi-os/mochi-world
 
 all: $(bin)/mochi-world
@@ -57,11 +77,17 @@ test:
 # Vulnerability scanning. Mirrors core's targets and the jobs in
 # .github/workflows/security.yml, so local and CI findings agree.
 
+# Scanner versions, in one place: the scan targets below use them, and the
+# Security workflow runs those targets rather than its own commands, so a CI
+# scan and a local one cannot differ. The Trivy image is pinned by digest as
+# well as version, so a replaced tag cannot change what runs. Bump them here.
+govulncheck = golang.org/x/vuln/cmd/govulncheck@v1.8.0
+trivy = aquasec/trivy:0.70.0@sha256:be1190afcb28352bfddc4ddeb71470835d16462af68d310f9f4bca710961a41e
+
 # Reachability-aware: builds the call graph, so a failure is real exposure
 # rather than a version comparison.
 vulnerability-scan:
-	go install golang.org/x/vuln/cmd/govulncheck@latest
-	$$(go env GOPATH)/bin/govulncheck ./...
+	go run $(govulncheck) ./...
 
 # No build and no reachability analysis, but it sees every module in the graph
 # and catches advisories the Go vulnerability database has not picked up.
@@ -69,7 +95,7 @@ dependency-scan:
 	docker run --rm -v $(CURDIR):/src:ro \
 	    -v $(HOME)/.cache/trivy:/root/.cache/trivy \
 	    -v $(CURDIR)/.trivyignore:/.trivyignore:ro \
-	    aquasec/trivy:latest fs \
+	    $(trivy) fs \
 	    --scanners vuln --severity HIGH,CRITICAL \
 	    --exit-code 1 --no-progress --timeout 10m \
 	    --ignorefile /.trivyignore /src
@@ -87,17 +113,20 @@ base-digest:
 	else echo "base-digest: $$image has MOVED"; echo "  pinned:  $$pinned"; echo "  current: $$current"; fi
 
 # Trivy against the locally-built image. A manual pre-release check,
-# deliberately not wired into make release for the same reason as core's.
+# deliberately not wired into make release for the same reason as core's. The
+# image is saved to a file and scanned from it, never through the Docker
+# socket, which would hand the scanner root on the machine.
 docker-scan: docker-local
+	@scan=$$(mktemp -d); trap 'rm -rf "$$scan"' EXIT; \
+	docker save -o "$$scan/image.tar" $(docker_image):dev && \
 	docker run --rm \
-	    -v /var/run/docker.sock:/var/run/docker.sock \
+	    -v "$$scan":/scan:ro \
 	    -v $(HOME)/.cache/trivy:/root/.cache/trivy \
 	    -v $(CURDIR)/.trivyignore:/.trivyignore:ro \
-	    aquasec/trivy:latest image \
+	    $(trivy) image --input /scan/image.tar \
 	    --severity HIGH,CRITICAL --exit-code 1 --no-progress \
 	    --timeout 15m \
-	    --ignorefile /.trivyignore \
-	    $(docker_image):dev
+	    --ignorefile /.trivyignore
 
 # The bot doctrine sweeps: several simulated minutes per seed. Fights run
 # longer under the #95 energy model (less free mid-band thrust means slower
@@ -122,11 +151,13 @@ test-race:
 	go test -race ./server/... ./game/...
 	go test -race -short -timeout 30m ./games/...
 
-# The -short gate: skips the flight-envelope sweeps too, for seconds not a
-# minute. Doctrine sweeps are already opt-in, so `test` and this differ only in
-# the envelope tests. Use while iterating on unrelated code.
+# The -short gate: skips the flight-envelope sweeps too. Doctrine sweeps are
+# already opt-in, so `test` and this differ only in the envelope tests. Use
+# while iterating on unrelated code. The air packages still run for minutes
+# under -short, so it carries the same explicit budget as `test`: an overrun is
+# then a named test, not Go's ten-minute panic.
 test-quick:
-	go test -short ./...
+	go test -short -timeout 20m ./...
 
 # Run the simulation-core tests on the browser target: the golden-trace
 # comparison under wasm IS the native-versus-wasm divergence bound. The
@@ -138,6 +169,16 @@ test-wasm:
 # Compile-check the simulation core and its boundary for the browser target.
 wasm:
 	GOOS=js GOARCH=wasm CGO_ENABLED=0 go build ./games/air/flight/ ./wasm/
+
+# What every change must pass before it ships: the native tree vets and builds,
+# the short suite passes, and the browser half compiles for wasm. A browser-only
+# file without its js && wasm constraint breaks the first three at once. The
+# Test workflow runs this; the release preflight runs the full suites.
+check:
+	go vet ./...
+	go build ./...
+	$(MAKE) --no-print-directory test-quick
+	$(MAKE) --no-print-directory wasm
 
 clean:
 	rm -f $(bin)/mochi-world $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world-linux-arm $(bin)/mochi-world.exe $(bin)/mochi-world-darwin-amd64 $(bin)/mochi-world-darwin-arm64 $(bin)/mochi-world.8
@@ -172,8 +213,9 @@ $(bin)/mochi-world.8: docs/mochi-world.8.md | $(bin)
 # .deb packages
 # --------------------------------------------------------------------------
 
-$(deb_amd64): $(bin)/mochi-world $(bin)/mochi-world.8
-	mkdir -p -m 0775 $(build_linux_amd64) $(build_linux_amd64)/usr/sbin $(build_linux_amd64)/var/lib/mochi-world
+deb-amd64: $(bin)/mochi-world $(bin)/mochi-world.8
+	mkdir -m 0775 $(build_linux_amd64)
+	mkdir -p -m 0775 $(build_linux_amd64)/usr/sbin $(build_linux_amd64)/var/lib/mochi-world
 	cp -av build/deb/* $(build_linux_amd64)
 	sed 's/_VERSION_/$(version)/' build/deb/DEBIAN/control > $(build_linux_amd64)/DEBIAN/control
 	cp -av install/* $(build_linux_amd64)
@@ -186,10 +228,10 @@ $(deb_amd64): $(bin)/mochi-world $(bin)/mochi-world.8
 	rm -rf $(build_linux_amd64)
 	ls -l $(deb_amd64)
 
-deb-amd64: $(deb_amd64)
 
-$(deb_arm64): $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world.8
-	mkdir -p -m 0775 $(build_linux_arm64) $(build_linux_arm64)/usr/sbin $(build_linux_arm64)/var/lib/mochi-world
+deb-arm64: $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world.8
+	mkdir -m 0775 $(build_linux_arm64)
+	mkdir -p -m 0775 $(build_linux_arm64)/usr/sbin $(build_linux_arm64)/var/lib/mochi-world
 	cp -av build/deb/* $(build_linux_arm64)
 	sed -e 's/_VERSION_/$(version)/' -e 's/Architecture: amd64/Architecture: arm64/' build/deb/DEBIAN/control > $(build_linux_arm64)/DEBIAN/control
 	cp -av install/* $(build_linux_arm64)
@@ -200,10 +242,10 @@ $(deb_arm64): $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world.8
 	rm -rf $(build_linux_arm64)
 	ls -l $(deb_arm64)
 
-deb-arm64: $(deb_arm64)
 
-$(deb_armhf): $(bin)/mochi-world-linux-arm $(bin)/mochi-world.8
-	mkdir -p -m 0775 $(build_linux_armhf) $(build_linux_armhf)/usr/sbin $(build_linux_armhf)/var/lib/mochi-world
+deb-armhf: $(bin)/mochi-world-linux-arm $(bin)/mochi-world.8
+	mkdir -m 0775 $(build_linux_armhf)
+	mkdir -p -m 0775 $(build_linux_armhf)/usr/sbin $(build_linux_armhf)/var/lib/mochi-world
 	cp -av build/deb/* $(build_linux_armhf)
 	sed -e 's/_VERSION_/$(version)/' -e 's/Architecture: amd64/Architecture: armhf/' build/deb/DEBIAN/control > $(build_linux_armhf)/DEBIAN/control
 	cp -av install/* $(build_linux_armhf)
@@ -214,7 +256,6 @@ $(deb_armhf): $(bin)/mochi-world-linux-arm $(bin)/mochi-world.8
 	rm -rf $(build_linux_armhf)
 	ls -l $(deb_armhf)
 
-deb-armhf: $(deb_armhf)
 
 deb: deb-amd64 deb-arm64 deb-armhf
 
@@ -223,47 +264,44 @@ deb: deb-amd64 deb-arm64 deb-armhf
 # --------------------------------------------------------------------------
 
 # Requires: apt install rpm
-$(rpm_x86_64): $(bin)/mochi-world $(bin)/mochi-world.8
-	rm -rf $(rpmbuild_x86_64)
+rpm-x86_64: $(bin)/mochi-world $(bin)/mochi-world.8
+	mkdir $(rpmbuild_x86_64)
 	mkdir -p $(rpmbuild_x86_64)/SOURCES $(rpmbuild_x86_64)/SPECS $(rpmbuild_x86_64)/BUILD $(rpmbuild_x86_64)/RPMS $(rpmbuild_x86_64)/SRPMS
 	cp $(bin)/mochi-world $(rpmbuild_x86_64)/SOURCES/
 	cp $(bin)/mochi-world.8 $(rpmbuild_x86_64)/SOURCES/
 	cp install/etc/mochi/world.conf $(rpmbuild_x86_64)/SOURCES/
-	cp install/etc/systemd/system/mochi-world.service $(rpmbuild_x86_64)/SOURCES/
+	cp install/usr/lib/systemd/system/mochi-world.service $(rpmbuild_x86_64)/SOURCES/
 	rpmbuild -bb --define "_topdir $(rpmbuild_x86_64)" --define "_version $(version)" --target x86_64 build/rpm/mochi-world.spec
 	cp $(rpmbuild_x86_64)/RPMS/x86_64/mochi-world-$(version)-1.x86_64.rpm $(rpm_x86_64)
 	rm -rf $(rpmbuild_x86_64)
 	ls -l $(rpm_x86_64)
 
-rpm-x86_64: $(rpm_x86_64)
 
-$(rpm_aarch64): $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world.8
-	rm -rf $(rpmbuild_aarch64)
+rpm-aarch64: $(bin)/mochi-world-linux-arm64 $(bin)/mochi-world.8
+	mkdir $(rpmbuild_aarch64)
 	mkdir -p $(rpmbuild_aarch64)/SOURCES $(rpmbuild_aarch64)/SPECS $(rpmbuild_aarch64)/BUILD $(rpmbuild_aarch64)/RPMS $(rpmbuild_aarch64)/SRPMS
 	cp $(bin)/mochi-world-linux-arm64 $(rpmbuild_aarch64)/SOURCES/mochi-world
 	cp $(bin)/mochi-world.8 $(rpmbuild_aarch64)/SOURCES/
 	cp install/etc/mochi/world.conf $(rpmbuild_aarch64)/SOURCES/
-	cp install/etc/systemd/system/mochi-world.service $(rpmbuild_aarch64)/SOURCES/
+	cp install/usr/lib/systemd/system/mochi-world.service $(rpmbuild_aarch64)/SOURCES/
 	rpmbuild -bb --define "_topdir $(rpmbuild_aarch64)" --define "_version $(version)" --target aarch64 build/rpm/mochi-world.spec
 	cp $(rpmbuild_aarch64)/RPMS/aarch64/mochi-world-$(version)-1.aarch64.rpm $(rpm_aarch64)
 	rm -rf $(rpmbuild_aarch64)
 	ls -l $(rpm_aarch64)
 
-rpm-aarch64: $(rpm_aarch64)
 
-$(rpm_armv7hl): $(bin)/mochi-world-linux-arm $(bin)/mochi-world.8
-	rm -rf $(rpmbuild_armv7hl)
+rpm-armv7hl: $(bin)/mochi-world-linux-arm $(bin)/mochi-world.8
+	mkdir $(rpmbuild_armv7hl)
 	mkdir -p $(rpmbuild_armv7hl)/SOURCES $(rpmbuild_armv7hl)/SPECS $(rpmbuild_armv7hl)/BUILD $(rpmbuild_armv7hl)/RPMS $(rpmbuild_armv7hl)/SRPMS
 	cp $(bin)/mochi-world-linux-arm $(rpmbuild_armv7hl)/SOURCES/mochi-world
 	cp $(bin)/mochi-world.8 $(rpmbuild_armv7hl)/SOURCES/
 	cp install/etc/mochi/world.conf $(rpmbuild_armv7hl)/SOURCES/
-	cp install/etc/systemd/system/mochi-world.service $(rpmbuild_armv7hl)/SOURCES/
+	cp install/usr/lib/systemd/system/mochi-world.service $(rpmbuild_armv7hl)/SOURCES/
 	rpmbuild -bb --define "_topdir $(rpmbuild_armv7hl)" --define "_version $(version)" --target armv7hl build/rpm/mochi-world.spec
 	cp $(rpmbuild_armv7hl)/RPMS/armv7hl/mochi-world-$(version)-1.armv7hl.rpm $(rpm_armv7hl)
 	rm -rf $(rpmbuild_armv7hl)
 	ls -l $(rpm_armv7hl)
 
-rpm-armv7hl: $(rpm_armv7hl)
 
 rpm: rpm-x86_64 rpm-aarch64 rpm-armv7hl
 
@@ -271,29 +309,26 @@ rpm: rpm-x86_64 rpm-aarch64 rpm-armv7hl
 # Windows MSI (requires wixl from msitools on Linux)
 # --------------------------------------------------------------------------
 
-$(msi): $(bin)/mochi-world.exe
-	mkdir -p $(build_windows)
+msi: $(bin)/mochi-world.exe
+	mkdir $(build_windows)
 	cp $(bin)/mochi-world.exe $(build_windows)/
 	cp build/msi/world.conf $(build_windows)/
 	wixl -v --ext ui -a x64 -D Version=$(version) -D SourceDir=$(build_windows) -o $(msi) build/msi/world.wxs
 	rm -rf $(build_windows)
 	ls -l $(msi)
 
-msi: $(msi)
 
 # --------------------------------------------------------------------------
 # macOS .pkg installers (requires bomutils at /opt/bomutils, xar)
 # --------------------------------------------------------------------------
 
-$(pkg_amd64): $(bin)/mochi-world-darwin-amd64
-	PATH="/opt/bomutils/bin:$$PATH" ./build/scripts/build-pkg $(bin)/mochi-world-darwin-amd64 $(version) amd64 $(pkg_amd64)
+pkg-amd64: $(bin)/mochi-world-darwin-amd64
+	PATH="/opt/bomutils/bin:$$PATH" ../core/build/scripts/build-pkg build/pkg $(version) amd64 $(pkg_amd64) $(bin)/mochi-world-darwin-amd64
 
-$(pkg_arm64): $(bin)/mochi-world-darwin-arm64
-	PATH="/opt/bomutils/bin:$$PATH" ./build/scripts/build-pkg $(bin)/mochi-world-darwin-arm64 $(version) arm64 $(pkg_arm64)
+pkg-arm64: $(bin)/mochi-world-darwin-arm64
+	PATH="/opt/bomutils/bin:$$PATH" ../core/build/scripts/build-pkg build/pkg $(version) arm64 $(pkg_arm64) $(bin)/mochi-world-darwin-arm64
 
-pkg-amd64: $(pkg_amd64)
 
-pkg-arm64: $(pkg_arm64)
 
 pkg: pkg-amd64 pkg-arm64
 
@@ -336,21 +371,25 @@ docker: docker-stage
 # --------------------------------------------------------------------------
 
 release:
+	@mkdir -p local
 	@: > $(timing)
 	@trap '$(MAKE) release-clean' EXIT; \
-	t=$$(date +%s); $(MAKE) clean release-clean || exit 1; echo ">>> phase clean: $$(($$(date +%s)-t))s" | tee -a $(timing); \
-	t=$$(date +%s); $(MAKE) -j$(JOBS) release-build || exit 1; echo ">>> phase build (incl docker push): $$(($$(date +%s)-t))s" | tee -a $(timing); \
-	t=$$(date +%s); $(MAKE) release-publish || exit 1; echo ">>> phase publish (reindex + rsync): $$(($$(date +%s)-t))s" | tee -a $(timing); \
+	t=$$(date +%s); $(MAKE) clean release-clean STAGE=$(stage) || exit 1; echo ">>> phase clean: $$(($$(date +%s)-t))s" | tee -a $(timing); \
+	t=$$(date +%s); $(MAKE) -j$(JOBS) release-build STAGE=$(stage) || exit 1; echo ">>> phase build (incl docker push): $$(($$(date +%s)-t))s" | tee -a $(timing); \
+	t=$$(date +%s); $(MAKE) release-publish STAGE=$(stage) || exit 1; echo ">>> phase publish (reindex + rsync): $$(($$(date +%s)-t))s" | tee -a $(timing); \
 	echo; echo "=== release $(version) timing summary ==="; cat $(timing)
 
-# Remove this release's /tmp staging trees and packages, all versions. The
-# patterns are disjoint from core's /tmp/mochi-server*. $(timing) is kept
-# deliberately - the post-release report reads it after this target runs.
+# Remove every world staging root except the one named by STAGE, which the
+# running release is about to use; the exit trap calls this with STAGE unset,
+# so the current root goes too. The fixed names are what earlier releases left
+# behind. $(timing) is kept: the post-release report reads it after this runs.
 release-clean:
+	-for root in /tmp/mochi-world-release.*; do [ "$$root" = "$(STAGE)" ] || rm -rf "$$root"; done
 	-rm -rf /tmp/mochi-world_* /tmp/mochi-world-*.rpm /tmp/mochi-world-rpmbuild-*
 
-# Parallel-safe build of every release artefact — same shape as core's: each
-# branch stages in its own /tmp tree, so -j fans them across cores.
+# Parallel-safe build of every release artefact, the same shape as core's: each
+# branch stages in its own tree under the release's root, so -j fans them
+# across cores.
 release-build: deb rpm msi pkg docker
 
 # Publish into the shared packages tree beside core's artefacts; the apt/rpm
@@ -373,12 +412,32 @@ release-publish:
 	mkdir -p ../packages/world
 	echo '{"generated": $(generated), "platform": "world", "tracks": {"production": "$(version)"}}' > ../packages/world/versions.json
 	# Signed with the release key like the server manifests, so a client that
-	# appears can verify it. -rawin needs openssl 3.0+.
-	openssl pkeyutl -sign -rawin -inkey ../core/local/update-signing.key -in ../packages/world/versions.json | base64 -w0 > ../packages/world/versions.json.sig
-	# Publish to yuzu by name (not the packages.mochi-os.org alias) so the
-	# target is deterministic regardless of where that record points.
+	# appears can verify it. The script checks the signature against the key the
+	# server pins before it replaces the old one.
+	../core/build/scripts/sign-manifest ../core/local/update-signing.key ../packages/world/versions.json
+	$(MAKE) --no-print-directory release-publish-rsync
+
+# Publish to yuzu by name (not the packages.mochi-os.org alias) so the target is
+# deterministic regardless of where that record points. Only what this release
+# changed goes up, never the whole shared tree: a core release that stopped
+# between writing its files and uploading them would otherwise be published
+# here, with manifests whose signatures are still the old ones. The apt pool
+# and the stable index made from it go together, as do the rpm packages (the
+# reindex re-signs every one) and their repodata. Packages before the indexes
+# that name them, so no client meets an index naming a file not yet there; then
+# the prune, which removes only world's own superseded packages and never a file
+# of core's that this tree happens not to hold.
+release-publish-rsync:
 	@t0=$$(date +%s); \
-	rsync -av --delete ../packages/ root@yuzu.mochi-os.org:/srv/packages/ || exit 1; \
+	rsync -av ../packages/apt/pool/main/ root@yuzu.mochi-os.org:/srv/packages/apt/pool/main/ || exit 1; \
+	rsync -av ../packages/rpm/Packages/ root@yuzu.mochi-os.org:/srv/packages/rpm/Packages/ || exit 1; \
+	rsync -av ../packages/windows/mochi-world.msi root@yuzu.mochi-os.org:/srv/packages/windows/ || exit 1; \
+	rsync -av ../packages/macos/mochi-world-amd64.pkg ../packages/macos/mochi-world-arm64.pkg root@yuzu.mochi-os.org:/srv/packages/macos/ || exit 1; \
+	rsync -av ../packages/apt/dists/stable/ root@yuzu.mochi-os.org:/srv/packages/apt/dists/stable/ || exit 1; \
+	rsync -av --delete-after ../packages/rpm/repodata/ root@yuzu.mochi-os.org:/srv/packages/rpm/repodata/ || exit 1; \
+	rsync -av --delete-after ../packages/world/ root@yuzu.mochi-os.org:/srv/packages/world/ || exit 1; \
+	rsync -av --delete-after --include='mochi-world_*.deb' --exclude='*' ../packages/apt/pool/main/ root@yuzu.mochi-os.org:/srv/packages/apt/pool/main/ || exit 1; \
+	rsync -av --delete-after --include='mochi-world-*.rpm' --exclude='*' ../packages/rpm/Packages/ root@yuzu.mochi-os.org:/srv/packages/rpm/Packages/ || exit 1; \
 	echo ">>> rsync local->yuzu: $$(($$(date +%s)-t0))s" | tee -a $(timing)
 
 # Install the published version on yuzu (verified). Separate from `release`
@@ -386,6 +445,6 @@ release-publish:
 # apt flags via `make deploy DEPLOY_FLAGS=--reinstall` to redeploy an
 # identical version.
 deploy:
-	./build/scripts/deploy $(DEPLOY_FLAGS)
+	./build/scripts/deploy $(version) $(DEPLOY_FLAGS)
 
-.PHONY: all run1 test test-wasm wasm clean deb deb-amd64 deb-arm64 deb-armhf rpm rpm-x86_64 rpm-aarch64 rpm-armv7hl msi pkg pkg-amd64 pkg-arm64 docker docker-stage docker-local release release-clean release-build release-publish deploy
+.PHONY: all run1 test test-wasm wasm clean deb deb-amd64 deb-arm64 deb-armhf rpm rpm-x86_64 rpm-aarch64 rpm-armv7hl msi pkg pkg-amd64 pkg-arm64 docker docker-stage docker-local release release-clean release-build release-publish release-publish-rsync deploy check

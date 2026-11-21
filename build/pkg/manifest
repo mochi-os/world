@@ -1,0 +1,7 @@
+# The macOS package core/build/scripts/build-pkg builds from this directory.
+identifier=org.mochi-os.world
+title=Mochi World
+programs=mochi-world
+uninstaller=mochi-world-uninstall
+configuration=/etc/mochi/world.conf
+directories=/var/lib/mochi-world

@@ -70,8 +70,9 @@ variable as **MOCHI\_<SECTION>\_<KEY>** (for example
 **data**
 :   Directory for the server's persistent state, currently the stable
     listing id (*world.id*) - what makes a rename update the existing
-    listing rather than create a second one. Default */var/lib/mochi-world*
-    (the [acme] cache shares that default via its own key).
+    listing rather than create a second one. Default */var/lib/mochi-world*,
+    or *%ProgramData%\\Mochi\\world* on Windows (the [acme] cache shares that
+    default via its own key).
 
 ## [*service*]
 
@@ -154,7 +155,8 @@ directory - each gets its own listing.
     from the internet. Ignored when [tls] certificate is set.
 
 **cache**
-:   Directory for obtained certificates. Default */var/lib/mochi-world*.
+:   Directory for obtained certificates. Default */var/lib/mochi-world*, or
+    *%ProgramData%\\Mochi\\world* on Windows.
 
 When neither [tls] nor [acme] is configured, an ephemeral self-signed
 certificate is generated and rotated every few days; game clients pin its
@@ -215,6 +217,11 @@ than its literal address, since a single subscriber is normally given a whole
 */var/lib/mochi-world*
 :   Persistent state: ACME certificate cache and the stable listing id
     (*world.id*).
+
+*/usr/lib/systemd/system/mochi-world.service*
+:   systemd unit shipped by the deb/rpm packages. Override it with a drop-in
+    under */etc/systemd/system/mochi-world.service.d/*, which an upgrade
+    leaves alone.
 
 # SEE ALSO
 

@@ -3,6 +3,9 @@
 chown -R mochi:mochi /var/lib/mochi-world
 systemctl daemon-reload
 # enable as well as start: a game server must come back by itself after a
-# reboot.
-systemctl enable mochi-world >/dev/null 2>&1 || true
+# reboot. reenable, not enable: earlier packages shipped the unit in
+# /etc/systemd/system, and the link enable made there still names that path,
+# which this upgrade removed; enable would leave the dangling link alone, and
+# the server would not start at the next boot.
+systemctl reenable mochi-world >/dev/null 2>&1 || true
 systemctl start mochi-world

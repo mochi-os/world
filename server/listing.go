@@ -51,7 +51,7 @@ type listing_service struct {
 // create a second one, so it must survive restarts; it lives beside the
 // ACME cache in the data directory.
 func listing_id() string {
-	directory := ini_string("world", "data", "/var/lib/mochi-world")
+	directory := ini_string("world", "data", state_directory())
 	path := filepath.Join(directory, "world.id")
 	if data, err := os.ReadFile(path); err == nil {
 		// Core takes only 32 of [0-9a-z], and refuses every push carrying

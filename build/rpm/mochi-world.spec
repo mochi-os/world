@@ -56,7 +56,13 @@ fi
 chown -R mochi:mochi /var/lib/mochi-world
 systemctl daemon-reload
 systemctl enable mochi-world 2>/dev/null || true
-systemctl start mochi-world 2>/dev/null || true
+# A fresh install ($1 = 1) starts the server; an upgrade restarts it from
+# %postun, once the new binary is in place. Without the restart an upgraded
+# host keeps serving the old version, whose wire protocol and flight model the
+# new client refuses.
+if [ $1 -eq 1 ]; then
+    systemctl start mochi-world 2>/dev/null || true
+fi
 
 %preun
 if [ $1 -eq 0 ]; then
@@ -66,3 +72,6 @@ fi
 
 %postun
 systemctl daemon-reload
+if [ $1 -ge 1 ]; then
+    systemctl try-restart mochi-world >/dev/null 2>&1 || true
+fi

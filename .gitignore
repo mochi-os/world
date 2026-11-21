@@ -3,3 +3,6 @@ build/docker/bin/
 
 # Editor swap files
 .*.swp
+
+# Release timing summary, written by `make release`
+local/

@@ -2,6 +2,13 @@
 
 chown -R _mochi:_mochi /var/lib/mochi-world
 
+# The payload carries the default configuration beside the live file, so an
+# upgrade never overwrites the operator's settings; a first install copies it
+# into place.
+if [ ! -f /etc/mochi/world.conf ]; then
+    cp /etc/mochi/world.conf.default /etc/mochi/world.conf
+fi
+
 # Load the launchd service
 launchctl bootout system/org.mochi-os.world 2>/dev/null
 launchctl bootstrap system /Library/LaunchDaemons/org.mochi-os.world.plist

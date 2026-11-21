@@ -258,3 +258,35 @@ func TestListingRefusalIsNotAnOutage(t *testing.T) {
 		t.Errorf("a push taken after an outage logged %q", logged.String())
 	}
 }
+
+// The state directory's default comes from one per-platform function: a Unix
+// path written into shared code resolved on Windows to C:\var\lib\mochi-world,
+// a folder any local account may change, holding the certificate keys.
+func TestStateDirectoryHasOnePlatformSource(t *testing.T) {
+	if state_directory() != "/var/lib/mochi-world" {
+		t.Fatalf("state_directory() = %q off Windows", state_directory())
+	}
+	sources, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range sources {
+		if strings.HasSuffix(source, "_test.go") || source == "state_other.go" {
+			continue
+		}
+		data, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(data), `"/var/lib/mochi-world"`) {
+			t.Errorf("%s names /var/lib/mochi-world itself; take the default from state_directory()", source)
+		}
+	}
+	windows, err := os.ReadFile("state_windows.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(windows), `os.Getenv("ProgramData")`) {
+		t.Error("state_windows.go does not resolve the directory under ProgramData")
+	}
+}
